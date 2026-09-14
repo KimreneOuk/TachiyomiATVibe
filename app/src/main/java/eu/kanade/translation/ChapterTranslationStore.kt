@@ -2476,6 +2476,10 @@ class ChapterTranslationStore(
         glossaryStore.updateGlossary(updated)
     }
 
+    suspend fun foldPageContribution(pageKey: String, pairs: List<Pair<String, String>>) {
+        glossaryStore.foldPageContribution(pageKey, pairs)
+    }
+
     /**
      * TachiyomiAT T917 D5: live glossary version for the reuse gate and
      * provenance stamps; `null` = gate off (legacy authority / no glossary

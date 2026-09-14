@@ -67,4 +67,72 @@ class ChapterGlossaryBuilderTest {
         )
         text shouldBe "太郎 => Taro\n東京 => Tokyo"
     }
+
+    @Test
+    fun `remove decreases recurrence and evicts term below threshold`() {
+        val stats = ChapterGlossaryBuilder.Stats()
+        stats.add("太郎は走る", "Taro runs")
+        stats.add("太郎が来た", "Taro came")
+        stats.add("太郎を見た", "I saw Taro")
+
+        stats.build()["太郎"] shouldBe "Taro"
+
+        // Removing one bubble drops recurrence to 2 (< MIN_RECURRENCE = 3)
+        stats.remove("太郎を見た", "I saw Taro")
+        stats.build().containsKey("太郎") shouldBe false
+
+        // Adding back restores qualification
+        stats.add("太郎を見た", "I saw Taro")
+        stats.build()["太郎"] shouldBe "Taro"
+    }
+
+    @Test
+    fun `remove cleans up candidate and rendering maps when count drops to zero`() {
+        val stats = ChapterGlossaryBuilder.Stats()
+        stats.add("太郎は走る", "Taro runs")
+        stats.remove("太郎は走る", "Taro runs")
+
+        stats.build() shouldBe emptyMap()
+    }
+
+    @Test
+    fun `replace updates contributions and maintains rankings`() {
+        val stats = ChapterGlossaryBuilder.Stats()
+        val oldPairs = listOf(
+            "太郎は走る" to "Taro runs",
+            "太郎が来た" to "Taro came",
+            "太郎を見た" to "I saw Taro",
+        )
+        val newPairs = listOf(
+            "次郎は走る" to "Jiro runs",
+            "次郎が来た" to "Jiro came",
+            "次郎を見た" to "I saw Jiro",
+        )
+
+        stats.addAll(oldPairs)
+        stats.build()["太郎"] shouldBe "Taro"
+
+        stats.replace(oldPairs, newPairs)
+        val glossary = stats.build()
+        glossary.containsKey("太郎") shouldBe false
+        glossary["次郎"] shouldBe "Jiro"
+    }
+
+    @Test
+    fun `streamedRecompute matches incremental accumulator build`() {
+        val pairs = listOf(
+            "太郎は走る" to "Taro runs",
+            "太郎が来た" to "Taro came",
+            "太郎を見た" to "I saw Taro",
+            "学校に行く" to "The school is far",
+        )
+        val stats = ChapterGlossaryBuilder.Stats()
+        stats.addAll(pairs)
+
+        val incremental = stats.build()
+        val streamed = ChapterGlossaryBuilder.streamedRecompute(pairs)
+        incremental shouldBe streamed
+        incremental["太郎"] shouldBe "Taro"
+    }
 }
+

@@ -1,5 +1,7 @@
 package eu.kanade.translation.translator.contextual
 
+import java.util.TreeSet
+
 /**
  * Pure, deterministic, **advisory** chapter-level term→target glossary builder.
  *
@@ -26,6 +28,8 @@ object ChapterGlossaryBuilder {
     private const val MIN_RENDERING_LEN = 2
     private const val RECALL_THRESHOLD = 0.8
 
+    private val CAPITALIZED_TOKEN_REGEX = Regex("[^\\p{L}\\p{M}\\-']+")
+
     // Function words / particles / pronouns / common verbs that recur in CJK but
     // are not terms. CJK sources; Latin sources rarely reach this path.
     private val CJK_BLOCKLIST = setOf(
@@ -51,13 +55,26 @@ object ChapterGlossaryBuilder {
     )
 
     /**
+     * Incrementally maintained candidate rank entry for [Stats.rankedCandidates].
+     * Sorts descending by recurrence count, then ascending by candidate string.
+     */
+    private data class Candidate(val cand: String, val count: Int) : Comparable<Candidate> {
+        override fun compareTo(other: Candidate): Int {
+            val cmp = other.count.compareTo(this.count)
+            return if (cmp != 0) cmp else this.cand.compareTo(other.cand)
+        }
+    }
+
+    /**
      * Incremental accumulator: call [add] for each translated (source, target)
      * pair, then [build] for the capped glossary map. Pure; holds no Android or
-     * I/O state. Safe to seed from an existing glossary's pairs on batch resume.
+     * I/O state. Safe to seed from translated pairs ([translatedPairs]) on batch/session
+     * resume; NEVER seed from the capped 30-entry glossary map.
      */
     class Stats {
         private val sourceCounts = HashMap<String, Int>()
         private val renderings = HashMap<String, HashMap<String, Int>>()
+        private val rankedCandidates = TreeSet<Candidate>()
 
         fun add(source: String, translation: String) {
             val s = source.trim()
@@ -67,7 +84,16 @@ object ChapterGlossaryBuilder {
             if (cands.isEmpty()) return
             val targetTokens = capitalizedTokens(t)
             for (c in cands) {
-                sourceCounts[c] = (sourceCounts[c] ?: 0) + 1
+                val currentCount = sourceCounts[c] ?: 0
+                val isEligible = c.length >= MIN_CANDIDATE_LEN && c !in CJK_BLOCKLIST
+                if (isEligible && currentCount >= MIN_RECURRENCE) {
+                    rankedCandidates.remove(Candidate(c, currentCount))
+                }
+                val newCount = currentCount + 1
+                sourceCounts[c] = newCount
+                if (isEligible && newCount >= MIN_RECURRENCE) {
+                    rankedCandidates.add(Candidate(c, newCount))
+                }
                 if (targetTokens.isNotEmpty()) {
                     val map = renderings.getOrPut(c) { HashMap() }
                     for (token in targetTokens) {
@@ -77,20 +103,72 @@ object ChapterGlossaryBuilder {
             }
         }
 
+        fun remove(source: String, translation: String) {
+            val s = source.trim()
+            val t = translation.trim()
+            if (s.isEmpty() || t.isEmpty() || t == s) return
+            val cands = candidates(s)
+            if (cands.isEmpty()) return
+            val targetTokens = capitalizedTokens(t)
+            for (c in cands) {
+                val currentCount = sourceCounts[c] ?: continue
+                val isEligible = c.length >= MIN_CANDIDATE_LEN && c !in CJK_BLOCKLIST
+                if (isEligible && currentCount >= MIN_RECURRENCE) {
+                    rankedCandidates.remove(Candidate(c, currentCount))
+                }
+                val newCount = currentCount - 1
+                if (newCount <= 0) {
+                    sourceCounts.remove(c)
+                } else {
+                    sourceCounts[c] = newCount
+                    if (isEligible && newCount >= MIN_RECURRENCE) {
+                        rankedCandidates.add(Candidate(c, newCount))
+                    }
+                }
+                if (targetTokens.isNotEmpty()) {
+                    val map = renderings[c]
+                    if (map != null) {
+                        for (token in targetTokens) {
+                            val tokenCount = map[token] ?: continue
+                            val newTokenCount = tokenCount - 1
+                            if (newTokenCount <= 0) {
+                                map.remove(token)
+                            } else {
+                                map[token] = newTokenCount
+                            }
+                        }
+                        if (map.isEmpty()) {
+                            renderings.remove(c)
+                        }
+                    }
+                }
+            }
+        }
+
+        fun addAll(pairs: Iterable<Pair<String, String>>) {
+            for ((s, t) in pairs) {
+                add(s, t)
+            }
+        }
+
+        fun removeAll(pairs: Iterable<Pair<String, String>>) {
+            for ((s, t) in pairs) {
+                remove(s, t)
+            }
+        }
+
+        fun replace(oldPairs: List<Pair<String, String>>, newPairs: List<Pair<String, String>>) {
+            removeAll(oldPairs)
+            addAll(newPairs)
+        }
+
         fun build(): Map<String, String> {
             val out = LinkedHashMap<String, String>()
-            sourceCounts.entries
-                .filter {
-                    it.value >= MIN_RECURRENCE &&
-                        it.key.length >= MIN_CANDIDATE_LEN &&
-                        it.key !in CJK_BLOCKLIST
-                }
-                .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
-                .forEach { (cand, total) ->
-                    val rendering = bestRendering(cand, total) ?: return@forEach
-                    out[cand] = rendering
-                    if (out.size >= MAX_ENTRIES) return out
-                }
+            for (candidate in rankedCandidates) {
+                val rendering = bestRendering(candidate.cand, candidate.count) ?: continue
+                out[candidate.cand] = rendering
+                if (out.size >= MAX_ENTRIES) return out
+            }
             return out
         }
 
@@ -103,6 +181,18 @@ object ChapterGlossaryBuilder {
             }
             return null
         }
+    }
+
+    /**
+     * Labeled fallback per T933 memory contract: recomputes a glossary map from
+     * a stream or collection of translated pairs.
+     */
+    fun streamedRecompute(pairs: Iterable<Pair<String, String>>): Map<String, String> {
+        val stats = Stats()
+        for ((s, t) in pairs) {
+            stats.add(s, t)
+        }
+        return stats.build()
     }
 
     /** Maximal CJK-ideograph (kanji/hanzi) runs (≥ [MIN_CANDIDATE_LEN]).
@@ -127,7 +217,7 @@ object ChapterGlossaryBuilder {
     /** Capitalized Latin tokens (≥ [MIN_RENDERING_LEN]) in the target — names
      *  romanize to a capitalized token. Single letters (e.g. "I") are excluded. */
     private fun capitalizedTokens(target: String): List<String> {
-        return target.split(Regex("[^\\p{L}\\p{M}\\-']+"))
+        return target.split(CAPITALIZED_TOKEN_REGEX)
             .filter { it.length >= MIN_RENDERING_LEN && it[0].isUpperCase() }
     }
 

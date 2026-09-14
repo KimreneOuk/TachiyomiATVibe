@@ -442,11 +442,12 @@ internal class SinglePageHttpRenderPhase(
                     // Fold this page's translated pairs into the chapter glossary so later
                     // on-demand/batch translations reuse its established terms.
                     if (activeTranslator is ContextualTextTranslator) {
-                        val stats = ChapterGlossaryBuilder.Stats().also { s ->
-                            store.translatedPairs().forEach { (src, tgt) -> s.add(src, tgt) }
+                        val pairs = pageTranslation.blocks.mapNotNull { block ->
+                            val s = block.text.trim()
+                            val t = block.translation.trim()
+                            if (s.isBlank() || t.isBlank() || t == s) null else s to t
                         }
-                        pageTranslation.blocks.forEach { b -> stats.add(b.text, b.translation) }
-                        store.updateGlossary(stats.build())
+                        store.foldPageContribution(pageKey, pairs)
                     }
                     // T917 D5 (phase3-design §1.3): stamp the live glossary version AFTER
                     // this page's own pairs folded, before the durable write — a pre-fold

@@ -3,6 +3,7 @@ package eu.kanade.translation.store
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.MutationAdmission
 import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -22,6 +23,12 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
     internal var glossary: Map<String, String> = emptyMap()
 
     internal var glossaryDirty = false
+
+    // T933 / Task 1.1: per-store accumulator and per-page contribution watermark.
+    // Owned under store.mutex.
+    internal val stats = ChapterGlossaryBuilder.Stats()
+    private var statsSeeded = false
+    internal val pageContributions = HashMap<String, List<Pair<String, String>>>()
 
     fun glossarySnapshot(): Map<String, String> = glossary.toMap()
 
@@ -52,6 +59,52 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
             }
         }
 
+    /**
+     * Lazily seeds the accumulator once per store from existing store pages.
+     * NEVER seeds from the capped 30-entry glossary map.
+     * Must be called under store.mutex.
+     */
+    private fun ensureAccumulatorSeededLocked() {
+        if (statsSeeded) return
+        for ((key, page) in store.pages) {
+            val existingPairs = page.blocks.mapNotNull { block ->
+                val s = block.text.trim()
+                val t = block.translation.trim()
+                if (s.isBlank() || t.isBlank() || t == s) null else s to t
+            }
+            if (existingPairs.isNotEmpty()) {
+                pageContributions[key] = existingPairs
+                stats.addAll(existingPairs)
+            }
+        }
+        statsSeeded = true
+    }
+
+    /**
+     * Folds a page's translated pairs into the per-store accumulator under store.mutex.
+     * Replaces any prior contribution recorded for [pageKey] to prevent duplicate
+     * count inflation on retranslation.
+     */
+    suspend fun foldPageContribution(pageKey: String, pairs: List<Pair<String, String>>) {
+        if (store.isDefunct) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT store foldPageContribution rejected: store is defunct"
+            }
+            return
+        }
+        store.mutex.withLock {
+            ensureAccumulatorSeededLocked()
+            val prior = pageContributions[pageKey]
+            if (prior != null) {
+                stats.removeAll(prior)
+            }
+            pageContributions[pageKey] = pairs
+            stats.addAll(pairs)
+            val updated = stats.build()
+            updateGlossaryLocked(updated)
+        }
+    }
+
     suspend fun updateGlossary(updated: Map<String, String>) {
         if (store.isDefunct) {
             logcat(LogPriority.WARN) {
@@ -60,43 +113,54 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
             return
         }
         store.mutex.withLock {
-            if (glossary != updated) {
-                when (val admission = store.admitMutationLocked()) {
-                    MutationAdmission.Granted -> Unit
-                    is MutationAdmission.Rejected -> {
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT store updateGlossary rejected: " +
-                                "code=${admission.code} reason=${admission.message}"
-                        }
-                        return@withLock
+            updateGlossaryLocked(updated)
+        }
+    }
+
+    internal fun updateGlossaryLocked(updated: Map<String, String>) {
+        if (glossary != updated) {
+            when (val admission = store.admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT store updateGlossary rejected: " +
+                            "code=${admission.code} reason=${admission.message}"
                     }
+                    return
                 }
-                glossary = updated.toMap()
-                val artifact = store.artifactStore
-                val manifest = store.artifactManifest
-                if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
-                    val pointer = artifact.publishGlossary(glossary)
-                    if (pointer != null) {
-                        val next = manifest.copy(
-                            glossary = pointer,
-                            updatedAtEpochMs = System.currentTimeMillis(),
-                        )
-                        if (artifact.publishManifest(next)) {
-                            store.artifactManifest = next
-                            glossaryDirty = false
-                        } else {
-                            glossaryDirty = true
-                        }
+            }
+            glossary = updated.toMap()
+            val artifact = store.artifactStore
+            val manifest = store.artifactManifest
+            if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
+                val pointer = artifact.publishGlossary(glossary)
+                if (pointer != null) {
+                    val next = manifest.copy(
+                        glossary = pointer,
+                        updatedAtEpochMs = System.currentTimeMillis(),
+                    )
+                    if (artifact.publishManifest(next)) {
+                        store.artifactManifest = next
+                        glossaryDirty = false
                     } else {
                         glossaryDirty = true
                     }
                 } else {
                     glossaryDirty = true
                 }
-                if (glossaryDirty) store.schedulePersist(markPageDirty = false)
+            } else {
+                glossaryDirty = true
             }
+            if (glossaryDirty) store.schedulePersist(markPageDirty = false)
         }
     }
+
+    /**
+     * Labeled fallback per T933 memory contract: recomputes the glossary by streaming all
+     * translated pairs in the chapter rather than using the incremental accumulator.
+     */
+    internal fun streamedRecomputeFallback(): Map<String, String> =
+        ChapterGlossaryBuilder.streamedRecompute(translatedPairs())
 
     internal fun loadGlossary() {
         val artifact = store.artifactStore
