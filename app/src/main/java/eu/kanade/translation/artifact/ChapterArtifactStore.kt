@@ -1229,13 +1229,15 @@ class ChapterArtifactStore(
                 )
             }
         }
-        val candidateFile = candidate.pageSnapshotFileName
-            ?: layout.candidatePageSnapshotFile(pageKey, generationId)
-        val candidateMatches = documents.readValidated<PageTranslation>(candidateFile)?.let {
-            it == pageSnapshot
-        } == true
-        if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
-            return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
+        if (!GroupCommitConfiguration.enabled) {
+            val candidateFile = candidate.pageSnapshotFileName
+                ?: layout.candidatePageSnapshotFile(pageKey, generationId)
+            val candidateMatches = documents.readValidated<PageTranslation>(candidateFile)?.let {
+                it == pageSnapshot
+            } == true
+            if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
+                return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
+            }
         }
         val committedFile = layout.committedPageSnapshotFile(pageKey, generationId)
         if (!documents.publishJson(committedFile, pageSnapshot.detachedCopy())) {

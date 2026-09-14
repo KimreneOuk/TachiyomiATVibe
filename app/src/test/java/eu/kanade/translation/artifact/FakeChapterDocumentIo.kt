@@ -12,6 +12,9 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     var failWrites = false
     var supportsNoReplaceRename = true
     var renameChangesLastModified = false
+    var fileBacked = false
+
+    override fun isFileBacked(): Boolean = fileBacked
 
     /** Owned artifact moves remain available even when this double models URI/SAF. */
     val ownedRenamesToFail = mutableSetOf<String>()

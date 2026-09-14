@@ -6,7 +6,9 @@ import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AttemptOrigin
+import eu.kanade.translation.artifact.CommitPoint
 import eu.kanade.translation.artifact.FailureCategory
+import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
 import eu.kanade.translation.artifact.ChapterArtifactLayout
@@ -53,6 +55,7 @@ import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -251,6 +254,62 @@ class ChapterTranslationStore(
     internal var dirty = false
     internal var persistJob: Job? = null
     private val persistenceScheduler = StorePersistenceScheduler(this)
+
+    // T930 Slice B1: Staged mutations buffer + debounce.
+    private val stagedPageKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private var stagedDebounceJob: Job? = null
+
+    internal fun hasStagedMutations(): Boolean = stagedPageKeys.isNotEmpty()
+
+    internal fun stagePageMutationLocked(pageKey: String, updated: PageTranslation) {
+        stagedPageKeys.add(pageKey)
+        persistenceScheduler.schedulePersist(markPageDirty = false)
+        stagedDebounceJob?.cancel()
+        stagedDebounceJob = persistenceScheduler.persistScope.launch {
+            kotlinx.coroutines.delay(GroupCommitConfiguration.DEBOUNCE_MS)
+            mutex.withLock {
+                flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+            }
+        }
+    }
+
+    internal fun flushStagedMutationsLocked(commitPoint: CommitPoint = CommitPoint.EXPLICIT_FLUSH): Boolean {
+        stagedDebounceJob?.cancel()
+        stagedDebounceJob = null
+        if (stagedPageKeys.isEmpty()) return true
+        val keys = stagedPageKeys.toList()
+        stagedPageKeys.clear()
+        val store = artifactStore ?: return false
+        var current = artifactManifest ?: return false
+        for (key in keys) {
+            val page = pages[key] ?: continue
+            val candidate = current.pages[key]?.candidate ?: continue
+            val res = store.persistLiveCandidate(
+                manifest = current,
+                pageKey = key,
+                generationId = candidate.generationId,
+                expectedPageVersion = current.pages[key]?.pageVersion ?: 0L,
+                expectedDependencyFingerprint = candidate.dependencyFingerprint.orEmpty(),
+                pageSnapshot = page,
+                origin = candidate.origin,
+                sourceIdentity = page.sourceIdentity(key),
+            )
+            if (res is ChapterArtifactStore.TransactionOutcome.Committed) {
+                current = res.manifest
+            }
+        }
+        artifactManifest = current
+        return true
+    }
+
+    internal fun flushStagedMutationsBlocking() {
+        if (!hasStagedMutations()) return
+        runBlocking {
+            mutex.withLock {
+                flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+            }
+        }
+    }
 
     /**
      * TachiyomiAT: set by [markDefunct] when the store is evicted
@@ -2044,8 +2103,8 @@ class ChapterTranslationStore(
         val currentCandidate = manifest.pages.getValue(pageKey).candidate
             ?: run {  return false }
         val expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion
-        val persisted = if (durableFailure != null) {
-            store.persistLiveCandidateAndFailure(
+        if (durableFailure != null) {
+            val persisted = store.persistLiveCandidateAndFailure(
                 manifest = manifest,
                 pageKey = pageKey,
                 generationId = currentCandidate.generationId,
@@ -2056,35 +2115,27 @@ class ChapterTranslationStore(
                 failure = durableFailure,
                 sourceIdentity = updated.sourceIdentity(pageKey),
             )
-        } else {
-            store.persistLiveCandidate(
-                manifest = manifest,
-                pageKey = pageKey,
-                generationId = currentCandidate.generationId,
-                expectedPageVersion = expectedPageVersion,
-                expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                pageSnapshot = updated,
-                origin = origin,
-                sourceIdentity = updated.sourceIdentity(pageKey),
-            )
-        }
-        manifest = when (persisted) {
-            is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
-            is ChapterArtifactStore.TransactionOutcome.Rejected -> {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
+            manifest = when (persisted) {
+                is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
+                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
+                    }
+                    return false
                 }
-                return false
             }
-        }
-        artifactManifest = manifest
-        if (durableFailure == null && (updated.hasRenderedResult || updated.isTextlessTerminal)) {
+            artifactManifest = manifest
+        } else if (GroupCommitConfiguration.enabled && (updated.hasRenderedResult || updated.isTextlessTerminal)) {
+            // T930 Slice B2: Candidate-promotion merge at PAGE_TERMINAL_PROMOTION commit point.
+            flushStagedMutationsLocked(CommitPoint.PAGE_TERMINAL_PROMOTION)
+            val current = artifactManifest ?: manifest
+            val currentCand = current.pages[pageKey]?.candidate ?: currentCandidate
             val promoted = store.promoteLiveCandidate(
-                manifest = manifest,
+                manifest = current,
                 pageKey = pageKey,
-                generationId = currentCandidate.generationId,
-                expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion,
-                expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                generationId = currentCand.generationId,
+                expectedPageVersion = current.pages[pageKey]?.pageVersion ?: expectedPageVersion,
+                expectedDependencyFingerprint = currentCand.dependencyFingerprint.orEmpty(),
                 pageSnapshot = updated,
                 origin = origin,
                 sourceIdentity = updated.sourceIdentity(pageKey),
@@ -2097,6 +2148,55 @@ class ChapterTranslationStore(
                     }
                     return false
                 }
+            }
+            artifactManifest = manifest
+            return true
+        } else if (GroupCommitConfiguration.enabled) {
+            // T930 Slice B1: Staged mutations + debounce for intermediate non-terminal stage writes.
+            stagePageMutationLocked(pageKey, updated)
+            return true
+        } else {
+            val persisted = store.persistLiveCandidate(
+                manifest = manifest,
+                pageKey = pageKey,
+                generationId = currentCandidate.generationId,
+                expectedPageVersion = expectedPageVersion,
+                expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                pageSnapshot = updated,
+                origin = origin,
+                sourceIdentity = updated.sourceIdentity(pageKey),
+            )
+            manifest = when (persisted) {
+                is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
+                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
+                    }
+                    return false
+                }
+            }
+            artifactManifest = manifest
+            if (updated.hasRenderedResult || updated.isTextlessTerminal) {
+                val promoted = store.promoteLiveCandidate(
+                    manifest = manifest,
+                    pageKey = pageKey,
+                    generationId = currentCandidate.generationId,
+                    expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion,
+                    expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                    pageSnapshot = updated,
+                    origin = origin,
+                    sourceIdentity = updated.sourceIdentity(pageKey),
+                )
+                manifest = when (promoted) {
+                    is ChapterArtifactStore.TransactionOutcome.Committed -> promoted.manifest
+                    is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
+                        }
+                        return false
+                    }
+                }
+                artifactManifest = manifest
             }
         }
         artifactManifest = manifest

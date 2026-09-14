@@ -37,6 +37,7 @@ internal class ActiveChapterStoreRegistry {
     fun register(chapterId: Long, store: ChapterTranslationStore): Boolean {
         if (stores.containsKey(chapterId)) return false
         stores[chapterId] = store
+        store.chapterKey?.let { mainStores[it] = store }
         storeWriterRegistrations[chapterId] = registerWriter(
             chapterId = chapterId,
             chapterKey = store.chapterKey,
@@ -167,6 +168,7 @@ internal class ActiveChapterStoreRegistry {
     @Synchronized
     fun remove(chapterId: Long): ChapterTranslationStore? {
         val removed = stores.remove(chapterId) ?: return null
+        removed.chapterKey?.let { mainStores.remove(it) }
         storeWriterRegistrations.remove(chapterId)?.close()
         fileStores.entries.removeIf { it.value === removed }
         publish()
@@ -214,8 +216,11 @@ internal class ActiveChapterStoreRegistry {
     }
 
     companion object {
+        private val mainStores = java.util.concurrent.ConcurrentHashMap<String, ChapterTranslationStore>()
         private val globalWriters = LinkedHashSet<ActiveWriter>()
         private val globalMutex = Any()
+
+        fun mainStoreFor(chapterKey: String): ChapterTranslationStore? = mainStores[chapterKey]
 
         /**
          * T930 Slice A2: Registers an active writer process-wide.
@@ -233,6 +238,9 @@ internal class ActiveChapterStoreRegistry {
             tag: String? = null,
             nowEpochMs: Long = System.currentTimeMillis(),
         ): AutoCloseable = synchronized(globalMutex) {
+            if (eu.kanade.translation.artifact.GroupCommitConfiguration.enabled && origin != WriterOrigin.MAIN_STORE) {
+                chapterKey?.let { mainStores[it]?.flushStagedMutationsBlocking() }
+            }
             val writer = ActiveWriter(
                 chapterId = chapterId,
                 chapterKey = chapterKey,

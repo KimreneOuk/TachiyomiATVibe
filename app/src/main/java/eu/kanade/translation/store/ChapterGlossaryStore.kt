@@ -130,6 +130,9 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
                 }
             }
             glossary = updated.toMap()
+            if (eu.kanade.translation.artifact.GroupCommitConfiguration.enabled && store.hasStagedMutations()) {
+                store.flushStagedMutationsLocked(eu.kanade.translation.artifact.CommitPoint.EXPLICIT_FLUSH)
+            }
             val artifact = store.artifactStore
             val manifest = store.artifactManifest
             if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {

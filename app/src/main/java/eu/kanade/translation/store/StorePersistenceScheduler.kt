@@ -91,6 +91,7 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
     }
 
     private fun flushDirtyLocked() {
+        store.flushStagedMutationsLocked(eu.kanade.translation.artifact.CommitPoint.EXPLICIT_FLUSH)
         if (dirty) {
             if (persistLocked()) dirty = false else dirty = true
         }

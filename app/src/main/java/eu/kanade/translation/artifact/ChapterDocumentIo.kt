@@ -59,12 +59,17 @@ interface ChapterDocumentIo {
 
     /** Immediate child names of a directory, or null when it does not exist. */
     fun list(directoryName: String): List<String>?
+
+    /** Indicates whether this IO is backed by a local java.io.File filesystem. */
+    fun isFileBacked(): Boolean = false
 }
 
 /** [ChapterDocumentIo] over a [UniFile] manga directory. */
 class UniFileChapterDocumentIo(
     private val root: UniFile,
 ) : ChapterDocumentIo {
+
+    override fun isFileBacked(): Boolean = root.filePath != null
 
     private val dirCache = java.util.concurrent.ConcurrentHashMap<String, UniFile>()
 
@@ -238,7 +243,13 @@ class AtomicChapterDocuments(
         val backupName = backupNameFor(name)
         if (!io.write(tempName, bytes)) return false
         val written = io.read(tempName)
-        if (written == null || !written.contentEquals(bytes) || !validate(written)) {
+        val matches = if (io.isFileBacked() && GroupCommitConfiguration.enabled) {
+            // T930 Slice B3: read-back elision on File-backed storage (parse-validate only)
+            written != null && validate(written)
+        } else {
+            written != null && written.contentEquals(bytes) && validate(written)
+        }
+        if (!matches) {
             io.delete(tempName)
             return false
         }
