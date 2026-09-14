@@ -69,7 +69,7 @@ class AnalysisEngineTransport(
          * [eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
          * .ANALYSIS_MAX_OUTPUT_TOKENS].
          */
-        const val ANALYSIS_MAX_OUTPUT_TOKENS = 8192
+        const val ANALYSIS_MAX_OUTPUT_TOKENS = 3072
 
         /**
          * The analysis framing prompt (T924-AP-01): chapter-local structured

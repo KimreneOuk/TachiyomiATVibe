@@ -41,14 +41,14 @@ import eu.kanade.translation.artifact.StageFingerprints
  * must not invalidate compatible translations).
  */
 data class EnvelopePlannerPolicy(
-    /** Structural block budget per envelope (design §8 experiment: 32). */
-    val maxBlocksPerEnvelope: Int = 32,
-    /** Contributing-page budget per envelope (design §8 experiment: 8). */
-    val maxContributingPages: Int = 8,
+    /** Structural block budget per envelope (design §8 experiment: 12). */
+    val maxBlocksPerEnvelope: Int = 12,
+    /** Contributing-page budget per envelope (design §8 experiment: 3). */
+    val maxContributingPages: Int = 3,
     /** Estimated source-token input budget (always stricter than context ceiling). */
-    val maxEstimatedInputTokens: Int = 16_384,
+    val maxEstimatedInputTokens: Int = 4_096,
     /** Estimated output-token reserve (framing + target expansion). */
-    val maxEstimatedOutputTokens: Int = 8_192,
+    val maxEstimatedOutputTokens: Int = 3_584,
     /**
      * Prefer closing the envelope at a frozen-profile scene start
      * (`page.sceneBoundaryBefore`). Never a correctness fence.

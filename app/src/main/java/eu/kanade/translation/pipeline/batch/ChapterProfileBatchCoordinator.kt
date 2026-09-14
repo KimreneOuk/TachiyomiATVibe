@@ -3127,7 +3127,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_STRANDED_RECONCILED = "strandedPagesReconciled"
 
         /** Analysis output budget default (T924-AP-03 `outputBudget`). */
-        const val ANALYSIS_MAX_OUTPUT_TOKENS = 8192
+        const val ANALYSIS_MAX_OUTPUT_TOKENS = 3072
 
         /** FF-01d flag state, frozen as an operational (never fingerprinted) counter. */
         const val COUNTER_FLAG = "flagProfilePipeline"

@@ -247,10 +247,12 @@ class StreamingChunkPlanner(
                 0
             }
             val available = constraints.maxContextTokens - constraints.safetyMargin - promptTokens - protocolReserve
+            if (available < constraints.minOutputTokens) {
+                return -1
+            }
             return requestedOutputTokens
                 .coerceAtLeast(constraints.minOutputTokens)
                 .coerceAtMost(available)
-                .coerceAtLeast(constraints.minOutputTokens)
         }
     }
 }

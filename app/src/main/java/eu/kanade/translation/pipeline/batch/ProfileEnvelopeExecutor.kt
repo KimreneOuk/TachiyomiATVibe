@@ -433,7 +433,6 @@ internal class ProfileEnvelopeExecutor(
      * entries on a narrower range.
      */
     private fun splitForTokenFit(held: List<HeldPage>, rollingContext: String): SplitPlan {
-        if (frozenProfile == null) return SplitPlan(fitted = listOf(held), oversized = emptyList())
         val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
 
         // Wave-7a F-W7-1: the context reserve is re-derived per CANDIDATE
@@ -511,7 +510,8 @@ internal class ProfileEnvelopeExecutor(
      * builder renders them.
      */
     private fun estimateEnrichedContextTokens(held: List<HeldPage>, rollingContext: String): Int {
-        val profile = frozenProfile ?: return 0
+        val profile = frozenProfile
+            ?: return if (rollingContext.isBlank()) 0 else TranslationContextChunkPlanner.estimateTokens(rollingContext.trim())
         val subset = ProfileSubsetMatcher.match(profile, envelopeSourcesOf(held))
         val glossary = TranslationPrompts.profileAwareGlossaryPrefix(subset)
         val rolling = TranslationPrompts.profileAwareRollingPrefix(
@@ -548,6 +548,28 @@ internal class ProfileEnvelopeExecutor(
         val held = batch // DR-A classification operates over exactly this batch
         // ---- Dispatch ONE provider envelope (hard one-in-flight invariant). ----
         val prepared = buildEnvelopeChunk(envelope, held, frontier.rollingContext)
+        val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
+        val protocolReserve = TranslationContextChunkPlanner.batchResponseOverheadTokens(
+            prepared.chunk.blockCount,
+            prepared.chunk.pages.size,
+        )
+        val availableOutput = constraints.maxContextTokens - constraints.safetyMargin -
+            prepared.estimatedInputTokens - protocolReserve
+        if (prepared.chunk.maxOutputTokens < constraints.minOutputTokens || availableOutput < constraints.minOutputTokens) {
+            return EnvelopeDispatchResult.Paused(
+                reason = "T924 envelope ${envelope.envelopeId} paused: " +
+                    "unfulfillable token budget (available output $availableOutput < min ${constraints.minOutputTokens}, " +
+                    "output cap ${prepared.chunk.maxOutputTokens}); prompt not shipped",
+                anchorPageKey = held.firstOrNull()?.pageKey,
+                failure = ProviderFailure(
+                    kind = ProviderFailureKind.PROTOCOL,
+                    retryability = ProviderFailureRetryability.PAUSE,
+                    safeSummary = "unfulfillable token budget: available output tokens below minimum floor",
+                    requestId = envelope.envelopeId,
+                ),
+                nextEligibleRetryAtEpochMs = null,
+            )
+        }
         val metadata = ProviderRequestMetadata(
             key = ProviderRequestKey(
                 backend = work.providerBackend,

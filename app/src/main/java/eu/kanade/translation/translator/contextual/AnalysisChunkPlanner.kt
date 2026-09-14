@@ -44,7 +44,7 @@ data class AnalysisChunkPolicy(
      * chunk (design §6.1 input cap; at least half the provider context stays
      * reserved for instructions, existing canon and output). PROPOSED-GATE.
      */
-    val maxEstimatedInputTokens: Int = 16_384,
+    val maxEstimatedInputTokens: Int = 4_608,
 ) {
     fun validationError(): String? = when {
         maxCorePages < 1 || maxCorePages > AnalysisChunkResult.MAX_CORE_PAGES ->

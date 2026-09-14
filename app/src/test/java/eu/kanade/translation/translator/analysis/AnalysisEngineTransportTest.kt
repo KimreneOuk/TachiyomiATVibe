@@ -87,6 +87,7 @@ class AnalysisEngineTransportTest {
         system shouldBe AnalysisEngineTransport.ANALYSIS_SYSTEM_PROMPT
         user shouldBe AnalysisEngineTransport.ANALYSIS_USER_INSTRUCTIONS + "\n\n" + requestJson
         max shouldBe AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS
+        AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 3072
     }
 
     @Test

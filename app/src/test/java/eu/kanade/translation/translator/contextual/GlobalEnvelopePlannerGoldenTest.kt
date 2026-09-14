@@ -152,7 +152,7 @@ class GlobalEnvelopePlannerGoldenTest {
             GlobalEnvelopePlanner.plan(
                 pages,
                 "c".repeat(64),
-                EnvelopePlannerPolicy(preferSceneBreaks = false),
+                EnvelopePlannerPolicy(preferSceneBreaks = false, maxContributingPages = 8),
                 createdAtEpochMs = 1_757_050_000_000,
             ),
         )
@@ -168,7 +168,7 @@ class GlobalEnvelopePlannerGoldenTest {
             createdAtEpochMs = 1_757_050_000_000,
         )
         val rejectedBlocks = rejected(tooManyBlocks)
-        rejectedBlocks.reasons.single() shouldContain "page p0 oversized: 33 blocks > 32"
+        rejectedBlocks.reasons.single() shouldContain "page p0 oversized: 33 blocks > 12"
 
         val tooManyTokens = GlobalEnvelopePlanner.plan(
             pages = listOf(page(0, blockCount = 1, chars = 4_000_000)),
@@ -377,7 +377,12 @@ class GlobalEnvelopePlannerGoldenTest {
                     )
                 },
                 corpusFingerprint = ("1a").repeat(32),
-                policy = EnvelopePlannerPolicy(maxBlocksPerEnvelope = 12, maxContributingPages = 8),
+                policy = EnvelopePlannerPolicy(
+                    maxBlocksPerEnvelope = 12,
+                    maxContributingPages = 8,
+                    maxEstimatedInputTokens = 16_384,
+                    maxEstimatedOutputTokens = 8_192,
+                ),
                 createdAtEpochMs = 1_757_050_000_000,
             ),
         )

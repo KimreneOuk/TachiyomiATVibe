@@ -167,6 +167,8 @@ class TranslationContextChunkPlannerTest {
         val constraints = TranslationContextChunkPlanner.constraintsFor(
             TranslationContextChunkPlanner.Profile.LM_STUDIO,
         )
+        constraints.maxContextTokens shouldBe 8_192
+        constraints.maxRollingContextTokens shouldBe 512
         result.rejectedPages shouldBe emptyMap()
         result.chunks.forEach { chunk ->
             (
@@ -341,6 +343,40 @@ class TranslationContextChunkPlannerTest {
         )
         huge.glossary shouldBe ""
         huge.rollingContext shouldBe ""
+    }
+
+    @Test
+    fun `lm studio rolling context respects 512 budget`() {
+        val pages = linkedMapOf("001.jpg" to page("hello"))
+        val chunk = TranslationContextChunkPlanner.plan(
+            pages,
+            requestedOutputTokens = 8192,
+            profile = TranslationContextChunkPlanner.Profile.LM_STUDIO,
+        ).chunks.single()
+
+        val constraints = TranslationContextChunkPlanner.constraintsFor(
+            TranslationContextChunkPlanner.Profile.LM_STUDIO,
+        )
+        constraints.maxContextTokens shouldBe 8_192
+        constraints.maxRollingContextTokens shouldBe 512
+
+        // Small rolling context fits within 512
+        val withSmall = TranslationContextChunkPlanner.withRollingContext(
+            chunk = chunk,
+            rollingContext = "源 => source",
+            requestedOutputTokens = 8192,
+            profile = TranslationContextChunkPlanner.Profile.LM_STUDIO,
+        )
+        withSmall.rollingContext shouldBe "源 => source"
+
+        // Context exceeding 512 tokens is dropped
+        val withLarge = TranslationContextChunkPlanner.withRollingContext(
+            chunk = chunk,
+            rollingContext = "x".repeat(5_000),
+            requestedOutputTokens = 8192,
+            profile = TranslationContextChunkPlanner.Profile.LM_STUDIO,
+        )
+        withLarge.rollingContext shouldBe ""
     }
 
     private fun block(text: String): TranslationBlock {

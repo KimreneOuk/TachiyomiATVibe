@@ -194,11 +194,11 @@ object TranslationContextChunkPlanner {
             maxRollingContextTokens = MAX_ROLLING_CONTEXT_TOKENS,
         )
         Profile.LM_STUDIO -> Constraints(
-            maxContextTokens = 16_000,
+            maxContextTokens = 8_192,
             safetyMargin = SAFETY_MARGIN,
             minOutputTokens = MIN_OUTPUT_TOKENS,
             promptOverheadTokens = PROMPT_OVERHEAD_TOKENS,
-            maxRollingContextTokens = 1_024,
+            maxRollingContextTokens = 512,
         )
     }
 
