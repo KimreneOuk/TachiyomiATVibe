@@ -19,7 +19,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * SCRATCH laptop mock rig — NOT committed, NOT a regression test.
+ * Developer diagnostic mock rig — NOT a suite regression test (evicted from app test suite).
  *
  * Runs the real production planner ([TextLayoutPlanner.planPage]) against the
  * REAL cached detection data of the Director's problem page (Konoka to Kossori 3
