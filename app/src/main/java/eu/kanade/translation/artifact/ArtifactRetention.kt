@@ -152,6 +152,7 @@ internal class ArtifactRetention(
         manifest.envelopePlan?.fileName?.let(::add)
         manifest.layoutPlans.values.forEach { pointer -> add(pointer.fileName) }
         manifest.colorPreparations.values.forEach { pointer -> add(pointer.fileName) }
+        manifest.context?.fileName?.let(::add)
     }
 }
 

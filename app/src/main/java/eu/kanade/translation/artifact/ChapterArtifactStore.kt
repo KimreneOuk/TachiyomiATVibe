@@ -964,6 +964,62 @@ class ChapterArtifactStore(
     internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.colorPreparationFile(pageKey, contentFingerprint)
 
+    /** T933 Increment 2: content-addressed `ChapterContextSnapshot` sidecar name under `context/`. */
+    internal fun contextSidecarName(contentFingerprint: String): String =
+        layout.contextFile(contentFingerprint)
+
+    sealed interface ContextSnapshotRead {
+        data class Usable(val snapshot: ChapterContextSnapshot) : ContextSnapshotRead
+        data class UnsupportedVersion(val schemaVersion: Int) : ContextSnapshotRead
+        data object Absent : ContextSnapshotRead
+    }
+
+    fun readContextSnapshot(pointer: SidecarPointer): ContextSnapshotRead {
+        if (!pointer.isWellFormed()) return ContextSnapshotRead.Absent
+        val bytes = io.read(pointer.fileName) ?: return ContextSnapshotRead.Absent
+        val snapshot = runCatching {
+            documents.json.decodeFromStream<ChapterContextSnapshot>(bytes.inputStream())
+        }.getOrNull() ?: run {
+            documents.quarantineCorrupt(pointer.fileName)
+            return ContextSnapshotRead.Absent
+        }
+        if (snapshot.schemaVersion > ChapterContextSnapshot.SCHEMA_VERSION) {
+            return ContextSnapshotRead.UnsupportedVersion(snapshot.schemaVersion)
+        }
+        if (!snapshot.isSemanticallyValid) {
+            documents.quarantineCorrupt(pointer.fileName)
+            return ContextSnapshotRead.Absent
+        }
+        return ContextSnapshotRead.Usable(snapshot)
+    }
+
+    fun publishContextSnapshot(
+        manifest: ChapterArtifactManifest,
+        snapshot: ChapterContextSnapshot,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome {
+        val err = snapshot.validationError()
+        if (err != null) return TransactionOutcome.Rejected("invalid context snapshot: $err")
+        val fileName = contextSidecarName(snapshot.contentFingerprint)
+        val sidecar = jsonSidecarPublication(
+            fileName = fileName,
+            contentFingerprint = snapshot.contentFingerprint,
+            document = snapshot,
+            serializer = ChapterContextSnapshot.serializer(),
+        )
+        val pointer = SidecarPointer(
+            fileName = fileName,
+            schemaVersion = ChapterContextSnapshot.SCHEMA_VERSION,
+            contentFingerprint = snapshot.contentFingerprint,
+        )
+        return publishSidecarPointers(
+            manifest = manifest,
+            sidecars = listOf(sidecar),
+            updatePointers = { it.copy(context = pointer) },
+            nowEpochMs = nowEpochMs,
+        )
+    }
+
     /**
      * Builds one immutable JSON sidecar publication for
      * [publishSidecarPointers] through the shared [AtomicChapterDocuments]

@@ -281,7 +281,7 @@ class ChapterContextCrossFeedProbeTest {
         artifact.publishManifest(ChapterArtifactManifest(chapterKey = "Chapter 1"))
         val manifest = artifact.readManifest().shouldNotBeNull()
 
-        manifest.schemaVersion shouldBe 3
+        manifest.schemaVersion shouldBe ChapterArtifactManifest.SCHEMA_VERSION
         // No new durable storage pointer is written in Increment 1
     }
 }

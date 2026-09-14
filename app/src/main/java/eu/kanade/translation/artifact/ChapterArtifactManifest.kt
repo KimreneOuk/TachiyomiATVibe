@@ -73,14 +73,16 @@ data class ChapterArtifactManifest(
     val layoutPlans: Map<String, SidecarPointer> = emptyMap(),
     /** Persisted per-page color/style preparations; key = pageKey. */
     val colorPreparations: Map<String, SidecarPointer> = emptyMap(),
+    /** T933 Increment 2: durable unified chapter context snapshot pointer. */
+    val context: SidecarPointer? = null,
 ) {
     companion object {
         /**
-         * T924-SC-04: bumped 2 → 3 with the pointer extensions. New code reads
-         * v2 and v3 and writes v3; the verified future-schema guard refuses
+         * T933 Increment 2: bumped 3 → 4 with the context pointer. New code reads
+         * v2, v3, and v4 and writes v4; the verified future-schema guard refuses
          * versions greater than this read-only.
          */
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
     }
 }
 
@@ -342,6 +344,7 @@ data class AttemptLedgerEntry(
     val origin: AttemptOrigin,
     val generation: Long,
     val startedAtEpochMs: Long,
+    val requestContextFingerprint: String? = null,
 )
 
 /**

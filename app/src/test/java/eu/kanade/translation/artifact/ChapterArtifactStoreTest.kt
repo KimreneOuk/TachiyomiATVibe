@@ -1216,7 +1216,7 @@ class ChapterArtifactStoreTest {
         loaded.resyncedFromLegacy shouldBe false
         val manifest = loaded.manifest
         // In-memory normalization stamps the current schema version.
-        manifest.schemaVersion shouldBe 3
+        manifest.schemaVersion shouldBe ChapterArtifactManifest.SCHEMA_VERSION
         manifest.authority shouldBe ManifestAuthority.ARTIFACTS
         // Old data intact.
         manifest.chapterKey shouldBe "Chapter 1"
@@ -1244,6 +1244,7 @@ class ChapterArtifactStoreTest {
         manifest.envelopePlan shouldBe null
         manifest.layoutPlans shouldBe emptyMap()
         manifest.colorPreparations shouldBe emptyMap()
+        manifest.context shouldBe null
     }
 
     @Test
@@ -1255,7 +1256,7 @@ class ChapterArtifactStoreTest {
 
         store.publishManifest(loaded.copy(updatedAtEpochMs = 999L)) shouldBe true
 
-        String(io.read(layout.manifestFileName)!!).contains("\"schemaVersion\":3") shouldBe true
+        String(io.read(layout.manifestFileName)!!).contains("\"schemaVersion\":${ChapterArtifactManifest.SCHEMA_VERSION}") shouldBe true
         val reparsed = store.readManifest().shouldNotBeNull()
         reparsed shouldBe loaded.copy(updatedAtEpochMs = 999L)
         // The old page record and glossary pointer survive the rewrite byte-for-byte.

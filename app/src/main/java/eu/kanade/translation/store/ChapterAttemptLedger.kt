@@ -68,6 +68,7 @@ internal class ChapterAttemptLedger(private val store: ChapterTranslationStore) 
         providerKeyHash: String,
         origin: AttemptOrigin,
         generation: Long,
+        requestContextFingerprint: String? = null,
     ): Boolean {
         val current = documentLocked()
         val consecutive = current.consecutiveUnresolved[pageKey] ?: 0
@@ -86,6 +87,7 @@ internal class ChapterAttemptLedger(private val store: ChapterTranslationStore) 
             origin = origin,
             generation = generation,
             startedAtEpochMs = System.currentTimeMillis(),
+            requestContextFingerprint = requestContextFingerprint,
         )
         val next = current.copy(
             entries = (current.entries + entry).takeLast(ChapterAttemptLedgerDocument.MAX_ENTRIES),

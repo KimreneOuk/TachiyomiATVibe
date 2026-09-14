@@ -449,8 +449,9 @@ class ChapterTranslationStore(
         providerKeyHash: String,
         origin: AttemptOrigin,
         generation: Long = currentGeneration,
+        requestContextFingerprint: String? = null,
     ): Boolean = mutex.withLock {
-        attemptLedger.recordStartLocked(pageKey, providerKeyHash, origin, generation)
+        attemptLedger.recordStartLocked(pageKey, providerKeyHash, origin, generation, requestContextFingerprint)
     }
 
     /**

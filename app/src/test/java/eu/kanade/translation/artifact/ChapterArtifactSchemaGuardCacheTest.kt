@@ -86,10 +86,11 @@ class ChapterArtifactSchemaGuardCacheTest {
         val io = FakeChapterDocumentIo()
         val store = createStore(io)
 
-        // v1 and v2 need normalization to current schema version (3)
+        // v1, v2, and v3 need normalization to current schema version (4)
         store.isNormalizationRequired(1) shouldBe true
         store.isNormalizationRequired(2) shouldBe true
-        // v3 is already current schema version
+        store.isNormalizationRequired(3) shouldBe true
+        // v4 is already current schema version
         store.isNormalizationRequired(ChapterArtifactManifest.SCHEMA_VERSION) shouldBe false
         // future schemas are untouched
         store.isNormalizationRequired(99) shouldBe false

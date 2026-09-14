@@ -1,6 +1,7 @@
 package eu.kanade.translation.context
 
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.artifact.ChapterContextSnapshot
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
@@ -38,6 +39,30 @@ data class PreparedContext(
     val budgetDecision: String? = null,
     val omissionReasons: List<String> = emptyList(),
 ) {
+    fun computeRequestContextFingerprint(
+        targetLang: String = "",
+        sourceLang: String? = null,
+        reuseCompatibility: String = "v1",
+        glossaryFingerprint: String? = null,
+        profileInputFingerprint: String? = null,
+    ): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val payload = buildString {
+            append("v:1\n")
+            append("tLang:").append(targetLang).append('\n')
+            append("sLang:").append(sourceLang.orEmpty()).append('\n')
+            append("compat:").append(reuseCompatibility).append('\n')
+            append("glossaryFp:").append(glossaryFingerprint.orEmpty()).append('\n')
+            append("profileFp:").append(profileInputFingerprint.orEmpty()).append('\n')
+            append("sheet:").append(characterAndTermSheet).append('\n')
+            append("rolling:").append(rollingContext).append('\n')
+            selectedTerms.forEach { (s, t) -> append("term:").append(s).append('=').append(t).append('\n') }
+            selectedPairs.forEach { (s, t) -> append("pair:").append(s).append('=').append(t).append('\n') }
+        }
+        val bytes = md.digest(payload.toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
     companion object {
         val EMPTY = PreparedContext(
             characterAndTermSheet = "",
@@ -297,5 +322,46 @@ class ChapterContextService(
                 sourceText = text,
             )
         }
+    }
+
+    fun snapshotForDurable(
+        targetLang: String,
+        sourceLang: String? = null,
+        revision: Long = 1L,
+    ): ChapterContextSnapshot {
+        val prepared = prepare(
+            ContextRequest(
+                pageKeys = emptyList(),
+                targetLang = targetLang,
+                sourceLang = sourceLang,
+                requestedOutputTokens = 2048,
+                profile = TranslationContextChunkPlanner.Profile.DEFAULT,
+                laneCapability = LaneCapability.MANUAL,
+            ),
+        )
+        val chapterKey = store.artifactStore?.layout?.chapterKey ?: "chapter"
+        val contentFp = ChapterContextSnapshot.computeContentFingerprint(
+            chapterKey = chapterKey,
+            targetLang = targetLang,
+            sourceLang = sourceLang,
+            revision = revision,
+            sheet = prepared.characterAndTermSheet,
+            rolling = prepared.rollingContext,
+        )
+        return ChapterContextSnapshot(
+            chapterKey = chapterKey,
+            targetLang = targetLang,
+            sourceLang = sourceLang,
+            chapterContextRevision = revision,
+            contentFingerprint = contentFp,
+            characterAndTermSheet = prepared.characterAndTermSheet,
+            rollingContext = prepared.rollingContext,
+            selectedTerms = prepared.selectedTerms,
+            selectedPairs = prepared.selectedPairs,
+            estimatedContextTokens = prepared.estimatedContextTokens,
+            budgetDecision = prepared.budgetDecision,
+            omissionReasons = prepared.omissionReasons,
+            createdAtEpochMs = System.currentTimeMillis(),
+        )
     }
 }

@@ -144,6 +144,11 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     fun colorPreparationFile(pageKey: String, contentFingerprint: String): String =
         pageContentAddressedFile(colorPreparationDirectoryName, pageKey, contentFingerprint)
 
+    val contextRootDirectory: String get() = contextDirectoryName
+
+    fun contextFile(contentFingerprint: String): String =
+        contentAddressedFile(contextDirectoryName, contentFingerprint)
+
     private fun contentAddressedFile(directory: String, contentFingerprint: String): String =
         "$directory/${fingerprintSegment(contentFingerprint)}.json"
 
