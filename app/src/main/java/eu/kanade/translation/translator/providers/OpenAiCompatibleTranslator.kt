@@ -28,8 +28,12 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import org.json.JSONObject
@@ -209,16 +213,19 @@ abstract class OpenAiCompatibleTranslator(
                 ),
             )
         }
-        val responseJson = JSONObject(responseString)
 
-        val choicesArray = responseJson.optJSONArray("choices")
-        val rawOutput = choicesArray?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+        val rawOutput = if (responseString.trimStart().startsWith("data:") || responseString.contains("\ndata:")) {
+            parseSseResponse(responseString)
+        } else {
+            val responseJson = JSONObject(responseString)
+            val choicesArray = responseJson.optJSONArray("choices")
+            choicesArray?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+        }
 
         if (rawOutput.isNullOrBlank()) {
             logcat(LogPriority.WARN) {
                 "event=provider_response_empty reason=no_content status=${response.code} " +
-                    "chars=${responseString.length} responseHash=${ShortHash.hash(responseString)} " +
-                    "choices=${choicesArray?.length() ?: 0}"
+                    "chars=${responseString.length} responseHash=${ShortHash.hash(responseString)}"
             }
             throw ProviderFailureException(
                 ProviderFailure(
@@ -231,6 +238,38 @@ abstract class OpenAiCompatibleTranslator(
         }
 
         return rawOutput
+    }
+
+    companion object {
+        /**
+         * Milestone M5 (Provider 3): Parses an SSE response body (data: lines).
+         * Extracts delta.content, text, or message.content from streaming chunks until [DONE].
+         */
+        fun parseSseResponse(body: String): String {
+            val builder = StringBuilder()
+            for (rawLine in body.lineSequence()) {
+                val line = rawLine.trim()
+                if (!line.startsWith("data:")) continue
+                val data = line.removePrefix("data:").trim()
+                if (data == "[DONE]") break
+                if (data.isBlank()) continue
+                try {
+                    val root = Json.parseToJsonElement(data).jsonObject
+                    val choices = root["choices"]?.jsonArray ?: continue
+                    val firstChoice = choices.firstOrNull()?.jsonObject ?: continue
+                    val deltaObj = firstChoice["delta"]?.jsonObject
+                    val content = deltaObj?.get("content")?.jsonPrimitive?.content
+                        ?: firstChoice["text"]?.jsonPrimitive?.content
+                        ?: firstChoice["message"]?.jsonObject?.get("content")?.jsonPrimitive?.content
+                    if (!content.isNullOrEmpty()) {
+                        builder.append(content)
+                    }
+                } catch (_: Exception) {
+                    // Ignore malformed intermediate frames
+                }
+            }
+            return builder.toString()
+        }
     }
 
     override suspend fun translateContextual(chunk: TranslationContextChunk): ContextualTranslationBatch {

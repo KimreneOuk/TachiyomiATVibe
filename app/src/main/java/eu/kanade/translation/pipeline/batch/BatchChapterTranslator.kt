@@ -800,6 +800,7 @@ internal class BatchChapterTranslator(
                                 analysisChunkRunner = analysisRunner,
                                 overlapScheduler = overlapScheduler,
                                 renderJoin = renderJoin,
+                                seriesKey = manga.id.toString(),
                             ).runPass1(orderedPages, computeClass)
                         }
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
@@ -850,6 +851,7 @@ internal class BatchChapterTranslator(
                                 renderJoin = renderJoin,
                                 standardLane = true,
                                 standardTranslateOutcome = { ref -> standardTranslateOutcome(ref) },
+                                seriesKey = manga.id.toString(),
                             ).runPass1(orderedPages, computeClass)
                         }
                     }

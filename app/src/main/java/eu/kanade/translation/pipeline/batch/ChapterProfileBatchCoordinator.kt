@@ -4,6 +4,7 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.CheckpointOcrResult
 import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.OcrStagePatch
+import eu.kanade.translation.context.SeriesProfileRegistry
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
@@ -241,6 +242,7 @@ internal class ChapterProfileBatchCoordinator(
      */
     private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> ChunkCompletionOutcome)? = null,
     private val envelopePlannerPolicy: EnvelopePlannerPolicy? = null,
+    private val seriesKey: String? = null,
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -644,6 +646,60 @@ internal class ChapterProfileBatchCoordinator(
                 corpusFingerprint = corpusFingerprint,
                 baseCounters = finalCounters,
             )
+        }
+
+        // Milestone M5 (S6 / P8): Series-scoped profile carry-over (drift-gated).
+        // If a series profile is registered and passes drift gating, adopt it
+        // and skip the expensive analysis phase (ANALYSIS_PLAN -> ANALYSIS_CHUNKS -> PROFILE_RECONCILE).
+        if (seriesKey != null) {
+            val carried = SeriesProfileRegistry.get(seriesKey)
+            if (carried != null && SeriesProfileRegistry.isDriftSafe(carried, frozenConfig)) {
+                val adopted = SeriesProfileRegistry.adoptForChapter(
+                    carried = carried,
+                    runId = runId,
+                    profileInputFingerprint = profileInputFingerprintOf(corpusFingerprint),
+                    nowEpochMs = nowEpochMs(),
+                )
+                val manifestForPublish = store.artifactManifest
+                if (manifestForPublish != null) {
+                    val publication = ProfileFreezePublication.publish(
+                        artifact = artifact,
+                        manifest = manifestForPublish,
+                        profile = adopted,
+                        nowEpochMs = nowEpochMs(),
+                    )
+                    if (publication is ChapterArtifactStore.TransactionOutcome.Committed) {
+                        store.artifactManifest = publication.manifest
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT M5 series profile carry-over adopted: version=${adopted.version} " +
+                                "entities=${adopted.entities.size} terms=${adopted.terms.size}"
+                        }
+                        publishRecord(
+                            artifact,
+                            record(
+                                runId,
+                                ChapterRunState.PROFILE_FROZEN,
+                                frozenFingerprint,
+                                sourceDigest,
+                                finalCounters + mapOf(
+                                    COUNTER_PROFILE_FROZEN to 1,
+                                    COUNTER_SERIES_PROFILE_CARRIED_OVER to 1,
+                                    COUNTER_STOP to 1,
+                                ),
+                                ocrCorpusFingerprint = corpusFingerprint,
+                                profilePointer = publication.manifest.profile,
+                            ),
+                        )
+                        return runEnvelopePlanAndTranslate(
+                            artifact = artifact,
+                            runId = runId,
+                            orderedPages = orderedPages,
+                            corpusFingerprint = corpusFingerprint,
+                            baseCounters = finalCounters + mapOf(COUNTER_SERIES_PROFILE_CARRIED_OVER to 1),
+                        )
+                    }
+                }
+            }
         }
 
         // ---- T924 Stage 5 slices A+B: ANALYSIS_PLAN -> ANALYSIS_CHUNKS ----
@@ -1185,6 +1241,16 @@ internal class ChapterProfileBatchCoordinator(
         ) {
             is ChapterArtifactStore.TransactionOutcome.Committed -> {
                 store.artifactManifest = publication.manifest
+                seriesKey?.let { key ->
+                    SeriesProfileRegistry.register(
+                        seriesKey = key,
+                        profile = profile,
+                        sourceLang = frozenConfig.sourceLang,
+                        targetLang = frozenConfig.targetLang,
+                        providerKey = frozenConfig.providerKey,
+                        nowEpochMs = nowEpochMs(),
+                    )
+                }
                 publishRecord(
                     artifact,
                     record(
@@ -3229,6 +3295,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_PROFILE_CHUNKS_PENDING = "profileChunksPending"
         const val COUNTER_PROFILE_FROZEN = "profileFrozen"
         const val COUNTER_PROFILE_REUSED = "profileReused"
+        const val COUNTER_SERIES_PROFILE_CARRIED_OVER = "seriesProfileCarriedOver"
         const val COUNTER_PROFILE_RECONCILE_REJECTED = "profileReconcileRejected"
         const val COUNTER_PROFILE_FREEZE_REJECTED = "profileFreezeRejected"
 
