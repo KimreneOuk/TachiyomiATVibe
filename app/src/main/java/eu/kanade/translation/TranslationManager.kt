@@ -415,6 +415,10 @@ class TranslationManager(
         requestCoordinator.clearStaleDownloadFailedRequest(chapterId)
     }
 
+    /** Milestone M6 (S2): Recovers from download-failure starvation. */
+    fun rearmDownloadFailedRequest(chapterId: Long): Boolean =
+        requestCoordinator.rearmDownloadFailedRequest(chapterId)
+
     fun hasPendingTranslationRequest(chapterId: Long): Boolean =
         requestCoordinator.hasPendingTranslationRequest(chapterId)
 

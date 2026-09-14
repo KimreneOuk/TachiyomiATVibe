@@ -148,6 +148,11 @@ class UniFileChapterDocumentIo(
         target.openOutputStream().use { output ->
             output.write(bytes)
             output.flush()
+            if (output is java.io.FileOutputStream) {
+                try {
+                    output.fd.sync()
+                } catch (_: Exception) {}
+            }
         }
         true
     }.getOrDefault(false)

@@ -31,6 +31,9 @@ import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import android.os.PowerManager
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import java.text.DateFormat
 import java.util.Date
 
@@ -45,6 +48,9 @@ class TranslationForegroundService : Service() {
 
     @Volatile
     private var retryInFlight = false
+
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var serviceStartEpochMs = System.currentTimeMillis()
 
     override fun onCreate() {
         super.onCreate()
@@ -96,6 +102,7 @@ class TranslationForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        releaseWakeLock()
         monitorJob?.cancel()
         serviceScope.cancel()
         if (retainNotification) {
@@ -106,6 +113,60 @@ class TranslationForegroundService : Service() {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         }
         super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "tachiyomi:TranslationWakeLock")?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                    logcat(LogPriority.INFO) { "Acquired translation partial wake lock" }
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "Failed to acquire translation wake lock" }
+            }
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+                logcat(LogPriority.INFO) { "Released translation partial wake lock" }
+            }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Failed to release translation wake lock" }
+        } finally {
+            wakeLock = null
+        }
+    }
+
+    override fun onTimeout(startId: Int) {
+        logcat(LogPriority.WARN) { "Foreground service timed out (startId=$startId); pausing translation" }
+        handleFgsTimeout()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        logcat(LogPriority.WARN) { "Foreground service timed out (startId=$startId, fgsType=$fgsType); pausing translation" }
+        handleFgsTimeout()
+    }
+
+    private fun handleFgsTimeout() {
+        retainNotification = true
+        manager.pauseTranslation()
+        releaseWakeLock()
+        serviceScope.launch {
+            val queued = manager.queueState.value
+            val active = queued.firstOrNull {
+                it.status == eu.kanade.translation.model.Translation.State.TRANSLATING ||
+                    it.status == eu.kanade.translation.model.Translation.State.QUEUE
+            }
+            val snapshot = active?.chapter?.id?.let { manager.getTranslationProgress(it).first() }
+            showPaused(this@TranslationForegroundService, active?.chapter?.name ?: "Translation", active?.chapter?.id, snapshot)
+            stopSelf()
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -121,6 +182,22 @@ class TranslationForegroundService : Service() {
                 continue
             }
             val queued = manager.queueState.value
+
+            // Milestone M6: Forward FGS 6-hour limit check (targetSdk 35 / background durability)
+            if (System.currentTimeMillis() - serviceStartEpochMs >= FGS_CAP_THRESHOLD_MS) {
+                logcat(LogPriority.WARN) { "Translation foreground service reached 6-hour cap threshold; pausing to rotate service safely" }
+                handleFgsTimeout()
+                return
+            }
+
+            // Milestone M6: Partial wake lock management while any chapter is TRANSLATING
+            val translating = queued.any { it.status == eu.kanade.translation.model.Translation.State.TRANSLATING }
+            if (translating) {
+                acquireWakeLock()
+            } else {
+                releaseWakeLock()
+            }
+
             val paused = queued.firstOrNull {
                 it.status == eu.kanade.translation.model.Translation.State.PAUSED
             }
@@ -241,6 +318,7 @@ class TranslationForegroundService : Service() {
         private const val ACTION_RETRY = "eu.kanade.tachiyomi.action.RETRY_BATCH_TRANSLATION"
         private const val EXTRA_CHAPTER_ID = "chapter_id"
         private const val PROGRESS_UPDATE_INTERVAL_MS = 1_000L
+        const val FGS_CAP_THRESHOLD_MS = 6 * 3600 * 1000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, TranslationForegroundService::class.java))

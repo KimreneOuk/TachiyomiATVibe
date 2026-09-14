@@ -299,6 +299,27 @@ internal class TranslationRequestCoordinator(
         }
     }
 
+    /**
+     * Milestone M6 (S2): Recovers from download-failure starvation.
+     * Transitions a DOWNLOAD_FAILED request back to WAITING_FOR_DOWNLOAD so that
+     * download restart or retry does not leave the chapter starved.
+     */
+    fun rearmDownloadFailedRequest(chapterId: Long): Boolean {
+        val currentPhase = pendingTranslationRequestsState.value[chapterId]?.phase
+            ?: pendingRequestStore.phase(chapterId)
+            ?: return false
+        if (currentPhase == TranslationRequestPhase.DOWNLOAD_FAILED) {
+            setPendingTranslationRequest(
+                chapterId = chapterId,
+                phase = TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
+                reason = "re-armed after download failure",
+                failureKind = TranslationRequestFailureKind.NONE,
+            )
+            return true
+        }
+        return false
+    }
+
     fun hasPendingTranslationRequest(chapterId: Long): Boolean =
         pendingTranslationRequestsState.value.containsKey(chapterId) ||
             pendingRequestStore.load().contains(chapterId)

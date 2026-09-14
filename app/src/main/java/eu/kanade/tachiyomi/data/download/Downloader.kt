@@ -165,6 +165,10 @@ class Downloader(
 
         val pending = queueState.value.filter { it.status != Download.State.DOWNLOADED }
         pending.forEach { if (it.status != Download.State.QUEUE) it.status = Download.State.QUEUE }
+        // Milestone M6 (S2): rearm any download-failed translation requests for pending chapters
+        pending.forEach { download ->
+            download.chapter.id?.let(translationManager::rearmDownloadFailedRequest)
+        }
 
         isPaused = false
 
