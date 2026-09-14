@@ -7,8 +7,11 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -106,42 +109,51 @@ class DownloadCacheRenewalGuardTest {
     private fun newCache(): DownloadCache =
         DownloadCache(context, provider, sourceManager, extensionManager, storageManager)
 
-    private fun awaitRenewal(cache: DownloadCache) {
+    private fun awaitRenewal(cache: DownloadCache, timeoutMs: Long = 10_000) {
         val field = DownloadCache::class.java.getDeclaredField("renewalJob")
         field.isAccessible = true
-        val jobDeadline = System.currentTimeMillis() + 5_000
-        var job = field.get(cache) as? Job
-        while (job == null && System.currentTimeMillis() < jobDeadline) {
-            Thread.sleep(25)
-            job = field.get(cache) as? Job
+        runBlocking {
+            withTimeout(timeoutMs) {
+                var job = field.get(cache) as? Job
+                while (job == null) {
+                    delay(5)
+                    job = field.get(cache) as? Job
+                }
+                job.join()
+            }
         }
-        while (job != null && job.isActive) {
-            Thread.sleep(25)
+    }
+
+    private fun awaitCondition(
+        timeoutMs: Long = 15_000,
+        message: () -> String = { "Condition not met within ${timeoutMs}ms" },
+        condition: () -> Boolean,
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        runBlocking {
+            withTimeout(timeoutMs) {
+                while (!condition()) {
+                    assertTrue(System.currentTimeMillis() < deadline, message)
+                    delay(10)
+                }
+            }
         }
-        // Give the completion callback (notifyChanges/updateDiskCache scheduling) a beat.
-        Thread.sleep(100)
     }
 
     private fun awaitDiskCacheFile(): File {
         val file = File(tempDir, "dl_index_cache_v3")
-        val deadline = System.currentTimeMillis() + 15_000
-        while (!file.exists() || file.length() == 0L) {
-            assertTrue(System.currentTimeMillis() < deadline) { "disk cache file was never written" }
-            Thread.sleep(100)
+        awaitCondition(15_000, { "disk cache file was never written" }) {
+            file.exists() && file.length() > 0L
         }
         return file
     }
 
     private fun pollDownloaded(cache: DownloadCache, timeoutMs: Long = 15_000): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (cache.isChapterDownloaded("Chapter", "kojiraen", mangaDirName, sourceId, skipCache = false)) {
-                return true
-            }
-            awaitRenewal(cache)
-            Thread.sleep(50)
+        if (cache.isChapterDownloaded("Chapter", "kojiraen", mangaDirName, sourceId, skipCache = false)) {
+            return true
         }
-        return false
+        awaitRenewal(cache, timeoutMs)
+        return cache.isChapterDownloaded("Chapter", "kojiraen", mangaDirName, sourceId, skipCache = false)
     }
 
     @Test
@@ -201,12 +213,8 @@ class DownloadCacheRenewalGuardTest {
             pollDownloaded(secondSession),
             "recovered storage must be re-indexed despite an empty persisted index",
         )
-        val populatedDeadline = System.currentTimeMillis() + 15_000
-        while (!(diskFile.exists() && diskFile.length() > emptyBytes.size)) {
-            assertTrue(System.currentTimeMillis() < populatedDeadline) {
-                "populated index was never persisted over the empty one"
-            }
-            Thread.sleep(100)
+        awaitCondition(15_000, { "populated index was never persisted over the empty one" }) {
+            diskFile.exists() && diskFile.length() > emptyBytes.size
         }
     }
 

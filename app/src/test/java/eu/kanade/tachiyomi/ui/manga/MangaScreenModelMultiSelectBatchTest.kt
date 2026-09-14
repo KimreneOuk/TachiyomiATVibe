@@ -8,13 +8,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
-import eu.kanade.domain.chapter.interactor.SetReadStatus
-import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.manga.interactor.GetExcludedScanlators
-import eu.kanade.domain.manga.interactor.SetExcludedScanlators
-import eu.kanade.domain.manga.interactor.UpdateManga
-import eu.kanade.domain.track.interactor.AddTracks
-import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.model.AutoTrackState
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.presentation.manga.components.ChapterTranslationAction
@@ -23,13 +17,13 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.TranslationSettingsSummary
 import eu.kanade.translation.model.snapshotTranslationSummary
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.clearMocks
@@ -40,31 +34,28 @@ import io.mockk.mockkStatic
 import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
-import mihon.domain.chapter.interactor.FilterChaptersForDownload
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterAll
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import tachiyomi.core.common.preference.Preference
-import tachiyomi.domain.chapter.interactor.SetMangaDefaultChapterFlags
-import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.category.interactor.GetCategories
-import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.library.service.LibraryPreferences
-import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
 import tachiyomi.domain.manga.interactor.GetMangaWithChapters
-import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
@@ -150,6 +141,7 @@ class MangaScreenModelMultiSelectBatchTest {
     private val pendingRequestsState = MutableStateFlow(emptyMap<Long, TranslationRequestState>())
 
     private lateinit var model: MangaScreenModel
+    private var initialCollectorJobs: Set<Job> = emptySet()
 
     @BeforeAll
     fun setUp() {
@@ -261,6 +253,7 @@ class MangaScreenModelMultiSelectBatchTest {
             filterChaptersForDownload = mockk(relaxed = true),
         )
         awaitUntil("screen state becomes Success") { successState() != null }
+        initialCollectorJobs = model.screenModelScope.coroutineContext[Job]?.children?.toSet().orEmpty()
     }
 
     /**
@@ -270,6 +263,7 @@ class MangaScreenModelMultiSelectBatchTest {
      */
     @BeforeEach
     fun clearRecordedCalls() {
+        settleProbe()
         clearMocks(
             downloadManager,
             translationManager,
@@ -402,12 +396,30 @@ class MangaScreenModelMultiSelectBatchTest {
     // -- helpers ------------------------------------------------------------
 
     /**
-     * The probe launches on the main surrogate and its fenced stubs answer
-     * synchronously; a short settle wait is enough before verifying the calls
-     * it must (or must not) have made.
+     * Quiesces background coroutines launched on [MangaScreenModel.screenModelScope]
+     * and flushes the main thread surrogate dispatcher.
      */
     private fun settleProbe() {
-        Thread.sleep(250)
+        val rootJob = model.screenModelScope.coroutineContext[Job] ?: return
+        val progressJobSet = try {
+            val field = MangaScreenModel::class.java.getDeclaredField("translationProgressJobs")
+            field.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            (field.get(model) as? Map<*, Job>)?.values?.toSet().orEmpty()
+        } catch (_: Throwable) {
+            emptySet()
+        }
+        val transientJobs = rootJob.children.filter { job ->
+            job.isActive && job !in initialCollectorJobs && job !in progressJobSet
+        }.toList()
+        if (transientJobs.isNotEmpty()) {
+            runBlocking {
+                withTimeout(5_000) {
+                    transientJobs.joinAll()
+                }
+            }
+        }
+        runBlocking(mainThreadSurrogate) { /* flush pending dispatches */ }
     }
 
     private fun evictCachedScreenModelScope() {
@@ -450,7 +462,7 @@ class MangaScreenModelMultiSelectBatchTest {
             if (System.currentTimeMillis() > deadline) {
                 throw AssertionError("Timed out after ${timeoutMs}ms waiting for: $what")
             }
-            Thread.sleep(10)
+            Thread.yield()
         }
     }
 

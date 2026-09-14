@@ -241,7 +241,10 @@ class TranslationRequestGenerationFenceTest {
             synchronized(mutationLock) {
                 callback.start()
                 // Let the callback block on the lock before cancelling.
-                Thread.sleep(150)
+                val deadline = System.currentTimeMillis() + 5_000
+                while (callback.state != Thread.State.BLOCKED && System.currentTimeMillis() < deadline) {
+                    Thread.yield()
+                }
                 manager.cancelTranslationRequest(10L)
             }
             withTimeout(5_000) { callback.join(5_000) }
