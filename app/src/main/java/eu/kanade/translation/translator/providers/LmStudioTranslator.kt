@@ -9,6 +9,8 @@ import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.InputAccountingContract
+import eu.kanade.translation.translator.LmStudioInputAccountingContract
 import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -16,7 +18,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import logcat.logcat
 
-class LmStudioTranslator(
+open class LmStudioTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
     baseUrl: String,
@@ -24,7 +26,11 @@ class LmStudioTranslator(
     val maxOutputToken: Int,
     val temperature: Float,
     requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
-) : OpenAiCompatibleTranslator(requestGovernor) {
+    customAccountingContract: InputAccountingContract? = null,
+) : OpenAiCompatibleTranslator(requestGovernor, customAccountingContract) {
+
+    override fun defaultAccountingContract(): InputAccountingContract =
+        LmStudioInputAccountingContract(modelName)
 
     private val normalizedBaseUrl = AiModelFetcher.normalizeBaseUrl(baseUrl)
 

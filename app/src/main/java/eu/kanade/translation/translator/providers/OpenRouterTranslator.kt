@@ -9,6 +9,8 @@ import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.InputAccountingContract
+import eu.kanade.translation.translator.OpenRouterInputAccountingContract
 import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -16,7 +18,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import logcat.logcat
 
-class OpenRouterTranslator(
+open class OpenRouterTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
     val apiKey: String,
@@ -24,7 +26,11 @@ class OpenRouterTranslator(
     val maxOutputToken: Int,
     val temperature: Float,
     requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
-) : OpenAiCompatibleTranslator(requestGovernor) {
+    customAccountingContract: InputAccountingContract? = null,
+) : OpenAiCompatibleTranslator(requestGovernor, customAccountingContract) {
+
+    override fun defaultAccountingContract(): InputAccountingContract =
+        OpenRouterInputAccountingContract(modelName)
 
     override val providerBackend: String = "openrouter"
     override val providerModel: String get() = modelName

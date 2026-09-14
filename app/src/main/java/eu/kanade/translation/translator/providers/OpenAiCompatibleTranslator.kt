@@ -18,6 +18,7 @@ import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.translator.contextual.ContextualResponseParser
 import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
+import eu.kanade.translation.translator.InputAccountingContract
 
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.util.ShortHash
@@ -27,13 +28,23 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 abstract class OpenAiCompatibleTranslator(
     protected val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
+    open val customAccountingContract: InputAccountingContract? = null,
 ) : AiTranslator() {
+
+    override open val inputAccountingContract: InputAccountingContract?
+        get() = customAccountingContract ?: defaultAccountingContract()
+
+    protected abstract fun defaultAccountingContract(): InputAccountingContract
 
     protected open val providerBackend: String
         get() = this::class.java.simpleName.removeSuffix("Translator").lowercase(Locale.ROOT)
@@ -82,15 +93,21 @@ abstract class OpenAiCompatibleTranslator(
                     safeSummary = "backend has no analysis endpoint",
                 ),
             )
-        val payload = JSONObject().apply {
+        val payload = buildJsonObject {
             put("model", analysisModelId.orEmpty())
             // Structured extraction: low temperature, honest max_tokens.
             put("temperature", 0.2)
             put("max_tokens", maxOutputTokens)
-            put("messages", org.json.JSONArray().apply {
-                put(JSONObject().put("role", "system").put("content", systemPrompt))
-                put(JSONObject().put("role", "user").put("content", userPrompt))
-            })
+            putJsonArray("messages") {
+                addJsonObject {
+                    put("role", "system")
+                    put("content", systemPrompt)
+                }
+                addJsonObject {
+                    put("role", "user")
+                    put("content", userPrompt)
+                }
+            }
         }.toString()
         return postChatCompletion(
             url = url,
@@ -114,6 +131,27 @@ abstract class OpenAiCompatibleTranslator(
         operation: String = "chat_completion",
         envelopeId: String? = null,
     ): String {
+        val contract = inputAccountingContract
+        if (contract == null || !contract.isCertified) {
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.CONFIGURATION,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    safeSummary = "dispatch refused: provider '$providerBackend' has no certified InputAccountingContract",
+                ),
+            )
+        }
+        val finalInputTokens = contract.countFinalTokens(payloadJson)
+        if (finalInputTokens + reservedOutputTokens + 512 > 8_192) {
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.CONFIGURATION,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    safeSummary = "dispatch refused under 8k: final input ($finalInputTokens) + output ($reservedOutputTokens) + 512 > 8192 for $providerBackend",
+                ),
+            )
+        }
+
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val body = payloadJson.toRequestBody(mediaType)
 
@@ -134,7 +172,7 @@ abstract class OpenAiCompatibleTranslator(
                 model = providerModel,
                 credentialScope = providerCredentialScope,
             ),
-            estimatedInputTokens = estimatedInputTokens,
+            estimatedInputTokens = finalInputTokens,
             reservedOutputTokens = reservedOutputTokens,
             operation = operation,
             envelopeId = envelopeId,

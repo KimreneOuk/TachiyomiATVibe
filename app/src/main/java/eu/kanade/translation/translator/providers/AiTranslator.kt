@@ -9,12 +9,16 @@ import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
 
+import eu.kanade.translation.translator.InputAccountingContract
 import eu.kanade.translation.model.PageTranslation
 
 /**
  * TachiyomiAT: Base abstraction for AI / LLM translators.
  */
 abstract class AiTranslator : BaseTranslator(), ContextualTextTranslator {
+
+    /** T933: Certified accounting contract for final model request input tokens. */
+    open val inputAccountingContract: InputAccountingContract? get() = null
 
     // ------------------------------------------------------------------
     // T924 Stage-7/WP5 (wave-7c): the typed structured-analysis transport.

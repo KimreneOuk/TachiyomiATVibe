@@ -14,7 +14,11 @@ import eu.kanade.translation.translator.SharedProviderRequestGovernor
 import eu.kanade.translation.translator.ProviderRequestMetadata
 import eu.kanade.translation.translator.ProviderRequestKey
 import eu.kanade.translation.translator.ProviderRequestGovernor
+import eu.kanade.translation.translator.GeminiInputAccountingContract
+import eu.kanade.translation.translator.InputAccountingContract
 import eu.kanade.translation.translator.ProviderFailure
+import eu.kanade.translation.translator.ProviderFailureKind
+import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.translator.contextual.ContextualResponseParser
 import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
@@ -45,7 +49,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.domain.translation.GeminiThinkingMode
 import java.util.concurrent.TimeUnit
 
-class GeminiTranslator(
+open class GeminiTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
     private val apiKey: String,
@@ -54,7 +58,11 @@ class GeminiTranslator(
     val temp: Float,
     private val thinkingMode: GeminiThinkingMode = GeminiThinkingMode.DISABLED,
     private val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
+    val customAccountingContract: InputAccountingContract? = null,
 ) : AiTranslator() {
+
+    override open val inputAccountingContract: InputAccountingContract?
+        get() = customAccountingContract ?: GeminiInputAccountingContract(modelName)
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
@@ -180,6 +188,26 @@ class GeminiTranslator(
     }
 
     private suspend fun post(payload: String, reservedOutputTokens: Int): String {
+        val contract = inputAccountingContract
+        if (contract == null || !contract.isCertified) {
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.CONFIGURATION,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    safeSummary = "dispatch refused: provider 'gemini' has no certified InputAccountingContract",
+                ),
+            )
+        }
+        val finalInputTokens = contract.countFinalTokens(payload)
+        if (finalInputTokens + reservedOutputTokens + 512 > 8_192) {
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.CONFIGURATION,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    safeSummary = "dispatch refused under 8k: final input ($finalInputTokens) + output ($reservedOutputTokens) + 512 > 8192 for gemini",
+                ),
+            )
+        }
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent")
             .header("x-goog-api-key", apiKey)
@@ -192,7 +220,7 @@ class GeminiTranslator(
                 model = modelName,
                 credentialScope = ShortHash.hash(apiKey).ifEmpty { null },
             ),
-            estimatedInputTokens = TranslationContextChunkPlanner.estimateTokens(payload),
+            estimatedInputTokens = finalInputTokens,
             reservedOutputTokens = reservedOutputTokens,
             operation = "generate_content",
             envelopeId = ShortHash.hash(payload),
