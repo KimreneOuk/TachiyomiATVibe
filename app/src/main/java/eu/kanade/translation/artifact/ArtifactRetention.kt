@@ -11,17 +11,45 @@ internal class ArtifactRetention(
     private val layout: ChapterArtifactLayout,
 ) {
 
-    internal fun reconcileRetention(manifest: ChapterArtifactManifest): RetentionResult {
-        val reachable = reachablePaths(manifest)
+    internal fun reconcileRetention(
+        manifest: ChapterArtifactManifest,
+        stagedReachable: Set<String> = emptySet(),
+    ): RetentionResult {
+        val reachable = reachablePaths(manifest) + stagedReachable
         val retainedImageGenerations = retainedImageGenerations(manifest)
         val deleted = mutableListOf<String>()
 
         // Orphan temp sibling of the manifest itself (outside the managed tree).
         val manifestTemp = AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
-        if (io.exists(manifestTemp) && io.delete(manifestTemp)) deleted += manifestTemp
+        if (manifestTemp !in stagedReachable && io.exists(manifestTemp) && io.delete(manifestTemp)) {
+            deleted += manifestTemp
+        }
 
         layout.managedDirectories.forEach { root ->
             sweepDirectory(root, reachable, retainedImageGenerations, deleted)
+        }
+        return RetentionResult(deleted.size, deleted)
+    }
+
+    /**
+     * T930 Slice A4 (Amendment D): event-driven known-orphan deletion.
+     * Deletes explicitly known orphans (e.g. unlinked generation records or candidate
+     * snapshots) without executing a full reachability crawl over the filesystem.
+     * Race register #6: orphan must be unreachable from BOTH durable and staged state.
+     */
+    internal fun deleteKnownOrphans(
+        candidateOrphans: Collection<String>,
+        stagedReachable: Set<String> = emptySet(),
+    ): RetentionResult {
+        val deleted = mutableListOf<String>()
+        val manifestTemp = AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
+        if (manifestTemp !in stagedReachable && io.exists(manifestTemp) && io.delete(manifestTemp)) {
+            deleted += manifestTemp
+        }
+        for (path in candidateOrphans) {
+            if (path !in stagedReachable && layout.isManagedPath(path) && io.exists(path) && io.delete(path)) {
+                deleted += path
+            }
         }
         return RetentionResult(deleted.size, deleted)
     }

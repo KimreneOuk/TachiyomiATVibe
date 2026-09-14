@@ -1733,8 +1733,23 @@ class ChapterArtifactStore(
      * images) are never touched.
      */
     @Synchronized
-    fun reconcileRetention(manifest: ChapterArtifactManifest): RetentionResult =
-        retentionSweep.reconcileRetention(manifest)
+    fun reconcileRetention(
+        manifest: ChapterArtifactManifest,
+        stagedReachable: Set<String> = emptySet(),
+    ): RetentionResult =
+        retentionSweep.reconcileRetention(manifest, stagedReachable)
+
+    /**
+     * T930 Slice A4 (Amendment D): event-driven known-orphan deletion.
+     * Reclaims explicitly unlinked artifact files without a full tree crawl.
+     * Race register #6: files referenced in stagedReachable are spared.
+     */
+    @Synchronized
+    fun deleteKnownOrphans(
+        candidateOrphans: Collection<String>,
+        stagedReachable: Set<String> = emptySet(),
+    ): RetentionResult =
+        retentionSweep.deleteKnownOrphans(candidateOrphans, stagedReachable)
 
     internal fun readManifestDocument(name: String): ChapterArtifactManifest? {
         val bytes = io.read(name) ?: return null
