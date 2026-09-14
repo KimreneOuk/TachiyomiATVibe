@@ -27,6 +27,7 @@ import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.recognition.PageRecognitionEngine
+import eu.kanade.translation.scheduling.CrossOriginBitmapBudget
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
@@ -433,10 +434,12 @@ internal class BatchLaneWorkers(
                 )
             }
 
-            // S2: Decode off the native permit (F.2)
+            // S2: Decode off the native permit (F.2); M4: CrossOriginBitmapBudget permit
+            CrossOriginBitmapBudget.acquireBatchPermit()
             val decoded = try {
                 decodePageBitmapForTranslation(pageKey, streamFn)
             } catch (deferred: LowMemoryDecodeDeferredException) {
+                CrossOriginBitmapBudget.releaseBatchPermit()
                 tracker?.markOcrFailed(pageKey, deferred.message ?: "Decode deferred")
                 val deferredWrite = guardedBatchUpdate(pageKey, "batch decode deferred", BatchStage.OCR) {
                     (it ?: PageTranslation()).apply {
@@ -452,7 +455,11 @@ internal class BatchLaneWorkers(
                     abortBatchCandidate(pageKey, "decode deferral rejected: ${deferredWrite.reason}")
                 }
                 return null
+            } catch (t: Throwable) {
+                CrossOriginBitmapBudget.releaseBatchPermit()
+                throw t
             } ?: run {
+                CrossOriginBitmapBudget.releaseBatchPermit()
                 tracker?.markOcrFailed(pageKey, "Failed to decode page: null bitmap")
                 val failedWrite = guardedBatchUpdate(pageKey, "batch decode failed", BatchStage.OCR) {
                     (it ?: PageTranslation()).apply {
@@ -594,12 +601,23 @@ internal class BatchLaneWorkers(
             }
             val handedOffDecoded = nativeHandoff as? DecodedPage
             var decoded: DecodedPage? = handedOffDecoded
-            // S2: Decode off the native permit (F.2)
+            // S2: Decode off the native permit (F.2); M4: CrossOriginBitmapBudget permit
+            var newlyDecoded = false
             if (decoded == null) {
                 val streamFn = streamsByKey[pageKey] ?: return
-                decoded = decodePageBitmapForTranslation(pageKey, streamFn)
+                CrossOriginBitmapBudget.acquireBatchPermit()
+                try {
+                    decoded = decodePageBitmapForTranslation(pageKey, streamFn)
+                    newlyDecoded = true
+                } catch (t: Throwable) {
+                    CrossOriginBitmapBudget.releaseBatchPermit()
+                    throw t
+                }
             }
             if (decoded == null) {
+                if (newlyDecoded) {
+                    CrossOriginBitmapBudget.releaseBatchPermit()
+                }
                 tracker?.markInpaintFailed(pageKey, "Null bitmap for inpaint")
                 return
             }
@@ -755,9 +773,17 @@ internal class BatchLaneWorkers(
 
         private fun releaseDecodedPage(decoded: DecodedPage?) {
             if (decoded != null) {
-                try {
-                    decoded.bitmap.recycle()
-                } catch (_: Exception) {}
+                val wasRecycled = try {
+                    decoded.bitmap.isRecycled
+                } catch (_: Exception) {
+                    false
+                }
+                if (!wasRecycled) {
+                    try {
+                        decoded.bitmap.recycle()
+                    } catch (_: Exception) {}
+                    CrossOriginBitmapBudget.releaseBatchPermit()
+                }
             }
             BitmapPool.releaseAll()
             try {

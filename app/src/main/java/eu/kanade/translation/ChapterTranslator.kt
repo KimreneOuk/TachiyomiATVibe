@@ -449,11 +449,29 @@ class ChapterTranslator(
                     // this preference only keeps a live worker stable while the
                     // rearm is idempotently recorded.
                     val active = candidates.filter { it.status == Translation.State.TRANSLATING }
-                    (if (active.isNotEmpty()) active else candidates).asSequence()
+                    val activeSource = active.firstOrNull()?.source
+                    val selected = if (active.isNotEmpty()) {
+                        // S11 wave lookahead (Milestone M4): allow chapter N (active translating)
+                        // + chapter N+1 (preflight queue) on the same source to pipeline native OCR/inpaint
+                        // while provider waits are in flight.
+                        val nextQueue = candidates.firstOrNull {
+                            it.status == Translation.State.QUEUE &&
+                                it !in active &&
+                                (activeSource == null || it.source == activeSource)
+                        }
+                        if (nextQueue != null) {
+                            active.take(1) + listOf(nextQueue)
+                        } else {
+                            active.take(1)
+                        }
+                    } else {
+                        candidates.take(1)
+                    }
+                    selected.asSequence()
                         .groupBy { it.source }
                         .toList()
                         .take(1)
-                        .map { (_, translations) -> translations.first() }
+                        .flatMap { (_, translations) -> translations.take(2) }
                 }.distinctUntilChanged().collect { emit(it) }
             }.distinctUntilChanged()
             supervisorScope {

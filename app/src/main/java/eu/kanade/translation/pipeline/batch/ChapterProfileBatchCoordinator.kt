@@ -1814,8 +1814,9 @@ internal class ChapterProfileBatchCoordinator(
         artifact: ChapterArtifactStore,
         runId: String,
         orderedPages: List<PageKey>,
-        corpusFingerprint: String,
+        corpusFingerprint: String?,
         baseCounters: Map<String, Int>,
+        hasGaps: Boolean = false,
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
         val sourceDigest = orderedSourceDigest(orderedSourcePairs)
@@ -2033,6 +2034,20 @@ internal class ChapterProfileBatchCoordinator(
                     ),
                 ),
             )
+            // X6 invariant: "PARTIAL-corpus COMPLETE" is unrepresentable.
+            // If hasGaps == true (corpusGaps > 0) or corpusFingerprint == null,
+            // we stop at TRANSLATE and return PAUSED, never COMPLETE.
+            if (hasGaps || corpusFingerprint == null) {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT M4 standard translate finished available checkpoints but chapter has gaps; returning PAUSED"
+                }
+                return@overlapLoop BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.PAUSED,
+                    completedPageKeys = allPageKeys,
+                    reason = STOP_REASON,
+                )
+            }
             runFinalizeAndComplete(
                 artifact = artifact,
                 runId = runId,
