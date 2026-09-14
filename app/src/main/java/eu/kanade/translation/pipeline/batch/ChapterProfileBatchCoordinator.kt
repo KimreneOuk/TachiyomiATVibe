@@ -525,6 +525,62 @@ internal class ChapterProfileBatchCoordinator(
             }
         }
 
+        // S8 (Milestone M2): In-pass corpus-gap rescan.
+        // Before declaring preflight incomplete and returning PAUSED, run a bounded
+        // rescan pass over gap pages: adopt completed checkpoints (e.g. from manual taps)
+        // or re-OCR pages whose leases/workers were temporarily deferred.
+        if (total - corpusFingerprints.size > 0) {
+            val initialGaps = total - corpusFingerprints.size
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT S8 in-pass gap rescan starting: $initialGaps gap(s) across $total pages"
+            }
+            for (page in orderedPages) {
+                val (pageKey, pageIndex) = page
+                if (corpusFingerprints.any { it.first == pageKey }) continue
+                currentCoroutineContext().ensureActive()
+                yield()
+
+                val reusable = reusableCheckpointFingerprint(artifact, pageKey)
+                if (reusable != null) {
+                    val before = store.snapshot(pageKey)
+                    val hydrated = before.page != null &&
+                        before.page.ocrStatus == StageStatus.READY &&
+                        before.page.blocks.isNotEmpty()
+                    if (hydrated || adoptCheckpointSnapshot(artifact, pageKey, before) != null) {
+                        reusedPages++
+                        corpusFingerprints += pageKey to reusable
+                        continue
+                    }
+                }
+
+                listener.ocrStarted(pageKey)
+                var ref: OcrReadyPageRef? = null
+                try {
+                    ref = nativeWorker.runOcrStage(pageKey, pageIndex)
+                    if (ref != null) {
+                        listener.ocrPublished(pageKey)
+                        val outcome = checkpointPage(artifact, pageKey, ref)
+                        if (outcome is CheckpointOcrResult.Committed) {
+                            checkpointedPages++
+                            readCheckpointFingerprint(artifact, pageKey)?.let { fingerprint ->
+                                corpusFingerprints += pageKey to fingerprint
+                            }
+                        }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT S8 in-pass gap rescan failed for pageHash=${pageHash(pageKey)}: ${e.message}"
+                    }
+                } finally {
+                    ref?.let(nativeWorker::releaseNativeHandoff)
+                    releaseBatchLease(pageKey)
+                    listener.ocrFinished(pageKey)
+                }
+            }
+        }
+
         // ---- OCR_PREFLIGHT complete durably; continue into the analysis ----
         // ---- phase when the corpus is complete (T924-ST-07/08).        ----
         val corpusGaps = total - corpusFingerprints.size

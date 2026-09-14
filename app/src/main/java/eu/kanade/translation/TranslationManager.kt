@@ -749,6 +749,21 @@ class TranslationManager(
         return queueState.value.find { it.chapter.id == chapterId }
     }
 
+    /**
+     * S7 / B1 (Milestone M2): Steers the specified chapter to the head of
+     * the pending queue.
+     */
+    fun prioritizeChapter(chapterId: Long) {
+        translator.prioritizeChapter(chapterId)
+    }
+
+    /**
+     * S3 (Milestone M2): Warmed-up engine sessions outside critical path.
+     */
+    suspend fun warmUp() {
+        pipeline.warmUp()
+    }
+
     fun isBatchTranslationActive(chapterId: Long): Boolean {
         return queueState.value.any { translation ->
             translation.chapter.id == chapterId &&

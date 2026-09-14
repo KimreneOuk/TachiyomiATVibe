@@ -21,11 +21,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -164,6 +166,34 @@ class ChapterTranslator(
     }
 
     /**
+     * S7 / B1 (Milestone M2): Reader-position queue priority. Moves the specified
+     * queued chapter to the head of pending candidates (immediately following any
+     * actively translating chapter, or index 0) and persists the updated order.
+     * Never interrupts or preempts an in-flight TRANSLATING chapter.
+     */
+    fun prioritizeChapter(chapterId: Long) {
+        synchronized(queueMutationLock) {
+            val current = _queueState.value
+            val target = current.find { it.chapter.id == chapterId } ?: return
+            if (target.status == Translation.State.TRANSLATING) return
+            val activeIndex = current.indexOfFirst { it.status == Translation.State.TRANSLATING }
+            val insertIndex = if (activeIndex >= 0) activeIndex + 1 else 0
+            val targetIndex = current.indexOf(target)
+            if (targetIndex <= insertIndex) return
+
+            val reordered = current.toMutableList().apply {
+                removeAt(targetIndex)
+                add(insertIndex, target)
+            }
+            _queueState.value = reordered
+            persistQueue()
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT S7: steered chapter $chapterId to queue index $insertIndex"
+            }
+        }
+    }
+
+    /**
      * TachiyomiAT: persists the queue (ordered chapter ids) to disk after every
      * mutation so a crash mid-batch no longer loses it. One SharedPreferences
      * editor batch; idempotent.
@@ -289,6 +319,7 @@ class ChapterTranslator(
     // work (no cancel, no restart, no second schedule): two live schedules
     // for one chapter make each store generation advance cancel the prior run.
     private val inFlightChapterIds: MutableSet<Long> = ConcurrentHashMap.newKeySet()
+    private val inFlightClaimReleasedSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     fun start(): Boolean {
         if (queueState.value.isEmpty()) {
@@ -459,7 +490,9 @@ class ChapterTranslator(
                 // released only in the finally below, after this coroutine has
                 // fully unwound.
                 while (!inFlightChapterIds.add(chapterId)) {
-                    delay(IN_FLIGHT_CLAIM_RETRY_MS)
+                    withTimeoutOrNull(IN_FLIGHT_CLAIM_RETRY_MS) {
+                        inFlightClaimReleasedSignal.first()
+                    }
                 }
                 claimed = true
             }
@@ -495,6 +528,7 @@ class ChapterTranslator(
             // admissions for the same chapter while it was still running).
             if (claimed) {
                 inFlightChapterIds.remove(chapterId)
+                inFlightClaimReleasedSignal.tryEmit(Unit)
             }
         }
     }

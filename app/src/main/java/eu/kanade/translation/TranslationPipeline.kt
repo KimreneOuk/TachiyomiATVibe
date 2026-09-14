@@ -248,6 +248,13 @@ class TranslationPipeline(
         drainScope = nativeRunScope,
     )
 
+    /**
+     * S3 (Milestone M2): Engine warm-up.
+     */
+    suspend fun warmUp() {
+        engines.warmUp()
+    }
+
     private suspend fun <T> withNativeLane(
         timeoutMs: Long,
         chapterId: Long?,

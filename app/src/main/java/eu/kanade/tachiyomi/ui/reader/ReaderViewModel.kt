@@ -583,6 +583,15 @@ class ReaderViewModel @JvmOverloads constructor(
         // navigating within this reader session.
         translationPreferences.autoTranslate().set(false)
 
+        // S3 (Milestone M2): Warm up recognition engines when translation is enabled.
+        if (translationPreferences.translationEnabled().get()) {
+            viewModelScope.launchIO {
+                try {
+                    translationManager.warmUp()
+                } catch (_: Exception) {}
+            }
+        }
+
         // To save state
         state.map { it.viewerChapters?.currChapter }
             .distinctUntilChanged()
@@ -595,6 +604,8 @@ class ReaderViewModel @JvmOverloads constructor(
                     currentChapter.requestedPage = currentChapter.chapter.last_page_read
                 }
                 chapterId = currentChapter.chapter.id!!
+                // S7 / B1 (Milestone M2): Steer queue toward current reader chapter.
+                translationManager.prioritizeChapter(chapterId)
             }
             .launchIn(viewModelScope)
 

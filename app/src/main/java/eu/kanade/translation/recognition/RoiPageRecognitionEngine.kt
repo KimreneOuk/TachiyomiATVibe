@@ -150,6 +150,15 @@ class RoiPageRecognitionEngine(
     val isAvailable: Boolean
         get() = !initFailed && (initialized || modelStore.modelsAvailable() || modelStore.assetsAvailable())
 
+    /**
+     * S3 (Milestone M2): Warmed-up engine sessions outside the timed region.
+     */
+    suspend fun warmUp() {
+        if (isAvailable && !initialized) {
+            initialize()
+        }
+    }
+
     private suspend fun initialize() {
         initMutex.withLock {
             if (initialized) return

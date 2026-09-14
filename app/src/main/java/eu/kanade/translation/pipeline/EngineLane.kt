@@ -298,6 +298,13 @@ internal class EngineLane(
         throw IllegalStateException("ONNX recognition unavailable for $lang/$ocrModel")
     }
 
+    /**
+     * S3 (Milestone M2): Warmed-up engine sessions outside the critical path.
+     */
+    internal suspend fun warmUp() {
+        (recognitionEngine as? RoiPageRecognitionEngine)?.warmUp()
+    }
+
     internal fun closeEngines() {
         // A stop invalidates cached engines immediately, but actual teardown may
         // only happen while no admitted native call is alive. If the lane is

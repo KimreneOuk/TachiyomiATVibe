@@ -8,9 +8,12 @@ import eu.kanade.translation.translator.retry.RequestRetryBudgetExhaustedExcepti
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import logcat.logcat
 import java.util.Locale
@@ -280,6 +283,7 @@ class ProviderRequestGovernor(
     private val mutex = Mutex()
     private val buckets = mutableMapOf<ProviderRequestKey, Bucket>()
     private var nextSequence = 0L
+    private val releaseWakeupSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     suspend fun admit(metadata: ProviderRequestMetadata): ProviderAdmissionDecision {
         val normalizedMetadata = metadata.copy(
@@ -327,7 +331,13 @@ class ProviderRequestGovernor(
                     }
 
                     is WaitResult.Wait -> {
-                        clock.delay(result.millis.coerceAtLeast(1L))
+                        if (clock is SystemProviderRequestClock) {
+                            withTimeoutOrNull(result.millis.coerceAtLeast(1L)) {
+                                releaseWakeupSignal.first()
+                            }
+                        } else {
+                            clock.delay(result.millis.coerceAtLeast(1L))
+                        }
                     }
                 }
             }
@@ -585,6 +595,7 @@ class ProviderRequestGovernor(
                 outcome = outcome,
             )
         }
+        releaseWakeupSignal.tryEmit(Unit)
     }
 
     private suspend fun applyCooldown(key: ProviderRequestKey, durationMs: Long, source: String) {
