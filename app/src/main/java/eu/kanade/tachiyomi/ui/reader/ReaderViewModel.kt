@@ -52,6 +52,7 @@ import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.TranslationPipeline
+import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.rendering.HydratedLayout
@@ -2200,22 +2201,29 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
+        val chapter = page.chapter.chapter
+        val pageKey = resolvePageKey(page)
         val manga = manga ?: run {
             logcat(LogPriority.WARN) { "translateSinglePage: manga is null, cannot translate" }
+            if (GroupCommitConfiguration.enabled) {
+                chapter.id?.let { chapterId ->
+                    translationScheduler.recordManualOutcome(chapterId, pageKey, SinglePageOutcome.Failed(pageKey, "manga is null"))
+                }
+            }
             return
         }
-        // TachiyomiAT: use the page's own chapter context, not getCurrentChapter().
-        // The global current-chapter may differ from the page's actual chapter
-        // when a cross-chapter page-transition event fires before loadNewChapter
-        // completes — translating against the wrong chapter would write results
-        // under the wrong store key (skipped-pages bug) and register reader-page
-        // streams for a chapter the translator can't match to disk files.
-        val chapter = page.chapter.chapter
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val source = sourceManager.get(manga.source) as? HttpSource ?: run {
+            logcat(LogPriority.WARN) { "translateSinglePage: invalid HttpSource, cannot translate" }
+            if (GroupCommitConfiguration.enabled) {
+                chapter.id?.let { chapterId ->
+                    translationScheduler.recordManualOutcome(chapterId, pageKey, SinglePageOutcome.Failed(pageKey, "invalid HttpSource"))
+                }
+            }
+            return
+        }
         // TachiyomiAT: manual entry drops a stale DOWNLOAD_FAILED batch
         // request so its failed projection cannot shadow this manual work.
         chapter.id?.let(translationManager::clearStaleDownloadFailedRequest)
-        val pageKey = resolvePageKey(page)
         // TachiyomiAT: resolve force from the page's live translation state.
         // A FAILED stage means the page is stuck (the "cannot reprocess /
         // retranslate" bug) and the retry MUST reset the bookkeeping via
@@ -2264,6 +2272,11 @@ class ReaderViewModel @JvmOverloads constructor(
             logcat(LogPriority.WARN) {
                 "translateSinglePage: no stream available for page $pageKey (originalStream=null, chapterDownloaded=$pageChapterDownloaded, imageUrl=${page.imageUrl != null})"
             }
+            if (GroupCommitConfiguration.enabled) {
+                chapter.id?.let { chapterId ->
+                    translationScheduler.recordManualOutcome(chapterId, pageKey, SinglePageOutcome.Failed(pageKey, "no stream available"))
+                }
+            }
             return
         }
         page.originalStream?.let { streamFn ->
@@ -2294,6 +2307,11 @@ class ReaderViewModel @JvmOverloads constructor(
                 } catch (e: Throwable) {
                     logcat(LogPriority.WARN) {
                         "translateSinglePage: lazy download failed for $pageKey: ${e.message}"
+                    }
+                    if (GroupCommitConfiguration.enabled) {
+                        chapter.id?.let { chapterId ->
+                            translationScheduler.recordManualOutcome(chapterId, pageKey, SinglePageOutcome.Failed(pageKey, "lazy download failed: ${e.message}"))
+                        }
                     }
                     return@launchIO
                 }

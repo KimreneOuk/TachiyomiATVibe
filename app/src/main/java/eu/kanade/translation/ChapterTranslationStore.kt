@@ -1946,6 +1946,12 @@ class ChapterTranslationStore(
     ): Boolean {
         val pageKey = updated.sourceFileName ?: ""
         val isDurable = shouldPersistUpdate(previous, updated)
+        // T930 R2 restricted UI-before-persist: transient non-durable updates publish StateFlows
+        // before staging into memory; durable results keep persist-first.
+        if (GroupCommitConfiguration.enabled && !isDurable) {
+            _state.value = snapshotPages()
+            _display.value = displaySnapshotLocked()
+        }
         val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
             persistArtifactMutationLocked(pageKey, previous, updated, expected, durableFailure)
         } else {
@@ -1956,8 +1962,10 @@ class ChapterTranslationStore(
         if (isDurable && artifactManifest?.authority != ManifestAuthority.ARTIFACTS) {
             schedulePersist()
         }
-        _state.value = snapshotPages()
-        _display.value = displaySnapshotLocked()
+        if (!GroupCommitConfiguration.enabled || isDurable) {
+            _state.value = snapshotPages()
+            _display.value = displaySnapshotLocked()
+        }
         return true
     }
 

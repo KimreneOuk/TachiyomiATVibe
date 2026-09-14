@@ -132,6 +132,9 @@ interface TranslationExecutor {
  * cancel path can tell "owned the page" from "only observed the owner".
  */
 sealed interface SinglePageOutcome {
+    /** T930 R1: the page intent was admitted and is queued in-memory awaiting pipeline execution. */
+    data object Admitted : SinglePageOutcome
+
     /** The executor ran the page itself (including resume-skip soft exits). */
     data object Completed : SinglePageOutcome
 

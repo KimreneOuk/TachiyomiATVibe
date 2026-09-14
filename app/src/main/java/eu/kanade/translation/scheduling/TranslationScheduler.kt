@@ -5,6 +5,7 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPageRequest
 import eu.kanade.translation.TranslationSession
+import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -123,6 +124,10 @@ class TranslationScheduler(
      */
     fun manualOutcomeFor(chapterId: Long, pageKey: String): SinglePageOutcome? =
         synchronized(manualOutcomes) { manualOutcomes["$chapterId:$pageKey"] }
+
+    fun recordManualOutcome(chapterId: Long, pageKey: String, outcome: SinglePageOutcome) {
+        synchronized(manualOutcomes) { manualOutcomes["$chapterId:$pageKey"] = outcome }
+    }
 
     // Pages queued/executing inside an ordered auto-prefetch batch. Closes the
     // gap where overlapping selection windows enqueue the same page (e.g. page 6
@@ -674,6 +679,9 @@ class TranslationScheduler(
                 activePageJobs.remove(jobKey)
             }
             logcat(LogPriority.DEBUG) { "translatePage: launching $jobKey" }
+            if (GroupCommitConfiguration.enabled) {
+                manualOutcomes[jobKey] = SinglePageOutcome.Admitted
+            }
             // T922 Phase 3 (plan §4.4 Manual): the schedule + run are created
             // BEFORE the coroutine is launched, and the lease_wait span starts
             // here so its duration is the request→coroutine-start scheduler
@@ -792,6 +800,7 @@ class TranslationScheduler(
         is SinglePageOutcome.Stalled -> TranslationTraceOutcome.FAILURE
         is SinglePageOutcome.Attached, is SinglePageOutcome.AttachedUnresolved -> TranslationTraceOutcome.ATTACHED
         is SinglePageOutcome.Rejected -> TranslationTraceOutcome.SKIP
+        is SinglePageOutcome.Admitted -> TranslationTraceOutcome.TEARDOWN_EXCEPTION
     }
 
     /**

@@ -102,6 +102,7 @@ object TranslationUiTruth {
         cancelled: Boolean = false,
     ): PageUiTruth? = when {
         cancelled -> CANCELLED
+        outcome is SinglePageOutcome.Admitted -> QUEUED
         outcome is SinglePageOutcome.Attached -> attached(outcome.owner)
         outcome is SinglePageOutcome.AttachedUnresolved -> attachedUnresolved(outcome)
         outcome is SinglePageOutcome.Rejected -> rejected(outcome)
@@ -120,15 +121,7 @@ object TranslationUiTruth {
         slot: AutoSlotState,
         retryAtEpochMs: Long? = null,
     ): PageUiTruth = when (slot) {
-        AutoSlotState.Queued -> PageUiTruth(
-            label = "Queued.",
-            severity = UiSeverity.PROGRESS,
-            retryMode = UiRetryMode.NONE,
-            retryAtEpochMs = null,
-            actions = setOf(UiAction.DETAILS, UiAction.CANCEL),
-            terminalSuccess = false,
-            contentDescription = "Translation queued; work has not started.",
-        )
+        AutoSlotState.Queued -> QUEUED
         AutoSlotState.ReadingText -> stage("Reading text.", "reading text")
         AutoSlotState.Cleaning -> stage("Cleaning bubbles.", "cleaning bubbles")
         AutoSlotState.Translating -> stage("Translating text.", "translating text")
@@ -533,6 +526,16 @@ object TranslationUiTruth {
     // ------------------------------------------------------------------
     // Shared truths
     // ------------------------------------------------------------------
+
+    val QUEUED = PageUiTruth(
+        label = "Queued.",
+        severity = UiSeverity.PROGRESS,
+        retryMode = UiRetryMode.NONE,
+        retryAtEpochMs = null,
+        actions = setOf(UiAction.DETAILS, UiAction.CANCEL),
+        terminalSuccess = false,
+        contentDescription = "Translation queued; work has not started.",
+    )
 
     private val TRANSLATED = PageUiTruth(
         label = "Translated.",
