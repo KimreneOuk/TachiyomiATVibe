@@ -592,6 +592,7 @@ internal class ChapterProfileBatchCoordinator(
 
         // ---- OCR_PREFLIGHT complete durably; continue into the analysis ----
         // ---- phase when the corpus is complete (T924-ST-07/08).        ----
+        store.flush()
         val corpusGaps = total - corpusFingerprints.size
         val corpusFingerprint = if (corpusGaps == 0 && corpusFingerprints.isNotEmpty()) {
             val naturalOrderProven = orderedPages.map { it.second }.toSet() == (0 until total).toSet()

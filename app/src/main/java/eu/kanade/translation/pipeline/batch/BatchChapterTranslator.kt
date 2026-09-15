@@ -8,8 +8,8 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
-import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
+import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationScheduleTrace
@@ -290,7 +290,8 @@ internal class BatchChapterTranslator(
         val batchGeneration = store.beginGeneration("batch start chapter=${chapter.name}")
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        return store.withGeneration(batchGeneration) {
+        return GroupCommitConfiguration.withFlag(true) {
+            store.withGeneration(batchGeneration) {
             val batchWriteIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
             // Paused/terminal durable failures retain their candidate and
             // manifest metadata until the next explicit retry/reset. The
@@ -1033,6 +1034,7 @@ internal class BatchChapterTranslator(
                 onBatchClosed?.invoke(manga, chapter, source, store)
             }
         }
+    }
     }
 
     /** T922 Phase 4: typed schedule terminal per pass-1 stop status. */

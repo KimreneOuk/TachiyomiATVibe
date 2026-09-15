@@ -56,9 +56,12 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
 
     override fun lastModified(name: String): Long = lastModifiedTimes[name] ?: 0L
 
-    override fun write(name: String, bytes: ByteArray): Boolean {
+    val syncedWrites = mutableListOf<String>()
+
+    override fun write(name: String, bytes: ByteArray, syncToDisk: Boolean): Boolean {
         if (failWrites || writeNamesToFail.any { fragment -> name.contains(fragment) }) return false
         writtenNames += name
+        if (syncToDisk) syncedWrites += name
         files[name] = bytes.copyOf()
         ensureParents(name)
         return true

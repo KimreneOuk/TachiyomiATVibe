@@ -863,6 +863,7 @@ class ChapterArtifactStore(
         updatePointers: (ChapterArtifactManifest) -> ChapterArtifactManifest,
         nowEpochMs: Long = System.currentTimeMillis(),
         commitPoint: CommitPoint? = null,
+        syncToDisk: Boolean = false,
     ): TransactionOutcome {
         staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
         sidecars.forEach { sidecar ->
@@ -878,8 +879,9 @@ class ChapterArtifactStore(
                 return TransactionOutcome.Rejected("sidecar publication failed: file=${sidecar.fileName}")
             }
         }
+        val shouldSync = syncToDisk || commitPoint == CommitPoint.EXPLICIT_FLUSH || commitPoint == CommitPoint.CHAPTER_COMPLETE || commitPoint == CommitPoint.BATCH_CHUNK
         val updated = updatePointers(manifest).copy(updatedAtEpochMs = nowEpochMs)
-        if (!publishManifestInternal(updated)) {
+        if (!publishManifestInternal(updated, syncToDisk = shouldSync)) {
             return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
         }
         return TransactionOutcome.Committed(updated, commitPoint = commitPoint)
@@ -1893,7 +1895,7 @@ class ChapterArtifactStore(
         readManifestDocument(backupName())?.schemaVersion?.let { it > ChapterArtifactManifest.SCHEMA_VERSION }
             ?: false
 
-    internal fun publishManifestInternal(manifest: ChapterArtifactManifest): Boolean {
+    internal fun publishManifestInternal(manifest: ChapterArtifactManifest, syncToDisk: Boolean = false): Boolean {
         if (readManifestDocument(layout.manifestFileName)?.schemaVersion
                 ?.let { it > ChapterArtifactManifest.SCHEMA_VERSION } == true
         ) {
@@ -1910,7 +1912,7 @@ class ChapterArtifactStore(
             }
             return false
         }
-        return documents.publishJson(layout.manifestFileName, manifest)
+        return documents.publishJson(layout.manifestFileName, manifest, syncToDisk = syncToDisk)
     }
 
     internal fun stampChapterKey(manifest: ChapterArtifactManifest): ChapterArtifactManifest =

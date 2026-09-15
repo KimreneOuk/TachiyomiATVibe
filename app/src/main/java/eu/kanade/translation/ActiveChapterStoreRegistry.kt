@@ -222,6 +222,12 @@ internal class ActiveChapterStoreRegistry {
 
         fun mainStoreFor(chapterKey: String): ChapterTranslationStore? = mainStores[chapterKey]
 
+        fun flushAllActiveStores() {
+            mainStores.values.forEach { store ->
+                store.flushStagedMutationsBlocking()
+            }
+        }
+
         /**
          * T930 Slice A2: Registers an active writer process-wide.
          *

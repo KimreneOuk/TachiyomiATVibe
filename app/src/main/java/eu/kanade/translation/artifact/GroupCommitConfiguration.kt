@@ -9,6 +9,7 @@ object GroupCommitConfiguration {
     var enabled: Boolean = false
 
     const val DEBOUNCE_MS: Long = 250L
+    const val MAX_STAGED_PAGES: Int = 5
 
     /**
      * Executes [block] with group commit flag set to [flagValue], restoring previous value after.

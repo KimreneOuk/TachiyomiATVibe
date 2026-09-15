@@ -40,7 +40,7 @@ interface ChapterDocumentIo {
     fun openInputStream(name: String): InputStream? = read(name)?.inputStream()
 
     /** Creates or overwrites [name], creating parent directories as needed. */
-    fun write(name: String, bytes: ByteArray): Boolean
+    fun write(name: String, bytes: ByteArray, syncToDisk: Boolean = false): Boolean
 
     /**
      * Moves [from] to [to] only when the backend can enforce no replacement.
@@ -143,12 +143,12 @@ class UniFileChapterDocumentIo(
         resolve(name)?.takeIf { it.isFile }?.openInputStream()
     }.getOrNull()
 
-    override fun write(name: String, bytes: ByteArray): Boolean = runCatching {
+    override fun write(name: String, bytes: ByteArray, syncToDisk: Boolean): Boolean = runCatching {
         val target = resolveOrCreate(name) ?: return false
         target.openOutputStream().use { output ->
             output.write(bytes)
             output.flush()
-            if (output is java.io.FileOutputStream) {
+            if (syncToDisk && output is java.io.FileOutputStream) {
                 try {
                     output.fd.sync()
                 } catch (_: Exception) {}
@@ -243,10 +243,15 @@ class AtomicChapterDocuments(
 
     fun exists(name: String): Boolean = io.exists(name)
 
-    fun publish(name: String, bytes: ByteArray, validate: (ByteArray) -> Boolean): Boolean {
+    fun publish(
+        name: String,
+        bytes: ByteArray,
+        syncToDisk: Boolean = false,
+        validate: (ByteArray) -> Boolean,
+    ): Boolean {
         val tempName = tempNameFor(name)
         val backupName = backupNameFor(name)
-        if (!io.write(tempName, bytes)) return false
+        if (!io.write(tempName, bytes, syncToDisk = syncToDisk)) return false
         val written = io.read(tempName)
         val matches = if (io.isFileBacked() && GroupCommitConfiguration.enabled) {
             // T930 Slice B3: read-back elision on File-backed storage (parse-validate only)
@@ -270,9 +275,14 @@ class AtomicChapterDocuments(
         return true
     }
 
-    inline fun <reified T> publishJson(name: String, value: T): Boolean = publish(
+    inline fun <reified T> publishJson(
+        name: String,
+        value: T,
+        syncToDisk: Boolean = false,
+    ): Boolean = publish(
         name,
         json.encodeToString(value).toByteArray(Charsets.UTF_8),
+        syncToDisk = syncToDisk,
     ) { bytes -> runCatching { json.decodeFromStream<T>(bytes.inputStream()) }.isSuccess }
 
     /**

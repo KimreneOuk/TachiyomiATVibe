@@ -264,11 +264,17 @@ class ChapterTranslationStore(
     internal fun stagePageMutationLocked(pageKey: String, updated: PageTranslation) {
         stagedPageKeys.add(pageKey)
         persistenceScheduler.schedulePersist(markPageDirty = false)
-        stagedDebounceJob?.cancel()
-        stagedDebounceJob = persistenceScheduler.persistScope.launch {
-            kotlinx.coroutines.delay(GroupCommitConfiguration.DEBOUNCE_MS)
-            mutex.withLock {
-                flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+        if (stagedPageKeys.size >= GroupCommitConfiguration.MAX_STAGED_PAGES) {
+            stagedDebounceJob?.cancel()
+            stagedDebounceJob = null
+            flushStagedMutationsLocked(CommitPoint.BATCH_CHUNK)
+        } else {
+            stagedDebounceJob?.cancel()
+            stagedDebounceJob = persistenceScheduler.persistScope.launch {
+                kotlinx.coroutines.delay(GroupCommitConfiguration.DEBOUNCE_MS)
+                mutex.withLock {
+                    flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+                }
             }
         }
     }
@@ -276,11 +282,19 @@ class ChapterTranslationStore(
     internal fun flushStagedMutationsLocked(commitPoint: CommitPoint = CommitPoint.EXPLICIT_FLUSH): Boolean {
         stagedDebounceJob?.cancel()
         stagedDebounceJob = null
-        if (stagedPageKeys.isEmpty()) return true
+        if (stagedPageKeys.isEmpty()) {
+            if (commitPoint == CommitPoint.EXPLICIT_FLUSH) {
+                artifactManifest?.let { manifest ->
+                    artifactStore?.publishManifestInternal(manifest, syncToDisk = true)
+                }
+            }
+            return true
+        }
         val keys = stagedPageKeys.toList()
         stagedPageKeys.clear()
         val store = artifactStore ?: return false
         var current = artifactManifest ?: return false
+        val sync = (commitPoint == CommitPoint.EXPLICIT_FLUSH || commitPoint == CommitPoint.BATCH_CHUNK)
         for (key in keys) {
             val page = pages[key] ?: continue
             val candidate = current.pages[key]?.candidate ?: continue
@@ -297,6 +311,9 @@ class ChapterTranslationStore(
             if (res is ChapterArtifactStore.TransactionOutcome.Committed) {
                 current = res.manifest
             }
+        }
+        if (sync) {
+            store.publishManifestInternal(current, syncToDisk = true)
         }
         artifactManifest = current
         return true
@@ -2162,6 +2179,31 @@ class ChapterTranslationStore(
                 is ChapterArtifactStore.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
+                    }
+                    return false
+                }
+            }
+            artifactManifest = manifest
+        } else if (GroupCommitConfiguration.enabled && updated.blocks.any { it.userEditedAt != null }) {
+            // Tier 1: User manual edits are immediately persisted without staging
+            flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+            val current = artifactManifest ?: manifest
+            val currentCand = current.pages[pageKey]?.candidate ?: currentCandidate
+            val persisted = store.persistLiveCandidate(
+                manifest = current,
+                pageKey = pageKey,
+                generationId = currentCand.generationId,
+                expectedPageVersion = current.pages[pageKey]?.pageVersion ?: expectedPageVersion,
+                expectedDependencyFingerprint = currentCand.dependencyFingerprint.orEmpty(),
+                pageSnapshot = updated,
+                origin = origin,
+                sourceIdentity = updated.sourceIdentity(pageKey),
+            )
+            manifest = when (persisted) {
+                is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
+                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
                     }
                     return false
                 }

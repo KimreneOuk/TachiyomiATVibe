@@ -50,7 +50,11 @@ class FakeUniFile(
 
     override fun canWrite(): Boolean = backing.canWrite()
 
-    override fun delete(): Boolean = backing.deleteRecursively()
+    override fun delete(): Boolean = when {
+        !backing.exists() -> false
+        backing.isDirectory -> backing.deleteRecursively()
+        else -> backing.delete()
+    }
 
     override fun exists(): Boolean = backing.exists()
 

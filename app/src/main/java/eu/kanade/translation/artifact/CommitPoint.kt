@@ -37,7 +37,10 @@ enum class CommitPoint(val description: String) {
     USER_STOP_DRAIN("user STOP drain"),
 
     /** Explicit flush requests from fenced CAS seams or direct flush calls. */
-    EXPLICIT_FLUSH("explicit flush requests from fenced CAS seams");
+    EXPLICIT_FLUSH("explicit flush requests from fenced CAS seams"),
+
+    /** Batch chunk accumulation boundary (e.g. every MAX_STAGED_PAGES pages). */
+    BATCH_CHUNK("batch chunk accumulation boundary");
 
     /** Returns true if this mutation must trigger durable publication immediately. */
     val isMandatoryDurable: Boolean get() = true
