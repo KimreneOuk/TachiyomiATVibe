@@ -6,85 +6,149 @@ file:line. No assertion weakened anywhere (checked per lane).
 
 ## W0 — Baseline
 
-- [ ] W0.1 Dirty diff classified (E-fixes vs prior in-flight work) — note classification here:
-- [ ] W0.2 Full suite `:app:testStandardDebugUnitTest` green on dirty tree — result:
-- [ ] W0.3 Branch `t934/resume-rebuild-and-parallelism` created at `8010961` + baseline commit — commit:
-- [ ] W0.4 Tree clean after baseline (`git status` empty of tracked changes)
+- [x] W0.1 Dirty diff classified (E-fixes vs prior in-flight work): prior-session
+      E-fixes + in-flight milestone tail; committed wholesale as baseline `25a7589`.
+- [x] W0.2 Full suite green: 26 baseline failures (team/w0-baseline-failures.md)
+      repaired by the W0.5 lane across 3 rounds (GroupCommit leak teardowns,
+      render-stamp conversions, retention race — see commit ce8d925), plus the
+      flake root in SinglePageHttpRenderPhase. Final: BUILD SUCCESSFUL,
+      2020 tests, 0 failed (run 2026-09-17 /tmp/t934_full_suite6.log).
+      Residue: 4 order-dependent flakes in one run (run 5) — all green in
+      isolation and in the immediate clean re-run; signatures handed to the
+      repair lane as a follow-up (see "Flake follow-up" below).
+- [x] W0.3 Branch + baseline: `t934/resume-rebuild-and-parallelism` from `8010961`,
+      baseline commit `25a7589`.
+- [x] W0.4 Tree clean after baseline — verified 2026-09-16.
 
-## R1 — Lease abort/re-work fix
+## R1 — Lease abort/re-work fix (commit 845975d)
 
-- [ ] R1.1 Owner-proof heal implemented in BatchWriteGate:
-      token-mismatch reject → re-acquire BATCH lease; Denied → typed contention
-      yield (existing semantics); Granted AND generation+candidateGenerationId
-      match → refresh identity from the GRANTED lease, retry once, max.
-      Evidence (file:line):
-- [ ] R1.2 Never-heal guards: no heal from bare `store.snapshot` re-arm; no
-      heal on absent-lease ("page lease required") rejects. Evidence:
-- [ ] R1.3 Flip-source fix: envelope completion cannot release a page whose
-      write identity overlap-inpaint still holds. Evidence:
-- [ ] R1.4 New test: token-flip mid-write heals via re-acquire (same run
-      identity) and write succeeds — class/test name:
-- [ ] R1.5 New test: MANUAL/AUTO lease holder → heal denied → typed contention
-      exception, NO write — class/test name:
-- [ ] R1.6 New test: resumed-run identity (candidateGenerationId mismatch) →
-      no heal — class/test name:
-- [ ] R1.7 New test: envelope release no longer invalidates live overlap
-      identity (the T1→T2 reproduction) — class/test name:
-- [ ] R1.8 Existing fences green: BatchWriteGateHealTest + T917 contention/
-      coexistence family unedited and passing — test output:
-- [ ] R1.9 No net assertion weakened — diff audit note:
+- [x] R1.1 Owner-proof heal in BatchWriteGate: token-mismatch reject →
+      re-acquire BATCH lease; Denied → typed contention yield; Granted AND
+      generation+candidateGenerationId match → identity re-armed FROM THE
+      GRANTED LEASE, one retry. `BatchWriteGate.kt` `LEASE_TOKEN_CHANGED`
+      branch after the drift heal (diff verified by Main Leader).
+- [x] R1.2 Never-heal guards: no heal from bare snapshot re-arm; absent-lease
+      ("page lease required") rejects never enter the heal (branch is
+      token-mismatch only). Verified in diff + pinned by BatchLeaseFlipHealTest
+      resumed-run/manual-owner tests.
+- [x] R1.3 Flip-source fix: envelope completion cannot release a page a sibling
+      still holds — all 5 ProfileEnvelopeExecutor release sites call
+      `releasePageStageLeaseIfUnattached` (attaches==0 required);
+      PageStageLeaseTable.attaches counter bumps on same-origin re-acquire.
+- [x] R1.4 Flip-heal test: BatchLeaseFlipHealTest "a flipped batch token heals
+      via owner-proof re-acquire and the write succeeds".
+- [x] R1.5 Manual-owner denial test: BatchLeaseFlipHealTest "a manual owner
+      denies the owner-proof heal - rejection kept with no write".
+- [x] R1.6 Resumed-run identity test: BatchLeaseFlipHealTest "a resumed-run
+      candidate identity denies the heal - no retry write".
+- [x] R1.7 T1→T2 reproduction test: BatchLeaseFlipHealTest "t1-to-t2
+      reproduction - envelope release keeps a re-attached overlap identity
+      alive". Class green: 4/4 (verify run 2026-09-16).
+- [x] R1.8 Existing fences green unedited: BatchWriteGateHealTest,
+      ChapterTranslationStorePhase3Test, D1OriginPriorityTest,
+      ProfileEnvelopeDispatchTest all green in targeted runs (2026-09-16/17).
+- [x] R1.9 No net assertion weakened — full diff audit by Main Leader
+      (plain `releasePageStageLease` byte-identical; Phase3Test contract kept).
 
-## U — Phase truth + simplified UI
+## U — Phase truth + simplified UI (commit 818ce68)
 
-- [ ] U.1 Phase + payload in projection derived from run-record states/counters;
-      no competing enum; rebuild/restore phases distinguishable — file:line:
-- [ ] U.2 Sheet Simple view: hero + ready chip + progress bar (indeterminate in
-      rebuild) + ONE status line + one-line failure notice (failures>0) +
-      actions; Advanced = stages + page grid + failure groups + queue detail;
-      toggle persisted — file:line:
-- [ ] U.3 Status-line priority chain implemented: requestState → queuePosition
-      → pauseReason → coordinator phase+counters → batchPhase — file:line:
-- [ ] U.4 BottomReaderBar consumes the same phase truth (no frozen "Batch X/Y"
-      during rebuild) — file:line:
-- [ ] U.5 "Resuming…" snapshot-driven; synchronous self-reset removed — file:line:
-- [ ] U.6 All NEW copy routed through TranslationUiTruth / string resources;
-      truth layer extended, existing truth assertions unedited — file:line:
-- [ ] U.7 Truth/projection tests: rebuild→running→finished transitions +
-      reader-bar copy mapping — class/test names:
-- [ ] U.8 Existing UI-truth + projector tests green — test output:
+- [x] U.1 Phase + payload in the existing projection: TranslationBatchPhase
+      appends REBUILDING/RESTORING (no competing enum) + BatchRebuildProgress;
+      derived from durable run-record state/counters by
+      BatchProgressProjector.rebuildTruthFromRunRecord / withRunRecordTruth
+      (live FIRST_PASS window only; OCR_PLAN done==0 is NOT a rebuild).
+- [x] U.2 Sheet Simple default (hero + ready chip + progress bar —
+      indeterminate during rebuild — + ONE status line + failure notice +
+      actions) and persisted Advanced chevron (stages, page grid, failure
+      groups, queue detail): TranslationProgressSheet.kt advancedView +
+      chevron row + view split; TranslationPreferences.
+      translationProgressSheetAdvancedView (default false).
+- [x] U.3 Priority chain once in TranslationUiTruth.batchStatusLine:
+      isResuming → requestState → queuePosition → pauseReason → rebuild/
+      restore → batchPhase; each stage a private helper.
+- [x] U.4 BottomReaderBar consumes TranslationUiTruth.readerBarLine —
+      REBUILDING → "Rebuilding pipeline…", RESTORING → "Restoring N pages…";
+      legacy "Batch X/Y" fallback byte-identical, visibility rule unchanged.
+- [x] U.5 "Resuming…" snapshot-driven: synchronous self-reset deleted
+      (formerly TranslationProgressSheet.kt:471-480); LaunchedEffect clears
+      on phase truth change + bounded 10s escape hatch
+      (RESUME_PENDING_TIMEOUT_MS).
+- [x] U.6 New copy via truth + NEW string keys only (8 keys in
+      i18n-at moko base strings.xml; no existing key modified); existing
+      truth assertions unedited (TranslationProgressSheetSubtitleTest,
+      TranslationQueuePositionAndPhasesTest green in full suite).
+- [x] U.7 New tests: T934RebuildTruthTransitionsTest (13),
+      T934ReaderBarTruthTest (12), T934SheetAdvancedViewPreferenceTest (3),
+      T934ProjectorRebuildTruthTest (4) — all green.
+- [x] U.8 Existing UI-truth/projector tests green in the full suite
+      (2020/2020, run 6). Main-leader compile fixes during verification:
+      BatchStatusLineKind/BatchStatusLine de-nested to top level (nested
+      declarations made sheet/bar imports unresolvable); projector test
+      helper converted from runTest-wrapping (returns Unit on JVM) to a
+      suspend TestScope extension.
 
-## R2a — Write-time digests + typed adoption failures
+## R2a — Write-time digests + typed adoption failures (wave 2 — pending)
 
-- [ ] R2a.1 Per-page source SHA-256 recorded durably at first admission — file:line:
-- [ ] R2a.2 Run start consumes recorded digests; whole-chapter re-hash removed — file:line:
-- [ ] R2a.3 Test: second run with unchanged sources performs zero source
-      re-hash (hasher call-count assertion) — class/test name:
-- [ ] R2a.4 Test: changed source detected at consumption, fails closed (no
-      stale reuse) — class/test name:
-- [ ] R2a.5 Typed adoption-failure reasons (NO_POINTER, SIDE_CAR_UNREADABLE,
-      SHA_MISMATCH, LEASE_DENIED, MERGE_REJECTED, BUNDLE_MISSING) in WARN +
-      run-record counters — file:line + test:
-- [ ] R2a.6 D5/D6/D9/D10/D11 test files byte-identical (git diff empty) — verified:
+- [ ] R2a.1 Per-page source SHA-256 recorded durably at first admission
+- [ ] R2a.2 Run start consumes recorded digests; whole-chapter re-hash removed
+- [ ] R2a.3 Test: second run with unchanged sources performs zero source re-hash
+- [ ] R2a.4 Test: changed source detected at consumption fails closed
+- [ ] R2a.5 Typed adoption-failure reasons + WARN + run-record counters
+- [ ] R2a.6 D5/D6/D9/D10/D11 test files byte-identical
 
 ## R2c — Consolidation spike
 
-- [ ] R2c.1 Report filed: both options sized (touchpoints, seam risk, test
-      impact, migration order) + recommendation — path:
+- [x] R2c.1 Report filed: team/r2c-spike.md — Option A (consolidated resume
+      snapshot, M) recommended first; Option B (SQLDelight store, L) sized
+      and not blocked by A.
 
-## I — Inpaint decoupling
+## I — Inpaint decoupling (commit c085f0f)
 
-- [ ] I.1 Gate relaxed: OCR-final page is a candidate regardless of translation
-      status; textless/already-inpainted skips preserved — file:line:
-- [ ] I.2 "No inpaint during OCR preflight" still enforced — file:line + test:
-- [ ] I.3 Bitmap-budget concurrency caps unchanged — file:line:
-- [ ] I.4 Test: OCR READY + translation PENDING page gets inpainted — test name:
-- [ ] I.5 Test: displayReady still requires translation terminal + cleaned
-      image (promotion gate untouched) — test name:
-- [ ] I.6 Scheduler test conversions documented, semantics preserved — note:
+- [x] I.1 Gate relaxed: OCR-final candidacy (nextInpaintCandidate
+      `ocrStatus != READY → skip` + `blocks.isEmpty() → skip`), translation
+      status irrelevant; textless/already-inpainted/in-flight skips preserved;
+      mirrored in the inpaintOne fresh-snapshot re-check.
+- [x] I.2 "No inpaint during OCR preflight" enforced: structural (scheduler
+      never calls runOcrStage), lifecycle (TRANSLATE-only), and the new
+      OCR-final admission layer; pinned by "non-final ocr pages are never
+      inpaint candidates" test (green).
+- [x] I.3 Bitmap-budget caps unchanged: inpaintMutex one-native-job rule
+      untouched; observedMax()==1 asserted in window + I.4 tests.
+- [x] I.4 Test: OCR READY + translation PENDING inpainted in-window
+      ("ocr-final translation-pending page is inpainted in the window…", green).
+- [x] I.5 Test: displayReady still requires translation terminal + cleaned
+      image even when inpaint commits first (real store + cleaned-image probe
+      seam; promotion gate file untouched; green).
+- [x] I.6 Conversions documented: harness transport-await removal (R2.3),
+      T918 remainder conversion to zero-restart-decode (R2.8) — both in
+      team/i-inpaint-decoupling.md with before/after; no net weakening.
+      Round-2/3 additions: one-attempt-per-window defer discipline (fixes the
+      T5 virtual-time hang), BATCH write-slot admission pre-check (never
+      sibling-attach onto a live same-origin hold — the D2 breakage),
+      stampRenderTerminalOrphans at drainSerial (render-terminal had no owner
+      for the inverted inpaint/translation order — the T918 gap).
 
 ## Wave gates
 
-- [ ] GATE-W1: full suite green after R1 + U commits — result:
-- [ ] GATE-W2: full suite green after R2a + I commits — result:
+- [x] GATE-W1: full suite green after R1 + U commits — BUILD SUCCESSFUL,
+      2020 tests, 0 failed, 65 skipped (2026-09-17, /tmp/t934_full_suite6.log;
+      identical tree to the committed HEAD after the four path-staged
+      commits ce8d925/845975d/c085f0f/818ce68).
+- [ ] GATE-W2: full suite green after R2a + I commits
 - [ ] On-device smoke: resume shows "Rebuilding pipeline…" then completes;
-      no lease-abort storm in logcat — evidence:
+      no lease-abort storm in logcat
+
+## Flake follow-up (post-GATE-W1, repair lane)
+
+Run 5 of the full suite (identical tree to the green run 6) produced 4
+order-dependent failures, all green in isolation and in the re-run:
+- MangaScreenModelTranslationDrawerTest — executionError "Already resumed,
+  but proposed with update kotlin.Unit" (double-resumed continuation).
+- BatchDispatchResumeWiringTest "re-dispatch after a reset demotes real
+  work…" — expected COMPLETE but was TRANSLATE (run not finished in window).
+- StandardPipelineCoexistenceTest "flagged standard lane runs the real shell
+  end-to-end…" — expected 2 but was 3 (counter off-by-one).
+- StandardPipelineCoordinatorTest "standard lane records freeze the standard
+  provider identity…" — JUnitException: Failed to close extension context.
+Suspects: teardown/cleanup races in real-concurrency coexistence classes
+(possibly amplified by new T934 tests' store/scope lifetimes).
