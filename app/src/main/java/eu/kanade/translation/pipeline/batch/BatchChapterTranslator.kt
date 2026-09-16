@@ -32,6 +32,7 @@ import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.recognition.PageRecognitionEngine
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.analysis.AnalysisChunkExecutor
+import eu.kanade.translation.translator.analysis.AnalysisEngineGlossarySynthesizer
 import eu.kanade.translation.translator.analysis.AnalysisEngineTransport
 import eu.kanade.translation.translator.providers.AiTranslator
 import eu.kanade.translation.translator.providers.LmStudioTranslator
@@ -550,6 +551,19 @@ internal class BatchChapterTranslator(
                 // their lease is handed back.
                 val deferredPages = LinkedHashMap<String, PageWriteOrigin?>()
                 val batchScheduleListener = object : BatchScheduleListener() {
+                    override fun ocrStarted(pageKey: String) {
+                        // Live progress: reused preflight pages emit the same
+                        // marks as fresh OCR pages — the tracker recomputes its
+                        // snapshot only on events, so silent adoption left the
+                        // drawer frozen at pre-resume counts for the whole
+                        // revalidation phase (2026-09-15/16 field report).
+                        tracker?.markOcrRunning(pageKey)
+                    }
+
+                    override fun ocrPublished(pageKey: String) {
+                        tracker?.markOcrDone(pageKey)
+                    }
+
                     override fun ocrDeferred(pageKey: String, owner: PageWriteOrigin?) {
                         deferredPages.putIfAbsent(pageKey, owner)
                     }
@@ -755,6 +769,14 @@ internal class BatchChapterTranslator(
                                         transport = AnalysisEngineTransport(engine),
                                     ).runner()
                                 }
+                            // Summary-glossary redesign (Director decision): the
+                            // same engine also builds the one-shot chapter
+                            // glossary over the durable chunk summaries.
+                            val glossarySynthesizer = aiEngine
+                                ?.takeIf { it.analysisBackendId != null }
+                                ?.let { engine ->
+                                    AnalysisEngineGlossarySynthesizer(engine)
+                                }
                             // T924 Stage 7 (D1/D2): the overlap scheduler runs
                             // the EXISTING native inpaint lane inside each
                             // remote envelope window (ST-13) and the render
@@ -799,6 +821,7 @@ internal class BatchChapterTranslator(
                                 // Stage 3-5 profile chunk runner; null keeps
                                 // the typed CONFIGURATION pause.
                                 analysisChunkRunner = analysisRunner,
+                                glossarySynthesizer = glossarySynthesizer,
                                 overlapScheduler = overlapScheduler,
                                 renderJoin = renderJoin,
                                 seriesKey = manga.id.toString(),
@@ -1030,7 +1053,7 @@ internal class BatchChapterTranslator(
                         flushSpan.end()
                     }
                 }
-                store.reconcileArtifactRetention()
+                store.reconcileArtifactRetentionAsync()
                 onBatchClosed?.invoke(manga, chapter, source, store)
             }
         }

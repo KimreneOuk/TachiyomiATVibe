@@ -744,7 +744,36 @@ class ChapterArtifactStore(
         return when (outcome) {
             is TransactionOutcome.Committed ->
                 if (sweepAfterCommit) {
-                    val retention = reconcileRetention(outcome.manifest)
+                    // T930 Slice A4 (Amendment D): the checkpoint runs once per
+                    // OCR'd page on the serialized batch lane; a full SAF tree
+                    // crawl here costs seconds-to-a-minute per page once the
+                    // chapter accumulates sidecars (the same measured cost that
+                    // removed the open-path sweep for >8-page chapters). Only
+                    // the files THIS transaction unlinked are reclaim candidates;
+                    // cross-page orphans stay owned by the chapter-boundary
+                    // sweep (reconcileArtifactRetention) and the open-path sweep.
+                    val orphans = buildList {
+                        // The just-cancelled generation's CANCELLED record (and,
+                        // for REBASE, nothing else: the successor record stays
+                        // reachable via activeCandidateGenerationIds).
+                        producerGenerationId?.let { add(layout.generationFile(it)) }
+                        // This page's superseded checkpoint sidecar.
+                        manifest.ocrCheckpoints[pageKey]?.fileName
+                            ?.takeIf { it != checkpointFileName }
+                            ?.let(::add)
+                        // The OCR stage record replaced by this checkpoint.
+                        page.ocr?.artifactFileName
+                            ?.takeIf { it != snapshotFileName }
+                            ?.let(::add)
+                        // CLOSE drops every candidate-owned stage record; their
+                        // sidecars left the reachability graph.
+                        if (mode == OcrCheckpointMode.CLOSE && candidate != null) {
+                            listOf(page.detection, page.inpaint, page.translation, page.layout)
+                                .filter { it?.generationId == candidate.generationId }
+                                .forEach { it?.artifactFileName?.let(::add) }
+                        }
+                    }
+                    val retention = deleteKnownOrphans(orphans, durableManifest = outcome.manifest)
                     TransactionOutcome.Committed(
                         outcome.manifest,
                         successorGenerationId ?: outcome.generationId,
@@ -1610,7 +1639,19 @@ class ChapterArtifactStore(
         if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; candidate remains recorded")
         }
-        val retention = reconcileRetention(updated)
+        // Event-driven reclamation (T930 Slice A4): relaunch teardown cancels
+        // every stale candidate left by a dead process — one full SAF tree
+        // sweep per page there cost tens of seconds per page on large
+        // chapters (the same measured crawl removed from the checkpoint and
+        // open paths). Only the files THIS cancel unlinked are candidates;
+        // cross-page orphans stay owned by the chapter-boundary sweep.
+        val orphans = buildList {
+            add(layout.generationFile(generationId))
+            listOf(page.detection, page.ocr, page.inpaint, page.translation, page.layout)
+                .filter { it?.generationId == generationId }
+                .forEach { it?.artifactFileName?.let(::add) }
+        }
+        val retention = deleteKnownOrphans(orphans, durableManifest = updated)
         return TransactionOutcome.Committed(updated, generationId, retention.deletedNames)
     }
 
@@ -1800,16 +1841,42 @@ class ChapterArtifactStore(
         retentionSweep.reconcileRetention(manifest, stagedReachable)
 
     /**
+     * Retention phase 1 (candidate crawl) WITHOUT the store monitor — and
+     * deliberately NOT @Synchronized. It is pure over its inputs (the passed
+     * manifest + the immutable layout/IO) and takes minutes of SAF round-trips
+     * on real storage; taking either the store monitor or the scheduler mutex
+     * during it froze every page lease in the pipeline (jdb thread dump,
+     * 2026-09-15: 20+ minute batch stall on a 70-page chapter). Pair with
+     * [deleteVerifiedRetentionCandidates], which re-verifies each candidate
+     * against the live manifest under the monitor.
+     */
+    fun collectRetentionCandidates(
+        manifest: ChapterArtifactManifest,
+        stagedReachable: Set<String> = emptySet(),
+    ): Set<String> = retentionSweep.collectOrphanCandidates(manifest, stagedReachable)
+
+    /** Retention phase 2: re-verify and delete under the store monitor. */
+    @Synchronized
+    fun deleteVerifiedRetentionCandidates(
+        candidateOrphans: Collection<String>,
+        manifest: ChapterArtifactManifest,
+        stagedReachable: Set<String> = emptySet(),
+    ): RetentionResult =
+        retentionSweep.deleteVerifiedOrphans(candidateOrphans, manifest, stagedReachable)
+
+    /**
      * T930 Slice A4 (Amendment D): event-driven known-orphan deletion.
      * Reclaims explicitly unlinked artifact files without a full tree crawl.
-     * Race register #6: files referenced in stagedReachable are spared.
+     * Race register #6: files referenced in stagedReachable are spared; when
+     * [durableManifest] is supplied, files still reachable from it are spared too.
      */
     @Synchronized
     fun deleteKnownOrphans(
         candidateOrphans: Collection<String>,
         stagedReachable: Set<String> = emptySet(),
+        durableManifest: ChapterArtifactManifest? = null,
     ): RetentionResult =
-        retentionSweep.deleteKnownOrphans(candidateOrphans, stagedReachable)
+        retentionSweep.deleteKnownOrphans(candidateOrphans, stagedReachable, durableManifest)
 
     internal fun readManifestDocument(name: String): ChapterArtifactManifest? {
         val bytes = io.read(name) ?: return null

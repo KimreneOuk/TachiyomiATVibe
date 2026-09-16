@@ -36,6 +36,8 @@ import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
 import eu.kanade.translation.translator.analysis.ValidatedEntity
 import eu.kanade.translation.translator.analysis.ValidatedTerm
 import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
@@ -120,6 +122,11 @@ class ProfileEnvelopeDispatchTest {
      * contend for the process-wide shared 15-RPM pool (the gate TYPE is the
      * seam; the default shared instance is pinned at the construction sites).
      */
+    /** Summary-glossary seam (Director redesign): an empty sheet freezes fine. */
+    private val emptyGlossarySynthesizer = GlossarySynthesizer { _, _, _ ->
+        GlossarySynthesisOutcome.Glossary(emptyList())
+    }
+
     private fun coordinator(
         store: ChapterTranslationStore,
         worker: NativeLaneWorker,
@@ -146,6 +153,7 @@ class ProfileEnvelopeDispatchTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
+        glossarySynthesizer = emptyGlossarySynthesizer,
         textTranslator = translator,
         translationSublimitGate = gate,
     )

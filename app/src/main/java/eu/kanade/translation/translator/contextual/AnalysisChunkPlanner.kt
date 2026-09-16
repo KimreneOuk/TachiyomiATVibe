@@ -40,11 +40,15 @@ data class AnalysisChunkPolicy(
      */
     val maxBlocksPerChunk: Int = 512,
     /**
-     * Maximum estimated source tokens across the contributing set of one
-     * chunk (design §6.1 input cap; at least half the provider context stays
-     * reserved for instructions, existing canon and output). PROPOSED-GATE.
+     * Maximum estimated input tokens across the contributing set of one
+     * chunk (design §6.1 input cap). The per-page estimates cover the wire
+     * envelope (text + per-block/per-page overhead) but NOT the chunk-level
+     * fixed framing (system+user prompts, envelope scaffolding — ~400
+     * tokens), so this cap must leave that framing room alongside the
+     * output budget and the 512 dispatch margin under the 8k window:
+     * 4_096 + framing + 3_072 output + 512 ≤ 8_192. PROPOSED-GATE.
      */
-    val maxEstimatedInputTokens: Int = 4_608,
+    val maxEstimatedInputTokens: Int = 4_096,
 ) {
     fun validationError(): String? = when {
         maxCorePages < 1 || maxCorePages > AnalysisChunkResult.MAX_CORE_PAGES ->

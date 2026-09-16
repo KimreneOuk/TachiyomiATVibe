@@ -33,9 +33,11 @@ class AnalysisEngineTransportTest {
         override val analysisModelId: String?,
         override val analysisCredentialScope: String?,
         private val onRaw: suspend (systemPrompt: String, userPrompt: String, maxOutputTokens: Int) -> String,
+        private val contract: eu.kanade.translation.translator.InputAccountingContract? = null,
     ) : AiTranslator() {
         override val fromLang = TextRecognizerLanguage.JAPANESE
         override val toLang = TextTranslatorLanguage.ENGLISH
+        override val inputAccountingContract get() = contract
 
         override suspend fun translateContextualStructured(
             chunk: TranslationContextChunk,
@@ -87,7 +89,7 @@ class AnalysisEngineTransportTest {
         system shouldBe AnalysisEngineTransport.ANALYSIS_SYSTEM_PROMPT
         user shouldBe AnalysisEngineTransport.ANALYSIS_USER_INSTRUCTIONS + "\n\n" + requestJson
         max shouldBe AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS
-        AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 3072
+        AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 512
     }
 
     @Test
@@ -157,5 +159,56 @@ class AnalysisEngineTransportTest {
             AnalysisEngineTransport(engine).postStructuredAnalysis("{}", "chunk-0")
         }
         error.message shouldBe "run aborted"
+    }
+
+    /** Deterministic certified contract: every payload counts as [tokensPerPayload]. */
+    private class FixedTokenContract(
+        private val tokensPerPayload: Int,
+    ) : eu.kanade.translation.translator.InputAccountingContract {
+        override val providerBackend = "fake"
+        override val model: String? = null
+        override val isCertified = true
+        override val accountingMode = eu.kanade.translation.translator.AccountingMode.CERTIFIED_BOUND
+        override fun countFinalTokens(payload: String): Int = tokensPerPayload
+    }
+
+    @Test
+    fun `certified contract clamps the output budget when honest input count leaves less room`() = runTest {
+        // 8_192 - 512 - 128 - 7_100 = 452 available (< 512 default, >= 256 floor).
+        var capturedMax: Int? = null
+        val engine = FakeEngine(
+            analysisBackendId = "gemini",
+            analysisModelId = "gemini-2.5",
+            analysisCredentialScope = null,
+            onRaw = { _, _, max ->
+                capturedMax = max
+                "{}"
+            },
+            contract = FixedTokenContract(tokensPerPayload = 7_100),
+        )
+        val transport = AnalysisEngineTransport(engine)
+
+        transport.postStructuredAnalysis("""{"pages":[]}""", "chunk-0-abcdef12")
+
+        capturedMax shouldBe 452
+    }
+
+    @Test
+    fun `input that cannot host the minimum analysis output pauses with a typed failure`() = runTest {
+        // 8_192 - 512 - 128 - 7_500 = 52 available (< 256 floor).
+        val engine = FakeEngine(
+            analysisBackendId = "gemini",
+            analysisModelId = "gemini-2.5",
+            analysisCredentialScope = null,
+            onRaw = { _, _, _ -> error("never dispatched") },
+            contract = FixedTokenContract(tokensPerPayload = 7_500),
+        )
+        val error = assertThrows<ProviderFailureException> {
+            AnalysisEngineTransport(engine).postStructuredAnalysis("""{"pages":[]}""", "chunk-0-abcdef12")
+        }
+        error.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
+        error.failure.retryability shouldBe ProviderFailureRetryability.PAUSE
+        error.failure.safeSummary shouldBe "analysis request token-oversized: " +
+            "input (7500) leaves under 256 output tokens under 8k"
     }
 }

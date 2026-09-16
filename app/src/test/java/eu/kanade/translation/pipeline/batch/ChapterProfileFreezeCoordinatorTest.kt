@@ -29,6 +29,10 @@ import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.translator.analysis.GlossaryEntry
+import eu.kanade.translation.translator.analysis.GlossaryEntryKind
+import eu.kanade.translation.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
 import eu.kanade.translation.translator.analysis.ValidatedEntity
 import eu.kanade.translation.translator.analysis.ValidatedTerm
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
@@ -47,8 +51,8 @@ import java.io.File
  * T924 Stage 5 slice B: coordinator freeze behavior (T924-ST-09/10 +
  * T924-TX-22 + the ST-05/OCR_PLAN skip rule). Pins:
  *
- *  - a full pass reconciles the durable chunks, freezes the profile in one
- *    transaction and ends PAUSED (never COMPLETED);
+ *  - a full pass synthesizes the glossary from the durable chunk summaries,
+ *    freezes the profile in one transaction and ends PAUSED (never COMPLETED);
  *  - resume after freeze SKIPS the entire run through analysis: zero re-OCR,
  *    zero chunk executions (the T924 fast-feedback core);
  *  - an FP-04 input change (target language) invalidates reuse and re-freezes
@@ -113,6 +117,7 @@ class ChapterProfileFreezeCoordinatorTest {
         pages: List<PageKey>,
         runner: AnalysisChunkRunner?,
         targetLang: String = "en",
+        synthesizer: GlossarySynthesizer = FakeGlossarySynthesizer(),
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
         store = store,
         nativeWorker = worker,
@@ -126,6 +131,7 @@ class ChapterProfileFreezeCoordinatorTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
+        glossarySynthesizer = synthesizer,
     )
 
     /** M1-idiom OCR lane: lease, merge under the token, hand the identity back. */
@@ -207,6 +213,30 @@ class ChapterProfileFreezeCoordinatorTest {
         }
     }
 
+    /**
+     * Summary-glossary fake (Director redesign): records each summary list
+     * handed to the one-shot synthesis (one call per reconcile) and answers
+     * with a fixed character/place identity sheet — the profile's operative
+     * content is THIS sheet, never the structured chunk records.
+     */
+    private inner class FakeGlossarySynthesizer(
+        private val entries: List<GlossaryEntry> = listOf(
+            GlossaryEntry(GlossaryEntryKind.CHARACTER, "カイル", "Kail", listOf("kyle")),
+            GlossaryEntry(GlossaryEntryKind.PLACE, "王都", "royal capital"),
+        ),
+    ) : GlossarySynthesizer {
+        val receivedSummaries = mutableListOf<List<String>>()
+
+        override suspend fun synthesize(
+            sourceLanguage: String,
+            targetLanguage: String,
+            summaries: List<String>,
+        ): GlossarySynthesisOutcome {
+            receivedSummaries += summaries
+            return GlossarySynthesisOutcome.Glossary(entries)
+        }
+    }
+
     private fun runRecord(store: ChapterTranslationStore) =
         artifactStore().let { artifact ->
             val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
@@ -246,9 +276,10 @@ class ChapterProfileFreezeCoordinatorTest {
         store.preRegisterPages(pageKeys)
         val worker = FakePreflightOcrWorker(store)
         val analyzer = FakeAnalyzer()
+        val synthesizer = FakeGlossarySynthesizer()
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
 
-        val outcome = coordinator(store, worker, pages, analyzer)
+        val outcome = coordinator(store, worker, pages, analyzer, synthesizer = synthesizer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // Stage-6 slice A: freeze now CONTINUES into the envelope phase;
@@ -259,13 +290,18 @@ class ChapterProfileFreezeCoordinatorTest {
         outcome.needsTranslation shouldBe emptyList()
         worker.ocrPages shouldContainExactly pageKeys
         analyzer.executedOrdinals shouldContainExactly listOf(0)
+        // Summary-glossary redesign: ONE synthesis call over the durable
+        // chunk summaries built the identity sheet.
+        synthesizer.receivedSummaries shouldContainExactly listOf(listOf("An opening journey."))
 
-        // The frozen profile carries the reconciled canon with provenance.
+        // The frozen profile carries the SYNTHESIZED sheet with provenance —
+        // entries come from the synthesis call, not the chunk records (the
+        // analyzer's 剣/sword term is deliberately absent).
         val (artifact, profile) = readProfile()
         profile.version shouldBe 1
         profile.validationError().shouldBeNull()
         profile.entities.single().canonicalTargetForm shouldBe "Kail"
-        profile.terms.single().canonicalTargetForm shouldBe "sword"
+        profile.terms.single().canonicalTargetForm shouldBe "royal capital"
         profile.seriesUpdateCandidates shouldBe emptyList()
         profile.correctionCandidates shouldBe emptyList()
         profile.analyzerProvenance.providerId shouldBe "fake"

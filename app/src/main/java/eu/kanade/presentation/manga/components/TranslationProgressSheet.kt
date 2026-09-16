@@ -627,7 +627,6 @@ private fun LivePipelineGrid(snapshot: TranslationProgressSnapshot) {
     val ocrCount = snapshot.perStage[BatchPhase.OCR]
     val translateCount = snapshot.perStage[BatchPhase.TRANSLATE]
     val inpaintCount = snapshot.perStage[BatchPhase.INPAINT]
-    val renderCount = snapshot.perStage[BatchPhase.RENDER]
 
     val total = snapshot.totalPages.coerceAtLeast(1)
 
@@ -654,6 +653,11 @@ private fun LivePipelineGrid(snapshot: TranslationProgressSnapshot) {
                 modifier = Modifier.weight(1f),
             )
         }
+        // T924 no-render batch design: the pipeline never runs an in-pass
+        // overlay/render stage (the reader draws text overlays on demand), so
+        // its card sat at 0/70 forever and read as a regression next to the
+        // real stage counters. The genuinely user-facing readiness figure is
+        // the "N of M pages ready to read" chip (displayReadyPages) above.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -664,14 +668,6 @@ private fun LivePipelineGrid(snapshot: TranslationProgressSnapshot) {
                 stageCount = inpaintCount,
                 total = total,
                 isActive = snapshot.activeStages.contains(TranslationProgressStage.INPAINT),
-                modifier = Modifier.weight(1f),
-            )
-            PipelineStageCard(
-                icon = Icons.Default.FormatPaint,
-                label = stringResource(ATMR.strings.manga_batch_stage_render_name),
-                stageCount = renderCount,
-                total = total,
-                isActive = snapshot.activeStages.contains(TranslationProgressStage.RENDER),
                 modifier = Modifier.weight(1f),
             )
         }

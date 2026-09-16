@@ -317,4 +317,131 @@ class OverlapSchedulerTest {
         committedHooks.size shouldBe 2
         committedHooks.toSet() shouldBe pageKeys.toSet()
     }
+
+    // ------------------------------------------------------------------
+    // T925 coexistence: contention with a live concurrent writer (the
+    // reader's translate-on-view lane) must YIELD the page, never retry it
+    // forever — the retry livelocked the whole ordered drain on device.
+    // ------------------------------------------------------------------
+
+    /**
+     * Lane whose guarded publication loses a precondition race for the pages
+     * in [contended] (every attempt) and commits the rest through the SAME
+     * guarded merge the real lane performs.
+     */
+    private inner class ContendedInpaintLane(
+        private val store: ChapterTranslationStore,
+        private val identities: ConcurrentHashMap<String, BatchWriteIdentity>,
+        private val contended: Set<String>,
+    ) : NativeLaneWorker {
+        val attempted = mutableListOf<String>()
+
+        override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? = null
+
+        override suspend fun runInpaintStage(pageKey: String) = runInpaintStage(pageKey, null)
+
+        override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
+            attempted += pageKey
+            if (pageKey in contended) {
+                throw BatchContentionRejectedException(
+                    yieldPageKey = pageKey,
+                    stage = BatchDiagnosticStage.INPAINT,
+                )
+            }
+            val identity = identities[pageKey]
+                ?: error("overlap scheduler must register the write identity for $pageKey")
+            store.updatePageGuarded(
+                pageKey = pageKey,
+                expected = ChapterTranslationStore.PatchPrecondition(
+                    generation = identity.generation,
+                    pageVersion = identity.pageVersion,
+                    leaseToken = identity.leaseToken,
+                    candidateGenerationId = identity.candidateGenerationId,
+                    dependencyFingerprint = identity.dependencyFingerprint,
+                    artifactPageVersion = identity.artifactPageVersion,
+                ),
+                description = "t925 contention test inpaint",
+            ) { page ->
+                page!!.apply { inpaintStatus = StageStatus.READY }
+            }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        }
+    }
+
+    /** Lane whose publication fails with a plain error every time. */
+    private inner class FailingInpaintLane : NativeLaneWorker {
+        val attempted = mutableListOf<String>()
+
+        override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? = null
+
+        override suspend fun runInpaintStage(pageKey: String) = runInpaintStage(pageKey, null)
+
+        override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
+            attempted += pageKey
+            error("inpaint merge rejected for $pageKey")
+        }
+    }
+
+    @Test
+    fun `serial drain yields a contended page and terminates instead of livelocking`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedTranslatedPage(store, it) }
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = ContendedInpaintLane(store, identities, contended = setOf("p1"))
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        scheduler.drainSerial()
+
+        // p1 attempted EXACTLY once (yielded + deferred for the pass) — the
+        // drain moved on and terminated; p2 still committed through the lane.
+        lane.attempted.count { it == "p1" } shouldBe 1
+        lane.attempted.count { it == "p2" } shouldBe 1
+        store.snapshot("p2").page?.inpaintStatus shouldBe StageStatus.READY
+        // p1 stays pending: the owner's outcome (or a later run) reconciles it.
+        (store.snapshot("p1").page?.inpaintStatus != StageStatus.READY) shouldBe true
+        scheduler.counters.snapshot()["overlapInpaintFailures"] shouldBe 1L
+    }
+
+    @Test
+    fun `serial drain defers a persistently failing page instead of retrying forever`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedTranslatedPage(store, it) }
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FailingInpaintLane()
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        scheduler.drainSerial()
+
+        lane.attempted shouldBe pageKeys
+        scheduler.counters.snapshot()["overlapInpaintFailures"] shouldBe 2L
+    }
+
+    @Test
+    fun `overlap loop yields a contended page and commits the rest in the same window`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedTranslatedPage(store, it) }
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = ContendedInpaintLane(store, identities, contended = setOf("p1"))
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+        scheduler.onRemoteWindowOpened()
+        testScheduler.advanceUntilIdle()
+        scheduler.onRemoteWindowClosed()
+        scheduler.stopOverlap()
+        loopJob.cancel()
+
+        // The window served both pages exactly once; the contended one was
+        // yielded and NOT re-tried within the window loop.
+        lane.attempted shouldBe pageKeys
+        store.snapshot("p2").page?.inpaintStatus shouldBe StageStatus.READY
+        (store.snapshot("p1").page?.inpaintStatus != StageStatus.READY) shouldBe true
+        // Teardown discipline still holds for the yielded page.
+        store.snapshot("p1").leaseToken shouldBe null
+    }
 }

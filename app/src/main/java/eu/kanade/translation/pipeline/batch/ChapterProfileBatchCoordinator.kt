@@ -10,6 +10,13 @@ import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.artifact.AnalysisChunkResult
+import eu.kanade.translation.artifact.AnalyzerProvenance
+import eu.kanade.translation.artifact.EvidenceStrength
+import eu.kanade.translation.artifact.FactConflictState
+import eu.kanade.translation.artifact.FactProvenance
+import eu.kanade.translation.artifact.FactScope
+import eu.kanade.translation.artifact.FactType
+import eu.kanade.translation.artifact.ProfileFact
 import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
@@ -46,6 +53,7 @@ import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocrBlockFingerprints
 import eu.kanade.translation.ocrFingerprint
+import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
@@ -55,7 +63,11 @@ import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
 import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
+import eu.kanade.translation.translator.analysis.AnalysisRequestBuilder
 import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.translator.analysis.GlossaryEntryKind
+import eu.kanade.translation.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
 import eu.kanade.translation.translator.analysis.AnalyzerProvenanceFactory
 import eu.kanade.translation.translator.contextual.AnalysisChunkPlanResult
 import eu.kanade.translation.translator.contextual.AnalysisChunkPlanner
@@ -69,16 +81,17 @@ import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
 import eu.kanade.translation.translator.contextual.OcrCorpusManifest
 import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import eu.kanade.translation.translator.contextual.ProfileReconciler
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -187,6 +200,13 @@ internal class ChapterProfileBatchCoordinator(
      * producing provider calls without a typed transport.
      */
     private val analysisChunkRunner: AnalysisChunkRunner? = null,
+    /**
+     * Director decision (summary-glossary redesign): the one-shot chapter
+     * glossary builder over the durable chunk summaries. `null` is a typed
+     * CONFIGURATION-class gate exactly like [analysisChunkRunner] — the run
+     * pauses at PROFILE_RECONCILE instead of synthesizing without a transport.
+     */
+    private val glossarySynthesizer: GlossarySynthesizer? = null,
     /**
      * Stage-6 slice A: the typed AI text translator for the envelope phase
      * (ST-11/ST-12). `null` is a typed CONFIGURATION-class gate: the run
@@ -408,12 +428,19 @@ internal class ChapterProfileBatchCoordinator(
                 val hydrated = before.page != null &&
                     before.page.ocrStatus == StageStatus.READY &&
                     before.page.blocks.isNotEmpty()
-                if (hydrated || adoptCheckpointSnapshot(artifact, pageKey, before) != null) {
-                    reusedPages++
-                    corpusFingerprints += pageKey to reusable
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT t924 preflight reused checkpoint pageHash=${pageHash(pageKey)}"
-                    }
+                    if (hydrated || adoptCheckpointSnapshot(artifact, pageKey, before) != null) {
+                        reusedPages++
+                        corpusFingerprints += pageKey to reusable
+                        // Same live-progress marks a fresh OCR page emits: without
+                        // them the tracker's snapshot stays frozen at the pre-resume
+                        // counts for the entire revalidation and the drawer looks
+                        // unresponsive (2026-09-15/16 field report).
+                        listener.ocrStarted(pageKey)
+                        listener.ocrPublished(pageKey)
+                        stampAdoptedRenderTerminal(pageKey)
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT t924 preflight reused checkpoint pageHash=${pageHash(pageKey)}"
+                        }
                     // M3: Batched advisory progress records: publish on first page, every 5 pages, or last page
                     val shouldPublishProgress = (pageIndex == 0) || ((pageIndex + 1) % 5 == 0) || ((pageIndex + 1) == total)
                     if (shouldPublishProgress) {
@@ -430,6 +457,7 @@ internal class ChapterProfileBatchCoordinator(
             }
 
             listener.ocrStarted(pageKey)
+            val pageStartedAt = System.currentTimeMillis()
             var ref: OcrReadyPageRef? = null
             // Set when THIS page's attempt ended unresolved (REJECTED checkpoint
             // or worker exception): the ledger record is written in `finally`,
@@ -437,7 +465,28 @@ internal class ChapterProfileBatchCoordinator(
             // candidate-owned stage records, so the record must outlive it.
             var pendingFailure: PreflightStageFailure? = null
             try {
-                ref = nativeWorker.runOcrStage(pageKey, pageIndex)
+                ref = try {
+                    // Per-page watchdog: lease acquisition, bitmap-budget
+                    // permits, and SAF decode sit BEFORE the native lane's own
+                    // 120s timeout, and a wedge in any of them used to stall
+                    // the pass silently forever (2026-09-15 incident). Bound
+                    // the whole page; the failure ledger path below makes the
+                    // timeout visible and the pass continues.
+                    withTimeout(PREFLIGHT_PAGE_TIMEOUT_MS) {
+                        nativeWorker.runOcrStage(pageKey, pageIndex)
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t924 preflight page watchdog timeout pageHash=${pageHash(pageKey)} " +
+                            "afterMs=${System.currentTimeMillis() - pageStartedAt}"
+                    }
+                    pendingFailure = PreflightStageFailure(
+                        pageKey = pageKey,
+                        kind = PreflightFailureKind.OCR_WORKER_FAILED,
+                        reason = "preflight page watchdog timeout after ${PREFLIGHT_PAGE_TIMEOUT_MS}ms",
+                    )
+                    null
+                }
                 if (ref == null) {
                     // Lease-deferred / externally completed: another origin owns
                     // the page's outcome. Not a failure; the final diagnostic
@@ -558,6 +607,11 @@ internal class ChapterProfileBatchCoordinator(
                     if (hydrated || adoptCheckpointSnapshot(artifact, pageKey, before) != null) {
                         reusedPages++
                         corpusFingerprints += pageKey to reusable
+                        // Same live-progress marks as the primary preflight's
+                        // reuse path (drawer must tick, not freeze).
+                        listener.ocrStarted(pageKey)
+                        listener.ocrPublished(pageKey)
+                        stampAdoptedRenderTerminal(pageKey)
                         continue
                     }
                 }
@@ -1081,10 +1135,11 @@ internal class ChapterProfileBatchCoordinator(
      *     above proved the persisted list IS this run's plan). Any
      *     unreadable/invalid sidecar is treated as ABSENT (T924-ST-30) — a
      *     typed pause, never a partial reconcile.
-     *  2. PROFILE_RECONCILE phase record published, then the pure
-     *     [ProfileReconciler] runs over the validated chunk set. A typed
-     *     reconcile rejection pauses BEFORE any freeze; chunk evidence stays
-     *     durable for a later run (ST-09 terminal).
+     *  2. PROFILE_RECONCILE phase record published, then the one-shot
+     *     glossary synthesis (synthesizeProfileContent) runs over the
+     *     durable chunk summaries — characters and places only (Director
+     *     decision, summary-glossary redesign). A typed synthesis pause
+     *     defers the freeze; the summaries stay durable for a later run.
      *  3. The profile DTO is assembled around the reconciled CONTENT with
      *     this run's FP-04 input fingerprint and the next monotonic chapter
      *     version; its FP-05 content fingerprint is computed over the DTO.
@@ -1160,11 +1215,17 @@ internal class ChapterProfileBatchCoordinator(
             ),
         )
 
-        val content = when (val reconciled = ProfileReconciler.reconcile(chunks)) {
-            is ProfileReconciler.ReconcileOutcome.Reconciled -> reconciled.content
-            is ProfileReconciler.ReconcileOutcome.Rejected -> {
+        // Director decision (summary-glossary redesign): the profile's
+        // content is ONE small identity sheet synthesized from the durable
+        // chunk summaries — characters and places only, capped hard, because
+        // anything beyond identity anchors is noise for the translation
+        // envelopes. The deterministic cross-chunk reconcile of structured
+        // extraction records is retired with the strict response contract.
+        val synthesis = when (val source = synthesizeProfileContent(chunks)) {
+            is ProfileContentSource.Content -> source
+            is ProfileContentSource.Pause -> {
                 logcat(LogPriority.WARN) {
-                    "TachiyomiAT t924 profile reconcile rejected: ${reconciled.reason}"
+                    "TachiyomiAT t924 glossary synthesis paused: ${source.reason}"
                 }
                 publishRecord(
                     artifact,
@@ -1180,7 +1241,8 @@ internal class ChapterProfileBatchCoordinator(
                 return BatchPass1Outcome(
                     needsTranslation = emptyList(),
                     status = BatchPass1Status.PAUSED,
-                    reason = "T924 profile reconcile rejected: ${reconciled.reason}",
+                    failure = source.failure,
+                    reason = source.reason,
                 )
             }
         }
@@ -1195,8 +1257,8 @@ internal class ChapterProfileBatchCoordinator(
                 freezeCounters(
                     mapOf(
                         COUNTER_PROFILE_CHUNKS_TOTAL to chunks.size,
-                        COUNTER_PROFILE_CHUNKS_RECONCILED to content.reconciledChunkCount,
-                        COUNTER_PROFILE_CHUNKS_PENDING to content.pendingChunkCount,
+                        COUNTER_PROFILE_CHUNKS_RECONCILED to synthesis.summarizedChunks,
+                        COUNTER_PROFILE_CHUNKS_PENDING to 0,
                     ),
                 ),
                 ocrCorpusFingerprint = corpusFingerprint,
@@ -1214,13 +1276,13 @@ internal class ChapterProfileBatchCoordinator(
             contentFingerprint = "",
             profileInputFingerprint = inputFingerprint,
             sourceRunId = runId,
-            analyzerProvenance = content.analyzerProvenance,
-            entities = content.entities,
-            terms = content.terms,
-            scenes = content.scenes,
-            unresolvedFacts = content.unresolvedFacts,
-            seriesUpdateCandidates = content.seriesUpdateCandidates,
-            correctionCandidates = content.correctionCandidates,
+            analyzerProvenance = synthesis.analyzerProvenance,
+            entities = synthesis.entities,
+            terms = synthesis.terms,
+            scenes = emptyList(),
+            unresolvedFacts = emptyList(),
+            seriesUpdateCandidates = emptyList(),
+            correctionCandidates = emptyList(),
             frozenAtEpochMs = nowEpochMs(),
         )
         val profile = draft.copy(
@@ -1262,8 +1324,8 @@ internal class ChapterProfileBatchCoordinator(
                         freezeCounters(
                             mapOf(
                                 COUNTER_PROFILE_CHUNKS_TOTAL to chunks.size,
-                                COUNTER_PROFILE_CHUNKS_RECONCILED to content.reconciledChunkCount,
-                                COUNTER_PROFILE_CHUNKS_PENDING to content.pendingChunkCount,
+                                COUNTER_PROFILE_CHUNKS_RECONCILED to synthesis.summarizedChunks,
+                                COUNTER_PROFILE_CHUNKS_PENDING to 0,
                                 COUNTER_PROFILE_FROZEN to 1,
                                 COUNTER_STOP to 1,
                             ),
@@ -1274,7 +1336,7 @@ internal class ChapterProfileBatchCoordinator(
                 )
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT t924 profile frozen version=$nextVersion " +
-                        "reconciled=${content.reconciledChunkCount} pending=${content.pendingChunkCount}"
+                        "synthesized=${synthesis.summarizedChunks} entries=${synthesis.entities.size + synthesis.terms.size}"
                 }
                 // Stage-6 slice A: PROFILE_FROZEN no longer terminates the
                 // run — the coordinator CONTINUES into ENVELOPE_PLAN (ST-11)
@@ -1288,8 +1350,8 @@ internal class ChapterProfileBatchCoordinator(
                     baseCounters = freezeCounters(
                         mapOf(
                             COUNTER_PROFILE_CHUNKS_TOTAL to chunks.size,
-                            COUNTER_PROFILE_CHUNKS_RECONCILED to content.reconciledChunkCount,
-                            COUNTER_PROFILE_CHUNKS_PENDING to content.pendingChunkCount,
+                            COUNTER_PROFILE_CHUNKS_RECONCILED to synthesis.summarizedChunks,
+                            COUNTER_PROFILE_CHUNKS_PENDING to 0,
                             COUNTER_PROFILE_FROZEN to 1,
                         ),
                     ),
@@ -1318,6 +1380,92 @@ internal class ChapterProfileBatchCoordinator(
                     reason = "T924 profile freeze rejected: ${publication.reason}",
                 )
             }
+        }
+    }
+
+    /** [synthesizeProfileContent] outcome: freezeable content or a typed pause. */
+    private sealed interface ProfileContentSource {
+        data class Content(
+            val analyzerProvenance: AnalyzerProvenance,
+            val entities: List<ProfileFact>,
+            val terms: List<ProfileFact>,
+            val summarizedChunks: Int,
+        ) : ProfileContentSource
+
+        data class Pause(val failure: ProviderFailure?, val reason: String) : ProfileContentSource
+    }
+
+    /**
+     * ONE synthesis call over the durable chunk summaries builds the
+     * profile's identity sheet. Characters become ENTITY_IDENTITY facts,
+     * places become TERM facts; every fact is chapter-wide and deliberately
+     * WEAK-strength — the summary path carries no per-block evidence, and
+     * the sheet's job is consistent renderings, not auditable provenance.
+     * An empty or missing glossary is still freezeable content (translation
+     * proceeds without the sheet).
+     */
+    private suspend fun synthesizeProfileContent(
+        chunks: List<AnalysisChunkResult>,
+    ): ProfileContentSource {
+        val synthesizer = glossarySynthesizer
+            ?: return ProfileContentSource.Pause(
+                failure = null,
+                reason = GLOSSARY_SYNTHESIS_NO_TRANSPORT_REASON,
+            )
+        val summaries = chunks.mapNotNull { chunk ->
+            chunk.narrativeSummary?.takeIf(String::isNotBlank)
+        }
+        return when (
+            val outcome = synthesizer.synthesize(
+                sourceLanguage = frozenConfig.sourceLang,
+                targetLanguage = frozenConfig.targetLang,
+                summaries = summaries,
+            )
+        ) {
+            is GlossarySynthesisOutcome.Glossary -> {
+                var entityOrdinal = 0
+                var termOrdinal = 0
+                val entities = outcome.entries
+                    .filter { it.kind == GlossaryEntryKind.CHARACTER }
+                    .map { entry ->
+                        ProfileFact(
+                            factId = "e%03d".format(++entityOrdinal),
+                            type = FactType.ENTITY_IDENTITY,
+                            canonicalSourceForm = entry.source,
+                            canonicalTargetForm = entry.target,
+                            aliases = entry.aliases,
+                            evidenceStrength = EvidenceStrength.WEAK,
+                            scope = FactScope.CANONICAL_CHAPTER_WIDE,
+                            provenance = FactProvenance.CHAPTER_ANALYSIS,
+                            conflictState = FactConflictState.RESOLVED,
+                        )
+                    }
+                val terms = outcome.entries
+                    .filter { it.kind == GlossaryEntryKind.PLACE }
+                    .map { entry ->
+                        ProfileFact(
+                            factId = "t%03d".format(++termOrdinal),
+                            type = FactType.TERM,
+                            canonicalSourceForm = entry.source,
+                            canonicalTargetForm = entry.target,
+                            aliases = entry.aliases,
+                            evidenceStrength = EvidenceStrength.WEAK,
+                            scope = FactScope.CANONICAL_CHAPTER_WIDE,
+                            provenance = FactProvenance.CHAPTER_ANALYSIS,
+                            conflictState = FactConflictState.RESOLVED,
+                        )
+                    }
+                ProfileContentSource.Content(
+                    analyzerProvenance = chunks.last().analyzerProvenance,
+                    entities = entities,
+                    terms = terms,
+                    summarizedChunks = summaries.size,
+                )
+            }
+            is GlossarySynthesisOutcome.Paused -> ProfileContentSource.Pause(
+                failure = outcome.failure,
+                reason = "T924 glossary synthesis paused: ${outcome.reason}",
+            )
         }
     }
 
@@ -1789,11 +1937,14 @@ internal class ChapterProfileBatchCoordinator(
         }
 
         // 5. Durable teardown: NonCancellable flush + retention reconciliation
-        //    (the BatchChapterTranslator :781-794 idiom).
+        //    (the BatchChapterTranslator :781-794 idiom). The sweep itself runs
+        //    fire-and-forget: its crawl is minutes of SAF round-trips and must
+        //    neither delay run closure nor hold the store mutex (2026-09-15
+        //    jdb-proven 20+ minute stall).
         withContext(NonCancellable) {
             store.flush()
         }
-        store.reconcileArtifactRetention()
+        store.reconcileArtifactRetentionAsync()
 
         // 6. Run closure: the single COMPLETE publication of the run. The
         //    overlap counters live on the FINALIZE record (see above — the
@@ -2403,9 +2554,18 @@ internal class ChapterProfileBatchCoordinator(
                 "T924 envelope plan deferred: corpus checkpoints changed under the run",
             )
         val sceneStarts = frozenProfileSceneStartIndexes(artifact)
+        // Director decision (2026-09-16): ~5-page batch translation to cut API
+        // calls. The scene-break PREFERENCE would otherwise close an envelope
+        // at nearly every manhwa page (pages mark scene starts), collapsing
+        // batching to 1 page per call; scene crossing inside an envelope is
+        // already flagged (crossesScene) and the glossary subset rides the
+        // call, so packing through scene starts is safe. Only the structural
+        // caps come from the frozen config; token budgets keep the planner
+        // defaults so oversized groups still split adaptively.
         val policy = envelopePlannerPolicy ?: EnvelopePlannerPolicy(
             maxBlocksPerEnvelope = frozenConfig.envelopePolicy.maxBlocks,
             maxContributingPages = frozenConfig.envelopePolicy.maxPages,
+            preferSceneBreaks = false,
         )
         val workPages = linkedMapOf<String, PageDispatchWork>()
         val plannerPages = mutableListOf<EnvelopePlannerPage>()
@@ -2569,6 +2729,65 @@ internal class ChapterProfileBatchCoordinator(
                             "reason=${outcome.reason}"
                     }
                     null
+                }
+            }
+        } finally {
+            store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+        }
+    }
+
+    /**
+     * T924 no-render design (2026-09-16 field report): the batch never runs an
+     * in-pass render stage — the reader draws the text overlay on demand — but
+     * pages completed BEFORE the render-terminal stamp existed (or whose stamp
+     * write was rejected) carry renderStatus PENDING forever. hasRenderedResult
+     * then never fires: the page never promotes to a committed display bundle
+     * (no pageSnapshotFileName), the reader's displayImageName gate stays null
+     * and the chapter shows ORIGINALS after reopen, while the reader's
+     * stranded-page sweep heals these healthy pages one by one. An adopted
+     * preflight page that already carries the full display evidence gets the
+     * render-terminal stamp here — the durable write carries hasRenderedResult,
+     * which fires the committed promotion and flips the reader gate. Idempotent;
+     * a rejection only skips the stamp (the page re-plans as before).
+     */
+    private suspend fun stampAdoptedRenderTerminal(pageKey: String) {
+        val before = store.snapshot(pageKey)
+        val page = before.page ?: return
+        val displayComplete = (page.translationStatus == StageStatus.READY || page.translationStatus == StageStatus.PARTIAL) &&
+            page.inpaintStatus == StageStatus.READY &&
+            page.cleanedImageName != null &&
+            page.renderStatus == StageStatus.PENDING &&
+            page.blocks.any { it.translation.isNotBlank() }
+        if (!displayComplete) return
+        when (store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)) {
+            is LeaseAcquisition.Granted -> Unit
+            else -> return
+        }
+        try {
+            val expected = ChapterTranslationStore.PatchPrecondition(
+                generation = before.generation,
+                pageVersion = before.pageVersion,
+                blockFingerprints = before.blockFingerprints,
+                leaseToken = before.leaseToken,
+                candidateGenerationId = before.candidateGenerationId,
+                dependencyFingerprint = before.dependencyFingerprint,
+                artifactPageVersion = before.artifactPageVersion,
+            )
+            val outcome = store.updatePageGuarded(
+                pageKey = pageKey,
+                expected = expected,
+                description = "t924 resume: stamp adopted display-complete page render-terminal",
+            ) { current ->
+                (current ?: page).apply {
+                    if (renderStatus == StageStatus.PENDING) {
+                        renderStatus = StageStatus.READY
+                        updatedAt = System.currentTimeMillis()
+                    }
+                }
+            }
+            if (outcome is ChapterTranslationStore.PatchResult.Rejected) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t924 render stamp rejected pageHash=${pageHash(pageKey)} reason=${outcome.reason}"
                 }
             }
         } finally {
@@ -2807,7 +3026,14 @@ internal class ChapterProfileBatchCoordinator(
                 wirePageKey = wirePageKey,
                 wireBlockIds = wireBlockIds,
                 blockTexts = blocks.map { it.text },
-                estimatedInputTokens = blocks.sumOf { (it.text.length + 3) / 4 }.coerceAtLeast(1),
+                // CL100K on the real text (CJK-aware — chars/4 undercounts
+                // CJK ~2-4x) + the wire envelope's per-block/per-page overhead,
+                // so chunk windowing budgets the dispatch payload, not the
+                // raw OCR text (T924 analysis under-8k dispatch contract).
+                estimatedInputTokens = TranslationContextChunkPlanner.estimateTokens(
+                    blocks.joinToString("\n") { it.text },
+                ) + blocks.size * AnalysisRequestBuilder.PER_BLOCK_ENVELOPE_TOKENS +
+                    AnalysisRequestBuilder.PER_PAGE_ENVELOPE_TOKENS,
             )
         }
         val corpusManifest = OcrCorpusManifest.assemble(
@@ -3159,6 +3385,17 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     companion object {
+
+        /**
+         * Per-page preflight watchdog bound. Deliberately larger than the
+         * native lane's SINGLE_PAGE_TIMEOUT_MS (120s) so the lane's own
+         * timeout handles native wedges; this bound catches the UNGUARDED
+         * suspensions before the lane — lease acquisition, bitmap-budget
+         * permits, SAF decode — where a wedge used to stall the pass
+         * silently forever.
+         */
+        private const val PREFLIGHT_PAGE_TIMEOUT_MS = 240_000L
+
         /**
          * The standard tail's translate-time terminal predicate: a page with a
          * committed translation (READY/PARTIAL), a durable no-text terminal
@@ -3191,6 +3428,8 @@ internal class ChapterProfileBatchCoordinator(
             "T924 analysis skipped: no chunkable OCR work in this chapter"
         const val ANALYSIS_NO_TRANSPORT_REASON =
             "T924 analysis paused: no typed analysis transport wired (CONFIGURATION gate)"
+        const val GLOSSARY_SYNTHESIS_NO_TRANSPORT_REASON =
+            "T924 glossary synthesis paused: no synthesis transport wired (CONFIGURATION gate)"
 
         /** Stage-5 slice B terminals (STILL PAUSED — envelope/translation are Stage 6). */
         const val PROFILE_FROZEN_STOP_REASON =
@@ -3272,8 +3511,14 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_LAYOUTS_PUBLISHED = "layoutPlansPublished"
         const val COUNTER_STRANDED_RECONCILED = "strandedPagesReconciled"
 
-        /** Analysis output budget default (T924-AP-03 `outputBudget`). */
-        const val ANALYSIS_MAX_OUTPUT_TOKENS = 3072
+        /**
+         * Analysis output budget (T924-AP-03 `outputBudget`): free-form
+         * chunk summaries are ~120 words, so the reservation is small and
+         * the input side keeps the 8k window. Mirrors
+         * [eu.kanade.translation.translator.analysis.AnalysisEngineTransport
+         * .ANALYSIS_MAX_OUTPUT_TOKENS].
+         */
+        const val ANALYSIS_MAX_OUTPUT_TOKENS = 512
 
         /** FF-01d flag state, frozen as an operational (never fingerprinted) counter. */
         const val COUNTER_FLAG = "flagProfilePipeline"

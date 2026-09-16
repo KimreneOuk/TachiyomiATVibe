@@ -11,6 +11,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 
 // T909 Phase 17b: the persistence scheduler moved from
 // `ChapterTranslationStore` (persistLocked + flush/close lifecycle + the
@@ -121,22 +124,61 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         persistScope.launch {
             mutex.withLock {
                 flushDirtyLocked()
-                reconcileArtifactRetentionLocked()
             }
+            reconcileArtifactRetention()
         }.invokeOnCompletion {
             persistScope.cancel()
         }
     }
 
-    /** Performs the bounded artifact-tree sweep at a serialized chapter boundary. */
+    /**
+     * Performs the bounded artifact-tree sweep at a serialized chapter
+     * boundary. The CRAWL runs OFF the store mutex — it is minutes of SAF
+     * round-trips on real storage and holding the mutex during it froze every
+     * page lease in the pipeline (jdb thread dump, 2026-09-15: 20+ minute
+     * batch stall). Only the short candidate re-verification/deletion takes
+     * the mutex, against the live manifest.
+     */
     suspend fun reconcileArtifactRetention() {
-        mutex.withLock { reconcileArtifactRetentionLocked() }
+        val plan = mutex.withLock {
+            val store = artifactStore ?: return
+            val manifest = artifactManifest ?: return
+            store to manifest
+        }
+        val startedAt = System.currentTimeMillis()
+        val candidates = withContext(Dispatchers.IO) {
+            plan.first.collectRetentionCandidates(plan.second)
+        }
+        val result = mutex.withLock {
+            val store = artifactStore ?: return
+            val manifest = artifactManifest ?: return
+            store.deleteVerifiedRetentionCandidates(candidates, manifest)
+        }
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT retention sweep: candidates=${candidates.size} " +
+                "deleted=${result.deletedCount} in ${System.currentTimeMillis() - startedAt}ms"
+        }
     }
 
-    private fun reconcileArtifactRetentionLocked() {
-        val store = artifactStore ?: return
-        val manifest = artifactManifest ?: return
-        store.reconcileRetention(manifest)
+    private val retentionInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Fire-and-forget boundary sweep for batch close paths: the schedule must
+     * not wait on a minutes-long crawl at its finally (the 2026-09-15 stall
+     * made a cancelled resume's schedule_end take 21 minutes), the gate keeps
+     * back-to-back boundaries from double-crawling, and re-verification under
+     * the mutex keeps deletions safe while later runs publish new files.
+     */
+    fun reconcileArtifactRetentionAsync() {
+        if (translationFile == null && fileCreator == null && artifactParent == null) return
+        if (!retentionInFlight.compareAndSet(false, true)) return
+        persistScope.launch {
+            try {
+                reconcileArtifactRetention()
+            } finally {
+                retentionInFlight.set(false)
+            }
+        }
     }
 
     internal fun schedulePersist(markPageDirty: Boolean = true) {

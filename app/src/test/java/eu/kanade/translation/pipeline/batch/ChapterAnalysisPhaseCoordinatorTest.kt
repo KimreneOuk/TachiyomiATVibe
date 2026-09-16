@@ -36,6 +36,10 @@ import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.translator.analysis.GlossaryEntry
+import eu.kanade.translation.translator.analysis.GlossaryEntryKind
+import eu.kanade.translation.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
 import eu.kanade.translation.translator.analysis.ValidatedEntity
 import eu.kanade.translation.translator.analysis.ValidatedTerm
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
@@ -55,7 +59,8 @@ import java.io.File
  * through profile freeze. After a COMPLETE OCR preflight the run publishes
  * ANALYSIS_PLAN, executes the planned chunks through the typed runner,
  * persists validated results via the crash-safe sidecar-then-pointer
- * transaction, then reconciles and freezes the profile (TX-22) — and STOPS
+ * transaction, then synthesizes the glossary from the durable chunk
+ * summaries and freezes the profile (TX-22) — and STOPS
  * (PAUSED; envelope/translation are Stage 6). Resume reuses the checkpointed
  * preflight (no re-OCR) and skips the persisted chunk prefix (no re-send).
  */
@@ -116,6 +121,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         pages: List<PageKey>,
         runner: AnalysisChunkRunner?,
         sourceShaOverride: Map<String, String> = emptyMap(),
+        synthesizer: GlossarySynthesizer = FakeGlossarySynthesizer(),
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
         store = store,
         nativeWorker = worker,
@@ -131,6 +137,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
+        glossarySynthesizer = synthesizer,
     )
 
     /** M1-idiom OCR lane: lease, merge under the token, hand the identity back. */
@@ -245,6 +252,29 @@ class ChapterAnalysisPhaseCoordinatorTest {
         }
     }
 
+    /**
+     * Summary-glossary fake (Director redesign): records each summary list
+     * handed to the one-shot synthesis (one call per reconcile) and answers
+     * with a fixed character/place identity sheet.
+     */
+    private inner class FakeGlossarySynthesizer(
+        private val entries: List<GlossaryEntry> = listOf(
+            GlossaryEntry(GlossaryEntryKind.CHARACTER, "カイル", "Kail", listOf("kyle")),
+            GlossaryEntry(GlossaryEntryKind.PLACE, "王都", "royal capital"),
+        ),
+    ) : GlossarySynthesizer {
+        val receivedSummaries = mutableListOf<List<String>>()
+
+        override suspend fun synthesize(
+            sourceLanguage: String,
+            targetLanguage: String,
+            summaries: List<String>,
+        ): GlossarySynthesisOutcome {
+            receivedSummaries += summaries
+            return GlossarySynthesisOutcome.Glossary(entries)
+        }
+    }
+
     private fun runRecord(store: ChapterTranslationStore): ChapterRunRecord {
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         val pointer = manifest.activeRun.shouldNotBeNull()
@@ -272,9 +302,10 @@ class ChapterAnalysisPhaseCoordinatorTest {
         store.preRegisterPages(pageKeys)
         val worker = FakePreflightOcrWorker(store)
         val analyzer = FakeAnalyzer()
+        val synthesizer = FakeGlossarySynthesizer()
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
 
-        val outcome = coordinator(store, worker, pages, analyzer)
+        val outcome = coordinator(store, worker, pages, analyzer, synthesizer = synthesizer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // Slice B: the durable chunk set flows into reconcile + freeze.
@@ -314,6 +345,10 @@ class ChapterAnalysisPhaseCoordinatorTest {
         record.ocrCorpusFingerprint.shouldNotBeNull()
         // TX-22: the frozen profile pointer rides the PROFILE_FROZEN record.
         record.profilePointer.shouldNotBeNull().version shouldBe 1
+        // Summary-glossary redesign: ONE synthesis call received exactly the
+        // durable chunk summaries (the persisted chunk records' structured
+        // fields are dead weight for the profile — the sheet is synthesized).
+        synthesizer.receivedSummaries shouldContainExactly listOf(listOf("An opening journey."))
     }
 
     @Test
@@ -323,9 +358,10 @@ class ChapterAnalysisPhaseCoordinatorTest {
         store.preRegisterPages(pageKeys)
         val worker = FakePreflightOcrWorker(store)
         val analyzer = FakeAnalyzer(extracts = false)
+        val synthesizer = FakeGlossarySynthesizer()
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
 
-        val outcome = coordinator(store, worker, pages, analyzer)
+        val outcome = coordinator(store, worker, pages, analyzer, synthesizer = synthesizer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // DR-A Option 1: the independently complete empty subset committed;
@@ -340,11 +376,14 @@ class ChapterAnalysisPhaseCoordinatorTest {
         val record = runRecord(store)
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_DONE] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_PENDING] shouldBe 1
-        // Reconcile still freezes (an all-pending canon is a valid empty
-        // profile); the pending count is carried on the freeze record.
+        // Summary-glossary redesign: the summary-less chunk contributes
+        // nothing — synthesis received an EMPTY summary list and the profile
+        // still freezes (translation proceeds without the sheet).
         record.state shouldBe ChapterRunState.TRANSLATE
-        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_CHUNKS_PENDING] shouldBe 1
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_CHUNKS_RECONCILED] shouldBe 0
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_CHUNKS_PENDING] shouldBe 0
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_FROZEN] shouldBe 1
+        synthesizer.receivedSummaries shouldContainExactly listOf(emptyList())
     }
 
     @Test

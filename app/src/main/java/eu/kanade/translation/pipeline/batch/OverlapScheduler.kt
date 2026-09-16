@@ -209,6 +209,10 @@ internal class OverlapScheduler(
                         when (inpaintOne(pageKey, overlap = true)) {
                             InpaintOutcome.Committed, InpaintOutcome.Failed, InpaintOutcome.NoWork ->
                                 progressedInWindow = true
+                            // Yielded to a concurrent writer — the page is
+                            // settled for this pass (progress = the loop moved
+                            // past it, so the window can close cleanly).
+                            InpaintOutcome.Deferred -> progressedInWindow = true
                             // Lease-denial accounting is per deferred PAGE
                             // (serialFallbacks inside inpaintOne); the loop
                             // keeps trying the remaining candidates.
@@ -229,6 +233,12 @@ internal class OverlapScheduler(
      * through the SAME lane — semantics identical to the pre-overlap
      * schedule. Called by the coordinator's FINALIZE (ST-14) before the
      * stranded-page reconciliation.
+     *
+     * A page that does NOT commit (lane failure, or a T925 yield to a
+     * concurrent writer) is DEFERRED for the rest of this drain — never
+     * retried in-pass, which livelocked the ordered drain when a live reader
+     * lane kept invalidating the page. FINALIZE's reconciliation (and a
+     * later run, or the owner itself) settles deferred pages.
      */
     suspend fun drainSerial() {
         stopOverlap()
@@ -236,7 +246,9 @@ internal class OverlapScheduler(
             val pageKey = nextInpaintCandidate() ?: break
             when (inpaintOne(pageKey, overlap = false)) {
                 InpaintOutcome.Committed -> Unit // counted inside inpaintOne
-                else -> Unit // failed/denied pages are reconciled at FINALIZE, not retried forever
+                // Deferred/failed/denied pages are reconciled at FINALIZE,
+                // not retried forever inside this drain.
+                else -> deferredByLeaseOwner += pageKey
             }
         }
     }
@@ -280,7 +292,7 @@ internal class OverlapScheduler(
         return null
     }
 
-    private enum class InpaintOutcome { Committed, Failed, NoWork, LeaseDenied }
+    private enum class InpaintOutcome { Committed, Failed, NoWork, LeaseDenied, Deferred }
 
     private suspend fun inpaintOne(pageKey: String, overlap: Boolean): InpaintOutcome {
         return inpaintMutex.withLock {
@@ -348,6 +360,21 @@ internal class OverlapScheduler(
                     if (committed) InpaintOutcome.Committed else InpaintOutcome.Failed
                 } catch (e: CancellationException) {
                     throw e
+                } catch (e: BatchContentionRejectedException) {
+                    // T925 coexistence: the page's guarded publication lost a
+                    // precondition race with a concurrent writer (typically the
+                    // reader's live translate-on-view lane) even after a
+                    // fresh-snapshot retry. The concurrent owner's committed
+                    // outcome is authoritative — defer the page for the rest
+                    // of the pass; the owner (or a later run) reconciles it.
+                    // Retrying here livelocked the whole ordered drain.
+                    counters.overlapInpaintFailures.incrementAndGet()
+                    deferredByLeaseOwner += pageKey
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t924 overlap inpaint yielded pageHash=${pageKey.hashCode()} " +
+                            "(concurrent writer owns the page; owner outcome or a later run reconciles)"
+                    }
+                    InpaintOutcome.Deferred
                 } catch (t: Throwable) {
                     counters.overlapInpaintFailures.incrementAndGet()
                     logcat(LogPriority.WARN) {

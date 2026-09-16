@@ -80,7 +80,12 @@ data class AnalysisPolicySnapshot(
 /** Envelope policy fields frozen at RUN_SNAPSHOT (values owned by T924-AP-*). */
 @Serializable
 data class EnvelopePolicySnapshot(
-    val maxBlocks: Int = 32,
+    /**
+     * Director decision (2026-09-16): pack ~5 pages per translation call to
+     * cut provider calls ~5×. 64 blocks ≈ 5 typical manhwa pages; the token
+     * budgets still split dense chapters adaptively.
+     */
+    val maxBlocks: Int = 64,
     val maxPages: Int = 8,
 )
 

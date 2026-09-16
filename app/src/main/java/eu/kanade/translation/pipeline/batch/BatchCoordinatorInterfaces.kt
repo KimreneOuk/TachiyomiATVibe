@@ -162,10 +162,24 @@ data class BatchPass1Outcome(
  * in-memory result. The marker is shared with the coordinator so a rejected
  * write cannot be reclassified as an unexpected terminal stage failure.
  */
-internal class BatchPersistenceRejectedException(
+internal open class BatchPersistenceRejectedException(
     val pageKey: String? = null,
     val stage: BatchDiagnosticStage? = null,
 ) : IllegalStateException("Batch persistence publication rejected")
+
+/**
+ * The stage's guarded publication lost a PRECONDITION race with a concurrent
+ * writer on the same page (typically the reader's live translate-on-view lane
+ * committing blocks while the batch drain publishes) and a fresh-snapshot
+ * retry was rejected too. This is CONTENTION, not corruption: the concurrent
+ * owner's committed outcome is authoritative, so the worker yields the page —
+ * the scheduler defers it for the rest of the pass and a later run (or the
+ * owner itself) reconciles it. Retrying instead livelocks the drain.
+ */
+internal class BatchContentionRejectedException(
+    yieldPageKey: String? = null,
+    stage: BatchDiagnosticStage? = null,
+) : BatchPersistenceRejectedException(yieldPageKey, stage)
 
 open class BatchScheduleListener {
     open fun ocrStarted(pageKey: String) {}

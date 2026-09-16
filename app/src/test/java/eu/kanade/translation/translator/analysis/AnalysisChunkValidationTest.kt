@@ -20,10 +20,10 @@ import org.junit.jupiter.api.Test
 /**
  * T924 WP5 slice A: fake-analyzer coverage for the typed analysis client —
  * the V1..V9 hard-fail matrix (T924-AP-05, all response-fatal), the
- * malformed-response taxonomy (MISSING_ONLY / AMBIGUOUS_PROTOCOL /
- * TERMINAL_REFUSAL), the exactly-one-identical-reissue policy, the refusal
- * no-auto-retry rule, and the DR-A Option 1 MISSING_ONLY partial-commit
- * classification (provider-analysis contract §6).
+ * response taxonomy (MISSING_ONLY / AMBIGUOUS_PROTOCOL / TERMINAL_REFUSAL),
+ * the summary-mode rule (Director redesign: any non-refusal body commits as
+ * a free-form summary on the FIRST attempt — no reissue loop), and the
+ * refusal no-auto-retry rule.
  */
 class AnalysisChunkValidationTest {
 
@@ -41,7 +41,6 @@ class AnalysisChunkValidationTest {
                         AnalysisRequestBuilder.RequestBlock(
                             "p0_b0",
                             blockText,
-                            "e:${excerptHash16()}",
                         ),
                     ),
                 ),
@@ -52,7 +51,6 @@ class AnalysisChunkValidationTest {
                         AnalysisRequestBuilder.RequestBlock(
                             "p1_b0",
                             "context page text",
-                            "e:${excerptHash16("context page text")}",
                         ),
                     ),
                 ),
@@ -334,30 +332,32 @@ class AnalysisChunkValidationTest {
     }
 
     @Test
-    fun `malformed response gets exactly one identical reissue then typed PROTOCOL pause`() = runTest {
-        val malformed = "{\"schemaVersion\":2,\"chunkId\":\"x\"}"
-        val transport = FakeTransport(mutableListOf(malformed, malformed))
+    fun `any non-refusal free-form body is a valid summary without reissue`() = runTest {
+        // Summary mode (Director decision): a body the strict contract once
+        // called malformed is just free-form text — validated on the first
+        // attempt, never reissued.
+        val body = "{\"schemaVersion\":2,\"chunkId\":\"x\"}"
+        val transport = FakeTransport(mutableListOf(body))
         val attempt = executor(transport).execute(request(), corePageKeys = setOf("p0"))
-        attempt.shouldBeInstanceOf<AnalysisChunkAttempt.Malformed>()
-        attempt.failure.kind shouldBe ProviderFailureKind.PROTOCOL
-        // Malformed output is model-state: PAUSE, never TERMINAL.
-        attempt.failure.retryability shouldBe ProviderFailureRetryability.PAUSE
-        // The reissue is IDENTICAL (same wire document, gap-3 order intact).
-        transport.calls.size shouldBe 2
-        transport.calls[0] shouldBe transport.calls[1]
+        attempt.shouldBeInstanceOf<AnalysisChunkAttempt.Validated>()
+        attempt.response.narrativeSummary shouldBe body
+        attempt.attemptsUsed shouldBe 1
+        transport.calls.size shouldBe 1
     }
 
     @Test
-    fun `malformed then valid reissue commits the valid response`() = runTest {
-        val transport = FakeTransport(
-            mutableListOf(
-                "garbage not json",
-                validResponseJson().replace("\"COMEDY_X\", ", ""),
-            ),
-        )
-        val attempt = executor(transport).execute(request(), corePageKeys = setOf("p0"))
-        attempt.shouldBeInstanceOf<AnalysisChunkAttempt.Validated>()
-        attempt.attemptsUsed shouldBe 2
+    fun `blank and nothing answers are valid empty summaries`() = runTest {
+        // Summary mode (Director decision): an explicit "nothing" or a blank
+        // body means "no characters or places in this chunk" — a COMPLETE
+        // empty summary committed on the first attempt, never a reissue.
+        for (body in listOf("nothing", "  NOTHING  ", "   ")) {
+            val transport = FakeTransport(mutableListOf(body))
+            val attempt = executor(transport).execute(request(), corePageKeys = setOf("p0"))
+            attempt.shouldBeInstanceOf<AnalysisChunkAttempt.Validated>()
+            attempt.response.narrativeSummary.shouldBeNull()
+            attempt.attemptsUsed shouldBe 1
+            transport.calls.size shouldBe 1
+        }
     }
 
     @Test

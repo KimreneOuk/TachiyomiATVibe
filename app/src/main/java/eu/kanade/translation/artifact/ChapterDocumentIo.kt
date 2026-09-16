@@ -73,6 +73,63 @@ class UniFileChapterDocumentIo(
 
     private val dirCache = java.util.concurrent.ConcurrentHashMap<String, UniFile>()
 
+    /**
+     * T925-perf: per-directory name→document index. A SAF [UniFile.findFile]
+     * scan walks the directory children through ONE binder round-trip per
+     * entry — on the artifact tree (hundreds of sidecars in `generations/`,
+     * one subdirectory per page) that made every sidecar read a multi-second
+     * scan and a 70-page resume revalidation take minutes of silent work.
+     * The FIRST access to a directory pays ONE [UniFile.listFiles] call; all
+     * further lookups are map hits — including MISSES: absent names are cached
+     * under an [ABSENT] marker, because the publish sweep probes names that do
+     * not exist (`.bak` before the first rotation) on every atomic write.
+     * Mutations through this IO keep the index coherent ([delete] and renames
+     * mark ABSENT or insert surgically; creates insert directly).
+     */
+    private val fileIndex = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, Any>>()
+
+    /** Marks a probed-and-missing name so repeated misses stay O(1). */
+    private val ABSENT = Any()
+
+    private fun lookupInDir(dir: UniFile, dirPath: String, fileName: String): UniFile? {
+        val index = fileIndex[dirPath]
+        if (index != null) {
+            return when (val hit = index[fileName]) {
+                // Never-seen name: one direct probe (it may exist outside this
+                // IO), then cached — a NEGATIVE result is cached too, because
+                // publish paths probe absent `.bak`/`.tmp` names constantly and
+                // each probe was a full SAF child walk (seconds per call).
+                // Mutations through this IO keep entries coherent (delete and
+                // rename mark ABSENT, creates insert, nothing else survives).
+                null -> {
+                    val found = dir.findFile(fileName)
+                    index[fileName] = found ?: ABSENT
+                    found
+                }
+                ABSENT -> null
+                else -> hit as UniFile
+            }
+        }
+        val built = java.util.concurrent.ConcurrentHashMap<String, Any>()
+        runCatching { dir.listFiles() }.getOrNull()?.forEach { child ->
+            child.name?.let { name -> built[name] = child }
+        }
+        fileIndex[dirPath] = built
+        return when (val hit = built[fileName]) {
+            null -> {
+                val found = dir.findFile(fileName)
+                built[fileName] = found ?: ABSENT
+                found
+            }
+            ABSENT -> null
+            else -> hit as UniFile
+        }
+    }
+
+    private fun invalidateIndex(dirPath: String) {
+        fileIndex.remove(dirPath)
+    }
+
     private fun resolveDir(dirPath: String): UniFile? {
         if (dirPath.isEmpty()) return root
         dirCache[dirPath]?.takeIf { it.exists() && it.isDirectory }?.let { return it }
@@ -97,12 +154,12 @@ class UniFileChapterDocumentIo(
         if (name.isEmpty()) return root
         val slashIndex = name.lastIndexOf('/')
         if (slashIndex == -1) {
-            return root.findFile(name)
+            return lookupInDir(root, "", name)
         }
         val dirPath = name.substring(0, slashIndex)
         val fileName = name.substring(slashIndex + 1)
         val dir = resolveDir(dirPath) ?: return null
-        return dir.findFile(fileName)
+        return lookupInDir(dir, dirPath, fileName)
     }
 
     private fun resolveOrCreate(name: String): UniFile? {
@@ -122,7 +179,10 @@ class UniFileChapterDocumentIo(
             }
         }
         val last = segments.last()
-        return current.findFile(last) ?: current.createFile(last)
+        return current.findFile(last)
+            ?: current.createFile(last)?.also { created ->
+                fileIndex.getOrPut(currentPath) { java.util.concurrent.ConcurrentHashMap() }[last] = created
+            }
     }
 
     override fun exists(name: String): Boolean = resolve(name)?.exists() == true
@@ -159,6 +219,7 @@ class UniFileChapterDocumentIo(
 
     override fun renameNoReplace(from: String, to: String): RenameResult {
         val source = resolve(from) ?: return RenameResult.FAILED
+        invalidateIndex(to.substringBeforeLast('/', ""))
         val segments = to.split('/')
         if (segments.any { it.isEmpty() }) return RenameResult.FAILED
         var parent: UniFile = root
@@ -175,6 +236,11 @@ class UniFileChapterDocumentIo(
             // Files.move without REPLACE_EXISTING is the enforceable raw-file
             // admission primitive. URI/SAF providers expose no equivalent.
             Files.move(sourcePath, targetPath)
+            // Files.move leaves the source UniFile bound to the old path, so
+            // only mark the source absent and re-list the target directory
+            // (cold path — quarantine restore).
+            fileIndex[from.substringBeforeLast('/', "")]?.put(from.substringAfterLast('/'), ABSENT)
+            invalidateIndex(to.substringBeforeLast('/', ""))
             RenameResult.MOVED
         } catch (_: FileAlreadyExistsException) {
             RenameResult.DESTINATION_EXISTS
@@ -195,12 +261,35 @@ class UniFileChapterDocumentIo(
         segments.dropLast(1).forEach { segment ->
             parent = parent.findFile(segment) ?: parent.createDirectory(segment) ?: return false
         }
-        return runCatching { source.renameTo(segments.last()) }.getOrDefault(false)
+        val renamed = runCatching { source.renameTo(segments.last()) }.getOrDefault(false)
+        if (!renamed) return false
+        // Surgical index update — SAF documents rebind in place (the renamed
+        // UniFile's URI is updated), so no directory re-listing is needed.
+        // Implementations that do NOT rebind (raw/test doubles still point at
+        // the old path) are detected by the existence probe and fall back to a
+        // re-list instead of caching a stale entry.
+        val fromDir = from.substringBeforeLast('/', "")
+        val toDir = to.substringBeforeLast('/', "")
+        if (source.exists()) {
+            fileIndex[fromDir]?.put(from.substringAfterLast('/'), ABSENT)
+            fileIndex[toDir]?.put(to.substringAfterLast('/'), source)
+        } else {
+            invalidateIndex(fromDir)
+            invalidateIndex(toDir)
+        }
+        return true
     }
 
     override fun delete(name: String): Boolean {
         dirCache.remove(name)
-        return resolve(name)?.delete() == true
+        val deleted = resolve(name)?.delete() == true
+        if (deleted) {
+            // Mark the name absent rather than dropping the entry: a later
+            // resolve of the deleted name (publish sweeps `.bak` every round)
+            // must not re-walk the directory.
+            fileIndex[name.substringBeforeLast('/', "")]?.put(name.substringAfterLast('/'), ABSENT)
+        }
+        return deleted
     }
 
     override fun list(directoryName: String): List<String>? =

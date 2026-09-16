@@ -28,6 +28,9 @@ import kotlin.math.ceil
  * 4. Rejection of dispatches with uncertified contracts (isCertified = false) at the transport layer.
  * 5. Per-provider disable mechanism (uncertified contract -> terminal dispatch refusal).
  * 6. Rejection of dispatches where finalInputTokens + reservedOutputTokens + 512 > 8192 before network calls.
+ *    (Analysis raw path: an oversized OUTPUT reservation is first clamped to
+ *    what fits the window; only an oversized INPUT — under the analysis
+ *    output floor — is refused at the guard.)
  * 7. Verification that dispatches within 8k budget pass the transport gate and sync certified tokens to governor.
  */
 class InputAccountingContractTest {
@@ -43,6 +46,18 @@ class InputAccountingContractTest {
             },
         )
         return governor to events
+    }
+
+    /**
+     * ~[targetBaseTokens] honest base tokens of repeated CJK text: every
+     * certified bound (x1.10..x1.40 + offset) pushes the final payload count
+     * past the point where ANY analysis output reservation fits
+     * (8192 - 512 - finalInput < 1024-token analysis floor).
+     */
+    private fun oversizedUserPrompt(targetBaseTokens: Int = 6_400): String {
+        val unit = "魔剣アルステラは神社の地下に眠っている"
+        val perUnit = TranslationContextChunkPlanner.estimateTokens(unit)
+        return unit.repeat(targetBaseTokens / perUnit + 1)
     }
 
     // =========================================================================
@@ -343,9 +358,10 @@ class InputAccountingContractTest {
             requestGovernor = governor,
         )
 
-        // With reservedOutputTokens = 7800, input + 7800 + 512 > 8192
+        // The INPUT is oversized: no honest output reservation fits under the
+        // analysis floor, the clamp stands down, and the guard refuses.
         val ex = shouldThrow<ProviderFailureException> {
-            translator.postStructuredAnalysisRaw("system prompt", "user prompt", maxOutputTokens = 7800)
+            translator.postStructuredAnalysisRaw("system prompt", oversizedUserPrompt(), maxOutputTokens = 7800)
         }
         ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
         ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
@@ -367,7 +383,7 @@ class InputAccountingContractTest {
         )
 
         val ex = shouldThrow<ProviderFailureException> {
-            translator.postStructuredAnalysisRaw("system prompt", "user prompt", maxOutputTokens = 7800)
+            translator.postStructuredAnalysisRaw("system prompt", oversizedUserPrompt(), maxOutputTokens = 7800)
         }
         ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
         ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
@@ -389,7 +405,7 @@ class InputAccountingContractTest {
         )
 
         val ex = shouldThrow<ProviderFailureException> {
-            translator.postStructuredAnalysisRaw("system prompt", "user prompt", maxOutputTokens = 7800)
+            translator.postStructuredAnalysisRaw("system prompt", oversizedUserPrompt(), maxOutputTokens = 7800)
         }
         ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
         ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
@@ -411,12 +427,35 @@ class InputAccountingContractTest {
         )
 
         val ex = shouldThrow<ProviderFailureException> {
-            translator.postStructuredAnalysisRaw("system prompt", "user prompt", maxOutputTokens = 7800)
+            translator.postStructuredAnalysisRaw("system prompt", oversizedUserPrompt(), maxOutputTokens = 7800)
         }
         ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
         ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
         ex.failure.safeSummary shouldContain "dispatch refused under 8k"
         ex.failure.safeSummary shouldContain "gemini"
+    }
+
+    @Test
+    fun `Gemini analysis output reservation is clamped to the 8k window instead of refused`() = runTest {
+        val (governor, _) = interceptingGovernor()
+        val translator = GeminiTranslator(
+            fromLang = TextRecognizerLanguage.JAPANESE,
+            toLang = TextTranslatorLanguage.ENGLISH,
+            apiKey = "test-gemini-key",
+            modelName = "gemini-1.5-flash",
+            maxOutputToken = 8000,
+            temp = 0.2f,
+            requestGovernor = governor,
+        )
+
+        // A small input with an oversized requested output no longer refuses:
+        // the reservation is clamped to what fits and the dispatch proceeds.
+        val ex = shouldThrow<AdmissionInterceptException> {
+            translator.postStructuredAnalysisRaw("system prompt", "user prompt", maxOutputTokens = 7800)
+        }
+        ex.event.outcome shouldBe "admitted"
+        // finalInputTokens + reservedOutput stays inside the dispatch window.
+        (ex.event.estimatedTokens <= 8_192 - 512) shouldBe true
     }
 
     // =========================================================================

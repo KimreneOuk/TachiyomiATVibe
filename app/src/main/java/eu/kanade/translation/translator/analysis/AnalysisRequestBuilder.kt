@@ -25,6 +25,21 @@ object AnalysisRequestBuilder {
     /** Wire protocol identity (T924-AP-01.2 / T924-AP-03). */
     const val PROTOCOL = "tachiyomiat-analysis"
 
+    /**
+     * Planning-side token overhead one wire block adds beyond its text
+     * (`{"blockId":"p12_b3","text":..}` — id + JSON syntax ≈ 12 tokens). The
+     * corpus estimator adds this per block so chunk windowing budgets the
+     * ENVELOPE, not the raw OCR text (raw-text/4 heuristics undercount CJK
+     * ~2-4x and starve the dispatch window's fixed framing). The former
+     * `excerptHash` echo field was removed with the strict-extraction
+     * contract (summary-glossary redesign) — it carried ~12 more tokens per
+     * block that no consumer reads anymore.
+     */
+    const val PER_BLOCK_ENVELOPE_TOKENS = 12
+
+    /** Planning-side token overhead of one wire page entry (key/role/brackets ≈ 12 tokens). */
+    const val PER_PAGE_ENVELOPE_TOKENS = 12
+
     /** The only accepted wire schema version in the first release (T924-AP-01.2). */
     const val SCHEMA_VERSION = 1
 
@@ -45,17 +60,6 @@ object AnalysisRequestBuilder {
     data class RequestBlock(
         val blockId: String,
         val text: String,
-        /**
-         * T924-AP-05 V8 echo basis: `e:` + the first 16 hex chars of
-         * [eu.kanade.translation.artifact.StageFingerprints.sourceExcerptHash]
-         * over this block's source text, computed at request-build time. An
-         * LLM cannot compute SHA-256 — the contract's anchor-integrity rule is
-         * realizable only as an ECHO: the model copies the block's hash into
-         * its evidence anchors and the validator recomputes locally, so an
-         * invented/paraphrased anchor (a hash that does not match the cited
-         * block) stays response-fatal (wave-7c).
-         */
-        val excerptHash: String,
     )
 
     /**
@@ -128,11 +132,7 @@ object AnalysisRequestBuilder {
                 append("{\"pageKey\":\"${jsonEscape(page.pageKey)}\",\"role\":\"${page.role}\",\"blocks\":[")
                 page.blocks.forEachIndexed { blockIndex, block ->
                     if (blockIndex > 0) append(",")
-                    append("{\"blockId\":\"${jsonEscape(block.blockId)}\",\"text\":\"${jsonEscape(block.text)}\",")
-                    // T924-AP-05 V8 echo basis (wave-7c): the model copies
-                    // this hash into its evidence anchors; the validator
-                    // recomputes it locally from the same text.
-                    append("\"excerptHash\":\"${jsonEscape(block.excerptHash)}\"}")
+                    append("{\"blockId\":\"${jsonEscape(block.blockId)}\",\"text\":\"${jsonEscape(block.text)}\"}")
                 }
                 append("]}")
             }

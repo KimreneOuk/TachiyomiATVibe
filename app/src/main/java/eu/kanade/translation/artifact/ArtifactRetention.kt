@@ -14,67 +14,156 @@ internal class ArtifactRetention(
     internal fun reconcileRetention(
         manifest: ChapterArtifactManifest,
         stagedReachable: Set<String> = emptySet(),
-    ): RetentionResult {
-        val reachable = reachablePaths(manifest) + stagedReachable
+    ): RetentionResult = deleteVerifiedOrphans(
+        collectOrphanCandidates(manifest, stagedReachable),
+        manifest,
+        stagedReachable,
+    )
+
+    /**
+     * Phase 1 of the split retention sweep: enumerate deletion CANDIDATES
+     * without mutating anything. Pure over its inputs — it takes NO store
+     * monitor — so the minutes-long SAF crawl can run OFF the store mutex.
+     * (JDB-proven 2026-09-15: the crawl held the store mutex for 20+ minutes
+     * on a 70-page chapter and froze every page lease in the pipeline.) The
+     * parent listing already proves a child exists, so no per-file `io.exists`
+     * probe is paid during the crawl; deletions re-verify in phase 2.
+     */
+    internal fun collectOrphanCandidates(
+        manifest: ChapterArtifactManifest,
+        stagedReachable: Set<String> = emptySet(),
+    ): Set<String> {
+        val reachable = reachablePaths(manifest)
         val retainedImageGenerations = retainedImageGenerations(manifest)
-        val deleted = mutableListOf<String>()
+        val candidates = mutableSetOf<String>()
 
         // Orphan temp sibling of the manifest itself (outside the managed tree).
         val manifestTemp = AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
-        if (manifestTemp !in stagedReachable && io.exists(manifestTemp) && io.delete(manifestTemp)) {
-            deleted += manifestTemp
-        }
+        if (manifestTemp !in stagedReachable) candidates += manifestTemp
 
         layout.managedDirectories.forEach { root ->
-            sweepDirectory(root, reachable, retainedImageGenerations, deleted)
+            collectDirectory(root, reachable, retainedImageGenerations, stagedReachable, candidates)
         }
+        return candidates
+    }
+
+    /**
+     * Recurses [directory]; returns true when every entry under it is itself a
+     * candidate (a fully reclaimable directory, matching the old
+     * became-empty rule). Managed roots are never candidates themselves.
+     */
+    private fun collectDirectory(
+        directory: String,
+        reachable: Set<String>,
+        retainedImageGenerations: Set<String>,
+        stagedReachable: Set<String>,
+        candidates: MutableSet<String>,
+    ): Boolean {
+        val children = io.list(directory) ?: return false
+        var allReclaimable = true
+        children.forEach { child ->
+            val path = "$directory/$child"
+            val reclaimable = if (io.list(path) != null) {
+                // Directory: reclaimable only when everything under it is.
+                if (collectDirectory(path, reachable, retainedImageGenerations, stagedReachable, candidates) &&
+                    path !in layout.managedDirectories
+                ) {
+                    candidates += path
+                    true
+                } else {
+                    false
+                }
+            } else {
+                // File — existence is proven by the parent listing.
+                val orphan = path !in stagedReachable &&
+                    !isRetained(path, reachable, retainedImageGenerations) &&
+                    layout.isManagedPath(path)
+                if (orphan) candidates += path
+                orphan
+            }
+            if (!reclaimable) allReclaimable = false
+        }
+        return allReclaimable
+    }
+
+    /**
+     * Phase 2: delete the collected candidates after re-verifying each against
+     * [manifest] — the LIVE manifest when called under the store mutex — so a
+     * file a concurrent publish made reachable mid-crawl is spared (the sweep
+     * ran off-lock by design). Deleting the candidates takes bounded IO: only
+     * genuinely orphaned files pay a binder round-trip here.
+     */
+    internal fun deleteVerifiedOrphans(
+        candidateOrphans: Collection<String>,
+        manifest: ChapterArtifactManifest,
+        stagedReachable: Set<String> = emptySet(),
+    ): RetentionResult {
+        val deleted = mutableListOf<String>()
+        val reachable = reachablePaths(manifest)
+        val retainedImageGenerations = retainedImageGenerations(manifest)
+        val manifestTemp = AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
+        if (
+            manifestTemp in candidateOrphans &&
+            manifestTemp !in stagedReachable &&
+            io.exists(manifestTemp) &&
+            io.delete(manifestTemp)
+        ) {
+            deleted += manifestTemp
+        }
+        // Children sort before their parent directories so a reclaimable
+        // directory is emptied before it is removed.
+        candidateOrphans.asSequence()
+            .filter { it != manifestTemp }
+            .sortedByDescending { it.length }
+            .forEach { path ->
+                if (path in stagedReachable) return@forEach
+                // Re-verification against the live reachability graph.
+                if (isRetained(path, reachable, retainedImageGenerations)) return@forEach
+                if (!layout.isManagedPath(path)) return@forEach
+                if (pathIsDirectory(path)) {
+                    // Recursive deletes must not consume a child a concurrent
+                    // publish made reachable: only remove a verified-empty dir.
+                    if (io.list(path).isNullOrEmpty() && io.delete(path)) deleted += path
+                } else if (io.exists(path) && io.delete(path)) {
+                    deleted += path
+                }
+            }
         return RetentionResult(deleted.size, deleted)
     }
+
+    private fun pathIsDirectory(path: String): Boolean = io.list(path) != null
 
     /**
      * T930 Slice A4 (Amendment D): event-driven known-orphan deletion.
      * Deletes explicitly known orphans (e.g. unlinked generation records or candidate
      * snapshots) without executing a full reachability crawl over the filesystem.
      * Race register #6: orphan must be unreachable from BOTH durable and staged state.
+     *
+     * When [durableManifest] is supplied (hot-path callers MUST supply it), every
+     * candidate is additionally filtered through the full sweep's reachability
+     * predicate, so the manifest-unreachability half of race register #6 is
+     * enforced here instead of relying on caller discipline.
      */
     internal fun deleteKnownOrphans(
         candidateOrphans: Collection<String>,
         stagedReachable: Set<String> = emptySet(),
+        durableManifest: ChapterArtifactManifest? = null,
     ): RetentionResult {
         val deleted = mutableListOf<String>()
+        val reachable = durableManifest?.let { reachablePaths(it) } ?: emptySet()
+        val retainedGenerations = durableManifest?.let { retainedImageGenerations(it) } ?: emptySet()
         val manifestTemp = AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
         if (manifestTemp !in stagedReachable && io.exists(manifestTemp) && io.delete(manifestTemp)) {
             deleted += manifestTemp
         }
         for (path in candidateOrphans) {
-            if (path !in stagedReachable && layout.isManagedPath(path) && io.exists(path) && io.delete(path)) {
+            if (path in stagedReachable) continue
+            if (durableManifest != null && isRetained(path, reachable, retainedGenerations)) continue
+            if (layout.isManagedPath(path) && io.exists(path) && io.delete(path)) {
                 deleted += path
             }
         }
         return RetentionResult(deleted.size, deleted)
-    }
-
-    private fun sweepDirectory(
-        directory: String,
-        reachable: Set<String>,
-        retainedImageGenerations: Set<String>,
-        deleted: MutableList<String>,
-    ) {
-        val children = io.list(directory) ?: return
-        children.forEach { child ->
-            val path = "$directory/$child"
-            when {
-                io.list(path) != null -> {
-                    sweepDirectory(path, reachable, retainedImageGenerations, deleted)
-                    // Remove subdirectories that became empty, keeping the
-                    // managed roots themselves.
-                    if (io.list(path).isNullOrEmpty() && io.delete(path)) deleted += path
-                }
-                io.exists(path) && !isRetained(path, reachable, retainedImageGenerations) -> {
-                    if (layout.isManagedPath(path) && io.delete(path)) deleted += path
-                }
-            }
-        }
     }
 
     private fun isRetained(

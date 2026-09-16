@@ -148,8 +148,45 @@ open class GeminiTranslator(
     ): String = generateContent(
         systemPrompt = systemPrompt,
         prompt = userPrompt,
-        maxOutputTokens = maxOutputTokens,
+        maxOutputTokens = clampAnalysisOutputToPayload(systemPrompt, userPrompt, maxOutputTokens),
     )
+
+    /**
+     * Analysis-only output-budget clamp, counted on the EXACT payload the
+     * dispatch guard will re-count (zero estimate drift by construction):
+     * when the honest final-input count leaves less room than requested,
+     * shrink the reservation to what fits under the 8k window instead of
+     * letting the guard refuse the chunk. Below the analysis output floor
+     * the reservation is returned unchanged — the guard's refusal (mapped
+     * to a typed PAUSE upstream) remains the honest outcome for an
+     * unfixably oversized input.
+     */
+    private fun clampAnalysisOutputToPayload(
+        systemPrompt: String,
+        prompt: String,
+        requestedOutputTokens: Int,
+    ): Int {
+        val contract = inputAccountingContract
+        if (contract == null || !contract.isCertified) return requestedOutputTokens
+        val probe = GeminiRequestPayload.create(
+            modelName = modelName,
+            systemPrompt = systemPrompt,
+            prompt = prompt,
+            maxOutputTokens = requestedOutputTokens,
+            temperature = temp,
+            thinkingMode = thinkingMode,
+        )
+        val finalInputTokens = contract.countFinalTokens(probe.payload)
+        val available = 8_192 - 512 - finalInputTokens
+        if (available >= requestedOutputTokens || available < ANALYSIS_MIN_OUTPUT_TOKENS) {
+            return requestedOutputTokens
+        }
+        logcat(LogPriority.WARN, tag = "GeminiTranslator") {
+            "event=analysis_output_budget_clamped model=${ShortHash.hash(modelName)} " +
+                "requested=$requestedOutputTokens clamped=$available finalInputTokens=$finalInputTokens"
+        }
+        return available
+    }
 
     override suspend fun promptText(prompt: String): String =
         try {
@@ -273,6 +310,9 @@ open class GeminiTranslator(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
+        /** Analysis JSON below this size cannot carry a usable record set. */
+        const val ANALYSIS_MIN_OUTPUT_TOKENS = 1_024
     }
 
     private data class RawGeminiResponse(

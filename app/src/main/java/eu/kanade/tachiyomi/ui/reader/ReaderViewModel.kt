@@ -68,6 +68,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toPageDisplayProjection
@@ -2644,6 +2645,12 @@ class ReaderViewModel @JvmOverloads constructor(
                 pt.translationStatus == StageStatus.FAILED ||
                 pt.renderStatus == StageStatus.FAILED ||
                 pt.displayImageName != null ||
+                // T924 no-render batch design: a page whose cleaned image is
+                // published and current already produced its durable result —
+                // the batch leaves renderStatus PENDING forever (overlay is
+                // drawn on demand), and treating that as stranded healed healthy
+                // pages one by one (2026-09-16 field report).
+                pt.isCleanedImageReady ||
                 pt.isTextlessTerminal
             if (isTerminal) continue
             val isNonTerminal = pt.ocrStatus == StageStatus.RUNNING ||
@@ -2674,6 +2681,7 @@ class ReaderViewModel @JvmOverloads constructor(
                         safe.translationStatus == StageStatus.FAILED ||
                         safe.renderStatus == StageStatus.FAILED ||
                         safe.displayImageName != null ||
+                        safe.isCleanedImageReady ||
                         safe.isTextlessTerminal
                     if (safeTerminal) return@updatePageFromCurrentSnapshot safe
                     safe.apply {

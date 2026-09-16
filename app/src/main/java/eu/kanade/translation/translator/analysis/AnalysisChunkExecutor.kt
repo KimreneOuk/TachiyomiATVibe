@@ -1,6 +1,5 @@
 package eu.kanade.translation.translator.analysis
 
-import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.BatchProviderSublimit
 import eu.kanade.translation.translator.BatchRequestSublimitGate
@@ -11,7 +10,7 @@ import eu.kanade.translation.translator.ProviderRequestKey
 import eu.kanade.translation.translator.ProviderRequestMetadata
 import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
-import eu.kanade.translation.translator.analysis.AnalysisResponseValidator.AnalysisResponseOutcome
+import eu.kanade.translation.translator.providers.OcrArtifactSanitizer
 import eu.kanade.translation.translator.retry.RequestRetryBudget
 import eu.kanade.translation.translator.retry.withTranslationRetry
 import kotlinx.coroutines.CancellationException
@@ -151,7 +150,6 @@ class AnalysisChunkExecutor(
         request: AnalysisRequestBuilder.AnalysisChunkRequest,
         corePageKeys: Set<String>,
     ): AnalysisChunkAttempt {
-        val contextPageKeys = request.orderedPageKeys.toSet() - corePageKeys
         val metadata = ProviderRequestMetadata(
             key = requestKey,
             estimatedInputTokens = estimateTokens(request.requestJson),
@@ -161,7 +159,6 @@ class AnalysisChunkExecutor(
         )
         val budget = RequestRetryBudget()
         var attemptsUsed = 0
-        var malformedViolations: List<String>? = null
 
         // At most two CLASSIFIED attempts (original + one identical reissue);
         // each attempt's TRANSPORT may retry under withTranslationRetry.
@@ -202,9 +199,11 @@ class AnalysisChunkExecutor(
                 )
             }
 
-            // Chapter-only authority guard: dropped + logged, never persisted.
-            when (val outcome = AnalysisResponseValidator.classify(rawText, request, corePageKeys, contextPageKeys)) {
-                is AnalysisResponseOutcome.Refusal -> {
+            // Chapter-only authority guard is implicit in summary mode: the
+            // free-form answer carries no structured authority keys.
+            val outcome = classifySummary(rawText)
+            when (outcome) {
+                is SummaryOutcome.Refused -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT t924 analysis chunk=${request.chunkId} refused (terminal, no auto-retry)"
                     }
@@ -217,36 +216,22 @@ class AnalysisChunkExecutor(
                         ),
                     )
                 }
-                is AnalysisResponseOutcome.Malformed -> {
-                    if (malformedViolations == null) {
-                        // T924-AP-05: exactly one identical reissue.
-                        malformedViolations = outcome.violations
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT t924 analysis chunk=${request.chunkId} malformed " +
-                                "(one identical reissue allowed): ${outcome.violations.firstOrNull()}"
-                        }
-                        continue
-                    }
-                    return AnalysisChunkAttempt.Malformed(
-                        violations = outcome.violations,
-                        failure = ProviderFailure(
-                            kind = ProviderFailureKind.PROTOCOL,
-                            retryability = ProviderFailureRetryability.PAUSE,
-                            safeSummary = "analysis chunk malformed after the allowed reissue",
-                        ),
-                    )
-                }
-                is AnalysisResponseOutcome.Validated -> {
-                    if (outcome.droppedAuthorityKeys.isNotEmpty()) {
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT t924 analysis chunk=${request.chunkId} dropped series-scoped " +
-                                "response keys (chapter-only authority): ${outcome.droppedAuthorityKeys}"
-                        }
-                    }
+                is SummaryOutcome.Summary -> {
                     return AnalysisChunkAttempt.Validated(
-                        response = outcome.response,
-                        coverage = outcome.coverage,
-                        droppedAuthorityKeys = outcome.droppedAuthorityKeys,
+                        response = AnalysisResponseValidator.ValidatedAnalysisResponse(
+                            chunkId = null,
+                            terms = emptyList(),
+                            entities = emptyList(),
+                            scenes = emptyList(),
+                            narrativeSummary = outcome.text,
+                            conflictNotes = emptyList(),
+                            evidenceRefs = emptyList(),
+                        ),
+                        coverage = AnalysisCoverage(
+                            kind = AnalysisCoverageKind.COMPLETE,
+                            reasons = emptyList(),
+                        ),
+                        droppedAuthorityKeys = emptyList(),
                         attemptsUsed = attemptsUsed,
                     )
                 }
@@ -261,6 +246,35 @@ class AnalysisChunkExecutor(
                 safeSummary = "analysis attempt loop exhausted",
             ),
         )
+    }
+
+    /**
+     * Summary-mode classification (Director decision): free-form text in,
+     * bounded summary out. The strict T924-AP-04 validator (shape, id
+     * patterns, verbatim hash echo) failed against real providers twice and
+     * paused every run — a free-form answer cannot be structurally
+     * malformed, so the only terminal outcomes are an explicit refusal and
+     * transport failures. A blank or "nothing" answer is a VALID empty
+     * summary (the chunk commits; the page set owes no records).
+     */
+    private sealed interface SummaryOutcome {
+        data class Refused(val marker: String) : SummaryOutcome
+        data class Summary(val text: String?) : SummaryOutcome
+    }
+
+    private fun classifySummary(rawText: String): SummaryOutcome {
+        val stripped = OcrArtifactSanitizer.stripThinkingTags(rawText)
+        if (TranslationResponseFaithfulness.isStructuralRefusal(stripped)) {
+            return SummaryOutcome.Refused("structural refusal marker in response body")
+        }
+        val body = stripped.trim()
+            .removePrefix("```").removePrefix("json").removePrefix("JSON")
+            .substringBeforeLast("```")
+            .trim()
+        if (body.isBlank() || body.equals("nothing", ignoreCase = true)) {
+            return SummaryOutcome.Summary(null)
+        }
+        return SummaryOutcome.Summary(body.take(AnalysisEngineTransport.MAX_SUMMARY_CHARS))
     }
 
     /** Coarse deterministic wire-size token estimate (governor input only). */
@@ -298,7 +312,9 @@ sealed interface AnalysisChunkRunOutcome {
 
 /** Builds the persisted [eu.kanade.translation.artifact.AnalyzerProvenance]. */
 object AnalyzerProvenanceFactory {
-    const val PROMPT_VERSION = 1
+
+    /** v2: free-form chunk summaries (Director decision, summary-glossary redesign). */
+    const val PROMPT_VERSION = 2
     const val ANALYSIS_SCHEMA_VERSION = AnalysisRequestBuilder.SCHEMA_VERSION
 
     fun from(transport: AnalysisTextTransport): eu.kanade.translation.artifact.AnalyzerProvenance =
@@ -327,14 +343,9 @@ fun AnalysisEvidenceTexts.toRequestPages(
                 AnalysisRequestBuilder.ROLE_CONTEXT
             },
             blocks = blockIds.map { blockId ->
-                val text = textByBlockId[blockId].orEmpty()
                 AnalysisRequestBuilder.RequestBlock(
                     blockId = blockId,
-                    text = text,
-                    // Wave-7c: the V8 echo basis is computed from the SAME
-                    // text the request carries, with the SAME fingerprint
-                    // function the validator recomputes with (16-hex prefix).
-                    excerptHash = "e:" + StageFingerprints.sourceExcerptHash(text).take(16),
+                    text = textByBlockId[blockId].orEmpty(),
                 )
             },
         )

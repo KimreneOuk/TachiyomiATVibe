@@ -144,13 +144,18 @@ class EightKilobyteComplianceTest {
     @Test
     fun `analysis chunks comply with 8k`() {
         val policy = AnalysisChunkPolicy()
-        policy.maxEstimatedInputTokens shouldBe 4_608
-        AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 3_072
-        ChapterProfileBatchCoordinator.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 3_072
+        policy.maxEstimatedInputTokens shouldBe 4_096
+        AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 512
+        ChapterProfileBatchCoordinator.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 512
 
+        // The per-page estimates exclude the chunk-level fixed framing
+        // (system+user prompts + envelope scaffolding, ~400 tokens); the
+        // input cap reserves that framing room, and the free-form summary
+        // output budget is small by design, so the pinned arithmetic sums
+        // well under the window.
         val totalAnalysisBudget = policy.maxEstimatedInputTokens +
             AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS + 512
-        totalAnalysisBudget shouldBe 8_192
+        totalAnalysisBudget shouldBe 5_120
         (totalAnalysisBudget <= 8_192) shouldBe true
     }
 

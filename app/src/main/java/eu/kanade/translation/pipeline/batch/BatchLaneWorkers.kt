@@ -710,8 +710,25 @@ internal class BatchLaneWorkers(
                     TranslationTraceStage.CLEANED_PERSIST,
                     lane = TranslationTraceLane.STORAGE,
                 )
-                val published = try {
-                    persistCleanedBitmap(
+                suspend fun publishOnce(): ChapterTranslationStore.PageSnapshot? {
+                    // Mirror guardedBatchUpdate's stale-cache recovery: the
+                    // group-commit flush can publish this page's OWN staged
+                    // translation record DURING inpaint, bumping
+                    // artifactPageVersion after the lease-time identity was
+                    // captured — the stale precondition was our own cache, not
+                    // a foreign writer, and it rejected EVERY page
+                    // deterministically (2026-09-16 bubble-cleaning failures).
+                    // A lease/generation change still rejects below (T917
+                    // ownership fence) — the manual lane is never preempted.
+                    batchWriteIdentities[pageKey]?.let { identity ->
+                        val live = store.snapshot(pageKey)
+                        if (live.generation == identity.generation &&
+                            live.leaseToken == identity.leaseToken
+                        ) {
+                            refreshBatchIdentity(pageKey, live)
+                        }
+                    }
+                    return persistCleanedBitmap(
                         target,
                         cleaned,
                         companionDir,
@@ -723,12 +740,32 @@ internal class BatchLaneWorkers(
                         chapter.id,
                         expectedPrecondition = batchWritePrecondition(pageKey),
                     )
+                }
+                var published = try {
+                    publishOnce()
                 } catch (t: Throwable) {
                     persistSpan.end(
                         if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
                         error = t,
                     )
                     throw t
+                }
+                if (published == null) {
+                    // T925 coexistence: the precondition raced a concurrent
+                    // writer (typically the reader's live translate-on-view
+                    // lane committing blocks). ONE fresh-snapshot retry; a
+                    // second rejection means the page is being rewritten
+                    // underneath us continuously and we YIELD it (typed
+                    // contention) instead of livelocking the drain.
+                    published = try {
+                        publishOnce()
+                    } catch (t: Throwable) {
+                        persistSpan.end(
+                            if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
+                            error = t,
+                        )
+                        throw t
+                    }
                 }
                 persistSpan.end(
                     if (published == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS,
@@ -740,11 +777,46 @@ internal class BatchLaneWorkers(
                     // and receive a retryable failure instead of a transient overlay.
                     target.cleanedBitmap = null
                     tracker?.markInpaintFailed(pageKey, "Cleaned image publication rejected")
-                    abortBatchCandidate(pageKey, "cleaned image publication rejected")
-                    throw BatchPersistenceRejectedException(
-                        pageKey = pageKey,
+                    abortBatchCandidate(pageKey, "cleaned image publication rejected (yielded to concurrent writer)")
+                    throw BatchContentionRejectedException(
+                        yieldPageKey = pageKey,
                         stage = BatchDiagnosticStage.INPAINT,
                     )
+                }
+                // T924 no-render batch design: the batch never runs an in-pass
+                // render stage — the reader draws the text overlay on demand
+                // from the committed blocks. A page that just reached
+                // inpaint-terminal with translated blocks is therefore
+                // display-complete as-is, but the durable record kept
+                // renderStatus PENDING, so hasRenderedResult never fired: the
+                // page never promoted to a committed display bundle (no
+                // pageSnapshotFileName), the reader's displayImageName gate
+                // stayed null and every batch page showed the ORIGINAL forever
+                // (2026-09-16 field report), while the reader's stranded-page
+                // sweep healed these healthy pages one by one. Stamp render
+                // terminal here: the durable write carries hasRenderedResult,
+                // which fires the committed promotion and flips the reader gate.
+                if (target.translationStatus == StageStatus.READY ||
+                    target.translationStatus == StageStatus.PARTIAL
+                ) {
+                    val stamp = guardedBatchUpdate(pageKey, "batch render terminal stamp", BatchStage.LAYOUT) { current ->
+                        (current ?: target).apply {
+                            if (renderStatus == StageStatus.PENDING && cleanedImageName != null) {
+                                renderStatus = StageStatus.READY
+                                updatedAt = System.currentTimeMillis()
+                            }
+                        }
+                    }
+                    if (stamp is ChapterTranslationStore.PatchResult.Rejected) {
+                        // Non-fatal: the page stays translation/inpaint-terminal
+                        // and a later run's adoption stamp (E2) retries it.
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT batch render terminal stamp rejected: " +
+                                "pageKey=$pageKey reason=${stamp.reason}"
+                        }
+                    } else {
+                        tracker?.markRenderDone(pageKey)
+                    }
                 }
             } else {
                 val terminal = guardedBatchUpdate(pageKey, "batch inpaint terminal state", BatchStage.INPAINT) {

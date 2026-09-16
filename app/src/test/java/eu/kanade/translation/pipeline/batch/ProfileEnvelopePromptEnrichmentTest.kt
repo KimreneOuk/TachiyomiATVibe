@@ -35,6 +35,10 @@ import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.translator.analysis.GlossaryEntry
+import eu.kanade.translation.translator.analysis.GlossaryEntryKind
+import eu.kanade.translation.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
 import eu.kanade.translation.translator.analysis.ValidatedEntity
 import eu.kanade.translation.translator.analysis.ValidatedTerm
 import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
@@ -120,12 +124,18 @@ class ProfileEnvelopePromptEnrichmentTest {
         artifactFileName = "Chapter 1.json",
     )
 
+    /** Summary-glossary seam (Director redesign): an empty sheet freezes fine. */
+    private val emptyGlossarySynthesizer = GlossarySynthesizer { _, _, _ ->
+        GlossarySynthesisOutcome.Glossary(emptyList())
+    }
+
     private fun coordinator(
         store: ChapterTranslationStore,
         pages: List<PageKey>,
         runner: AnalysisChunkRunner,
         translator: FakeTranslator?,
         maxPagesPerEnvelope: Int = 8,
+        synthesizer: GlossarySynthesizer = emptyGlossarySynthesizer,
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
         store = store,
         nativeWorker = FakePreflightOcrWorker(store),
@@ -144,6 +154,7 @@ class ProfileEnvelopePromptEnrichmentTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
+        glossarySynthesizer = synthesizer,
         textTranslator = translator,
         translationSublimitGate = BatchRequestSublimitGate(),
     )
@@ -305,8 +316,16 @@ class ProfileEnvelopePromptEnrichmentTest {
         store.preRegisterPages(pageKeys)
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
         val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
+        // The identity sheet comes from the one-shot synthesis (Director
+        // redesign): one CHARACTER entry whose source form matches the page
+        // text, so the subset matcher includes it in the sheet.
+        val synthesizer = GlossarySynthesizer { _, _, _ ->
+            GlossarySynthesisOutcome.Glossary(
+                listOf(GlossaryEntry(GlossaryEntryKind.CHARACTER, "source", "Source")),
+            )
+        }
 
-        val outcome = coordinator(store, pages, FakeAnalyzer(), translator)
+        val outcome = coordinator(store, pages, FakeAnalyzer(), translator, synthesizer = synthesizer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         outcome.status shouldBe BatchPass1Status.COMPLETED
@@ -314,10 +333,10 @@ class ProfileEnvelopePromptEnrichmentTest {
         translator.requests.size shouldBe 1
 
         val chunk = translator.requests.single()
-        // Glossary slot: entity id + matched source form + canonical target +
-        // the identity/gender decision rules + the range fence. (The frozen
-        // profile's fact ids are the reconciler's canonical `f-N` ids.)
-        chunk.glossary shouldContain "[f-1]"
+        // Glossary slot: synthesized fact id + matched source form + canonical
+        // target + the identity/gender decision rules + the range fence. (The
+        // frozen profile's fact ids are the synthesis-assigned `e001`/`t001`.)
+        chunk.glossary shouldContain "[e001]"
         chunk.glossary shouldContain "source"
         chunk.glossary shouldContain "Source"
         chunk.glossary shouldContain "Resolve the referent first"
@@ -333,7 +352,7 @@ class ProfileEnvelopePromptEnrichmentTest {
         val (_, counters) = runCounters(store)
         counters["promptShapeEnriched"] shouldBe 1
         counters["promptShapeLegacy"] shouldBe 0
-        counters["profileSubsetFactsMax"] shouldBe 2 // entity + term
+        counters["profileSubsetFactsMax"] shouldBe 1 // the one synthesized character fact
         counters["envelopeSplits"] shouldBe 0
         counters["pagesTranslated"] shouldBe 3
     }
@@ -402,6 +421,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
             analysisChunkRunner = FakeAnalyzer(),
+            glossarySynthesizer = emptyGlossarySynthesizer,
             textTranslator = translator,
             translationSublimitGate = BatchRequestSublimitGate(),
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -500,6 +520,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
             analysisChunkRunner = FakeAnalyzer(),
+            glossarySynthesizer = emptyGlossarySynthesizer,
             textTranslator = translator,
             translationSublimitGate = BatchRequestSublimitGate(),
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)

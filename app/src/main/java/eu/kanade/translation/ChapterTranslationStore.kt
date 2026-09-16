@@ -2763,6 +2763,12 @@ class ChapterTranslationStore(
     /** Performs the bounded artifact-tree sweep at a serialized chapter boundary. */
     suspend fun reconcileArtifactRetention() = persistenceScheduler.reconcileArtifactRetention()
 
+    /**
+     * Fire-and-forget boundary sweep for batch close paths — the caller never
+     * waits on the minutes-long crawl and the scheduler gates double-crawls.
+     */
+    fun reconcileArtifactRetentionAsync() = persistenceScheduler.reconcileArtifactRetentionAsync()
+
     internal fun schedulePersist(markPageDirty: Boolean = true) =
         persistenceScheduler.schedulePersist(markPageDirty)
 
