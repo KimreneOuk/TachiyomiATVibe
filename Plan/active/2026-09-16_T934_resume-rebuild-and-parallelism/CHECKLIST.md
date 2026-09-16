@@ -87,14 +87,50 @@ file:line. No assertion weakened anywhere (checked per lane).
       helper converted from runTest-wrapping (returns Unit on JVM) to a
       suspend TestScope extension.
 
-## R2a — Write-time digests + typed adoption failures (wave 2 — pending)
+## R2a — Write-time digests + typed adoption failures (wave 2 — Main Leader diff-verified)
 
-- [ ] R2a.1 Per-page source SHA-256 recorded durably at first admission
-- [ ] R2a.2 Run start consumes recorded digests; whole-chapter re-hash removed
-- [ ] R2a.3 Test: second run with unchanged sources performs zero source re-hash
-- [ ] R2a.4 Test: changed source detected at consumption fails closed
-- [ ] R2a.5 Typed adoption-failure reasons + WARN + run-record counters
-- [ ] R2a.6 D5/D6/D9/D10/D11 test files byte-identical
+- [x] R2a.1 Per-page source SHA-256 recorded durably at first admission —
+      additive `ChapterArtifactManifest.sourceShaByPageKey` (neutral default,
+      both-decode-directions tolerant, no schema bump), stamped inside
+      `checkpointOcr`'s atomic manifest transaction at
+      `ChapterArtifactStore.kt:728-738`; only well-formed 64-hex stamps.
+      Pinned by T934WriteTimeDigestsTest test 1.
+- [x] R2a.2 Run start consumes recorded digests — `effectiveSourcePairs`
+      replaces `orderedSourcePairs` at all 7 record-minting sites;
+      `admissionSourceSha` prefers a fresh dispatch observation (changed-source
+      detection stays non-vacuous) and falls back to the recorded digest
+      (dispatch hash failure no longer poisons reuse identity/runId/ST-14).
+      Coordinator-level whole-chapter re-read removed; shell construction pull
+      caveat tracked as R2a-FU below.
+- [x] R2a.3 Test: second run with unchanged sources performs zero source
+      re-hash — T934WriteTimeDigestsTest test 2 (strongest form: ALL dispatch
+      pairs withheld as the hash-failure placeholder; hashCalls==0, ocrPages
+      empty, runId + orderedSourceDigest preserved, REUSED==3, adopt counters
+      absent on the healthy run).
+- [x] R2a.4 Test: changed source detected at consumption fails closed —
+      T934WriteTimeDigestsTest test 3 (SHA_MISMATCH: stale checkpoints not
+      reused, both pages re-run, ocrPagesAdoptFailed==2 +
+      ocrAdoptShaMismatch==2, REUSED==0, new digests stamped at write time).
+      Test 4 pins SIDE_CAR_UNREADABLE the same way (dangling manifest pointer
+      cannot prove source equality).
+- [x] R2a.5 Typed adoption-failure reasons + WARN + run-record counters —
+      `CheckpointAdoptionFailure` (NO_POINTER/SIDE_CAR_UNREADABLE/SHA_MISMATCH/
+      LEASE_DENIED/MERGE_REJECTED/BUNDLE_MISSING) with bounded `ocrAdopt*`
+      counter keys emitted only-when-nonzero AFTER the fixed keys (the
+      takeLast(MAX_PHASE_COUNTER_KEYS) trim drops them first); NO_POINTER stays
+      the quiet fresh-OCR answer; both walks (primary + S8 rescan) and the
+      envelope-resume site typed; WARN carries pageHash + reason + detail.
+- [x] R2a.6 D5/D6/D9/D10/D11 test files byte-identical — `git diff --stat`
+      empty on all five; zero existing-test edits in the lane.
+- [ ] R2a-FU (follow-up, shell lane, NOT in this wave): the shell still
+      materializes `orderedSourcePairs` from the lazy fingerprint map at
+      coordinator construction (`BatchChapterTranslator.kt:808/:866`), forcing
+      one hash per page per dispatch. Removing that pull requires moving
+      change-detection to consumption time (lazy per-page verification in the
+      translate/render adoption paths) — without it the reuse gate's
+      recorded-digest comparison would be vacuous (a replaced source would
+      reuse stale checkpoints). Sized in team/r2a-digests.md "Honest scope
+      note"; needs its own lane + tests.
 
 ## R2c — Consolidation spike
 
@@ -134,7 +170,15 @@ file:line. No assertion weakened anywhere (checked per lane).
       2020 tests, 0 failed, 65 skipped (2026-09-17, /tmp/t934_full_suite6.log;
       identical tree to the committed HEAD after the four path-staged
       commits ce8d925/845975d/c085f0f/818ce68).
-- [ ] GATE-W2: full suite green after R2a + I commits
+- [x] GATE-W2: full suite green after R2a + flake-fix commits — BUILD
+      SUCCESSFUL, 2023 tests, 0 failed, 65 skipped (2026-09-17,
+      /tmp/t934_full_suite8.log; run 7 of the same tree caught one compile
+      error — sealed-type narrowing requires an exhaustive `when`, fixed by
+      Main Leader — before this green run. Count note: run-6 baseline was
+      2020 per its log; this run is 2023 = prior tree + 4 new
+      T934WriteTimeDigestsTest tests, with source @Test counts and per-class
+      XML cross-checked (no test deleted; the ±1 vs naive arithmetic is a
+      baseline-recording variance, not a lost test).)
 - [ ] On-device smoke: resume shows "Rebuilding pipeline…" then completes;
       no lease-abort storm in logcat
 
@@ -152,3 +196,25 @@ order-dependent failures, all green in isolation and in the re-run:
   provider identity…" — JUnitException: Failed to close extension context.
 Suspects: teardown/cleanup races in real-concurrency coexistence classes
 (possibly amplified by new T934 tests' store/scope lifetimes).
+
+RESOLVED 2026-09-17 (wave 2): read-only diagnosis
+(team/flake-followup-diagnosis.md, Main Leader spot-verified every cited
+mechanism against code) attributed all four to load-sensitive fixture
+interleavings — no production bug:
+1. Drawer executionError = swallowed 5s teardown join leaking unwind into a
+   later class (+ MockK suspend-stub two-thread hazard, fixture-only).
+2. COMPLETE-vs-TRANSLATE = ambiguous oracle (non-null reconciliation is also
+   returned by a legal typed pause; record legitimately sits at TRANSLATE).
+3. expected-2-was-3 = over-pinned decode count (S8 in-pass gap rescan may
+   legitimately re-decode a deferred page before the translate tail).
+4. extension-context close failure = never-closed file-backed stores' fire-
+   and-forget persistence/retention racing JUnit @TempDir deletion on Windows.
+Fixes (team/flake-followup-fixes.md, Main Leader diff-verified; fixture-only,
+no production edits, no net assertion weakening — #3 is the single authorized,
+documented conversion): A) `closeAndFlush()` at all 11 lazyStore sites in
+StandardPipelineCoordinatorTest + BatchLeaseFlipHealTest; B) durable-COMPLETE
+poll oracle with precise pause reporting in BatchDispatchResumeWiringTest
+firstRun; C) distinct-page decode discriminator in
+StandardPipelineCoexistenceTest (legacy page-serial still fails it);
+D) authoritative 30s teardown join (no runCatching) in all three
+MangaScreenModel fixtures. GATE-W2 run re-exercises all six classes.
