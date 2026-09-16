@@ -1,12 +1,15 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.LeaseAcquisition
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.DurableFailureMetadata
 import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
@@ -14,6 +17,19 @@ import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureKind
 import java.util.concurrent.ConcurrentHashMap
+
+// T934 R1.1: ChapterTranslationStore's lease-fence rejection reason (emitted by
+// pageWriteRejection for every guarded write). The only string that proves the
+// cached token no longer matches the lease table; absent-lease rejects carry
+// different reasons ("page lease required") and are never healed.
+private const val LEASE_TOKEN_CHANGED = "page lease token changed"
+
+private fun leaseStageFor(stage: BatchStage?): PageStage = when (stage) {
+    BatchStage.DETECTION, BatchStage.OCR, null -> PageStage.Ocr
+    BatchStage.TRANSLATION -> PageStage.Translation
+    BatchStage.INPAINT -> PageStage.Inpaint
+    BatchStage.LAYOUT -> PageStage.Render
+}
 
 // T909 Phase 20.2: moved verbatim from TranslationPipeline.kt with the batch
 // write gate (its only caller, `persistAiFailure`).
@@ -88,7 +104,7 @@ internal class BatchWriteGate(
         stage: BatchStage?,
         update: (PageTranslation?) -> PageTranslation,
     ): ChapterTranslationStore.PatchResult {
-        val identity = batchWriteIdentities[pageKey]
+        var identity = batchWriteIdentities[pageKey]
             ?: return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
         fun expected() = ChapterTranslationStore.PatchPrecondition(
             generation = identity.generation,
@@ -122,6 +138,49 @@ internal class BatchWriteGate(
                     description = description,
                     update = { current -> stampBatchProvenance(update(current), stage) },
                 )
+            } else if (result.reason == LEASE_TOKEN_CHANGED) {
+                // T934 R1.1 owner-proof heal: the cached token no longer
+                // matches the lease table (the T934 R1.2 residual flip — a
+                // sibling batch component re-minted the slot while this write
+                // identity was in flight). Only the TABLE can prove who owns
+                // the page now: a denied BATCH re-acquire is real contention
+                // (a MANUAL/AUTO owner holds the slot — the rejection is kept,
+                // and the lane's typed conversion surfaces it exactly as
+                // today), and a grant whose run identity (generation +
+                // candidateGenerationId) differs is a resumed/re-planned run —
+                // never healed.
+                val granted = when (
+                    val reAcquired = store.tryAcquirePageStageLease(
+                        pageKey,
+                        leaseStageFor(stage),
+                        PageWriteOrigin.BATCH,
+                    )
+                ) {
+                    is LeaseAcquisition.Granted -> reAcquired.lease
+                    is LeaseAcquisition.Denied -> null
+                }
+                if (granted != null &&
+                    granted.generation == identity.generation &&
+                    granted.candidateGenerationId == identity.candidateGenerationId
+                ) {
+                    // The table structurally proved BATCH ownership (a grant
+                    // is impossible across origins) with THIS run's identity:
+                    // re-arm from the GRANTED lease — never a bare snapshot —
+                    // and retry once.
+                    identity = identity.copy(
+                        pageVersion = granted.pageVersion,
+                        leaseToken = granted.token,
+                        dependencyFingerprint = granted.dependencyFingerprint,
+                        artifactPageVersion = granted.artifactPageVersion,
+                    )
+                    batchWriteIdentities[pageKey] = identity
+                    result = store.updatePageGuarded(
+                        pageKey = pageKey,
+                        expected = expected(),
+                        description = description,
+                        update = { current -> stampBatchProvenance(update(current), stage) },
+                    )
+                }
             }
         }
         if (result is ChapterTranslationStore.PatchResult.Accepted) {

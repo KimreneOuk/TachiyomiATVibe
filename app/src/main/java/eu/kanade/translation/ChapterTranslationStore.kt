@@ -627,6 +627,18 @@ class ChapterTranslationStore(
     suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) =
         pageStageLeaseTable.releasePageStageLease(pageKey, origin)
 
+    /**
+     * T934 R1.2: envelope-completion release — removes the page's BATCH lease
+     * only while no sibling batch component has attached to the same token
+     * (see `PageStageLeaseTable.releasePageStageLeaseIfUnattached`); returns
+     * true when this call removed the record.
+     */
+    suspend fun releasePageStageLeaseIfUnattached(
+        pageKey: String,
+        origin: PageWriteOrigin,
+        expectedToken: Long,
+    ): Boolean = pageStageLeaseTable.releasePageStageLeaseIfUnattached(pageKey, origin, expectedToken)
+
     /** Cancels the active artifact candidate and releases its matching writer lease. */
     suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
         pageStageLeaseTable.cancelPageStageWork(pageKey, origin)

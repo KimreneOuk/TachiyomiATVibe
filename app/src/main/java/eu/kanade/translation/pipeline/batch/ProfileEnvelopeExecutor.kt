@@ -325,13 +325,13 @@ internal class ProfileEnvelopeExecutor(
                     // just-acquired lease must be released before the early
                     // return — otherwise a MANUAL attempt on this page is
                     // denied for the whole replan window.
-                    store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+                    store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     return replanOrPause("page $pageKey lost its live state", pageKey)
                 }
                 // TX-21.3 skip re-check: the page became committed /
                 // manual-authoritative between plan and dispatch.
                 if (pageAuthoritativelyDone(pageKey, live)) {
-                    store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+                    store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     continue
                 }
                 // TX-21.2 live-revalidate the plan-time identities.
@@ -339,7 +339,7 @@ internal class ProfileEnvelopeExecutor(
                 if (drift != null) {
                     // Wave-6 F-W6-1: same release-before-early-return as the
                     // lost-page path above.
-                    store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+                    store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     return EnvelopeDispatchResult.ReplanNeeded(
                         reason = "page $pageKey drifted: $drift",
                         anchorPageKey = pageKey,
@@ -353,7 +353,7 @@ internal class ProfileEnvelopeExecutor(
                     liveBlock != null && liveBlock.userEditedAt == null
                 }
                 if (dispatchBlocks.isEmpty()) {
-                    store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+                    store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     continue
                 }
                 held += HeldPage(
@@ -412,8 +412,12 @@ internal class ProfileEnvelopeExecutor(
             return last
         } finally {
             // Any page still held (paused/replan paths) releases its lease.
+            // T934 R1.2: the release is attach-aware — a page the overlap
+            // inpaint re-attached to (same token, mid-lane) KEEPS its record
+            // so no sibling acquire can mint a fresh token and fail-close the
+            // sibling's write identity; the sibling's own release clears it.
             held.forEach { page ->
-                store.releasePageStageLease(page.pageKey, PageWriteOrigin.BATCH)
+                store.releasePageStageLeaseIfUnattached(page.pageKey, PageWriteOrigin.BATCH, page.leaseToken)
             }
         }
     }

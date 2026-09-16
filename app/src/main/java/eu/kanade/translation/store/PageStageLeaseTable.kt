@@ -61,6 +61,13 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
         val origin: PageWriteOrigin,
         val stage: PageStage,
         val generation: Long,
+        /**
+         * T934 R1.2: same-origin attach re-grants since this record was minted
+         * (the overlap inpaint riding the envelope's token). Read ONLY by
+         * [releasePageStageLeaseIfUnattached]; the plain release keeps its
+         * Phase-3 contract — any matching release removes the record.
+         */
+        val attaches: Int = 0,
     )
 
     // ------------------------------------------------------------------
@@ -96,6 +103,12 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
             )
         }
         if (existing != null && existing.origin == origin) {
+            // T934 R1.2: a same-origin re-acquire is a SIBLING ATTACH to the
+            // same slot (the overlap inpaint riding the envelope's token).
+            // Count it so the envelope's attach-aware release can leave the
+            // record — and every identity fenced on its token — intact for
+            // the sibling. The plain release below is untouched.
+            pageLeases[pageKey] = existing.copy(attaches = existing.attaches + 1)
             val currentSnapshot = snapshotLocked(pageKey)
             return@withLock LeaseAcquisition.Granted(
                 PageStageLease(
@@ -144,6 +157,38 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
                     }
                     completeLeaseReleaseWaitersLocked(pageKey)
                 }
+            }
+        }
+    }
+
+    /**
+     * T934 R1.2: releases the ENVELOPE's hold on its BATCH lease WITHOUT
+     * invalidating a live sibling attach. Envelope completion used to plainly
+     * release pages the overlap inpaint had re-attached to (same token): the
+     * removal let the next acquire mint a fresh token and fail-close every
+     * write identity still fenced on the old one ("page lease token changed" →
+     * candidate abort + full page re-work). The record is removed only when it
+     * is still [origin]'s [expectedToken] with NO same-origin attach since
+     * mint; a re-attached record is left for the attached sibling's own (plain)
+     * release. A record that moved on (re-minted token, other origin, gone)
+     * is a no-op — the sibling owns that slot now.
+     */
+    suspend fun releasePageStageLeaseIfUnattached(
+        pageKey: String,
+        origin: PageWriteOrigin,
+        expectedToken: Long,
+    ): Boolean = withContext(NonCancellable) {
+        mutex.withLock {
+            synchronized(pageLeases) {
+                val record = pageLeases[pageKey]
+                val removed = record?.origin == origin &&
+                    record.token == expectedToken &&
+                    record.attaches == 0
+                if (removed) {
+                    pageLeases.remove(pageKey)
+                    completeLeaseReleaseWaitersLocked(pageKey)
+                }
+                removed
             }
         }
     }
