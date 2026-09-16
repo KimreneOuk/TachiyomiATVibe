@@ -722,7 +722,16 @@ internal class SinglePageHttpRenderPhase(
             // identity re-planning must not invalidate its in-flight result.
             if (store.pageLeaseOwner(pageKey) == origin) {
                 val fresh = store.snapshot(pageKey)
-                if (fresh.generation != commitPrecondition.generation) {
+                // T934 (D7 flake): refresh on ANY store drift under our own
+                // lease, not only a generation change — a deferred group-commit
+                // publication can bump pageVersion at the SAME generation
+                // between the entry capture and this commit, and per D1 the
+                // lease holder is the page's exclusive writer, so its own
+                // side-effect must not reject its commit (the same
+                // refresh-before-persist idiom as guardedBatchUpdate).
+                if (fresh.generation != commitPrecondition.generation ||
+                    fresh.pageVersion != commitPrecondition.pageVersion
+                ) {
                     commitPrecondition = fresh.toPrecondition().copy(
                         candidateGenerationId = null,
                         dependencyFingerprint = null,

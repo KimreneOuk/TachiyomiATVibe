@@ -83,10 +83,12 @@ class StandardLaneMultiPageCompletionTest {
             pageKeys.forEach { pageKey ->
                 harness.transportCallsFor(pageKey) shouldBe 1
                 val page = harness.store.state.value.getValue(pageKey)
-                // T924 zero-legacy (D1): the standard lane commits every page
-                // translation-terminal WITHOUT an in-pass render.
+                // T924 zero-legacy (D1) + 2026-09-16 E-fix: no in-pass render
+                // WORK, but every page's durable record is stamped
+                // render-terminal at inpaint-completion (BatchLaneWorkers
+                // render terminal stamp) so the display bundle commits.
                 page.translationStatus shouldBe StageStatus.READY
-                page.renderStatus shouldBe StageStatus.PENDING
+                page.renderStatus shouldBe StageStatus.READY
             }
             // T924 zero-legacy (D2): the shell's COMPLETED path settles every
             // expected page's RENDER phase as skipped terminal work

@@ -276,7 +276,25 @@ class MangaScreenModelMultiSelectBatchTest {
     @AfterAll
     fun tearDown() {
         if (::model.isInitialized) {
+            // Quiesce BEFORE dismantling the Looper-free main-thread fakes:
+            // the observeTranslationProgress collectors unwind on the REAL
+            // Dispatchers.IO, and their flowWithLifecycle/repeatOnLifecycle
+            // teardown calls LifecycleRegistry.removeObserver — a
+            // main-thread-enforced call. If that unwind lands after
+            // setDelegate(null) below, the check falls back to android.os.Looper
+            // (not mocked on the JVM) and the RuntimeException surfaces as an
+            // uncaught exception in whichever test class runs next. Destroying
+            // the lifecycle and JOINING the cancelled scope while the delegate
+            // is still installed pins the unwind inside this teardown.
+            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
             model.screenModelScope.cancel()
+            runCatching {
+                runBlocking {
+                    withTimeout(5_000) {
+                        model.screenModelScope.coroutineContext[Job]?.join()
+                    }
+                }
+            }
         }
         evictCachedScreenModelScope()
         ArchTaskExecutor.getInstance().setDelegate(null)

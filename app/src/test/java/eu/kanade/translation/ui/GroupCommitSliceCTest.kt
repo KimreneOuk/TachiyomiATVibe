@@ -52,7 +52,11 @@ class GroupCommitSliceCTest {
 
     @AfterEach
     fun tearDown() {
-        GroupCommitConfiguration.enabled = true
+        // Restore the suite-wide default-off baseline (499a7c9): leaking the
+        // flag ON re-choreographs every later test class's store persistence
+        // (staged writes + debounce flush on a real dispatcher), which
+        // deterministically broke 20+ unrelated pipeline/coexistence tests.
+        GroupCommitConfiguration.enabled = false
         ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
         tempDir.deleteRecursively()
     }

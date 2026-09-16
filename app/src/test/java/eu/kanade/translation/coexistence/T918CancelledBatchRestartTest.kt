@@ -150,27 +150,40 @@ class T918CancelledBatchRestartTest {
             withClue("the restart must complete the chapter") {
                 restart.translation.status shouldBe Translation.State.TRANSLATED
                 reconciliation.nonDurableFailure shouldBe false
-                // T924 zero-legacy (D1): the lane commits translations
-                // WITHOUT an in-pass render — both pages end
-                // translation-terminal and the reader re-derives displays.
+                // T924 zero-legacy (D1) + 2026-09-16 E-fix + T934 track I
+                // round 3: the lane commits translations with NO in-pass
+                // render WORK. Both pages still end render-terminal:
+                // p0's inpaint ran in run 1 with its translation already
+                // terminal (the inpaint lane's render terminal stamp), and
+                // p1 — whose inpaint the decoupled scheduler completed in
+                // run 1 while p1's translation was still pending — is
+                // stamped by the serial drain's render-terminal adoption
+                // sweep (OverlapScheduler stampRenderTerminalOrphans, the
+                // drain-side twin of the E2 adopted-page stamp).
                 harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
                 harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.READY
-                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.PENDING
-                harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.PENDING
+                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
+                harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.READY
             }
             withClue("reuse: the completed page 0 may not be re-decoded/re-OCR'd by the restart") {
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0") shouldBe
                     decodeP0BeforeRestart
             }
-            withClue("remainder work: page 1's pending inpaint is the restart's own native work") {
-                // T924 zero-legacy (D1): with the re-seed deleted, run 1 parked
-                // p1's paid call BEFORE its inpaint ran, so the restart's
-                // remainder legitimately decodes p1 exactly once for that
-                // inpaint (the translation tail's overlap drain). The durable
-                // OCR checkpoint still prevents any re-OCR: the decode feeds
-                // the inpaint lane, never the recognizer.
+            withClue("reuse: page 1's inpaint is durable completed work - the restart re-decodes nothing") {
+                // T934 track I (round 3) DOCUMENTED CONVERSION — the
+                // choreography changed WITH the feature under test. The
+                // decoupled scheduler admits an OCR-final page regardless of
+                // translation status, so run 1's page-0 window already
+                // inpainted page 1 (OCR-final, lease-free, translation still
+                // PENDING) and committed the durable inpaint artifact. The
+                // restart therefore re-runs ONLY page 1's translation: zero
+                // new decodes. This asserts strictly LESS restart work than
+                // the pre-decoupling expectation
+                // (`decodeP1BeforeRestart + 1`), which encoded the old
+                // choreography where the inpaint was part of the remainder.
+                // The durable OCR checkpoint still prevents any re-OCR.
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p1") shouldBe
-                    decodeP1BeforeRestart + 1
+                    decodeP1BeforeRestart
             }
             withClue("remainder-only paid work: completed page 0 gets no second paid call") {
                 harness.transportCallsFor("p0") shouldBe 1

@@ -18,6 +18,7 @@ import eu.kanade.translation.artifact.FactScope
 import eu.kanade.translation.artifact.FactType
 import eu.kanade.translation.artifact.ProfileFact
 import eu.kanade.translation.artifact.ArtifactDocumentJson
+import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactStore
@@ -2344,8 +2345,11 @@ internal class ChapterProfileBatchCoordinator(
             // same way: instead of short-circuiting, the run STARTS FRESH
             // (ST-15-style supersession — the normal run-start path publishes
             // a new RUN_SNAPSHOT and re-derives the missing page state).
+            // Evidence is judged against the DURABLE manifest (same read the
+            // pointer above came from), never the facade's mutable cache.
+            val durableManifest = artifact.readManifest()
             val allPagesWorkProductEvidenced = orderedPages.all { (pageKey, _) ->
-                pageWorkProductResolvable(artifact, pageKey)
+                pageWorkProductResolvable(artifact, pageKey, durableManifest)
             }
             if (!allPagesWorkProductEvidenced) {
                 logcat(LogPriority.INFO) {
@@ -2393,6 +2397,7 @@ internal class ChapterProfileBatchCoordinator(
     private fun pageWorkProductResolvable(
         artifact: ChapterArtifactStore,
         pageKey: String,
+        durableManifest: ChapterArtifactManifest?,
     ): Boolean {
         // The durable no-text terminal (the legacy worker's textless commit
         // AND the OCR-side finalizePostOcrStage both set it): a committed
@@ -2401,7 +2406,7 @@ internal class ChapterProfileBatchCoordinator(
         fun isNoTextTerminal(page: PageTranslation): Boolean =
             page.isTextlessTerminal || page.translationStatus == StageStatus.SKIPPED
         val liveTextless = store.state.value[pageKey]?.let(::isNoTextTerminal) == true
-        val record = store.artifactManifest?.pages?.get(pageKey) ?: return liveTextless
+        val record = durableManifest?.pages?.get(pageKey) ?: return liveTextless
         if (record.committed != null) return true
         if (record.displayState.hasCommittedDisplay ||
             record.displayState == PageDisplayState.TEXTLESS_COMPLETE
@@ -3268,7 +3273,12 @@ internal class ChapterProfileBatchCoordinator(
     private fun existingActiveRecord(
         artifact: ChapterArtifactStore,
     ): ChapterArtifactStore.RunRecordRead? {
-        val pointer = store.artifactManifest?.activeRun ?: return null
+        // ST-14 dispatch reads the DURABLE manifest, not the facade's cached
+        // snapshot: the cache is a CAS optimization with many writers, while
+        // this decision must never re-run paid work (or drain a stale
+        // FINALIZE) behind what the artifact tree actually records. One
+        // sidecar read per dispatch — negligible next to the preflight.
+        val pointer = artifact.readManifest()?.activeRun ?: return null
         return artifact.readRunRecord(pointer)
     }
 

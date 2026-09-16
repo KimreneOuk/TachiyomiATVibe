@@ -36,7 +36,12 @@ class GroupCommitSliceBTest {
 
     @AfterEach
     fun tearDown() {
-        GroupCommitConfiguration.enabled = true
+        // Restore the suite-wide default-off baseline (499a7c9). The previous
+        // `= true` here leaked the flag into every later test class in the
+        // JVM: staged writes + the 250ms debounce flush on a real dispatcher
+        // race the runTest bodies and re-choreograph persistence behind the
+        // tests' captured preconditions (ARTIFACT_PUBLICATION_FAILED cascade).
+        GroupCommitConfiguration.enabled = false
         ActiveChapterStoreRegistry.clearGlobalWriters()
         ChapterTranslationStore.artifactImageProbe = BitmapFactoryCleanedImageProbe
     }

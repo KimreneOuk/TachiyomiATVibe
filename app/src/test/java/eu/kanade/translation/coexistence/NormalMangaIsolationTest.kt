@@ -67,11 +67,15 @@ class NormalMangaIsolationTest {
             withClue("active batch must complete normally for this gate to be meaningful") {
                 batch.translation.status shouldBe Translation.State.TRANSLATED
                 reconciliation.strandedPages shouldBe emptyMap()
-                // T924 zero-legacy (D1): the batch is translation-terminal
-                // WITHOUT an in-pass render — the display is re-derived when
-                // the reader opens the page.
+                // T924 zero-legacy (D1) + 2026-09-16 E-fix: the batch still
+                // runs NO in-pass render stage (no render lane work, display
+                // re-derived when the reader opens the page), but the durable
+                // page record is now STAMPED render-terminal at
+                // inpaint-completion (BatchLaneWorkers render terminal stamp)
+                // so hasRenderedResult fires and the page promotes to a
+                // committed display bundle instead of showing ORIGINALS.
                 harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
-                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.PENDING
+                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
             }
 
             // 1. No arbitration: no reader window update was ever issued for the

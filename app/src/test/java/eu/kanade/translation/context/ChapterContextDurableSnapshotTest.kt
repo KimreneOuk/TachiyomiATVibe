@@ -50,7 +50,8 @@ class ChapterContextDurableSnapshotTest {
 
     @AfterEach
     fun tearDown() {
-        GroupCommitConfiguration.enabled = true
+        // Restore the suite-wide default-off baseline (see GroupCommitSliceCTest).
+        GroupCommitConfiguration.enabled = false
         ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
         tempDir.deleteRecursively()
     }

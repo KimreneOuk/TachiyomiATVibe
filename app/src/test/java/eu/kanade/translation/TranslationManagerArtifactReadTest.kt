@@ -132,7 +132,14 @@ class TranslationManagerArtifactReadTest {
         ChapterTranslationStore.probeArtifactManifest(file).manifest?.authority shouldBe ManifestAuthority.ARTIFACTS
         ChapterTranslationStore.probeArtifactManifest(file).manifest?.expectedPageCount shouldBe 1
         ChapterTranslationStore.probeArtifactManifest(file).manifest?.expectedPageCountTrusted shouldBe false
-        file.delete() shouldBe true
+        // The T933 legacy-rescue machine retires the flat file itself: open()
+        // preserves it into the artifact tree with identity proof, verifies the
+        // graph health, and deletes the exact source (LegacyArtifactRescue
+        // .deletePreservedLegacyInput). The fixture step below therefore
+        // asserts ABSENCE — the stronger form of this test's premise that the
+        // reader no longer needs the flat file — instead of deleting a file
+        // that production already retired.
+        file.exists() shouldBe false
         File(mangaDir, "Chapter 1.summary.json").exists() shouldBe false
 
         val manager = newManager(file)

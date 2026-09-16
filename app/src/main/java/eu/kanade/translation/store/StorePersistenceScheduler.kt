@@ -151,8 +151,15 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         }
         val result = mutex.withLock {
             val store = artifactStore ?: return
-            val manifest = artifactManifest ?: return
-            store.deleteVerifiedRetentionCandidates(candidates, manifest)
+            // Verify against the manifest the STORE resolves under its own
+            // monitor, never a snapshot captured here: the facade cache is
+            // written only AFTER a publication's durable manifest rotation,
+            // so a capture taken outside the artifact monitor can lag an
+            // in-flight publication by its whole body — deleting the sidecar
+            // that publication just pointed at (the T924 COMPLETE run record
+            // was observed vanishing exactly this way between publication and
+            // the next read).
+            store.deleteVerifiedRetentionCandidates(candidates)
         }
         logcat(LogPriority.INFO) {
             "TachiyomiAT retention sweep: candidates=${candidates.size} " +

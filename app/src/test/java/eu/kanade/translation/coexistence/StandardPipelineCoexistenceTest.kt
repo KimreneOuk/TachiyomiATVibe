@@ -30,7 +30,9 @@ import org.junit.jupiter.api.Test
  *     before the first PROVIDER_START (the legacy page-serial standard lane
  *     interleaves decode → translate per page and shows exactly one);
  *  3. a single COMPLETE publication; pages end translationStatus READY with
- *     renderStatus PENDING (translation-terminal without in-pass render);
+ *     renderStatus READY — no in-pass render WORK ran, but the durable page
+ *     record carries the render-terminal stamp (2026-09-16 E-fix) so the
+ *     display bundle commits and the reader gate flips without a sweep;
  *  4. the store glossary is never written.
  */
 class StandardPipelineCoexistenceTest {
@@ -91,7 +93,10 @@ class StandardPipelineCoexistenceTest {
                 pageKeys.forEach { key ->
                     val page = store.snapshot(key).page.shouldNotBeNull()
                     page.translationStatus shouldBe StageStatus.READY
-                    page.renderStatus shouldBe StageStatus.PENDING
+                    // 2026-09-16 E-fix: no in-pass render WORK, but the durable
+                    // record is stamped render-terminal at inpaint-completion
+                    // (BatchLaneWorkers render terminal stamp).
+                    page.renderStatus shouldBe StageStatus.READY
                     page.blocks.forEach { block ->
                         block.translation shouldBe "tr-" + block.text
                     }

@@ -1865,6 +1865,28 @@ class ChapterArtifactStore(
         retentionSweep.deleteVerifiedOrphans(candidateOrphans, manifest, stagedReachable)
 
     /**
+     * Retention phase 2 for the split (off-lock crawl) sweep: resolves the
+     * verification manifest ITSELF, under the store monitor, from the durable
+     * artifact tree. A caller-supplied manifest captured outside this monitor
+     * (e.g. the facade's cached snapshot) can lag an in-flight publication by
+     * its whole body — the crawl may have listed a sidecar whose file was
+     * already written while its manifest pointer was not yet installed — and
+     * verifying against that stale graph deletes a sidecar the just-completed
+     * publication points at (observed: the T924 COMPLETE run record vanishing
+     * between its publication and the next read, leaving a dangling
+     * `activeRun`). This monitor serializes with every publication's manifest
+     * rotation, so a manifest read here is never older than any installed
+     * pointer. A chapter with no durable manifest verifies nothing.
+     */
+    @Synchronized
+    fun deleteVerifiedRetentionCandidates(
+        candidateOrphans: Collection<String>,
+    ): RetentionResult {
+        val live = readManifest() ?: return RetentionResult(0, emptyList())
+        return retentionSweep.deleteVerifiedOrphans(candidateOrphans, live)
+    }
+
+    /**
      * T930 Slice A4 (Amendment D): event-driven known-orphan deletion.
      * Reclaims explicitly unlinked artifact files without a full tree crawl.
      * Race register #6: files referenced in stagedReachable are spared; when

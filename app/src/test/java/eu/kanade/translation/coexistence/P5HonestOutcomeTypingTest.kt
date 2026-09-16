@@ -2,6 +2,7 @@ package eu.kanade.translation.coexistence
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageFailed
@@ -222,8 +223,9 @@ class P5HonestOutcomeTypingTest {
         h.installGraphicsShims()
         h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
         // Park the transport AFTER the paid call so the phase's commit
-        // precondition is captured, then bump the page version under it: the
-        // guarded final patchPage must reject → ChunkCompletionOutcome.PersistenceRejected.
+        // precondition is captured, then break the commit's ownership under
+        // it: the guarded final patchPage must reject →
+        // ChunkCompletionOutcome.PersistenceRejected.
         h.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p0")
         h.tapManual("p0")
         h.barrier.awaitArrivalWithin(
@@ -231,13 +233,17 @@ class P5HonestOutcomeTypingTest {
             "p0",
             TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
         )
-        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-            h.store.updatePageGuarded(
-                "p0",
-                h.store.snapshot("p0").toPrecondition(),
-                "P5 concurrent writer (test fixture)",
-            ) { current -> current ?: PageTranslation(sourceFileName = "p0") }
-        }
+        // T934 (D7 heal) CONVERSION: the old fixture bumped pageVersion under
+        // the parked boundary — exactly the deferred-publication shape the
+        // boundary now heals by design (the same-owner refresh in
+        // SinglePageHttpRenderPhase; under D1 the lease holder is the page's
+        // exclusive writer, so a same-generation version drift under the held
+        // lease is never a foreign write). The outcome-typing contract is
+        // instead exercised through the rejection the heal legitimately does
+        // NOT cover: the page's lease RETIRED mid-flight (ownership lost —
+        // the eviction/cancellation shape), so the final guarded patchPage
+        // rejects at the lease fence with its stale captured token.
+        h.store.releasePageStageLease("p0", PageWriteOrigin.MANUAL)
         h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p0")
         val job = h.capturedManualJob("p0")
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }

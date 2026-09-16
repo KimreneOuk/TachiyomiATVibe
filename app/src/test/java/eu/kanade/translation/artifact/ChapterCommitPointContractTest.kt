@@ -17,7 +17,13 @@ import java.security.MessageDigest
  * T930 Slice A1: tests the CommitPoint contract codification.
  *
  * Asserts:
- * 1. The 6 mandatory commit points are codified.
+ * 1. The mandatory commit points are codified. The T930 group-commit work
+ *    (milestone commit 8010961, M6 targeted fsync) deliberately added a 7th
+ *    boundary, BATCH_CHUNK — the MAX_STAGED_PAGES accumulation flush — and it
+ *    is a REAL commit point: ChapterTranslationStore.flushStagedMutationsLocked
+ *    commits staged candidates under it and both it and the artifact store
+ *    force an fsync on it (syncToDisk), matching every other boundary's
+ *    mandatory-durability contract.
  * 2. Stageable mutations (candidate open, intermediate candidate persist/stage, candidate cancel) have null commitPoint.
  * 3. Terminal promotion, OCR checkpoint close, and chapter phase records carry their respective CommitPoint.
  */
@@ -86,7 +92,7 @@ class ChapterCommitPointContractTest {
     }
 
     @Test
-    fun `commit points enum contains exactly the 6 required boundaries`() {
+    fun `commit points enum contains exactly the 7 required boundaries`() {
         val expected = listOf(
             CommitPoint.OCR_CHECKPOINT_CLOSE,
             CommitPoint.PAGE_TERMINAL_PROMOTION,
@@ -94,6 +100,9 @@ class ChapterCommitPointContractTest {
             CommitPoint.CHAPTER_COMPLETE,
             CommitPoint.USER_STOP_DRAIN,
             CommitPoint.EXPLICIT_FLUSH,
+            // T930 group-commit accumulation boundary: real and fsync-forcing
+            // (ChapterTranslationStore.kt:270/:297, ChapterArtifactStore.kt:911).
+            CommitPoint.BATCH_CHUNK,
         )
         CommitPoint.values().toList() shouldContainExactlyInAnyOrder expected
         expected.forEach { point ->
