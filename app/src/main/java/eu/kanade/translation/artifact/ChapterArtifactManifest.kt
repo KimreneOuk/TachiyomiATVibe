@@ -75,6 +75,21 @@ data class ChapterArtifactManifest(
     val colorPreparations: Map<String, SidecarPointer> = emptyMap(),
     /** T933 Increment 2: durable unified chapter context snapshot pointer. */
     val context: SidecarPointer? = null,
+    /**
+     * T934 R2a (write-time digests): the durable per-page source SHA-256
+     * (lowercase 64-hex), recorded AT FIRST ADMISSION — every OCR checkpoint
+     * publication (CLOSE, REBASE, adopt) stamps the page's source identity in
+     * the SAME atomic manifest transaction that moves the checkpoint pointer,
+     * never at run end. Run-start identity and checkpoint-reuse decisions
+     * consume this record without re-reading page bytes; a page with no
+     * record falls back to the dispatch-time observation. Additive map with
+     * a neutral default, tolerated in both decode directions by
+     * `ignoreUnknownKeys` (D5 precedent): a rolled-back build that strips it
+     * only loses the optimization (the fallback re-observes), never
+     * correctness — so no schema bump is owed. Bounded to one entry per
+     * manifest page record.
+     */
+    val sourceShaByPageKey: Map<String, String> = emptyMap(),
 ) {
     companion object {
         /**

@@ -725,6 +725,17 @@ class ChapterArtifactStore(
                     contentFingerprint = checkpoint.ocrContentFingerprint,
                 )
                 ),
+            // T934 R2a.1 (write-time digests): the page's source SHA-256 is
+            // recorded AT FIRST ADMISSION in the SAME atomic transaction that
+            // installs the checkpoint pointer — never at run end. Only a
+            // well-formed (lowercase 64-hex) sha is stamped; anything else
+            // leaves the record untouched (the consumer falls back to the
+            // dispatch-time observation). Run-start identity and checkpoint
+            // reuse then read this map instead of re-reading page bytes.
+            sourceShaByPageKey = checkpoint.sourceIdentity.sha256
+                ?.takeIf { it.isSha256Hex() }
+                ?.let { manifest.sourceShaByPageKey + (pageKey to it) }
+                ?: manifest.sourceShaByPageKey,
             // Every checkpoint branch (CLOSE, REBASE, adopt) durably
             // publishes this page's OCR content, so any prior OCR durable-
             // failure entry is stale — clear it on success (mirror of the

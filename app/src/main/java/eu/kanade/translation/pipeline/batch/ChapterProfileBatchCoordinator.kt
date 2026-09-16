@@ -44,6 +44,7 @@ import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.ToneFlag
+import eu.kanade.translation.artifact.isSha256Hex
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -171,6 +172,55 @@ internal enum class PreflightFailureKind {
     OCR_WORKER_FAILED,
 }
 
+/**
+ * T934 R2a.5: the typed reason a page's durable checkpoint could not back
+ * this run at consumption. Each reason is a bounded run-record counter key
+ * (the `ocrAdopt*` family, mirroring the bounded `ocrPages*` keys) and a
+ * WARN log field — the re-OCR cliff is now observable per cause instead of
+ * one untyped WARN. [NO_POINTER] doubles as the quiet "nothing to adopt
+ * yet" answer of the reuse probe on a never-checkpointed page: only the
+ * adoption ATTEMPT sites (a pointer existed and was lost, or the probe
+ * failed on an existing checkpoint) count and warn.
+ */
+internal enum class CheckpointAdoptionFailure(val counterKey: String) {
+    /** No checkpoint pointer for the page (or the manifest record vanished mid-walk). */
+    NO_POINTER("ocrAdoptNoPointer"),
+
+    /** The checkpoint sidecar is missing, corrupt, or an unsupported schema. */
+    SIDE_CAR_UNREADABLE("ocrAdoptSideCarUnreadable"),
+
+    /** Source identity mismatch — checkpoint, recorded digest, and/or decoded bytes disagree. */
+    SHA_MISMATCH("ocrAdoptShaMismatch"),
+
+    /** The BATCH OCR stage lease could not be acquired for the hydration merge. */
+    LEASE_DENIED("ocrAdoptLeaseDenied"),
+
+    /** The identity-fenced `mergeOcr` rejected the hydration merge. */
+    MERGE_REJECTED("ocrAdoptMergeRejected"),
+
+    /** The checkpoint's OCR page-snapshot bundle is unreadable. */
+    BUNDLE_MISSING("ocrAdoptBundleMissing"),
+}
+
+/** Typed outcome of the checkpoint-reuse probe for one page (T934 R2a). */
+internal sealed interface CheckpointReuse {
+    /** The checkpoint's OCR content fingerprint; source identity was proven. */
+    data class Reusable(val ocrContentFingerprint: String) : CheckpointReuse
+
+    /** Why the checkpoint cannot back this run (typed; the page re-runs — fail closed). */
+    data class Unavailable(val failure: CheckpointAdoptionFailure) : CheckpointReuse
+}
+
+/** Typed outcome of one checkpoint-adoption (hydration) attempt (T934 R2a). */
+internal sealed interface CheckpointAdoption {
+    data class Adopted(val snapshot: ChapterTranslationStore.PageSnapshot) : CheckpointAdoption
+
+    data class Failed(
+        val failure: CheckpointAdoptionFailure,
+        val detail: String? = null,
+    ) : CheckpointAdoption
+}
+
 internal class ChapterProfileBatchCoordinator(
     private val store: ChapterTranslationStore,
     private val nativeWorker: NativeLaneWorker,
@@ -269,6 +319,46 @@ internal class ChapterProfileBatchCoordinator(
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
 
     /**
+     * T934 R2a: the per-page source digests RECORDED durably at first
+     * admission ([ChapterArtifactManifest.sourceShaByPageKey], stamped by the
+     * checkpoint transaction). Read once at run start and held stable for the
+     * whole run, exactly like the constructor pairs.
+     */
+    private val recordedSourceShaByPageKey: Map<String, String> by lazy {
+        store.artifactManifest?.sourceShaByPageKey.orEmpty()
+    }
+
+    /**
+     * T934 R2a: the per-page ADMISSION identity — the recorded digest wins
+     * when the dispatch-time observation is absent or a non-hex placeholder
+     * (the shell's UNKNOWN_SOURCE_FINGERPRINT on a hash failure — a value
+     * that previously poisoned reuse identity forever and forced re-OCR); a
+     * well-formed dispatch observation (a fresh sha of the current bytes)
+     * still wins over the record so a changed source is DETECTED at
+     * consumption and fails closed; a page with neither keeps its (null)
+     * constructor value for the store's own fallback.
+     */
+    private fun admissionSourceSha(pageKey: String): String? {
+        val offered = sourceShaByPageKey[pageKey]
+        if (offered != null && offered.isSha256Hex()) return offered
+        return recordedSourceShaByPageKey[pageKey] ?: offered
+    }
+
+    /**
+     * T934 R2a.2: the run's ordered (pageKey, admission sha) pairs — the
+     * SINGLE orderedSourceDigest input for every record of this run. Derived
+     * from the RECORDED digests wherever they exist, so run-start identity no
+     * longer re-reads page bytes and a dispatch hash failure can no longer
+     * break runId/ST-14 continuity across a resume. Evaluated once (the same
+     * run-start read that feeds the reuse probes), then stable.
+     */
+    private val effectiveSourcePairs: List<Pair<String, String>> by lazy {
+        orderedSourcePairs.map { (pageKey, sha) ->
+            pageKey to (admissionSourceSha(pageKey) ?: sha)
+        }
+    }
+
+    /**
      * The batch pass-1 entry the shell's dispatch point calls (formerly
      * call-shape-compatible with the deleted legacy coordinator's
      * `runPass1`). [computeClass] is accepted for call-shape parity only —
@@ -299,7 +389,7 @@ internal class ChapterProfileBatchCoordinator(
         }
 
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
         val priorRecord = (existingActiveRecord(artifact) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
         // ST-15: settings apply next run — a resume continues the recorded run
         // only while the frozen configuration fingerprint still matches; a
@@ -324,6 +414,22 @@ internal class ChapterProfileBatchCoordinator(
         var checkpointedPages = 0
         val corpusFingerprints = mutableListOf<Pair<String, String>>()
 
+        // T934 R2a.5: per-run typed adoption-failure tally. Emitted as bounded
+        // `ocrAdopt*` counters ONLY when nonzero, so steady-state record
+        // counter maps stay byte-identical and the 32-key phaseCounters bound
+        // is never pressured on healthy runs.
+        val adoptionFailures = mutableMapOf<CheckpointAdoptionFailure, Int>()
+
+        fun recordAdoptionFailure(pageKey: String, failure: CheckpointAdoptionFailure, detail: String?) {
+            adoptionFailures.merge(failure, 1, Int::plus)
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT t924 preflight checkpoint adoption failed pageHash=${pageHash(pageKey)} " +
+                    "reason=${failure.name}" +
+                    (detail?.let { " detail=$it" } ?: "") +
+                    " — re-OCRing"
+            }
+        }
+
         fun counters(): Map<String, Int> = mapOf(
             COUNTER_TOTAL to total,
             COUNTER_DONE to (reusedPages + checkpointedPages),
@@ -334,7 +440,15 @@ internal class ChapterProfileBatchCoordinator(
             // FF-01 A/B flag completed its lifecycle — the profile pipeline
             // is the only pipeline — so the frozen state is always ON.
             COUNTER_FLAG to 1,
-        )
+        ) + buildMap {
+            // Appended AFTER the fixed keys so the publishRecord over-bound
+            // trim (takeLast) drops these first, never the phase-critical
+            // `ocrPages*` keys.
+            if (adoptionFailures.isNotEmpty()) {
+                put(COUNTER_ADOPT_FAILED, adoptionFailures.values.sum())
+                adoptionFailures.forEach { (failure, count) -> put(failure.counterKey, count) }
+            }
+        }
 
         // ---- ST-05/OCR_PLAN skip rule (contracts-state-transactions :114): ----
         // when a compatible frozen profile already exists (its sidecar reads
@@ -406,32 +520,37 @@ internal class ChapterProfileBatchCoordinator(
             // sleep) that lets interactive native demand win the lane.
             yield()
 
-            val reusable = reusableCheckpointFingerprint(artifact, pageKey)
-            if (reusable != null) {
-                // ST-06 resume rule: the page's origin-neutral checkpoint matches
-                // the current source identity — no re-OCR, no lease, no decode.
-                //
-                // T924 zero-legacy (D1): a reused checkpoint must also BACK the
-                // live store page. A reopened store (real restart, or the
-                // memory-only artifact-authority fixture) holds only a
-                // placeholder page record — its ocrStatus/blocks live in the
-                // durable checkpoint sidecar. Without adoption the translate
-                // tail's dependency gate reads WAIT_FOR_DEPENDENCY /
-                // DEPENDENCY_INCOMPLETE against the placeholder and silently
-                // skips the page's paid translation — the run then "completes"
-                // without paying (D9's resumed-death cycle). Adopt the
-                // checkpointed OCR snapshot into the live store — the SAME
-                // hydration idiom the envelope lane's resume uses — and only
-                // then count the page as reused. If the adoption cannot back
-                // the page (unreadable sidecar, racing owner), fall through to
-                // a fresh OCR run: never plan against fabricated content.
-                val before = store.snapshot(pageKey)
-                val hydrated = before.page != null &&
-                    before.page.ocrStatus == StageStatus.READY &&
-                    before.page.blocks.isNotEmpty()
-                    if (hydrated || adoptCheckpointSnapshot(artifact, pageKey, before) != null) {
+            when (val reusable = checkpointReuse(artifact, pageKey)) {
+                is CheckpointReuse.Reusable -> {
+                    // ST-06 resume rule: the page's origin-neutral checkpoint matches
+                    // the current source identity — no re-OCR, no lease, no decode.
+                    //
+                    // T924 zero-legacy (D1): a reused checkpoint must also BACK the
+                    // live store page. A reopened store (real restart, or the
+                    // memory-only artifact-authority fixture) holds only a
+                    // placeholder page record — its ocrStatus/blocks live in the
+                    // durable checkpoint sidecar. Without adoption the translate
+                    // tail's dependency gate reads WAIT_FOR_DEPENDENCY /
+                    // DEPENDENCY_INCOMPLETE against the placeholder and silently
+                    // skips the page's paid translation — the run then "completes"
+                    // without paying (D9's resumed-death cycle). Adopt the
+                    // checkpointed OCR snapshot into the live store — the SAME
+                    // hydration idiom the envelope lane's resume uses — and only
+                    // then count the page as reused. If the adoption cannot back
+                    // the page (unreadable sidecar, racing owner), fall through to
+                    // a fresh OCR run: never plan against fabricated content.
+                    val before = store.snapshot(pageKey)
+                    val hydrated = before.page != null &&
+                        before.page.ocrStatus == StageStatus.READY &&
+                        before.page.blocks.isNotEmpty()
+                    val adoption = if (hydrated) {
+                        CheckpointAdoption.Adopted(before)
+                    } else {
+                        adoptCheckpointSnapshot(artifact, pageKey, before)
+                    }
+                    if (adoption is CheckpointAdoption.Adopted) {
                         reusedPages++
-                        corpusFingerprints += pageKey to reusable
+                        corpusFingerprints += pageKey to reusable.ocrContentFingerprint
                         // Same live-progress marks a fresh OCR page emits: without
                         // them the tracker's snapshot stays frozen at the pre-resume
                         // counts for the entire revalidation and the drawer looks
@@ -442,18 +561,35 @@ internal class ChapterProfileBatchCoordinator(
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT t924 preflight reused checkpoint pageHash=${pageHash(pageKey)}"
                         }
-                    // M3: Batched advisory progress records: publish on first page, every 5 pages, or last page
-                    val shouldPublishProgress = (pageIndex == 0) || ((pageIndex + 1) % 5 == 0) || ((pageIndex + 1) == total)
-                    if (shouldPublishProgress) {
-                        publishRecord(
-                            artifact,
-                            record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
-                        )
+                        // M3: Batched advisory progress records: publish on first page, every 5 pages, or last page
+                        val shouldPublishProgress = (pageIndex == 0) || ((pageIndex + 1) % 5 == 0) || ((pageIndex + 1) == total)
+                        if (shouldPublishProgress) {
+                            publishRecord(
+                                artifact,
+                                record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
+                            )
+                        }
+                        continue
                     }
-                    continue
+                    // T934 R2a.5: the re-OCR cliff is now TYPED (counter + WARN
+                    // reason) instead of one untyped warning. The sealed
+                    // hierarchy has exactly two cases, so the early-continue
+                    // above leaves only Failed — spelled as a `when` because
+                    // the compiler does not narrow a sealed type from a
+                    // negated `is` after an if-statement.
+                    when (adoption) {
+                        is CheckpointAdoption.Failed ->
+                            recordAdoptionFailure(pageKey, adoption.failure, adoption.detail)
+                        is CheckpointAdoption.Adopted -> Unit
+                    }
                 }
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT t924 preflight checkpoint adoption failed pageHash=${pageHash(pageKey)} — re-OCRing"
+                is CheckpointReuse.Unavailable -> {
+                    // NO_POINTER is the quiet never-checkpointed answer (a normal
+                    // fresh OCR below); every other reason means a checkpoint
+                    // EXISTS but cannot back this run — the typed cliff.
+                    if (reusable.failure != CheckpointAdoptionFailure.NO_POINTER) {
+                        recordAdoptionFailure(pageKey, reusable.failure, null)
+                    }
                 }
             }
 
@@ -599,21 +735,42 @@ internal class ChapterProfileBatchCoordinator(
                 currentCoroutineContext().ensureActive()
                 yield()
 
-                val reusable = reusableCheckpointFingerprint(artifact, pageKey)
-                if (reusable != null) {
-                    val before = store.snapshot(pageKey)
-                    val hydrated = before.page != null &&
-                        before.page.ocrStatus == StageStatus.READY &&
-                        before.page.blocks.isNotEmpty()
-                    if (hydrated || adoptCheckpointSnapshot(artifact, pageKey, before) != null) {
+                when (val reusable = checkpointReuse(artifact, pageKey)) {
+                    is CheckpointReuse.Reusable -> {
+                        val before = store.snapshot(pageKey)
+                        val hydrated = before.page != null &&
+                            before.page.ocrStatus == StageStatus.READY &&
+                            before.page.blocks.isNotEmpty()
+                        val adoption = if (hydrated) {
+                            CheckpointAdoption.Adopted(before)
+                        } else {
+                            adoptCheckpointSnapshot(artifact, pageKey, before)
+                        }
+                    if (adoption is CheckpointAdoption.Adopted) {
                         reusedPages++
-                        corpusFingerprints += pageKey to reusable
+                        corpusFingerprints += pageKey to reusable.ocrContentFingerprint
                         // Same live-progress marks as the primary preflight's
                         // reuse path (drawer must tick, not freeze).
                         listener.ocrStarted(pageKey)
                         listener.ocrPublished(pageKey)
                         stampAdoptedRenderTerminal(pageKey)
                         continue
+                    }
+                    // Same typed cliff accounting as the primary walk. The
+                    // sealed hierarchy has exactly two cases, so the
+                    // early-continue above leaves only Failed — spelled as a
+                    // `when` because the compiler does not narrow a sealed
+                    // type from a negated `is` after an if-statement.
+                    when (adoption) {
+                        is CheckpointAdoption.Failed ->
+                            recordAdoptionFailure(pageKey, adoption.failure, adoption.detail)
+                        is CheckpointAdoption.Adopted -> Unit
+                    }
+                    }
+                    is CheckpointReuse.Unavailable -> {
+                        if (reusable.failure != CheckpointAdoptionFailure.NO_POINTER) {
+                            recordAdoptionFailure(pageKey, reusable.failure, null)
+                        }
                     }
                 }
 
@@ -798,7 +955,7 @@ internal class ChapterProfileBatchCoordinator(
     ): BatchPass1Outcome {
         val total = orderedPages.size
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
 
         fun analysisCounters(extra: Map<String, Int>): Map<String, Int> =
             baseCounters + mapOf(COUNTER_ANALYSIS_PLAN to 1) + extra
@@ -1160,7 +1317,7 @@ internal class ChapterProfileBatchCoordinator(
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
 
         fun freezeCounters(extra: Map<String, Int>): Map<String, Int> = baseCounters + extra
 
@@ -1501,7 +1658,7 @@ internal class ChapterProfileBatchCoordinator(
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
         val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 
         fun envelopeCounters(extra: Map<String, Int>): Map<String, Int> =
@@ -1842,7 +1999,7 @@ internal class ChapterProfileBatchCoordinator(
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
 
         // ST-14 entry: the FINALIZE phase pointer (resume re-runs finalize —
         // every step below is an idempotent re-run).
@@ -1896,7 +2053,7 @@ internal class ChapterProfileBatchCoordinator(
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
         val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 
         // 2. Serial post-translate inpaint drain (overlap-fallback arm).
@@ -2038,7 +2195,7 @@ internal class ChapterProfileBatchCoordinator(
         hasGaps: Boolean = false,
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
         val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 
         fun translateCounters(extra: Map<String, Int>): Map<String, Int> = baseCounters + extra
@@ -2589,7 +2746,10 @@ internal class ChapterProfileBatchCoordinator(
             // real block state. Fresh in-session pages carry blocks and skip
             // this entirely; committed/skipped/manual pages are never adopted.
             val (effectiveSnapshot, effectivePage) = if (page.blocks.isEmpty()) {
-                val adopted = adoptCheckpointSnapshot(artifact, entry.storagePageKey, snapshot)
+                val adopted = when (val outcome = adoptCheckpointSnapshot(artifact, entry.storagePageKey, snapshot)) {
+                    is CheckpointAdoption.Adopted -> outcome.snapshot
+                    is CheckpointAdoption.Failed -> null
+                }
                 if (adopted?.page == null) {
                     return EnvelopeWorkBuild.CorpusDrift(
                         "T924 envelope plan deferred: checkpoint adoption failed for ${entry.storagePageKey}",
@@ -2690,29 +2850,31 @@ internal class ChapterProfileBatchCoordinator(
      * Resume hydration for a synthesized (block-less) page: loads the page's
      * durable OCR checkpoint snapshot sidecar and merges it into the live
      * store under the standard BATCH OCR lease (M1 idiom), fenced by the
-     * placeholder page's identity. Returns the post-merge page snapshot, or
-     * null when the checkpoint/snapshot is unreadable or the identity-fenced
-     * merge was rejected — the caller defers the phase (typed pause), never
-     * plans against fabricated content.
+     * placeholder page's identity. Returns [CheckpointAdoption.Adopted] with
+     * the post-merge page snapshot, or [CheckpointAdoption.Failed] with the
+     * TYPED reason (T934 R2a.5) — the caller defers the phase or re-runs the
+     * page (fail closed), never plans against fabricated content.
      */
     private suspend fun adoptCheckpointSnapshot(
         artifact: ChapterArtifactStore,
         pageKey: String,
         before: ChapterTranslationStore.PageSnapshot,
-    ): ChapterTranslationStore.PageSnapshot? {
-        val manifest = store.artifactManifest ?: return null
-        val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
+    ): CheckpointAdoption {
+        val manifest = store.artifactManifest
+            ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.NO_POINTER)
+        val pointer = manifest.ocrCheckpoints[pageKey]
+            ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.NO_POINTER)
         val checkpoint = when (val read = artifact.readOcrCheckpoint(pointer)) {
             is ChapterArtifactStore.OcrCheckpointRead.Usable -> read.checkpoint
-            else -> return null
+            else -> return CheckpointAdoption.Failed(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
         }
         val ocrSnapshot = artifact.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
-            ?: return null
+            ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.BUNDLE_MISSING)
         val lease = when (
             val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
         ) {
             is LeaseAcquisition.Granted -> acquisition.lease
-            else -> return null
+            else -> return CheckpointAdoption.Failed(CheckpointAdoptionFailure.LEASE_DENIED)
         }
         try {
             val outcome = store.mergeOcr(
@@ -2727,13 +2889,13 @@ internal class ChapterProfileBatchCoordinator(
                 description = "t924 envelope resume: adopt checkpointed OCR into the live store",
             )
             return when (outcome) {
-                is StagePatchResult.Accepted -> store.snapshot(pageKey)
+                is StagePatchResult.Accepted -> CheckpointAdoption.Adopted(store.snapshot(pageKey))
                 is StagePatchResult.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT t924 checkpoint adoption rejected pageHash=${pageHash(pageKey)} " +
                             "reason=${outcome.reason}"
                     }
-                    null
+                    CheckpointAdoption.Failed(CheckpointAdoptionFailure.MERGE_REJECTED, outcome.reason)
                 }
             }
         } finally {
@@ -2901,7 +3063,8 @@ internal class ChapterProfileBatchCoordinator(
         // and the corpus drift gates downstream (wave-4 F-W4-1 discipline).
         val corpusPairs = mutableListOf<Pair<String, String>>()
         for ((pageKey, _) in orderedPages) {
-            val fingerprint = reusableCheckpointFingerprint(artifact, pageKey) ?: return null
+            val reusable = checkpointReuse(artifact, pageKey)
+            val fingerprint = (reusable as? CheckpointReuse.Reusable)?.ocrContentFingerprint ?: return null
             corpusPairs += pageKey to fingerprint
         }
         val naturalOrderProven =
@@ -3214,7 +3377,14 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * The per-page checkpoint transaction: CLOSE the BATCH candidate (TX-03 default). */
+     * The per-page checkpoint transaction: CLOSE the BATCH candidate (TX-03 default).
+     *
+     * T934 R2a: the checkpoint stamps the page's ADMISSION identity (the
+     * recorded digest, or the fresh dispatch observation for a first
+     * admission) — the store publishes it into
+     * [ChapterArtifactManifest.sourceShaByPageKey] in the SAME atomic
+     * transaction, so the digest is recorded at write time, never at run end.
+     */
     private suspend fun checkpointPage(
         artifact: ChapterArtifactStore,
         pageKey: String,
@@ -3227,6 +3397,7 @@ internal class ChapterProfileBatchCoordinator(
                 "preflight ocr reference without a lease token",
             )
         }
+        val admissionSha = admissionSourceSha(pageKey)
         return store.checkpointOcr(
             pageKey = pageKey,
             generation = snapshot.generation,
@@ -3235,7 +3406,7 @@ internal class ChapterProfileBatchCoordinator(
             expectedCandidateGenerationId = ref.candidateGenerationId,
             expectedArtifactPageVersion = snapshot.artifactPageVersion,
             expectedDependencyFingerprint = ref.dependencyFingerprint,
-            sourceSha256 = sourceShaByPageKey[pageKey],
+            sourceSha256 = admissionSha,
             sourceOrientation = orientationOf(snapshot),
             mode = OcrCheckpointMode.CLOSE,
             description = "t924 ocr preflight checkpoint",
@@ -3243,21 +3414,33 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * ST-06 reuse rule: a usable checkpoint whose source identity still
-     * matches the current source digest input. A checkpoint that cannot
-     * prove source equality (changed file, unknown current hash) is re-run.
+     * ST-06 reuse rule (T934 R2a typed): a usable checkpoint whose recorded
+     * source identity still matches the page's ADMISSION identity. The
+     * admission identity prefers the fresh dispatch observation, so a changed
+     * source is DETECTED here at consumption and fails closed (the page
+     * re-runs — never stale reuse); with no fresh observation it falls back
+     * to the RECORDED digest (written at first admission), so a dispatch
+     * hash failure can no longer force a full re-OCR of a proven-unchanged
+     * chapter. A checkpoint that cannot prove source equality is typed
+     * [CheckpointAdoptionFailure], not silently dropped.
      */
-    private fun reusableCheckpointFingerprint(
+    private fun checkpointReuse(
         artifact: ChapterArtifactStore,
         pageKey: String,
-    ): String? {
-        val manifest = store.artifactManifest ?: return null
-        val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
+    ): CheckpointReuse {
+        val manifest = store.artifactManifest
+            ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
+        val pointer = manifest.ocrCheckpoints[pageKey]
+            ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
         val read = artifact.readOcrCheckpoint(pointer)
-        if (read !is ChapterArtifactStore.OcrCheckpointRead.Usable) return null
-        val currentSha = sourceShaByPageKey[pageKey]
-        if (currentSha == null || read.checkpoint.sourceIdentity.sha256 != currentSha) return null
-        return read.checkpoint.ocrContentFingerprint
+        if (read !is ChapterArtifactStore.OcrCheckpointRead.Usable) {
+            return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
+        }
+        val admissionSha = admissionSourceSha(pageKey)
+        if (admissionSha == null || read.checkpoint.sourceIdentity.sha256 != admissionSha) {
+            return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SHA_MISMATCH)
+        }
+        return CheckpointReuse.Reusable(read.checkpoint.ocrContentFingerprint)
     }
 
     private fun readCheckpointFingerprint(
@@ -3537,6 +3720,15 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_REUSED = "ocrPagesReused"
         const val COUNTER_STOP = "preflightStop"
         const val COUNTER_GAPS = "preflightCheckpointGaps"
+
+        /**
+         * T934 R2a.5: typed checkpoint-adoption failures. The aggregate is
+         * emitted only when nonzero, alongside one bounded `ocrAdopt<Reason>`
+         * key per observed reason ([CheckpointAdoptionFailure.counterKey]) —
+         * appended AFTER the fixed keys so the publishRecord over-bound trim
+         * can never drop the phase-critical `ocrPages*` keys.
+         */
+        const val COUNTER_ADOPT_FAILED = "ocrPagesAdoptFailed"
         const val COUNTER_ANALYSIS_PLAN = "analysisPlanPublished"
         const val COUNTER_CHUNKS_TOTAL = "analysisChunksTotal"
         const val COUNTER_CHUNKS_DONE = "analysisChunksDone"
