@@ -8,14 +8,18 @@ import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.ocrBlockFingerprints
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -124,6 +128,32 @@ class OverlapSchedulerTest {
         ) { page ->
             page!!.apply { translationStatus = StageStatus.READY }
         }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+    }
+
+    /**
+     * T934 track I: seeds a page whose OCR is FINAL (READY, non-empty blocks)
+     * while its translation is still PENDING — the decoupled gate's new
+     * candidate shape. Inpaint's data dependency is detection/masks only
+     * (StageFingerprints.inpaint has no translation input), so this page must
+     * be schedulable without waiting for its own translation.
+     */
+    private suspend fun seedOcrOnlyPage(store: ChapterTranslationStore, pageKey: String) {
+        store.preRegisterPages(listOf(pageKey))
+        val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val before = store.snapshot(pageKey)
+        store.mergeOcr(
+            OcrStagePatch(
+                pageKey = pageKey,
+                generation = before.generation,
+                expectedPageVersion = before.pageVersion,
+                expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
+                ocrResult = ocrPage(pageKey, "source-$pageKey"),
+                expectedLeaseToken = lease.token,
+            ),
+            description = "t934 overlap test ocr",
+        ).shouldBeInstanceOf<StagePatchResult.Accepted>()
         store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
     }
 
@@ -443,5 +473,281 @@ class OverlapSchedulerTest {
         (store.snapshot("p1").page?.inpaintStatus != StageStatus.READY) shouldBe true
         // Teardown discipline still holds for the yielded page.
         store.snapshot("p1").leaseToken shouldBe null
+    }
+
+    // ------------------------------------------------------------------
+    // T934 track I — inpaint decoupling: the inpaint artifact fingerprint
+    // (StageFingerprints.inpaint) has NO translation input, so candidate
+    // admission gates on OCR being FINAL instead of the page's translation
+    // status. What must NOT regress: no OCR/detector work ever rides this
+    // scheduler (no inpaint during OCR preflight), the one-native-job
+    // bitmap envelope, and the displayReady promotion gate (translation
+    // terminal + cleaned image).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `ocr-final translation-pending page is inpainted in the window without waiting for translation`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedOcrOnlyPage(store, it) }
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(store, identities)
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+        scheduler.onRemoteWindowOpened()
+        testScheduler.advanceUntilIdle()
+        scheduler.onRemoteWindowClosed()
+        scheduler.stopOverlap()
+        loopJob.cancel()
+
+        // Decoupled gate: BOTH pages were inpainted even though neither
+        // translation has run.
+        lane.inpainted shouldBe pageKeys
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 2L
+        // The never-rule survives the decoupling: ZERO detector/OCR work.
+        lane.ocrEntries shouldBe emptyList()
+        lane.concurrent.observedMax() shouldBe 1
+        // Inpaint committed while translation stayed untouched (PENDING).
+        pageKeys.forEach { key ->
+            val page = store.snapshot(key).page!!
+            page.ocrStatus shouldBe StageStatus.READY
+            page.inpaintStatus shouldBe StageStatus.READY
+            page.translationStatus shouldBe StageStatus.PENDING
+            // TX-06 teardown discipline unchanged.
+            store.snapshot(key).leaseToken shouldBe null
+        }
+    }
+
+    @Test
+    fun `non-final ocr pages are never inpaint candidates - no inpaint before ocr final`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        // p1: OCR still PENDING (pre-registration only).
+        // p2: OCR merged (READY), then flipped to RUNNING (mid-preflight shape).
+        seedOcrOnlyPage(store, "p2")
+        val lease = store.tryAcquirePageStageLease("p2", PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val mid = store.snapshot("p2")
+        store.updatePageGuarded(
+            pageKey = "p2",
+            expected = ChapterTranslationStore.PatchPrecondition(
+                generation = mid.generation,
+                pageVersion = mid.pageVersion,
+                leaseToken = lease.token,
+            ),
+            description = "t934 ocr running seed",
+        ) { page ->
+            page!!.apply { ocrStatus = StageStatus.RUNNING }
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        store.releasePageStageLease("p2", PageWriteOrigin.BATCH)
+
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(store, identities)
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+        scheduler.onRemoteWindowOpened()
+        testScheduler.advanceUntilIdle()
+        scheduler.onRemoteWindowClosed()
+        // The serial drain must not pick them up either.
+        scheduler.drainSerial()
+        scheduler.stopOverlap()
+        loopJob.cancel()
+
+        // Neither arm ever touched the lane: a non-final OCR page has no
+        // durable mask, so the relaxed gate still requires OCR READY.
+        lane.inpainted shouldBe emptyList()
+        lane.ocrEntries shouldBe emptyList()
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 0L
+        scheduler.counters.snapshot()["serialInpaintsExecuted"] shouldBe 0L
+        store.snapshot("p1").page?.ocrStatus shouldBe StageStatus.PENDING
+        store.snapshot("p2").page?.ocrStatus shouldBe StageStatus.RUNNING
+    }
+
+    @Test
+    fun `display promotion still requires translation terminal and cleaned image even when inpaint commits first`() = runTest {
+        // T934 round 2 fixture fix: the committed-display promotion
+        // (ChapterArtifactStore.promoteLiveCandidate → displayBaseIsValid)
+        // validates the cleaned image FOR REAL — the companion file must exist
+        // on disk and probe as a decodable image matching the page's source
+        // dimensions. Production is correct; the fixture was missing both. The
+        // JVM has no BitmapFactory, so install the header-probe seam
+        // (ChapterTranslationStorePersistenceTest / D7 fixture recipe) and
+        // persist the cleaned companion file the layout expects.
+        val productionProbe = ChapterTranslationStore.artifactImageProbe
+        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
+        try {
+            val store = lazyStore()
+            val pageKeys = listOf("p1")
+            store.preRegisterPages(pageKeys)
+            pageKeys.forEach { seedOcrOnlyPage(store, it) }
+            val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            val lane = FakeInpaintLane(store, identities)
+            val scheduler = scheduler(store, lane, pageKeys, identities)
+
+            val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+            scheduler.onRemoteWindowOpened()
+            testScheduler.advanceUntilIdle()
+            scheduler.onRemoteWindowClosed()
+            scheduler.stopOverlap()
+            loopJob.cancel()
+
+            // Inpaint committed FIRST (decoupled gate), but the page must NOT be
+            // display-ready: the promotion gate still requires the translation to
+            // be terminal AND a cleaned image to exist.
+            val afterInpaint = store.snapshot("p1").page!!
+            afterInpaint.inpaintStatus shouldBe StageStatus.READY
+            afterInpaint.translationStatus shouldBe StageStatus.PENDING
+            afterInpaint.cleanedImageName shouldBe null
+            afterInpaint.toPageDisplayProjection().displayReady shouldBe false
+            afterInpaint.hasRenderedResult shouldBe false
+            // The committed-display promotion (ChapterTranslationStore
+            // promoteDisplayIfReadyLocked) must not have fired either.
+            val unresolved = store.resolveDisplayPage("p1")!!
+            unresolved.toPageDisplayProjection().displayReady shouldBe false
+
+            // Now drive the page to the full display shape through the SAME
+            // guarded store idiom: translation terminal + render READY + a cleaned
+            // image name + non-blank block translation. The cleaned companion
+            // file exists on disk first (ChapterArtifactLayout
+            // .legacyCompanionImageFile: "Chapter 1_images/<name>") so the
+            // promotion's real file validation passes.
+            File(mangaDir, "Chapter 1_images").mkdirs()
+            File(mangaDir, "Chapter 1_images/cleaned-p1.jpg").writeBytes(byteArrayOf(1))
+            val tLease = store.tryAcquirePageStageLease("p1", PageStage.Translation, PageWriteOrigin.BATCH)
+                .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+            val mid = store.snapshot("p1")
+            store.updatePageGuarded(
+                pageKey = "p1",
+                expected = ChapterTranslationStore.PatchPrecondition(
+                    generation = mid.generation,
+                    pageVersion = mid.pageVersion,
+                    leaseToken = tLease.token,
+                ),
+                description = "t934 display promotion test translate+render",
+            ) { page ->
+                page!!.apply {
+                    translationStatus = StageStatus.READY
+                    renderStatus = StageStatus.READY
+                    cleanedImageName = "cleaned-p1.jpg"
+                    blocks.forEach { block -> block.translation = "translated-${block.blockId}" }
+                }
+            }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+            store.releasePageStageLease("p1", PageWriteOrigin.BATCH)
+
+            // The promotion gate is untouched: with translation terminal + cleaned
+            // image the page IS display-ready (live and committed views agree).
+            val live = store.snapshot("p1").page!!
+            live.toPageDisplayProjection().displayReady shouldBe true
+            live.hasRenderedResult shouldBe true
+            val promoted = store.resolveDisplayPage("p1")!!
+            promoted.toPageDisplayProjection().displayReady shouldBe true
+            promoted.translationStatus shouldBe StageStatus.READY
+            promoted.cleanedImageName shouldBe "cleaned-p1.jpg"
+        } finally {
+            ChapterTranslationStore.artifactImageProbe = productionProbe
+        }
+    }
+
+    /**
+     * Commits a READY translation (plus optional cleaned image name and
+     * non-blank block translations) through the SAME guarded lease idiom the
+     * translation lane's final commit uses.
+     */
+    private suspend fun commitTranslation(
+        store: ChapterTranslationStore,
+        pageKey: String,
+        cleanedName: String?,
+    ) {
+        val tLease = store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val mid = store.snapshot(pageKey)
+        store.updatePageGuarded(
+            pageKey = pageKey,
+            expected = ChapterTranslationStore.PatchPrecondition(
+                generation = mid.generation,
+                pageVersion = mid.pageVersion,
+                leaseToken = tLease.token,
+            ),
+            description = "t934 render sweep test translation ready",
+        ) { page ->
+            page!!.apply {
+                translationStatus = StageStatus.READY
+                if (cleanedName != null) {
+                    cleanedImageName = cleanedName
+                }
+                blocks.forEach { block -> block.translation = "translated-${block.blockId}" }
+            }
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+    }
+
+    @Test
+    fun `serial drain stamps order-inverted display-complete pages render-terminal`() = runTest {
+        // T934 round 3: the decoupled window inpaints p1/p2 while BOTH
+        // translations are still PENDING (the order inversion the relaxed
+        // candidacy creates). The inpaint lane's own render stamp is gated
+        // on the translation being already terminal, so no stamp lands
+        // here. The drain's adoption sweep must stamp exactly the page that
+        // later carries the full display evidence (p1: cleaned image +
+        // translated block), and skip the one missing it (p2: no cleaned
+        // image) — the drain-side twin of the coordinator's E2 stamp.
+        val productionProbe = ChapterTranslationStore.artifactImageProbe
+        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
+        try {
+            val store = lazyStore()
+            val pageKeys = listOf("p1", "p2")
+            store.preRegisterPages(pageKeys)
+            pageKeys.forEach { seedOcrOnlyPage(store, it) }
+            val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            val lane = FakeInpaintLane(store, identities)
+            val scheduler = scheduler(store, lane, pageKeys, identities)
+
+            // The window inpaints both pages while their translations are
+            // PENDING — the order inversion.
+            val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+            scheduler.onRemoteWindowOpened()
+            testScheduler.advanceUntilIdle()
+            scheduler.onRemoteWindowClosed()
+            scheduler.stopOverlap()
+            loopJob.cancel()
+
+            lane.inpainted shouldBe pageKeys
+            pageKeys.forEach { key ->
+                val page = store.snapshot(key).page!!
+                page.inpaintStatus shouldBe StageStatus.READY
+                page.translationStatus shouldBe StageStatus.PENDING
+                page.renderStatus shouldBe StageStatus.PENDING
+            }
+
+            // The translations commit later (next window of the pass, or a
+            // restart). p1 gets the full display shape; p2 has no cleaned
+            // image persisted.
+            File(mangaDir, "Chapter 1_images").mkdirs()
+            File(mangaDir, "Chapter 1_images/cleaned-p1.jpg").writeBytes(byteArrayOf(1))
+            commitTranslation(store, "p1", cleanedName = "cleaned-p1.jpg")
+            commitTranslation(store, "p2", cleanedName = null)
+
+            // The drain finds no inpaint work (both artifacts durable) but
+            // settles the inverted page's render terminality.
+            scheduler.drainSerial()
+
+            val stamped = store.snapshot("p1").page!!
+            stamped.renderStatus shouldBe StageStatus.READY
+            stamped.translationStatus shouldBe StageStatus.READY
+            stamped.inpaintStatus shouldBe StageStatus.READY
+            // The stamp fires the committed-display promotion (the reader gate).
+            store.resolveDisplayPage("p1")!!.toPageDisplayProjection().displayReady shouldBe true
+            // Missing display evidence is NOT stamped.
+            store.snapshot("p2").page!!.renderStatus shouldBe StageStatus.PENDING
+            // TX-06 teardown discipline: the sweep's Render lease is released.
+            store.snapshot("p1").leaseToken shouldBe null
+            store.snapshot("p2").leaseToken shouldBe null
+        } finally {
+            ChapterTranslationStore.artifactImageProbe = productionProbe
+        }
     }
 }

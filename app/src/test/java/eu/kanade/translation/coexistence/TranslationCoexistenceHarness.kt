@@ -510,12 +510,22 @@ internal class TranslationCoexistenceHarness private constructor(
                 String?,
                 suspend (String, (PageTranslation?) -> PageTranslation) -> ChapterTranslationStore.PatchResult,
             ) -> PageTranslation = { pageKey, _, page, batchFingerprint, _ ->
-                // Lane ordering: the page's batch identity check has passed once
+                // T934 track I (round 2) CONVERSION: the old
+                // `transportStarted[pageKey]?.await()` pinned the pre-decoupling
+                // lane order "the page's batch identity check has passed once
                 // the transport started; only then may the native stage write
-                // the page (see FakeTransportTranslator doc).
-                println("DBG inpaint $pageKey wait")
-                transportStarted[pageKey]?.await()
-                println("DBG inpaint $pageKey woke")
+                // the page". Track I removed the translation-status candidacy
+                // gate (StageFingerprints.inpaint has no translation input), so
+                // the overlap inpaint legitimately runs BEFORE (or without) the
+                // page's own transport — awaiting it here deadlocked the native
+                // lane (the suspended fake holds the ONE native permit while the
+                // event it waits for may never fire: FAILED predecessors,
+                // reader-owned pages, parked transports). The scheduler's
+                // BATCH write-slot admission (OverlapScheduler slot-free
+                // pre-check) now provides the same-page write-exclusivity this
+                // wait used to approximate, so the fake inpaint runs
+                // unconditionally like the real native worker.
+                println("DBG inpaint $pageKey run")
                 page.inpaintFingerprint = batchFingerprint
                 page.cleanedBitmap = FakeCoexistence.stubBitmap()
                 // T924 zero-legacy (D1) fake fidelity: the real page inpainter
