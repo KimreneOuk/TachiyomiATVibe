@@ -231,4 +231,15 @@
     <!-- T917 Phase 5 (D10): partial download — available pages are real, the
          source total is unknown, and the drawer must never show a percentage. -->
     <string name="manga_batch_phase_unknown_total">Pages available; source total unknown</string>
+    <!-- T934 U: phase-truth copy for resume rebuild/restore, derived in
+         TranslationUiTruth and shared by the progress sheet and the reader
+         bottom bar, so neither surface freezes on stale "Batch X/Y" copy. -->
+    <string name="translation_status_rebuilding">Rebuilding pipeline…</string>
+    <string name="translation_status_restoring">Restoring %1$d of %2$d pages…</string>
+    <string name="translation_bar_restoring">Restoring %1$d pages…</string>
+    <string name="translation_status_rebuilding_short">Rebuilding</string>
+    <string name="translation_status_restoring_short">Restoring pages</string>
+    <string name="translation_status_resuming">Resuming…</string>
+    <string name="translation_sheet_advanced_toggle">Advanced details</string>
+    <string name="translation_sheet_failures_notice">%1$d pages need attention</string>
 </resources>

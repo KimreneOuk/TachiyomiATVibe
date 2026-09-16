@@ -2,14 +2,19 @@ package eu.kanade.translation.ui
 
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline
+import eu.kanade.translation.model.BatchHeroPhase
+import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
+import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.SinglePageOutcome
+import java.text.DateFormat
+import java.util.Date
 
 /**
  * T917 Phase 5 (spec §1.2, §2): bounded UI vocabulary projected FROM existing
@@ -609,4 +614,342 @@ object TranslationUiTruth {
         terminalSuccess = false,
         contentDescription = "Translation cancelled; saved translated pages were kept.",
     )
+
+    // ------------------------------------------------------------------
+    // T934 U.3/U.6: chapter-level batch status-line truth.
+    //
+    // One priority chain (requestState → queuePosition → pauseReason →
+    // coordinator phase+counters → batchPhase) resolved ONCE here, rendered
+    // by every batch status surface. Each line carries a stable
+    // [BatchStatusLineKind] (surfaces resolve NEW wording from string
+    // resources through it) plus the English fallback/source wording
+    // (legacy rendering stays byte-identical where no new resource exists
+    // yet). The vocabulary + line type are TOP-LEVEL in this file so every
+    // surface (sheet, reader bar, tests) imports them directly.
+    // ------------------------------------------------------------------
+
+    /**
+     * The single chapter-level status-line priority chain (U.3):
+     * requestState → queuePosition → pauseReason → coordinator
+     * rebuild/restore phase + counters → batchPhase. The sheet subtitle and
+     * the reader bottom bar both derive their copy from this mapping (via
+     * [readerBarLine] for the bar's short wording), so no surface can
+     * contradict another or freeze on stale "Batch X/Y" copy during a
+     * resume rebuild.
+     */
+    fun batchStatusLine(
+        snapshot: TranslationProgressSnapshot,
+        isResuming: Boolean = false,
+    ): BatchStatusLine = when {
+        isResuming -> BatchStatusLine(
+            kind = BatchStatusLineKind.RESUMING,
+            fallback = "Scanning completed pages & resuming batch...",
+        )
+
+        else -> requestStatusLine(snapshot)
+            ?: queueStatusLine(snapshot)
+            ?: pausedStatusLine(snapshot)
+            ?: rebuildStatusLine(snapshot)
+            ?: batchPhaseStatusLine(snapshot)
+    }
+
+    /** Priority 1: the immediate pre-tracker request acknowledgement. */
+    private fun requestStatusLine(snapshot: TranslationProgressSnapshot): BatchStatusLine? {
+        val request = snapshot.requestState ?: return null
+        val base = when (request.phase) {
+            TranslationRequestPhase.STARTING -> "Translation accepted — preparing batch..."
+            TranslationRequestPhase.PREPARING -> "Preparing translation batch..."
+            TranslationRequestPhase.WAITING_FOR_DOWNLOAD ->
+                "Waiting for chapter download before translation"
+            TranslationRequestPhase.DOWNLOAD_FAILED -> "Download failed — retry to continue"
+            TranslationRequestPhase.CANCELLED ->
+                "Translation cancelled — the chapter download was cancelled or removed"
+            TranslationRequestPhase.ADMISSION_FAILED ->
+                "Translation could not be queued — check the source and translation settings"
+        }
+        val kind = when (request.phase) {
+            TranslationRequestPhase.STARTING -> BatchStatusLineKind.REQUEST_STARTING
+            TranslationRequestPhase.PREPARING -> BatchStatusLineKind.REQUEST_PREPARING
+            TranslationRequestPhase.WAITING_FOR_DOWNLOAD ->
+                BatchStatusLineKind.REQUEST_WAITING_FOR_DOWNLOAD
+            TranslationRequestPhase.DOWNLOAD_FAILED -> BatchStatusLineKind.REQUEST_DOWNLOAD_FAILED
+            TranslationRequestPhase.CANCELLED -> BatchStatusLineKind.REQUEST_CANCELLED
+            TranslationRequestPhase.ADMISSION_FAILED -> BatchStatusLineKind.REQUEST_ADMISSION_FAILED
+        }
+        val suffix = request.reason.orEmpty().takeIf { it.isNotBlank() }?.let { " — $it" }.orEmpty()
+        return BatchStatusLine(kind = kind, fallback = base + suffix)
+    }
+
+    /** Priority 2: truthful queue position (never implies it can resume now). */
+    private fun queueStatusLine(snapshot: TranslationProgressSnapshot): BatchStatusLine? {
+        if (snapshot.state != Translation.State.QUEUE) return null
+        val position = snapshot.queuePosition
+        val total = snapshot.queueTotal
+        return if (position != null && total != null && position > 1) {
+            BatchStatusLine(
+                kind = BatchStatusLineKind.QUEUE_POSITION,
+                formatArgs = listOf(position, total),
+                fallback = queuedPositionLabel(position, total),
+            )
+        } else {
+            BatchStatusLine(
+                kind = BatchStatusLineKind.QUEUED_READY,
+                fallback = "Queued — ready to resume remaining pages",
+            )
+        }
+    }
+
+    /** Priority 3: a durable pause with its reason (and retry time, when known). */
+    private fun pausedStatusLine(snapshot: TranslationProgressSnapshot): BatchStatusLine? {
+        val paused = snapshot.state == Translation.State.PAUSED || snapshot.pauseReason != null
+        if (!paused) return null
+        val reason = snapshot.pauseReason?.takeIf { it.isNotBlank() }
+            ?: "Provider work is temporarily unavailable"
+        val next = snapshot.nextEligibleRetryAtEpochMs?.let { retryAt ->
+            DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(retryAt))
+        }
+        return BatchStatusLine(
+            kind = BatchStatusLineKind.PAUSED,
+            fallback = if (next == null) "Paused — $reason" else "Paused — $reason · retry after $next",
+        )
+    }
+
+    /** Priority 4: the coordinator's rebuild/restore phase with its counters. */
+    private fun rebuildStatusLine(snapshot: TranslationProgressSnapshot): BatchStatusLine? =
+        when (snapshot.batchPhase) {
+            TranslationBatchPhase.REBUILDING -> BatchStatusLine(
+                kind = BatchStatusLineKind.REBUILDING,
+                fallback = "Rebuilding pipeline…",
+            )
+            TranslationBatchPhase.RESTORING -> {
+                val payload = snapshot.rebuildProgress
+                BatchStatusLine(
+                    kind = BatchStatusLineKind.RESTORING,
+                    formatArgs = listOf(
+                        payload?.restoredPages ?: 0,
+                        payload?.totalPages ?: 0,
+                    ),
+                    fallback = "Restoring ${payload?.restoredPages ?: 0} of " +
+                        "${payload?.totalPages ?: 0} pages…",
+                )
+            }
+            else -> null
+        }
+
+    /** Priority 5: the remaining batch phases (the legacy subtitle wording). */
+    private fun batchPhaseStatusLine(snapshot: TranslationProgressSnapshot): BatchStatusLine =
+        when (snapshot.batchPhase) {
+            TranslationBatchPhase.IDLE -> when (snapshot.state) {
+                Translation.State.TRANSLATING -> BatchStatusLine(
+                    kind = BatchStatusLineKind.BUILDING_CONTEXT,
+                    fallback = "Building context & scanning completed pages...",
+                )
+                else -> BatchStatusLine(
+                    kind = BatchStatusLineKind.NO_ACTIVE_BATCH,
+                    fallback = "No active batch in progress",
+                )
+            }
+            TranslationBatchPhase.FIRST_PASS -> firstPassStatusLine(snapshot)
+            TranslationBatchPhase.FINALIZING -> BatchStatusLine(
+                kind = BatchStatusLineKind.FINALIZING,
+                fallback = "Finalizing translated chapter...",
+            )
+            TranslationBatchPhase.FINISHED -> BatchStatusLine(
+                kind = BatchStatusLineKind.COMPLETED,
+                fallback = "All pages translated and ready to read",
+            )
+            // The rebuild/restore kinds are resolved by [rebuildStatusLine]
+            // (higher priority); this branch is unreachable through
+            // [batchStatusLine] and exists only for exhaustiveness.
+            TranslationBatchPhase.REBUILDING,
+            TranslationBatchPhase.RESTORING,
+            -> rebuildStatusLine(snapshot)
+                ?: BatchStatusLine(
+                    kind = BatchStatusLineKind.REBUILDING,
+                    fallback = "Rebuilding pipeline…",
+                )
+        }
+
+    /** FIRST_PASS stage detail — the legacy subtitle's stage-aware wording. */
+    private fun firstPassStatusLine(snapshot: TranslationProgressSnapshot): BatchStatusLine = when {
+        snapshot.activeStages.contains(TranslationProgressStage.TRANSLATE) -> {
+            val progress = snapshot.aiProgress
+            val detail = listOfNotNull(
+                "${progress.pending} pending".takeIf { progress.pending > 0 },
+                "${progress.buffered} buffered".takeIf { progress.buffered > 0 },
+                "${progress.running} running/retrying".takeIf { progress.running > 0 },
+                "${progress.failed} failed".takeIf { progress.failed > 0 },
+            ).joinToString(", ")
+            BatchStatusLine(
+                kind = BatchStatusLineKind.FIRST_PASS_STAGES,
+                fallback = if (detail.isBlank()) {
+                    "Translating dialogue with AI model..."
+                } else {
+                    "AI translation: $detail"
+                },
+            )
+        }
+        snapshot.activeStages.contains(TranslationProgressStage.OCR) -> BatchStatusLine(
+            kind = BatchStatusLineKind.FIRST_PASS_STAGES,
+            fallback = "Reading and detecting page text...",
+        )
+        snapshot.activeStages.contains(TranslationProgressStage.INPAINT) -> BatchStatusLine(
+            kind = BatchStatusLineKind.FIRST_PASS_STAGES,
+            fallback = "Cleaning speech bubbles...",
+        )
+        snapshot.activeStages.contains(TranslationProgressStage.RENDER) -> BatchStatusLine(
+            kind = BatchStatusLineKind.FIRST_PASS_STAGES,
+            fallback = "Rendering English text overlays...",
+        )
+        else -> when (val hero = BatchHeroProjection.of(snapshot)) {
+            is BatchHeroProjection.Numeric -> BatchStatusLine(
+                kind = BatchStatusLineKind.FIRST_PASS_PAGES,
+                formatArgs = listOf(snapshot.donePages, snapshot.totalPages),
+                fallback = "Translating pages (${snapshot.donePages}/${snapshot.totalPages})",
+            )
+            is BatchHeroProjection.Phase -> BatchStatusLine(
+                kind = BatchStatusLineKind.FIRST_PASS_STAGES,
+                fallback = heroPhaseSubtitle(hero),
+            )
+        }
+    }
+
+    /** T911 slice 1 (post-review) subtitle copy for unknown-total phases. */
+    private fun heroPhaseSubtitle(hero: BatchHeroProjection.Phase): String {
+        val percent = hero.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
+        return when (hero.phase) {
+            BatchHeroPhase.ACCEPTED -> "Translation accepted — preparing batch..."
+            BatchHeroPhase.WAITING_FOR_DOWNLOAD -> "Waiting for chapter download before translation"
+            BatchHeroPhase.DOWNLOADING -> "Downloading chapter$percent..."
+            BatchHeroPhase.DOWNLOAD_FAILED -> "Download failed — retry to continue"
+            BatchHeroPhase.PREPARING -> "Preparing translation batch..."
+            BatchHeroPhase.QUEUED -> "Queued — ready to resume remaining pages"
+            BatchHeroPhase.PAUSED -> "Paused"
+            BatchHeroPhase.FINALIZING -> "Finalizing translated chapter..."
+            BatchHeroPhase.COMPLETED -> "All pages translated and ready to read"
+            BatchHeroPhase.FAILED_NO_PAGES -> "Translation failed — chapter has no readable pages"
+            BatchHeroPhase.CANCELLED ->
+                "Translation cancelled — the chapter download was cancelled or removed"
+            BatchHeroPhase.ADMISSION_FAILED ->
+                "Translation could not be queued — check the source and translation settings"
+            BatchHeroPhase.UNKNOWN_TOTAL ->
+                hero.donePages?.let { "$it pages available · source total unknown" }
+                    ?: "Source page total unknown"
+        }
+    }
+
+    /**
+     * T934 U.4: the reader bottom bar's short rendering of the SAME truth.
+     * Returns null exactly when the bar must stay hidden (no request, no
+     * pause, idle phase — the legacy visibility rule). The rebuild/restore
+     * kinds replace the frozen "Batch X/Y" line during a resume rebuild;
+     * every legacy branch keeps its historical bar wording byte-identically.
+     */
+    fun readerBarLine(snapshot: TranslationProgressSnapshot): BatchStatusLine? {
+        val request = snapshot.requestState
+        val isPaused = snapshot.state == Translation.State.PAUSED || snapshot.pauseReason != null
+        val isVisible = request != null ||
+            isPaused ||
+            snapshot.batchPhase != TranslationBatchPhase.IDLE
+        if (!isVisible) return null
+        return when {
+            request?.phase == TranslationRequestPhase.STARTING -> BatchStatusLine(
+                kind = BatchStatusLineKind.REQUEST_STARTING,
+                fallback = "Translation accepted — preparing",
+            )
+            request?.phase == TranslationRequestPhase.PREPARING -> BatchStatusLine(
+                kind = BatchStatusLineKind.REQUEST_PREPARING,
+                fallback = "Preparing translation batch",
+            )
+            request?.phase == TranslationRequestPhase.WAITING_FOR_DOWNLOAD -> BatchStatusLine(
+                kind = BatchStatusLineKind.REQUEST_WAITING_FOR_DOWNLOAD,
+                fallback = "Waiting for chapter download",
+            )
+            request?.phase == TranslationRequestPhase.DOWNLOAD_FAILED -> BatchStatusLine(
+                kind = BatchStatusLineKind.REQUEST_DOWNLOAD_FAILED,
+                fallback = "Download failed — retry to continue",
+            )
+            isPaused -> BatchStatusLine(
+                kind = BatchStatusLineKind.PAUSED,
+                fallback = "Translation paused",
+            )
+            snapshot.batchPhase == TranslationBatchPhase.REBUILDING -> BatchStatusLine(
+                kind = BatchStatusLineKind.REBUILDING,
+                fallback = "Rebuilding pipeline…",
+            )
+            snapshot.batchPhase == TranslationBatchPhase.RESTORING -> {
+                val remaining = snapshot.rebuildProgress?.remainingPages ?: 0
+                BatchStatusLine(
+                    kind = BatchStatusLineKind.RESTORING,
+                    formatArgs = listOf(remaining),
+                    fallback = "Restoring $remaining pages…",
+                )
+            }
+            snapshot.totalPages > 0 -> BatchStatusLine(
+                kind = BatchStatusLineKind.FIRST_PASS_PAGES,
+                formatArgs = listOf(snapshot.donePages, snapshot.totalPages),
+                fallback = "Batch ${snapshot.donePages}/${snapshot.totalPages} pages",
+            )
+            else -> BatchStatusLine(
+                kind = BatchStatusLineKind.REQUEST_PREPARING,
+                fallback = "Preparing translation batch",
+            )
+        }
+    }
+
+    /** 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 4 -> "4th", 11-13 -> "th". */
+    fun ordinalSuffixOf(value: Int): String {
+        val mod100 = value % 100
+        val suffix = when {
+            mod100 in 11..13 -> "th"
+            else -> when (value % 10) {
+                1 -> "st"
+                2 -> "nd"
+                3 -> "rd"
+                else -> "th"
+            }
+        }
+        return "$value$suffix"
+    }
+
+    /** T911 slice 2: truthful queue position, e.g. "Queued (2nd of 3) — ...". */
+    fun queuedPositionLabel(position: Int, total: Int): String =
+        "Queued (${ordinalSuffixOf(position)} of $total) — waiting for earlier batches"
 }
+
+/** Bounded vocabulary for chapter-level batch status lines (T934 U.3). */
+enum class BatchStatusLineKind {
+    RESUMING,
+    REQUEST_STARTING,
+    REQUEST_WAITING_FOR_DOWNLOAD,
+    REQUEST_PREPARING,
+    REQUEST_DOWNLOAD_FAILED,
+    REQUEST_CANCELLED,
+    REQUEST_ADMISSION_FAILED,
+    QUEUE_POSITION,
+    QUEUED_READY,
+    PAUSED,
+
+    /** T934 U.1: run record says the resumed run is re-validating sources. */
+    REBUILDING,
+
+    /** T934 U.1: run record says the resumed run is re-adopting durable page work. */
+    RESTORING,
+    BUILDING_CONTEXT,
+    FIRST_PASS_STAGES,
+    FIRST_PASS_PAGES,
+    FINALIZING,
+    COMPLETED,
+    NO_ACTIVE_BATCH,
+}
+
+/**
+ * One chapter-level batch status line (T934 U.3). [formatArgs] feeds the
+ * surface's string-resource lookup for [kind]; [fallback] is the English
+ * source wording for surfaces (or locales) that render without the resource.
+ */
+data class BatchStatusLine(
+    val kind: BatchStatusLineKind,
+    val formatArgs: List<Any> = emptyList(),
+    val fallback: String,
+)

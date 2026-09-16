@@ -39,7 +39,33 @@ data class AiBatchProgress(
     val processed: Int get() = succeeded + failed
 }
 
-enum class TranslationBatchPhase { IDLE, FIRST_PASS, FINALIZING, FINISHED }
+/**
+ * T934 U.1: the existing batch phase projection, extended with the two
+ * resume-rebuild states. [REBUILDING] and [RESTORING] are derived from the
+ * durable run record (state + phase counters) by the batch progress
+ * projector — never a competing state machine: every other producer keeps
+ * emitting the original four values, and a snapshot without run-record
+ * rebuild truth keeps its legacy phase.
+ */
+enum class TranslationBatchPhase { IDLE, FIRST_PASS, FINALIZING, FINISHED, REBUILDING, RESTORING }
+
+/**
+ * T934 U.1: rebuild/restore payload carried alongside
+ * [TranslationBatchPhase.REBUILDING]/[TranslationBatchPhase.RESTORING].
+ * Counts come from the active run record's phase counters
+ * (`ocrPagesTotal` / `ocrPagesDone`), so "restored" means durable work the
+ * resumed run has re-adopted so far — never fabricated progress.
+ */
+@Immutable
+data class BatchRebuildProgress(
+    /** Pages whose durable work the resumed run has re-validated/adopted. */
+    val restoredPages: Int,
+    /** The run's total registered page set. */
+    val totalPages: Int,
+) {
+    /** Pages still to re-validate/restore in this rebuild window. */
+    val remainingPages: Int get() = (totalPages - restoredPages).coerceAtLeast(0)
+}
 
 @Immutable
 data class TranslationProgressSnapshot(
@@ -100,6 +126,13 @@ data class TranslationProgressSnapshot(
      * trusted manifest earns `true`.
      */
     val expectedPageCountTrusted: Boolean = false,
+    /**
+     * T934 U.1: rebuild/restore counts for
+     * [TranslationBatchPhase.REBUILDING]/[TranslationBatchPhase.RESTORING],
+     * stamped by the batch progress projector from the durable run record.
+     * Null whenever the phase is not a rebuild/restore phase.
+     */
+    val rebuildProgress: BatchRebuildProgress? = null,
 ) {
     /** Failures are processed, so a terminal failed stage reaches 100%. */
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages

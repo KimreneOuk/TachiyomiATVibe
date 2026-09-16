@@ -26,9 +26,10 @@ import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationUiState
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.ui.BatchStatusLineKind
+import eu.kanade.translation.ui.TranslationUiTruth
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -66,20 +67,24 @@ fun BottomReaderBar(
         )
 
         translationBatchProgress?.let { snapshot ->
-            val request = snapshot.requestState
+            // T934 U.4: the bar renders the SAME chapter status truth as the
+            // progress sheet (TranslationUiTruth.readerBarLine). During a
+            // resume rebuild the rebuild/restore kinds resolve the shared
+            // string resources — the line can never freeze on "Batch X/Y";
+            // legacy kinds keep their historical bar wording via the truth
+            // line's fallback. Null = the bar's legacy hidden state.
             val isPaused = snapshot.state == Translation.State.PAUSED || snapshot.pauseReason != null
-            val isVisible = request != null ||
-                isPaused ||
-                snapshot.batchPhase != TranslationBatchPhase.IDLE
-            if (isVisible) {
-                val status = when {
-                    request?.phase == TranslationRequestPhase.STARTING -> "Translation accepted — preparing"
-                    request?.phase == TranslationRequestPhase.PREPARING -> "Preparing translation batch"
-                    request?.phase == TranslationRequestPhase.WAITING_FOR_DOWNLOAD -> "Waiting for chapter download"
-                    request?.phase == TranslationRequestPhase.DOWNLOAD_FAILED -> "Download failed — retry to continue"
-                    isPaused -> "Translation paused"
-                    snapshot.totalPages > 0 -> "Batch ${snapshot.donePages}/${snapshot.totalPages} pages"
-                    else -> "Preparing translation batch"
+            val line = TranslationUiTruth.readerBarLine(snapshot)
+            if (line != null) {
+                val status = when (line.kind) {
+                    BatchStatusLineKind.REBUILDING ->
+                        stringResource(ATMR.strings.translation_status_rebuilding)
+                    BatchStatusLineKind.RESTORING ->
+                        stringResource(
+                            ATMR.strings.translation_bar_restoring,
+                            *line.formatArgs.toTypedArray(),
+                        )
+                    else -> line.fallback
                 }
                 Text(
                     text = status,

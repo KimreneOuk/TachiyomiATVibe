@@ -6,6 +6,11 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterRunRecord
+import eu.kanade.translation.artifact.ChapterRunState
+import eu.kanade.translation.model.BatchRebuildProgress
+import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -15,6 +20,7 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +32,78 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.withContext
+
+/** T934 U.1: minimum interval between durable run-record probes per chapter flow. */
+private const val REBUILD_PROBE_MIN_INTERVAL_MS = 500L
+
+/**
+ * T934 U.1: pure rebuild/restore truth derived from the durable run record.
+ *
+ * The resume-rebuild window is the run record's preflight preamble:
+ *
+ *  - `RUN_SNAPSHOT` / `SOURCE_VALIDATION`: the resumed run re-validates its
+ *    frozen configuration and sources → [TranslationBatchPhase.REBUILDING]
+ *    ("Rebuilding pipeline…").
+ *  - `OCR_PLAN` with `ocrPagesDone > 0`: the coordinator re-adopts durable
+ *    page work and republishes its counters per adopted page →
+ *    [TranslationBatchPhase.RESTORING] with the restored/total payload.
+ *
+ * `OCR_PLAN` with a zero done count is deliberately NOT a rebuild: a FIRST
+ * run also publishes `OCR_PLAN` before its whole fresh OCR pass and never
+ * republishes it until the pass ends, so a zero count cannot distinguish a
+ * resume preamble from ordinary fresh OCR — never fake rebuild copy over a
+ * normal first translation. Every post-preflight state (OCR_PREFLIGHT and
+ * later, terminal states included) is running/terminal work → null (normal
+ * copy).
+ */
+internal fun rebuildTruthFromRunRecord(
+    record: ChapterRunRecord?,
+): Pair<TranslationBatchPhase, BatchRebuildProgress?>? {
+    if (record == null) return null
+    val total = record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_TOTAL] ?: 0
+    val done = record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] ?: 0
+    return when (record.state) {
+        ChapterRunState.RUN_SNAPSHOT,
+        ChapterRunState.SOURCE_VALIDATION,
+        -> TranslationBatchPhase.REBUILDING to BatchRebuildProgress(
+            restoredPages = done.coerceAtLeast(0),
+            totalPages = total.coerceAtLeast(0),
+        )
+        ChapterRunState.OCR_PLAN -> {
+            if (total <= 0 || done <= 0) return null
+            TranslationBatchPhase.RESTORING to BatchRebuildProgress(
+                restoredPages = done.coerceAtMost(total),
+                totalPages = total,
+            )
+        }
+        else -> null
+    }
+}
+
+/**
+ * T934 U.1: stamps the run-record rebuild truth onto a snapshot, but ONLY
+ * inside the live FIRST_PASS window (a TRANSLATING chapter whose phase is
+ * FIRST_PASS or already a rebuild phase). Terminal snapshots, queued
+ * chapters, and pauses are never restamped, so the rebuild phase can never
+ * outlive the run that produced it.
+ */
+internal fun TranslationProgressSnapshot.withRunRecordTruth(
+    record: ChapterRunRecord?,
+): TranslationProgressSnapshot {
+    val truth = rebuildTruthFromRunRecord(record) ?: return this
+    val liveRunWindow = state == Translation.State.TRANSLATING &&
+        (
+            batchPhase == TranslationBatchPhase.FIRST_PASS ||
+                batchPhase == TranslationBatchPhase.REBUILDING ||
+                batchPhase == TranslationBatchPhase.RESTORING
+            )
+    if (!liveRunWindow) return this
+    return copy(
+        batchPhase = truth.first,
+        rebuildProgress = truth.second,
+    )
+}
 
 /**
  * T911 slice 2: the chapter's 1-based position among the outstanding
@@ -300,6 +378,9 @@ internal class BatchProgressProjector(
                 .projectQueueStatus(queueStatus)
                 .withQueuePosition(chapterId)
         }
+        // T934 U.1: live snapshots are stamped with the durable run record's
+        // rebuild/restore truth (bounded probe; see withRunRecordRebuildTruth).
+        .withRunRecordRebuildTruth(chapterId)
         .distinctUntilChanged()
 
     /**
@@ -313,6 +394,55 @@ internal class BatchProgressProjector(
         if (state != Translation.State.QUEUE) return this
         val (position, total) = translationQueuePosition(queueState.value, chapterId) ?: return this
         return copy(queuePosition = position, queueTotal = total)
+    }
+
+    /**
+     * T934 U.1: augments live snapshots with the active run record's
+     * rebuild/restore truth. Probes are bounded: they run only while the
+     * snapshot shows a live FIRST_PASS/rebuild window, re-arm immediately
+     * when such a window (re)starts so a new run never renders a previous
+     * run's truth, and otherwise run at most once per
+     * [REBUILD_PROBE_MIN_INTERVAL_MS]. The record read is small sidecar
+     * I/O and is confined to [Dispatchers.IO] — the projection itself stays
+     * pure for the collector's context (T912 ANR discipline).
+     */
+    private fun Flow<TranslationProgressSnapshot>.withRunRecordRebuildTruth(
+        chapterId: Long,
+    ): Flow<TranslationProgressSnapshot> = flow {
+        var nextProbeAllowedAtMs = 0L
+        var cachedRecord: ChapterRunRecord? = null
+        var wasLiveRun = false
+        collect { snapshot ->
+            val liveRun = snapshot.state == Translation.State.TRANSLATING &&
+                (
+                    snapshot.batchPhase == TranslationBatchPhase.FIRST_PASS ||
+                        snapshot.batchPhase == TranslationBatchPhase.REBUILDING ||
+                        snapshot.batchPhase == TranslationBatchPhase.RESTORING
+                    )
+            if (liveRun) {
+                val now = System.currentTimeMillis()
+                if (!wasLiveRun) nextProbeAllowedAtMs = 0L
+                if (now >= nextProbeAllowedAtMs) {
+                    nextProbeAllowedAtMs = now + REBUILD_PROBE_MIN_INTERVAL_MS
+                    cachedRecord = withContext(Dispatchers.IO) {
+                        readActiveRunRecord(chapterId)
+                    }
+                }
+                emit(snapshot.withRunRecordTruth(cachedRecord))
+            } else {
+                cachedRecord = null
+                emit(snapshot)
+            }
+            wasLiveRun = liveRun
+        }
+    }
+
+    /** Read-only look at the chapter's durable active run record, if any. */
+    private fun readActiveRunRecord(chapterId: Long): ChapterRunRecord? {
+        val store = activeStores.get(chapterId) ?: return null
+        val pointer = store.artifactManifest?.activeRun ?: return null
+        val artifact = store.artifactStore ?: return null
+        return (artifact.readRunRecord(pointer) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
     }
 
     private fun snapshotFromStore(

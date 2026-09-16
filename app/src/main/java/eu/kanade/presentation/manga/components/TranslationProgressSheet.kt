@@ -10,6 +10,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FormatPaint
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
@@ -47,6 +50,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,18 +76,31 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.ui.BatchStatusLineKind
 import eu.kanade.translation.ui.TranslationUiTruth
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.delay
+import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.text.DateFormat
 import java.util.Date
 
 private val SuccessGreen = Color(0xFF10B981)
 private val ReadyBadgeColor = Color(0xFF059669)
 private val WarningAmber = Color(0xFFF59E0B)
+
+/**
+ * T934 U.5: bound on the snapshot-driven "Resuming…" hold. The manager owns
+ * the asynchronous cooldown check and can reject an early retry while the
+ * batch phase stays IDLE; the timeout returns the button instead of leaving
+ * it permanently disabled.
+ */
+private const val RESUME_PENDING_TIMEOUT_MS = 10_000L
 
 @Composable
 fun TranslationProgressSheet(
@@ -106,9 +123,30 @@ fun TranslationProgressSheet(
     onRetry: (() -> Unit)? = null,
 ) {
     var paused by remember(snapshot.chapterId) { mutableStateOf(false) }
+    // T934 U.5: the "Resuming…" hold is snapshot-driven. It is armed by the
+    // Resume action and holds until the batch truth shows the phase left
+    // IDLE (rebuild/running/finalizing/finished). The old synchronous
+    // self-reset — which cleared the state inside the click handler and
+    // during composition, so "Resuming…" could never actually render — is
+    // deleted.
     var isResuming by remember(snapshot.chapterId) { mutableStateOf(false) }
-    if (snapshot.batchPhase != TranslationBatchPhase.IDLE || snapshot.state == eu.kanade.translation.model.Translation.State.TRANSLATING) {
-        isResuming = false
+    // T934 U.2: the Advanced view (stage cards, page grid, failure groups,
+    // queue detail) behind the Simple default; the choice is persisted in
+    // the translation preferences so it survives sheet reopenings.
+    val translationPreferences = remember { Injekt.get<TranslationPreferences>() }
+    var advancedView by remember {
+        mutableStateOf(translationPreferences.translationProgressSheetAdvancedView().get())
+    }
+    val phaseActive = snapshot.batchPhase != TranslationBatchPhase.IDLE ||
+        snapshot.state == eu.kanade.translation.model.Translation.State.TRANSLATING
+    LaunchedEffect(snapshot.chapterId, snapshot.batchPhase, snapshot.state) {
+        if (isResuming && phaseActive) isResuming = false
+    }
+    LaunchedEffect(snapshot.chapterId, isResuming) {
+        if (isResuming) {
+            delay(RESUME_PENDING_TIMEOUT_MS)
+            isResuming = false
+        }
     }
     val isSnapshotPaused = snapshot.state == eu.kanade.translation.model.Translation.State.PAUSED ||
         snapshot.pauseReason != null
@@ -151,7 +189,7 @@ fun TranslationProgressSheet(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = batchStatusHeaderSubtitle(snapshot, isResuming),
+                        text = batchHeaderStatusText(snapshot, isResuming),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -317,8 +355,22 @@ fun TranslationProgressSheet(
                     // TachiyomiAT T911 slice 1: determinate only when a real
                     // fraction exists (translation totals or download percent);
                     // indeterminate for unknown-total phases; nothing for errors.
-                    when (hero) {
-                        is BatchHeroProjection.Numeric -> LinearProgressIndicator(
+                    // T934 U.2: a resume rebuild re-validates/re-adopts durable
+                    // work — its run-record counters are not page progress, so
+                    // the bar is indeterminate until the phase leaves the
+                    // rebuild/restore window.
+                    val rebuildInProgress = snapshot.batchPhase == TranslationBatchPhase.REBUILDING ||
+                        snapshot.batchPhase == TranslationBatchPhase.RESTORING
+                    when {
+                        rebuildInProgress -> LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                        hero is BatchHeroProjection.Numeric -> LinearProgressIndicator(
                             progress = { animatedFraction },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -333,7 +385,7 @@ fun TranslationProgressSheet(
                             },
                             trackColor = MaterialTheme.colorScheme.surfaceVariant,
                         )
-                        is BatchHeroProjection.Phase -> when {
+                        hero is BatchHeroProjection.Phase -> when {
                             hero.isError -> Unit
                             hero.fraction != null -> LinearProgressIndicator(
                                 progress = { hero.fraction },
@@ -357,39 +409,89 @@ fun TranslationProgressSheet(
                 }
             }
 
-            // Live 4-Stage Pipeline Breakdown
-            Text(
-                text = "Pipeline Stages",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            // T934 U.2: Simple is the default view (hero + ready chip +
+            // progress bar + ONE status line + actions); the Advanced depth —
+            // stage cards, page grid, failure groups, queue detail — sits
+            // behind this persisted chevron toggle.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val next = !advancedView
+                        advancedView = next
+                        translationPreferences.translationProgressSheetAdvancedView().set(next)
+                    }
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(ATMR.strings.translation_sheet_advanced_toggle),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Icon(
+                    imageVector = if (advancedView) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = stringResource(ATMR.strings.translation_sheet_advanced_toggle),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
-            LivePipelineGrid(snapshot = snapshot)
+            if (advancedView) {
+                // Live 4-Stage Pipeline Breakdown
+                Text(
+                    text = "Pipeline Stages",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
 
-            // Visual Page Matrix Strip
-            if (snapshot.pages.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "Page Overview",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        items(snapshot.pages, key = { it.pageKey }) { page ->
-                            PageMiniChip(page = page)
+                LivePipelineGrid(snapshot = snapshot)
+
+                // Visual Page Matrix Strip
+                if (snapshot.pages.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Page Overview",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            items(snapshot.pages, key = { it.pageKey }) { page ->
+                                PageMiniChip(page = page)
+                            }
                         }
                     }
                 }
-            }
 
-            // Failure Summary (if any)
-            if (snapshot.groupedFailures.isNotEmpty()) {
-                FailureSummary(snapshot)
+                // Failure groups (if any)
+                if (snapshot.groupedFailures.isNotEmpty()) {
+                    FailureSummary(snapshot)
+                }
+
+                // Queue detail: a queued chapter that is not first in line says so.
+                snapshot.queuePosition
+                    ?.takeIf { snapshot.queueTotal != null && it > 1 }
+                    ?.let { position ->
+                        Text(
+                            text = queuePositionLabel(position, snapshot.queueTotal ?: position),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+            } else if (snapshot.failedCount > 0) {
+                // T934 U.2: Simple view keeps failures to a one-line notice —
+                // the per-group breakdown lives in the Advanced view.
+                Text(
+                    text = stringResource(ATMR.strings.translation_sheet_failures_notice, snapshot.failedCount),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
 
             val isBatchRunning = !isSnapshotPaused &&
@@ -463,20 +565,23 @@ fun TranslationProgressSheet(
                                     )
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        text = "Resuming...",
+                                        // T934 U.6: resuming copy is truth-backed.
+                                        text = stringResource(ATMR.strings.translation_status_resuming),
                                         fontWeight = FontWeight.Bold,
                                     )
                                 }
                             } else {
                                 Button(
                                     onClick = {
+                                        // T934 U.5: the snapshot-driven effects
+                                        // clear the hold once the phase truth
+                                        // leaves IDLE (or via the bounded
+                                        // timeout when the manager's cooldown
+                                        // check rejects the resume). The old
+                                        // synchronous self-reset that made
+                                        // "Resuming…" unobservable is gone.
                                         isResuming = true
                                         onResume?.invoke()
-                                        // The manager owns the asynchronous
-                                        // cooldown check. Do not leave a
-                                        // permanently disabled button when it
-                                        // rejects an early retry.
-                                        isResuming = false
                                     },
                                     modifier = Modifier.weight(1.3f),
                                     colors = ButtonDefaults.buttonColors(
@@ -546,6 +651,9 @@ private fun LiveStatusPill(
     val isTranslating = isResuming ||
         snapshot.batchPhase == TranslationBatchPhase.FIRST_PASS ||
         snapshot.batchPhase == TranslationBatchPhase.FINALIZING ||
+        // T934 U.6: a resume rebuild is live work — the pill pulses with it.
+        snapshot.batchPhase == TranslationBatchPhase.REBUILDING ||
+        snapshot.batchPhase == TranslationBatchPhase.RESTORING ||
         snapshot.state == eu.kanade.translation.model.Translation.State.TRANSLATING
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -609,7 +717,13 @@ private fun LiveStatusPill(
                         TranslationRequestPhase.ADMISSION_FAILED ->
                             stringResource(ATMR.strings.manga_batch_phase_admission_failed)
                     }
-                    isResuming -> "Resuming..."
+                    // T934 U.6: the resume rebuild states surface in the pill too,
+                    // below the request acknowledgement and above "In Progress".
+                    snapshot.batchPhase == TranslationBatchPhase.REBUILDING ->
+                        stringResource(ATMR.strings.translation_status_rebuilding_short)
+                    snapshot.batchPhase == TranslationBatchPhase.RESTORING ->
+                        stringResource(ATMR.strings.translation_status_restoring_short)
+                    isResuming -> stringResource(ATMR.strings.translation_status_resuming)
                     isTranslating -> "In Progress"
                     snapshot.state == eu.kanade.translation.model.Translation.State.QUEUE -> stringResource(ATMR.strings.manga_batch_status_queued)
                     snapshot.state == eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS -> "Ready (Warnings)"
@@ -892,23 +1006,34 @@ private fun phaseSubtitleLine(hero: BatchHeroProjection.Phase): String {
     }
 }
 
-/** T911 slice 2: truthful queue position, e.g. "Queued (2nd of 3) — ..." (never implies it can resume now). */
+/** T911 slice 2: truthful queue position (delegates to the truth layer wording). */
 internal fun queuePositionLabel(position: Int, total: Int): String =
-    "Queued (${ordinalSuffix(position)} of $total) — waiting for earlier batches"
+    TranslationUiTruth.queuedPositionLabel(position, total)
 
 /** 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 4 -> "4th", 11-13 -> "th". */
-internal fun ordinalSuffix(value: Int): String {
-    val mod100 = value % 100
-    val suffix = when {
-        mod100 in 11..13 -> "th"
-        else -> when (value % 10) {
-            1 -> "st"
-            2 -> "nd"
-            3 -> "rd"
-            else -> "th"
-        }
+internal fun ordinalSuffix(value: Int): String = TranslationUiTruth.ordinalSuffixOf(value)
+
+/**
+ * T934 U.6: the sheet's ONE status line. Rebuild/restore wording is resolved
+ * through the truth layer's status kind into the NEW string resources; every
+ * other state keeps the historical subtitle rendering (existing truth
+ * assertions stay untouched). The chain and its precedence live once in
+ * [TranslationUiTruth.batchStatusLine].
+ */
+@Composable
+private fun batchHeaderStatusText(
+    snapshot: TranslationProgressSnapshot,
+    isResuming: Boolean,
+): String {
+    val line = TranslationUiTruth.batchStatusLine(snapshot, isResuming)
+    return when (line.kind) {
+        BatchStatusLineKind.REBUILDING -> stringResource(ATMR.strings.translation_status_rebuilding)
+        BatchStatusLineKind.RESTORING -> stringResource(
+            ATMR.strings.translation_status_restoring,
+            *line.formatArgs.toTypedArray(),
+        )
+        else -> batchStatusHeaderSubtitle(snapshot, isResuming)
     }
-    return "$value$suffix"
 }
 
 /** T911 slice 1: hero label for unknown-total phases (never 0/0). */
@@ -995,5 +1120,12 @@ internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, is
         }
         TranslationBatchPhase.FINALIZING -> "Finalizing translated chapter..."
         TranslationBatchPhase.FINISHED -> "All pages translated and ready to read"
+        // T934 U.1/U.6: the resume rebuild/restore phases render the truth
+        // chain's English fallback in this plain (non-composable) function;
+        // the composable call site (batchHeaderStatusText) resolves the
+        // resource-backed copy for these kinds first.
+        TranslationBatchPhase.REBUILDING,
+        TranslationBatchPhase.RESTORING,
+        -> TranslationUiTruth.batchStatusLine(snapshot).fallback
     }
 }

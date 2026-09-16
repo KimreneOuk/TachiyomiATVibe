@@ -246,6 +246,14 @@ class TranslationPreferences(
      */
     fun translationBatchPersistedLayout() = preferenceStore.getBoolean("translation_batch_persisted_layout", false)
 
+    /**
+     * T934 U.2: the batch progress sheet's Advanced view (pipeline stage
+     * cards, page grid, failure groups, queue detail) behind the simplified
+     * default. Persisted so the chosen depth survives sheet reopenings.
+     */
+    fun translationProgressSheetAdvancedView() =
+        preferenceStore.getBoolean("translation_progress_sheet_advanced_view", false)
+
     //endregion
 
     companion object {
