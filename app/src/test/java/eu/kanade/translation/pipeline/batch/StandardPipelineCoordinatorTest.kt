@@ -503,6 +503,11 @@ class StandardPipelineCoordinatorTest {
         pageKeys.forEach { key ->
             manifest.pages.getValue(key).candidate.shouldNotBeNull()
         }
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // so @TempDir's recursive delete cannot race them on Windows.
+        store.closeAndFlush()
     }
 
     // ------------------------------------------------------------------
@@ -549,6 +554,11 @@ class StandardPipelineCoordinatorTest {
         resumeTranslator.calls shouldBe emptyList()
         activeRunPointer(store) shouldBe pointerAfterRun1
         durableRunRecord(store).shouldNotBeNull().state shouldBe ChapterRunState.COMPLETE
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // so @TempDir's recursive delete cannot race them on Windows.
+        store.closeAndFlush()
     }
 
     // ------------------------------------------------------------------
@@ -613,6 +623,11 @@ class StandardPipelineCoordinatorTest {
         googleFingerprint shouldBe ChapterProfileBatchCoordinator.runConfigFingerprint(google.copy())
         googleFingerprint shouldNotBe
             ChapterProfileBatchCoordinator.runConfigFingerprint(google.copy(flagProfilePipeline = false))
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // so @TempDir's recursive delete cannot race them on Windows.
+        store.closeAndFlush()
     }
 
     // ------------------------------------------------------------------
@@ -684,6 +699,11 @@ class StandardPipelineCoordinatorTest {
             page.translationStatus shouldBe StageStatus.READY
             page.inpaintStatus shouldBe StageStatus.READY
         }
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // so @TempDir's recursive delete cannot race them on Windows.
+        store.closeAndFlush()
     }
 
     // ------------------------------------------------------------------
@@ -738,6 +758,11 @@ class StandardPipelineCoordinatorTest {
         resumeOutcome.reason shouldBe ChapterProfileBatchCoordinator.RESUME_COMPLETE_REASON
         resumeOcrWorker.ocrPages shouldBe emptyList()
         resumeSeam.invoked shouldBe emptyList()
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // so @TempDir's recursive delete cannot race them on Windows.
+        store.closeAndFlush()
     }
 
     // ------------------------------------------------------------------
@@ -794,6 +819,11 @@ class StandardPipelineCoordinatorTest {
         pageKeys.forEach { key ->
             store.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
         }
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // so @TempDir's recursive delete cannot race them on Windows.
+        store.closeAndFlush()
     }
 
     // ------------------------------------------------------------------
@@ -852,5 +882,10 @@ class StandardPipelineCoordinatorTest {
         resumeOcrWorker.ocrPages shouldBe emptyList()
         resumeSeam.invoked shouldBe emptyList()
         activeRunPointer(store) shouldBe pointerAfterRun1
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // so @TempDir's recursive delete cannot race them on Windows.
+        store.closeAndFlush()
     }
 }

@@ -6,6 +6,8 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
@@ -69,6 +71,37 @@ class BatchDispatchResumeWiringTest {
                 withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
                     batch.reconciliation.await().shouldNotBeNull()
                 }
+            }
+            // T934 flake hardening (diagnosis §2): a non-null reconciliation is
+            // NOT a completion oracle — a typed non-COMPLETED stop (PAUSED /
+            // FAILED / PERSISTENCE_REJECTED) ALSO reconciles non-null, and the
+            // durable record's last published phase before the translate tail
+            // is TRANSLATE. Poll the record until the run state is COMPLETE;
+            // on timeout, fail naming the record's state and phase counters so
+            // a load-induced typed pause is reported precisely here instead of
+            // surfacing later as a downstream assertion mismatch.
+            val artifact = harness.store.artifactStore.shouldNotBeNull()
+            try {
+                runBlocking {
+                    withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                        while (durableRecord(artifact).second != ChapterRunState.COMPLETE) {
+                            delay(50)
+                        }
+                    }
+                }
+            } catch (_: TimeoutCancellationException) {
+                val manifest = artifact.readManifest().shouldNotBeNull()
+                val record = (
+                    artifact.readRunRecord(manifest.activeRun.shouldNotBeNull())
+                        as ChapterArtifactStore.RunRecordRead.Usable
+                    ).record
+                error(
+                    "run 1 never reached ChapterRunState.COMPLETE within " +
+                        "${TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS}ms — the run " +
+                        "stopped early (a load-induced typed pause is legal production " +
+                        "behavior): state=${record.state}, runId=${record.runId}, " +
+                        "phaseCounters=${record.phaseCounters}",
+                )
             }
         } catch (t: Throwable) {
             harness.close()

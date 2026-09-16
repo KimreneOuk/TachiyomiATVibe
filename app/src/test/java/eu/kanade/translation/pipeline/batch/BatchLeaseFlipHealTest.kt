@@ -205,6 +205,11 @@ class BatchLeaseFlipHealTest {
         store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, loneToken) shouldBe false
         store.snapshot(pageKey).leaseToken shouldBe freshToken
         store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist) so @TempDir's recursive delete
+        // cannot race it on Windows.
+        store.closeAndFlush()
     }
 
     // ------------------------------------------------------------------
@@ -237,6 +242,11 @@ class BatchLeaseFlipHealTest {
 
         identities[pageKey]!!.leaseToken shouldBe siblingToken
         store.snapshot(pageKey).leaseToken shouldBe siblingToken
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist) so @TempDir's recursive delete
+        // cannot race it on Windows.
+        store.closeAndFlush()
     }
 
     @Test
@@ -282,6 +292,11 @@ class BatchLeaseFlipHealTest {
         }
         typed.shouldNotBeNull()
         typed.pageKey shouldBe pageKey
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist) so @TempDir's recursive delete
+        // cannot race it on Windows.
+        store.closeAndFlush()
     }
 
     @Test
@@ -327,5 +342,10 @@ class BatchLeaseFlipHealTest {
         // The sibling's hold is untouched by the declined heal.
         store.pageLeaseOwner(pageKey) shouldBe PageWriteOrigin.BATCH
         store.snapshot(pageKey).leaseToken shouldBe siblingToken
+
+        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        // persistScope (debounced persist) so @TempDir's recursive delete
+        // cannot race it on Windows.
+        store.closeAndFlush()
     }
 }

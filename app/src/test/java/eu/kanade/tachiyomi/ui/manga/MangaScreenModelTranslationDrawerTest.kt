@@ -277,13 +277,12 @@ class MangaScreenModelTranslationDrawerTest {
             // uncaught exception in whichever test class runs next. Destroying
             // the lifecycle and JOINING the cancelled scope while the delegate
             // is still installed pins the unwind inside this teardown.
+            // T934: the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
             model.screenModelScope.cancel()
-            runCatching {
-                runBlocking {
-                    withTimeout(5_000) {
-                        model.screenModelScope.coroutineContext[Job]?.join()
-                    }
+            runBlocking {
+                withTimeout(30_000) {
+                    model.screenModelScope.coroutineContext[Job]?.join()
                 }
             }
         }

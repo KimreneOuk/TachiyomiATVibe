@@ -57,15 +57,23 @@ class StandardPipelineCoexistenceTest {
             val firstProviderStart =
                 arrivals.indexOfFirst { it.first == CoexistenceBarrier.BarrierPoint.PROVIDER_START }
             (firstProviderStart >= 0) shouldBe true
-            val decodesBeforeFirstTranslate = arrivals
+            // T934 authorized assertion conversion (diagnosis §3): the S8
+            // in-pass gap rescan (ChapterProfileBatchCoordinator) may
+            // legitimately re-decode a deferred page before the translate
+            // tail, so per-page decode MULTIPLICITY is not a schedule
+            // property; DISTINCT-page coverage before the first paid call IS.
+            // The flagged preflight still decodes EVERY page before any
+            // translate, and the legacy page-serial standard schedule
+            // (LOCAL_COMPUTE chunk of one) interleaves decode → translate →
+            // inpaint per page and shows exactly ONE distinct page here —
+            // this assertion remains the schedule discriminator.
+            val distinctPagesDecodedBeforeFirstTranslate = arrivals
                 .take(firstProviderStart)
-                .count { it.first == CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE }
-            // The flagged preflight decodes EVERY page before any translate.
-            // The legacy page-serial standard schedule (LOCAL_COMPUTE chunk of
-            // one) interleaves decode → translate → inpaint per page and
-            // would show exactly one decode here — this assertion is the
-            // schedule discriminator.
-            decodesBeforeFirstTranslate shouldBe pageKeys.size
+                .filter { it.first == CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE }
+                .map { it.second }
+                .distinct()
+                .size
+            distinctPagesDecodedBeforeFirstTranslate shouldBe pageKeys.size
 
             // ---- Contract 1 (behavioral): the legacy schedule never ran. ----
             // The transport resolved through the normal engine path was called
