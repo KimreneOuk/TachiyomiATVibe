@@ -8,11 +8,14 @@ import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.artifact.EvidenceRef
+import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
@@ -356,7 +359,7 @@ class Stage7FinalizeCoordinatorTest {
     }
 
     @Test
-    fun `a block that never returns is a typed resumable pause, never a drained COMPLETE (ST-12 gap)`() = runTest {
+    fun `a block that never returns commits covered pages, parks the gap retryably, and drains COMPLETE (ST-12 gap)`() = runTest {
         val store = lazyStore()
         val pageKeys = (1..3).map { "p$it" }
         store.preRegisterPages(pageKeys)
@@ -369,11 +372,16 @@ class Stage7FinalizeCoordinatorTest {
             batchWriteIdentities = identities,
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         )
-        // p2's block never comes back: after the full repair budget the page
-        // is still partially covered — an UNRESOLVED GAP (ST-12). The run
-        // PAUSES for resume; it never drains into FINALIZE with untranslated
-        // planned work, and the gap page is never marked stranded.
-        val translator = FakeTranslator { _, chunk -> responseFor(chunk, omit = setOf("p2_b1")) }
+        // p2's block never comes back (wire id `p1_b1` = natural page index
+        // 1): after the full repair budget the page is still partially
+        // covered — an UNRESOLVED GAP (ST-12). T934 (Director decision
+        // 2026-09-17) relaxed the old ST-12 pause: the covered pages COMMIT,
+        // the gap page is PARKED durably FAILED (retryable, omitted-block
+        // evidence) instead of pausing the batch, and the run DRAINS into
+        // FINALIZE. ST-12's surviving guarantee: the gap page is never
+        // stranded and never silently lost — it surfaces in the
+        // pages-need-attention UI and re-plans on the next retry.
+        val translator = FakeTranslator { _, chunk -> responseFor(chunk, omit = setOf("p1_b1")) }
 
         val outcome = coordinator(
             store,
@@ -384,17 +392,20 @@ class Stage7FinalizeCoordinatorTest {
             overlapScheduler,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.failure.shouldNotBeNull()
+        outcome.status shouldBe BatchPass1Status.COMPLETED
         val record = runRecord(store)
-        record.state shouldBe ChapterRunState.TRANSLATE
+        record.state shouldBe ChapterRunState.COMPLETE
 
-        // The ambiguous-partial response is discarded whole: NOTHING commits
-        // (p1/p3's valid blocks ride a response the classifier rejects), and
-        // all pages stay PENDING — resumable, never silently failed.
-        store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldBe StageStatus.PENDING
-        store.snapshot("p3").page.shouldNotBeNull().translationStatus shouldBe StageStatus.PENDING
-        store.snapshot("p2").page.shouldNotBeNull().translationStatus shouldBe StageStatus.PENDING
-        store.durableFailuresSnapshot().containsKey("p2:TRANSLATION") shouldBe false
+        // p1/p3's valid blocks commit; only the gap page parks — durably
+        // FAILED with the omitted block id recorded, never silently failed.
+        store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        store.snapshot("p3").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        store.snapshot("p2").page.shouldNotBeNull().translationStatus shouldBe StageStatus.FAILED
+        val parked = store.durableFailure("p2").shouldNotBeNull()
+        parked.stage shouldBe ArtifactStage.TRANSLATION
+        parked.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+        parked.category shouldBe FailureCategory.PROTOCOL
+        parked.missingBlockIds shouldBe setOf("p1_b1")
+        parked.missingBlockCharLengths shouldBe mapOf("p1_b1" to "source-p2".length)
     }
 }

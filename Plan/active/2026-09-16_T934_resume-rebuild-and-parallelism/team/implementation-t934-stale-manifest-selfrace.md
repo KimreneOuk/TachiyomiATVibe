@@ -114,3 +114,128 @@ Implemented on top of the Tasks 1-3 changes (uncommitted in this worktree); none
 
 1. `envelopePlanCommitted()` also fires on the plan-REUSE path (and `rebuildDispatchWork`'s `alreadyPublished` branch), not only the literal `Committed` branch — otherwise the phase would stay REBUILDING while translation starts; the brief's "(the Committed branch)" is covered.
 2. Reason truncation is a plain `take(n)` without an ellipsis suffix (~200 sheet / ~120 notification, per brief).
+
+## Protocol-verdict relaxation (third implementer)
+
+Director decision 2026-09-17 ("go"): relax the PROGRESS policy for batch-envelope
+`ambiguousProtocol` verdicts, keep the COMMIT policy strict. On-device the model
+silently omits specific blocks regardless of envelope size even after the
+whole → whole → missing-only → missing-only retry budget; the old
+discard-and-pause zeroed all batch progress past the first stubborn envelope.
+
+### Provenance note (disclosed)
+
+This worktree already contained a complete, uncommitted implementation of
+exactly this assignment (main + dispatch-test files, written ~30–70 min before
+this session started) — evidently an interrupted earlier run of the same brief.
+It was verified line-by-line against the Director decision, kept as-is where
+correct (all of the executor/contracts code), and the missing pieces were
+completed here: the failing ST-12 neighbor test update (required — see
+Deviations), all test executions, and this report. Nothing was reverted.
+
+### Changes (file:line, current working tree)
+
+- `app/src/main/java/eu/kanade/translation/pipeline/batch/ProfileEnvelopeExecutor.kt`
+  - :217-247 — run loop handles the new NON-pausing
+    `EnvelopeDispatchResult.PartiallyParked`: advances to the next envelope
+    (batch continues); `pagesParked` counter added to Counters/progress map
+    (:137, :158); zero-commit circuit breaker below.
+  - :194-198 + :232-247 — breaker: consecutive `PartiallyParked` envelopes with
+    ZERO fully-covered commits are counted (any commit resets); at
+    `MAX_CONSECUTIVE_ZERO_COMMIT_ENVELOPES = 3` (:1276) the batch returns the
+    old typed `PhaseOutcome.Paused` (PROTOCOL/PAUSE-normalized failure, resume-
+    eligible via `retryAfterAtEpochMs`, anchor = first parked page key; already
+    parked pages stay parked — they remain retryable, so resume re-plans them).
+  - :321-331 — new `PartiallyParked(fullyCoveredCommitted, parkedPageKeys,
+    failure)` dispatch result variant.
+  - :742-758 — `ambiguousProtocol` branch (covers `AiChunkOutcome.Terminal`
+    PROTOCOL kind AND PAUSE-class PROTOCOL outcomes with uncovered pages)
+    now routes to `commitAndParkProtocolOutcome` instead of
+    `discardAndPause`. The REFUSAL branch above (:724-740) is untouched
+    (strict discard + terminal pause), and genuine transport pauses
+    (`ProviderRequestPausedException` → `Paused`) are untouched (:686-692).
+  - :803-873 — `commitAndParkProtocolOutcome`: commits `fullyCovered` pages
+    through the SAME `commitPages` TX-20 provenance ladder as MISSING_ONLY
+    retention (a rejected commit still pauses WITHOUT parking — store drift
+    may have invalidated the held identities), then parks
+    `partiallyCovered` pages, then returns `PartiallyParked`.
+  - :875-957 — `parkProtocolPages`: per page, computes omitted blocks
+    (`dispatchBlocks` whose `stableBlockId` is not in `outcome.blockTranslations`),
+    flips the live page to FAILED with a typed summary, and persists a
+    `DurableFailureMetadata` (`stage=TRANSLATION`,
+    `status=FAILED_RETRYABLE`, `category=PROTOCOL`, `envelopeId`,
+    `missingBlockIds`, `missingBlockCharLengths`) via
+    `ChapterTranslationStore.persistDurableStageFailure` — one mutex-fenced
+    publication so page status and failure metadata are atomic across
+    process death. Rejected parks are fail-open (page stays non-READY, so
+    resume still re-plans it — parking is a diagnosis upgrade, not a
+    correctness gate). One WARN line per parked page:
+    `pageKey`, `missing=<n>/<total>`, `omitted=<blockId>:<charLen>c,...`,
+    `envelopeId` — the self-describing evidence (char lengths, never text).
+  - File header contract (:77-92) updated to the new verdict semantics.
+- `app/src/main/java/eu/kanade/translation/artifact/ArtifactContracts.kt:220-226`
+  — `DurableFailureMetadata.missingBlockCharLengths: Map<String, Int>`
+  (defaulted, so all existing constructors/callers are unaffected).
+
+### How parking surfaces in the sheet
+
+A parked page is a standard durably-FAILED, retryable TRANSLATION failure —
+the exact shape the standard lane already produces — so it appears in the
+existing "pages need attention" UI with the typed message ("protocol failure:
+envelope omitted N of M requested block translations after the retry budget
+(…)"), and the progress counters gain `pagesParked`. Because the planner
+re-plans anything not READY, "Retry translation" re-sends exactly the omitted
+blocks (proven by the new replan test: after parking, a fresh run re-sends
+ONLY the parked page's block and the chapter finishes).
+
+### Tests
+
+- `ProfileEnvelopeDispatchTest` (rewrote the old discard test + 3 new):
+  - :478 mixed envelope (2 covered commit READY, 1 partial parks with omitted
+    id + char length recorded) and the run DRAINS — next envelope proceeds;
+  - :538 single-envelope 3-page case with exact durable-metadata assertions
+    (stage/status/category/envelopeId/missingBlockIds/charLengths);
+  - :578 three consecutive zero-coverage protocol envelopes trip the breaker:
+    batch PAUSED, all 9 pages parked (durably FAILED), pagesTranslated=0;
+  - :613 parking is retryable across simulated process death: fresh store
+    re-plans ONLY the parked block, chapter completes.
+  - Refusal guard kept: `structural refusal discards the response and pauses
+    terminal` (:759, unchanged, still green).
+- `Stage7FinalizeCoordinatorTest` :362 — neighbor encoded the OLD ST-12
+  pause contract and failed under the new policy; updated to the new contract
+  (drains COMPLETE; middle page parks retryably with omitted-block evidence;
+  ST-12's surviving no-strand guarantee asserted). Note: envelope wire block
+  ids are 0-based natural page indices (`p1_b1` = storage page p2) — the old
+  test's "p2" comment was mislabeled; fixed.
+
+### Results (real output)
+
+- Targeted: `ProfileEnvelopeDispatchTest` 13/13 green;
+  `Stage7FinalizeCoordinatorTest` 2/2 green;
+  `ProfileEnvelopePromptEnrichmentTest` 6/6 (after a flake, see below);
+  `BatchDispatchResumeWiringTest` 2/2 (after a flake, see below).
+- FULL `:app:testStandardDebugUnitTest`: two runs each had ONE unrelated
+  load flake (run 1: the real Stage7 contract conflict above; run 2:
+  `ProfileEnvelopePromptEnrichmentTest` "Failed to close extension context" =
+  JUnit @TempDir Windows file-handle cleanup, passes alone; run 3:
+  `BatchDispatchResumeWiringTest` "run 1 never reached COMPLETE within
+  10000ms — a load-induced typed pause is legal production behavior" — the
+  exact pre-existing flake the second implementer documented; passes alone).
+  Final fresh `--rerun-tasks` run: BUILD SUCCESSFUL, all 207 tasks executed —
+  **2067 tests, 0 failures, 0 errors** across 290 classes.
+- No spotless impact: `ktlint_standard_max-line-length` is disabled
+  (`buildSrc/src/main/kotlin/mihon.code.lint.gradle.kts:32`); edits mirror the
+  files' existing T9xx-tagged style. No repo-wide apply.
+
+### Deviations
+
+1. (Provenance) The implementation was found uncommitted in the worktree from
+   an interrupted earlier run of this same brief; I verified it in full rather
+   than rewriting it, and completed the test runs + neighbor fix + report.
+2. `Stage7FinalizeCoordinatorTest` neighbor was updated (the brief said
+   "extend" the dispatch tests; leaving the suite red was not an option — the
+   neighbor encoded the superseded ST-12 pause contract).
+3. The breaker counts `PartiallyParked` envelopes with zero COMMITS (per the
+   brief: "zero fully-covered pages"); parking alone does not reset the
+   streak — a provider that returns pure garbage still pauses after 3
+   envelopes, exactly as specified.

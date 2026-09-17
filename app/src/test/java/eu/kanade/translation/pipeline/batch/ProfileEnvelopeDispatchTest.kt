@@ -8,12 +8,15 @@ import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AnalyzerProvenance
+import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.artifact.EvidenceRef
+import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -472,7 +475,7 @@ class ProfileEnvelopeDispatchTest {
     }
 
     @Test
-    fun `ambiguous protocol outcome discards the whole envelope response`() = runTest {
+    fun `protocol outcome commits fully covered pages and parks omitted block pages without pausing`() = runTest {
         val store = lazyStore()
         val pageKeys = (1..17).map { "p$it" }
         store.preRegisterPages(pageKeys)
@@ -497,14 +500,152 @@ class ProfileEnvelopeDispatchTest {
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // AMBIGUOUS_PROTOCOL: NOTHING from the ambiguous response commits —
-        // not even the independently complete first page of that envelope.
+        // T934 relaxed PROGRESS policy: envelope 2's protocol verdict no
+        // longer discards the response — each retry round recovered exactly
+        // ONE more block (whole + 2 missing-only), so pages 9-11 (their
+        // blocks were returned) COMMIT, pages 12-16 PARK durably, and
+        // envelope 3 still dispatches (page 17 commits): the run DRAINS
+        // instead of pausing the batch.
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+        val (_, counters) = runCounters(store)
+        counters["pagesTranslated"] shouldBe 12
+        counters["pagesParked"] shouldBe 5
+        counters["envelopesDone"] shouldBe 3
+        counters["envelopeFailures"] shouldBe 0
+
+        (9..11).forEach { index ->
+            store.snapshot("p$index").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        }
+        store.snapshot("p17").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        (12..16).forEach { index ->
+            val key = "p$index"
+            val page = store.snapshot(key).page.shouldNotBeNull()
+            page.translationStatus shouldBe StageStatus.FAILED
+            page.blocks.single().translation shouldBe ""
+            // Self-describing evidence: omitted block id + source char length.
+            val failure = store.durableFailure(key).shouldNotBeNull()
+            failure.stage shouldBe ArtifactStage.TRANSLATION
+            failure.category shouldBe FailureCategory.PROTOCOL
+            failure.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+            failure.envelopeId.shouldNotBeNull()
+            failure.missingBlockIds shouldBe setOf("p${index - 1}_b1")
+            failure.missingBlockCharLengths shouldBe mapOf("p${index - 1}_b1" to "source-$key".length)
+        }
+    }
+
+    @Test
+    fun `single protocol envelope commits two covered pages and parks the partially covered page`() = runTest {
+        val store = lazyStore()
+        val pageKeys = (1..3).map { "p$it" }
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        // ONE envelope over all 3 pages; page 3's block is silently omitted
+        // across the whole retry budget while pages 1-2 come back complete.
+        val translator = FakeTranslator { _, chunk ->
+            responseFor(chunk, omit = setOf("p2_b1"))
+        }
+
+        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), translator)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        // NOT a batch pause: the two fully covered pages committed, the
+        // stubborn page parked durably, the run drained to COMPLETE.
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        val (state, counters) = runCounters(store)
+        state shouldBe ChapterRunState.COMPLETE
+        counters["pagesTranslated"] shouldBe 2
+        counters["pagesParked"] shouldBe 1
+        counters["envelopeFailures"] shouldBe 0
+
+        store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        store.snapshot("p2").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        val parked = store.snapshot("p3").page.shouldNotBeNull()
+        parked.translationStatus shouldBe StageStatus.FAILED
+        parked.blocks.single().translation shouldBe ""
+
+        val failure = store.durableFailure("p3").shouldNotBeNull()
+        failure.stage shouldBe ArtifactStage.TRANSLATION
+        failure.category shouldBe FailureCategory.PROTOCOL
+        failure.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+        failure.nextEligibleRetryAtEpochMs shouldBe null
+        failure.envelopeId.shouldNotBeNull()
+        failure.missingBlockIds shouldBe setOf("p2_b1")
+        failure.missingBlockCharLengths shouldBe mapOf("p2_b1" to "source-p3".length)
+    }
+
+    @Test
+    fun `three consecutive zero coverage protocol envelopes trip the breaker and pause the batch`() = runTest {
+        val store = lazyStore()
+        val pageKeys = (1..9).map { "p$it" }
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        // Every 3-page envelope comes back with an EMPTY translation set:
+        // zero fully-covered pages, every time (systematic provider garbage).
+        val translator = FakeTranslator { _, chunk ->
+            responseFor(chunk, omit = requestIds(chunk).toSet())
+        }
+
+        val outcome = coordinator(
+            store,
+            FakePreflightOcrWorker(store),
+            pages,
+            FakeAnalyzer(),
+            translator,
+            maxPagesPerEnvelope = 3,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        // The zero-commit breaker restores the old pause after 3 consecutive
+        // protocol envelopes without a single committed page.
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.failure.shouldNotBeNull().kind shouldBe ProviderFailureKind.PROTOCOL
         outcome.failure.shouldNotBeNull().retryability shouldBe ProviderFailureRetryability.PAUSE
-        runCounters(store).second["pagesTranslated"] shouldBe 8
-        store.snapshot("p9").page.shouldNotBeNull().translationStatus shouldBe StageStatus.PENDING
-        store.snapshot("p9").page.shouldNotBeNull().blocks.single().translation shouldBe ""
+        val (_, counters) = runCounters(store)
+        counters["pagesTranslated"] shouldBe 0
+        counters["pagesParked"] shouldBe 9
+        counters["envelopeFailures"] shouldBe 1
+        pageKeys.forEach { key ->
+            store.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.FAILED
+        }
+    }
+
+    @Test
+    fun `parked protocol pages replan and translate on the next run`() = runTest {
+        val store = lazyStore()
+        val pageKeys = (1..3).map { "p$it" }
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val firstTranslator = FakeTranslator { _, chunk ->
+            responseFor(chunk, omit = setOf("p2_b1"))
+        }
+        coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), firstTranslator)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+        store.snapshot("p3").page.shouldNotBeNull().translationStatus shouldBe StageStatus.FAILED
+
+        // ---- simulated process death: a fresh run over the SAME documents.
+        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedWorker = FakePreflightOcrWorker(resumedStore)
+        val secondTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
+
+        val resumed = coordinator(
+            resumedStore,
+            resumedWorker,
+            pages,
+            FakeAnalyzer(),
+            secondTranslator,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        // The parked page is NOT terminal for planning: it re-planned (its
+        // block was re-sent — the ONLY block re-sent) and translated; the
+        // previously committed pages were never re-sent.
+        resumed.status shouldBe BatchPass1Status.COMPLETED
+        resumedWorker.ocrPages shouldBe emptyList()
+        val sentIds = secondTranslator.requests.flatMap(::requestIds).toSet()
+        sentIds shouldBe setOf("p2_b1")
+        pageKeys.forEach { key ->
+            resumedStore.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        }
+        runCounters(resumedStore).second["pagesTranslated"] shouldBe 1
     }
 
     @Test

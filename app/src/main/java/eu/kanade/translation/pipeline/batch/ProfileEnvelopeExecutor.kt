@@ -6,14 +6,19 @@ import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.TranslationBlockPatch
 import eu.kanade.translation.TranslationStagePatch
+import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterTranslationProfile
+import eu.kanade.translation.artifact.DurableFailureMetadata
 import eu.kanade.translation.artifact.EnvelopePlan
+import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.PlannedEnvelope
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocrBlockFingerprints
 import eu.kanade.translation.ocrFingerprint
 import eu.kanade.translation.translator.AdmissionPriority
@@ -72,9 +77,14 @@ import tachiyomi.core.common.util.system.logcat
  *    credential) and the shared provider governor inside the translator;
  *  - DR-A Option 1 retention: per-page COMPLETE subsets of a paused response
  *    commit and advance (page atomicity — a page commits only when EVERY
- *    planned block of that page was accepted); a PROTOCOL-class outcome is
- *    AMBIGUOUS: the ENTIRE envelope response is discarded and nothing
- *    partial ever commits; REFUSAL discards and pauses terminal;
+ *    planned block of that page was accepted); REFUSAL discards and pauses
+ *    terminal. T934 (Director decision 2026-09-17): a PROTOCOL-class verdict
+ *    (blocks still missing after the controller's retry budget) no longer
+ *    discards the whole response — its fully-covered pages COMMIT, its
+ *    stubborn pages are PARKED as durable retryable TRANSLATION failures
+ *    (omitted block ids + per-block source char lengths recorded) and the
+ *    batch CONTINUES with the next envelope, guarded by a
+ *    consecutive-zero-commit circuit breaker ([MAX_CONSECUTIVE_ZERO_COMMIT_ENVELOPES]);
  *  - TX-20: every commit carries `profileContentFingerprint` +
  *    `envelopePlanFingerprint` and the full M4 CAS ladder; a rejected commit
  *    never advances the rolling-context frontier and never counts as
@@ -124,6 +134,8 @@ internal class ProfileEnvelopeExecutor(
         var envelopesPending: Int = 0,
         var envelopeFailures: Int = 0,
         var pagesTranslated: Int = 0,
+        /** T934 protocol parking: pages durably FAILED for omitted blocks. */
+        var pagesParked: Int = 0,
         var replans: Int = 0,
         /** Slice B (D6): whole-page execution-time splits actually dispatched. */
         var envelopeSplits: Int = 0,
@@ -143,6 +155,7 @@ internal class ProfileEnvelopeExecutor(
             "envelopesPending" to envelopesPending,
             "envelopeFailures" to envelopeFailures,
             "pagesTranslated" to pagesTranslated,
+            "pagesParked" to pagesParked,
             "envelopeReplans" to replans,
             "envelopeSplits" to envelopeSplits,
             "promptShapeEnriched" to promptShapeEnriched,
@@ -178,6 +191,11 @@ internal class ProfileEnvelopeExecutor(
         var current = work
         var index = 0
         var replansSinceProgress = 0
+        // T934 protocol-parking circuit breaker: consecutive envelopes that
+        // committed ZERO fully-covered pages under a PROTOCOL verdict. A
+        // systematically broken provider must pause the batch (old behavior)
+        // instead of parking an entire chapter page by page.
+        var consecutiveZeroCommitEnvelopes = 0
         while (index < current.plan.envelopes.size) {
             currentCoroutineContext().ensureActive()
             yield() // reader-priority courtesy between provider envelopes
@@ -194,6 +212,38 @@ internal class ProfileEnvelopeExecutor(
                     replansSinceProgress = 0
                     counters.envelopesSkipped++
                     counters.envelopesDone++
+                    onProgress(counters.toMap())
+                }
+                is EnvelopeDispatchResult.PartiallyParked -> {
+                    // T934 protocol parking: the envelope finished with a
+                    // PROTOCOL verdict but is NOT a batch pause — fully-covered
+                    // pages committed, stubborn pages are parked durably. The
+                    // breaker only trips after
+                    // [MAX_CONSECUTIVE_ZERO_COMMIT_ENVELOPES] envelopes with
+                    // zero committed coverage (systematic provider garbage).
+                    index++
+                    replansSinceProgress = 0
+                    counters.envelopesDone++
+                    if (result.fullyCoveredCommitted == 0) {
+                        consecutiveZeroCommitEnvelopes++
+                    } else {
+                        consecutiveZeroCommitEnvelopes = 0
+                    }
+                    if (consecutiveZeroCommitEnvelopes >= MAX_CONSECUTIVE_ZERO_COMMIT_ENVELOPES) {
+                        counters.envelopeFailures++
+                        counters.envelopesPending = current.plan.envelopes.size - index
+                        onProgress(counters.toMap())
+                        return PhaseOutcome.Paused(
+                            counters = countersSnapshot(),
+                            reason = "T924 envelope dispatch paused: " +
+                                "$MAX_CONSECUTIVE_ZERO_COMMIT_ENVELOPES consecutive protocol " +
+                                "envelopes committed zero fully-covered pages " +
+                                "(systematic protocol failure; parked pages stay retryable)",
+                            anchorPageKey = result.parkedPageKeys.firstOrNull(),
+                            failure = result.failure,
+                            nextEligibleRetryAtEpochMs = result.failure?.retryAfterAtEpochMs,
+                        )
+                    }
                     onProgress(counters.toMap())
                 }
                 is EnvelopeDispatchResult.ReplanNeeded -> {
@@ -267,6 +317,19 @@ internal class ProfileEnvelopeExecutor(
 
         /** Every affected page was dropped (committed/manual/user-edited): nothing to send. */
         data object Skipped : EnvelopeDispatchResult
+
+        /**
+         * T934 protocol parking: the envelope ended under a PROTOCOL-class
+         * verdict; its fully-covered pages committed, its stubborn pages were
+         * parked as durable retryable failures, and the batch CONTINUES.
+         * [fullyCoveredCommitted] feeds the consecutive-zero-commit circuit
+         * breaker in [run].
+         */
+        data class PartiallyParked(
+            val fullyCoveredCommitted: Int,
+            val parkedPageKeys: List<String>,
+            val failure: ProviderFailure?,
+        ) : EnvelopeDispatchResult
 
         /** Live store state drifted from the plan: deterministic suffix re-plan required. */
         data class ReplanNeeded(val reason: String, val anchorPageKey: String?) :
@@ -676,24 +739,22 @@ internal class ProfileEnvelopeExecutor(
                     reason = "T924 envelope ${envelope.envelopeId} refused; response discarded",
                 )
 
-            // AMBIGUOUS_PROTOCOL: parser violations survived the allowed
-            // retry budget. The response as a whole is untrustworthy —
-            // NOTHING partial commits from it; typed (PROTOCOL / PAUSE).
+            // AMBIGUOUS_PROTOCOL (T934 Director decision 2026-09-17): the
+            // PROGRESS policy is relaxed under the unchanged COMMIT policy —
+            // independently complete pages still commit (page atomicity),
+            // stubborn pages are parked as durable retryable failures with
+            // their omitted-block evidence, and the batch CONTINUES. The
+            // run loop's zero-commit breaker pauses a systematically broken
+            // provider; REFUSAL above keeps the strict discard+pause.
             ambiguousProtocol ->
-                discardAndPause(
-                    held,
-                    failure = when (outcome) {
-                        is AiChunkOutcome.Terminal -> outcome.failure
-                        is AiChunkOutcome.Paused -> outcome.failure
-                        is AiChunkOutcome.Complete ->
-                            ProviderFailure(
-                                kind = ProviderFailureKind.PROTOCOL,
-                                retryability = ProviderFailureRetryability.PAUSE,
-                                safeSummary = "defensive: complete outcome with uncovered pages",
-                                requestId = outcome.envelopeId,
-                            )
-                    }.copy(retryability = ProviderFailureRetryability.PAUSE),
-                    reason = "T924 envelope ${envelope.envelopeId} ambiguous (protocol); response discarded",
+                commitAndParkProtocolOutcome(
+                    envelope = envelope,
+                    held = held,
+                    fullyCovered = fullyCovered,
+                    partiallyCovered = partiallyCovered,
+                    outcome = outcome,
+                    work = work,
+                    frontier = frontier,
                 )
 
             // MISSING_ONLY retention: independently complete pages commit
@@ -738,6 +799,163 @@ internal class ProfileEnvelopeExecutor(
         failure = failure,
         nextEligibleRetryAtEpochMs = failure.retryAfterAtEpochMs,
     )
+
+    /**
+     * T934 (Director decision 2026-09-17): relaxed PROGRESS policy for a
+     * PROTOCOL-class verdict (blocks still missing after the controller's
+     * whole → whole → missing-only → missing-only retry budget — the exact
+     * on-device shape where a model silently omits specific blocks regardless
+     * of envelope size). The old behavior discarded the ENTIRE response and
+     * paused the WHOLE batch: a single stubborn envelope zeroed all progress
+     * past that point.
+     *
+     * COMMIT policy stays strict — page atomicity is untouched:
+     *  1. every fully-covered page commits through the SAME [commitPages]
+     *     TX-20 provenance ladder the MISSING_ONLY retention uses;
+     *  2. every partially-covered page is PARKED — a durable, RETRYABLE
+     *     TRANSLATION failure (protocol category) carrying the omitted block
+     *     ids + per-block source char lengths — so it surfaces in the
+     *     existing "pages need attention" UI and the retry path re-plans it
+     *     (anything not READY re-plans);
+     *  3. the result is NON-pausing ([EnvelopeDispatchResult.PartiallyParked])
+     *     so the next envelope dispatches; [run]'s breaker restores the old
+     *     pause when consecutive envelopes commit zero fully-covered pages.
+     *
+     * A rejected commit (store drift under the TX-20 ladder) still pauses
+     * WITHOUT parking — drift may have invalidated the held identities too.
+     */
+    private suspend fun commitAndParkProtocolOutcome(
+        envelope: PlannedEnvelope,
+        held: List<HeldPage>,
+        fullyCovered: List<HeldPage>,
+        partiallyCovered: List<HeldPage>,
+        outcome: AiChunkOutcome,
+        work: EnvelopeDispatchWork,
+        frontier: BatchContextFrontier,
+    ): EnvelopeDispatchResult {
+        val committed = commitPages(held, fullyCovered, outcome, work, frontier)
+        if (committed is EnvelopeDispatchResult.Paused) return committed
+        val failure = when (outcome) {
+            is AiChunkOutcome.Terminal -> outcome.failure
+            is AiChunkOutcome.Paused -> outcome.failure
+            is AiChunkOutcome.Complete ->
+                // Unreachable (Complete is never ambiguousProtocol) — typed
+                // defensive shape keeps the carrier non-null.
+                ProviderFailure(
+                    kind = ProviderFailureKind.PROTOCOL,
+                    retryability = ProviderFailureRetryability.PAUSE,
+                    safeSummary = "protocol parking under complete outcome",
+                    requestId = outcome.envelopeId,
+                )
+        }
+        val parkedKeys = parkProtocolPages(partiallyCovered, outcome, failure, envelope.envelopeId)
+        return EnvelopeDispatchResult.PartiallyParked(
+            fullyCoveredCommitted = fullyCovered.size,
+            parkedPageKeys = parkedKeys,
+            // PAUSE-normalized (old ambiguous-pause idiom): the breaker pause
+            // must stay resume-eligible even when the verdict came from a
+            // TERMINAL-class protocol outcome.
+            failure = failure.copy(retryability = ProviderFailureRetryability.PAUSE),
+        )
+    }
+
+    /**
+     * Parks partially-covered pages of a protocol-failed envelope as durable
+     * retryable failures. The live page flips to FAILED (typed message), and
+     * the manifest gains a [DurableFailureMetadata] under the page's
+     * TRANSLATION stage with `missingBlockIds` + `missingBlockCharLengths`
+     * (source char lengths — never the text) as the on-device diagnosis
+     * record. Writes ride the same store mutex + artifact publication as the
+     * standard lane's `persistAiFailure`, fenced by the snapshot captured at
+     * revalidation and the still-held BATCH lease token. A rejected park is
+     * fail-open: the page simply stays pending (never READY), so resume still
+     * re-plans it — parking is a diagnosis upgrade, not a correctness gate.
+     * Returns the keys that were durably parked.
+     */
+    private suspend fun parkProtocolPages(
+        pages: List<HeldPage>,
+        outcome: AiChunkOutcome,
+        failure: ProviderFailure,
+        envelopeId: String,
+    ): List<String> {
+        val parkedKeys = mutableListOf<String>()
+        val now = nowEpochMs()
+        for (page in pages) {
+            val missing = page.dispatchBlocks.filter { it.stableBlockId !in outcome.blockTranslations }
+            if (missing.isEmpty()) continue // caller guarantees partial coverage
+            val summary = "protocol failure: envelope omitted ${missing.size} of " +
+                "${page.dispatchBlocks.size} requested block translations " +
+                "after the retry budget (${failure.safeSummary})"
+            // Staged copy carries the incremented attempt counters the
+            // durable metadata records (BatchWriteGate.persistAiFailure idiom).
+            val staged = page.livePage.detachedCopy().apply {
+                translationStatus = StageStatus.FAILED
+                translationError = summary
+                errorMessage = summary
+                recordAttemptFailure()
+                updatedAt = now
+            }
+            val durable = DurableFailureMetadata(
+                pageKey = page.pageKey,
+                stage = ArtifactStage.TRANSLATION,
+                status = ArtifactStageStatus.FAILED_RETRYABLE,
+                category = FailureCategory.PROTOCOL,
+                retryCount = staged.retryCount,
+                lastFailureMessage = summary,
+                lastFailedAtEpochMs = now,
+                nextEligibleRetryAtEpochMs = null,
+                envelopeId = envelopeId,
+                missingBlockIds = missing.mapTo(linkedSetOf()) { it.stableBlockId },
+                missingBlockCharLengths = missing.associate { it.stableBlockId to it.sourceText.length },
+            )
+            val expected = ChapterTranslationStore.PatchPrecondition(
+                generation = page.snapshot.generation,
+                pageVersion = page.snapshot.pageVersion,
+                blockFingerprints = page.snapshot.blockFingerprints,
+                leaseToken = page.leaseToken,
+                candidateGenerationId = page.snapshot.candidateGenerationId,
+                dependencyFingerprint = page.snapshot.dependencyFingerprint,
+                artifactPageVersion = page.snapshot.artifactPageVersion,
+            )
+            when (
+                val result = store.persistDurableStageFailure(
+                    pageKey = page.pageKey,
+                    expected = expected,
+                    failure = durable,
+                    description = "t924 envelope protocol parking",
+                ) { current ->
+                    (current ?: staged).apply {
+                        translationStatus = staged.translationStatus
+                        translationError = staged.translationError
+                        errorMessage = staged.errorMessage
+                        retryCount = staged.retryCount
+                        attemptCount = staged.attemptCount
+                        updatedAt = now
+                    }
+                }
+            ) {
+                is ChapterTranslationStore.PatchResult.Accepted -> {
+                    counters.pagesParked++
+                    parkedKeys += page.pageKey
+                    // One WARN line per parked page: the self-describing
+                    // evidence for the next on-device diagnosis run.
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t924 envelope parked page pageKey=${page.pageKey} " +
+                            "missing=${missing.size}/${page.dispatchBlocks.size} omitted=" +
+                            missing.joinToString(",") { block ->
+                                "${block.stableBlockId}:${block.sourceText.length}c"
+                            } + " envelopeId=$envelopeId"
+                    }
+                }
+                is ChapterTranslationStore.PatchResult.Rejected ->
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t924 envelope parking rejected (fail-open, page stays " +
+                            "pending): pageKey=${page.pageKey} reason=${result.reason}"
+                    }
+            }
+        }
+        return parkedKeys
+    }
 
     private fun replanOrPause(reason: String, pageKey: String): EnvelopeDispatchResult =
         EnvelopeDispatchResult.ReplanNeeded(reason = reason, anchorPageKey = pageKey)
@@ -1048,6 +1266,14 @@ internal class ProfileEnvelopeExecutor(
     companion object {
         /** Livelock guard for pathological drift loops (typed pause beyond this). */
         const val MAX_CONSECUTIVE_REPLANS = 8
+
+        /**
+         * T934 protocol-parking breaker: after this many CONSECUTIVE
+         * PROTOCOL envelopes with ZERO fully-covered pages, the batch falls
+         * back to the old pause behavior instead of parking an entire
+         * chapter one envelope at a time.
+         */
+        const val MAX_CONSECUTIVE_ZERO_COMMIT_ENVELOPES = 3
     }
 }
 

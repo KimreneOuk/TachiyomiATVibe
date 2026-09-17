@@ -216,4 +216,11 @@ data class DurableFailureMetadata(
     val envelopeId: String? = null,
     /** Stable block ids still missing from a partial envelope candidate. */
     val missingBlockIds: Set<String> = emptySet(),
+    /**
+     * T934 protocol parking: per omitted block id, the SOURCE text char
+     * length at plan time. Diagnosis fingerprint only — never the text
+     * itself — so a parked page's omitted blocks can be told apart (e.g.
+     * one oversized block vs many tiny ones) without leaking content.
+     */
+    val missingBlockCharLengths: Map<String, Int> = emptyMap(),
 )
