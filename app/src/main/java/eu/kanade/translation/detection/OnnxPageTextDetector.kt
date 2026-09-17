@@ -221,7 +221,7 @@ class OnnxPageTextDetector {
     }
 
     companion object {
-        private const val CONFIDENCE_THRESHOLD = 0.45f
+        private const val CONFIDENCE_THRESHOLD = 0.6f
 
         private const val DETECTOR_INPUT_FLOATS = 3 * 640 * 640
 
