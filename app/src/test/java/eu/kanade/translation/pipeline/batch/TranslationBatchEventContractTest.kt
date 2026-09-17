@@ -25,7 +25,24 @@ class TranslationBatchEventContractTest {
             "BatchAborted",
             "BatchFinished",
             "BatchPaused",
+            // T934 LI-4: the coordinator's rebuild-window events (envelope
+            // plan build / commit).
+            "EnvelopePlanProgress",
+            "EnvelopePlanCommitted",
         )
+    }
+
+    @Test
+    fun `EnvelopePlanProgress carries the rebuild adoption counter`() {
+        val event = TranslationBatchEvent.EnvelopePlanProgress(done = 34, total = 206)
+
+        event.done shouldBe 34
+        event.total shouldBe 206
+    }
+
+    @Test
+    fun `EnvelopePlanCommitted is a singleton event`() {
+        TranslationBatchEvent.EnvelopePlanCommitted shouldBe TranslationBatchEvent.EnvelopePlanCommitted
     }
 
     @Test

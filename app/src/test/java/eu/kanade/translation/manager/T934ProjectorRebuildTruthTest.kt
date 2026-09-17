@@ -156,6 +156,20 @@ class T934ProjectorRebuildTruthTest {
     }
 
     @Test
+    fun `envelope plan record projects rebuilding on the live snapshot`() = runTest {
+        // T934 LI-4: the run record parks in ENVELOPE_PLAN while the
+        // coordinator rebuilds the dispatch work (resume hydration). Without a
+        // branch this window projected null and the sheet froze on a stale
+        // numeric hero; it must project the rebuild phase instead.
+        val snapshot = firstSnapshot(storeWithRunRecord(record(ChapterRunState.ENVELOPE_PLAN, done = 37)))
+
+        snapshot.batchPhase shouldBe TranslationBatchPhase.REBUILDING
+        snapshot.rebuildProgress.shouldNotBeNull()
+        snapshot.rebuildProgress!!.restoredPages shouldBe 37
+        snapshot.rebuildProgress!!.totalPages shouldBe 70
+    }
+
+    @Test
     fun `post preflight record leaves the plain live phase`() = runTest {
         val snapshot = firstSnapshot(
             storeWithRunRecord(record(ChapterRunState.OCR_PREFLIGHT, done = 70)),

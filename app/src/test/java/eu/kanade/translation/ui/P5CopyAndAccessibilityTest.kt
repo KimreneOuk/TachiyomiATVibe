@@ -231,13 +231,44 @@ class P5CopyAndAccessibilityTest {
         val snapshot = TranslationProgressSnapshot.empty(1L, Translation.State.TRANSLATING)
             .copy(
                 nonDurableFailure = true,
-                nonDurableFailureReason = "Translation could not be saved; retry required",
+                nonDurableFailureReason = "T924 envelope plan publication rejected: stale manifest snapshot",
             )
         val copy = notificationCopyOf("Chapter A", snapshot)
         withClue("the not-saved warning must be visible, never completion copy") {
+            // T934 LI-5: the typed rejection reason rides along (bounded) so
+            // the notification names WHICH seam rejected the publication.
+            prop(copy, "text").toString() shouldBe
+                "Translation not saved — retry required: " +
+                "T924 envelope plan publication rejected: stale manifest snapshot"
+            actionsOf(copy) shouldBe setOf("RETRY", "STOP")
+        }
+    }
+
+    @Test
+    fun `a persistence rejection without a reason keeps the bare not saved copy`() {
+        val snapshot = TranslationProgressSnapshot.empty(1L, Translation.State.TRANSLATING)
+            .copy(
+                nonDurableFailure = true,
+                nonDurableFailureReason = null,
+            )
+        val copy = notificationCopyOf("Chapter A", snapshot)
+        withClue("no reason — the historical not-saved copy is unchanged") {
             prop(copy, "text").toString() shouldBe "Translation not saved — retry required"
             actionsOf(copy) shouldBe setOf("RETRY", "STOP")
         }
+    }
+
+    @Test
+    fun `a persistence rejection reason is truncated on the notification`() {
+        val snapshot = TranslationProgressSnapshot.empty(1L, Translation.State.TRANSLATING)
+            .copy(
+                nonDurableFailure = true,
+                nonDurableFailureReason = "x".repeat(500),
+            )
+        val copy = notificationCopyOf("Chapter A", snapshot)
+        val text = prop(copy, "text").toString()
+        // T934 LI-5: bounded reason — 120 chars after the fixed prefix.
+        text shouldBe "Translation not saved — retry required: " + "x".repeat(120)
     }
 
     @Test

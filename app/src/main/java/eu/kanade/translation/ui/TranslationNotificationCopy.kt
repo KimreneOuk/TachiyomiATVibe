@@ -50,14 +50,25 @@ object TranslationNotificationCopy {
             )
 
             // A guarded publication was rejected: no completion copy, retry is
-            // required (spec §4, condition C).
-            snapshot.nonDurableFailure -> TranslationNotificationRecord(
-                title = chapterName,
-                text = "Translation not saved — retry required",
-                ongoing = false,
-                actions = setOf(NotificationAction.RETRY, NotificationAction.STOP),
-                retryAtEpochMs = null,
-            )
+            // required (spec §4, condition C). T934 LI-5: the typed rejection
+            // reason rides along (bounded) — the bare "not saved" copy hid
+            // which seam rejected the publication.
+            snapshot.nonDurableFailure -> {
+                val reason = snapshot.nonDurableFailureReason
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { it.take(120) }
+                TranslationNotificationRecord(
+                    title = chapterName,
+                    text = if (reason != null) {
+                        "Translation not saved — retry required: $reason"
+                    } else {
+                        "Translation not saved — retry required"
+                    },
+                    ongoing = false,
+                    actions = setOf(NotificationAction.RETRY, NotificationAction.STOP),
+                    retryAtEpochMs = null,
+                )
+            }
 
             snapshot.state == Translation.State.PAUSED || snapshot.nextEligibleRetryAtEpochMs != null -> {
                 val reason = snapshot.pauseReason?.takeIf { it.isNotBlank() }

@@ -32,6 +32,22 @@ sealed class TranslationBatchEvent {
         val state: AiPageProgressState,
         val reason: String? = null,
     ) : TranslationBatchEvent()
+    /**
+     * T934 LI-4: the coordinator is rebuilding the envelope dispatch work
+     * (resume hydration). Flips the projection into the REBUILDING phase and
+     * carries the per-page adoption counter, so the progress sheet shows the
+     * indeterminate live window and store-derived counters keep moving during
+     * the potentially minutes-long rebuild instead of freezing on a stale
+     * snapshot.
+     */
+    data class EnvelopePlanProgress(
+        val done: Int,
+        val total: Int,
+    ) : TranslationBatchEvent()
+
+    /** T934 LI-4: the envelope plan committed (or was reused) — rebuild window ended. */
+    data object EnvelopePlanCommitted : TranslationBatchEvent()
+
     data class BatchAborted(val reason: String, val failedPageKeys: Set<String>) : TranslationBatchEvent()
     data class BatchPaused(
         val anchorPageKey: String?,

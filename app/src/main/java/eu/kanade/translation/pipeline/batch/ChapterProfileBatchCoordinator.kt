@@ -1821,6 +1821,9 @@ internal class ChapterProfileBatchCoordinator(
                             )
                     }
                 }
+                // T934 LI-4: the plan is durable again (published, or an
+                // identical fingerprint was reused) — end the rebuild window.
+                listener.envelopePlanCommitted()
 
                 // ---- ST-12 TRANSLATE. ----
                 if (translator == null) {
@@ -2654,6 +2657,9 @@ internal class ChapterProfileBatchCoordinator(
                                 read.plan.planFingerprint == rebuilt.plan.planFingerprint
                         }
                 if (alreadyPublished) {
+                    // T934 LI-4: the identical plan is already durable — the
+                    // re-derivation (rebuild) window ends here.
+                    listener.envelopePlanCommitted()
                     ReplanResult.Ready(rebuilt.work)
                 } else {
                     when (
@@ -2666,6 +2672,9 @@ internal class ChapterProfileBatchCoordinator(
                     ) {
                         is ChapterArtifactStore.TransactionOutcome.Committed -> {
                             store.artifactManifest = publication.manifest
+                            // T934 LI-4: the superseding plan committed — the
+                            // rebuild window ends.
+                            listener.envelopePlanCommitted()
                             ReplanResult.Ready(rebuilt.work)
                         }
                         is ChapterArtifactStore.TransactionOutcome.Rejected ->
@@ -2711,6 +2720,37 @@ internal class ChapterProfileBatchCoordinator(
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
     ): EnvelopeWorkBuild {
+        // T934 LI-4: announce the rebuild window before the silent work starts
+        // — this build used to run for MINUTES with zero progress events (the
+        // progress sheet sat frozen on a stale snapshot). The listener maps
+        // this to a tracker emission; the tracker flips the snapshot's batch
+        // phase to REBUILDING and recomputes its store-derived counters.
+        listener.envelopePlanStarted(orderedPages.size)
+        // T934 LI-x: the resume-hydration adoption below (adoptCheckpointSnapshot
+        // per pending page) used to rewrite the FULL manifest JSON once or more
+        // PER PAGE (~340 rewrites of a ~360KB document on a 206-page chapter,
+        // ~1.3s apart — a main-thread ANR contributor). Coalesce those manifest
+        // publications: inside the window each publication only stages the
+        // intended manifest (durable rewrite at most every 32 staged
+        // publications), and the try/finally guarantees the mandatory final
+        // flush before this function returns — on every early-return path — so
+        // the plan publication afterwards sees the fully adopted durable state
+        // and the façade equals the durable manifest. On any doubt the store
+        // flushes (fail-safe); correctness of the plan publish itself no longer
+        // depends on the window (T934 LI-x rebase-retry).
+        artifact.beginManifestCoalescing()
+        try {
+            return buildEnvelopeDispatchWorkLocked(artifact, orderedPages, corpusFingerprint)
+        } finally {
+            artifact.endManifestCoalescing()
+        }
+    }
+
+    private suspend fun buildEnvelopeDispatchWorkLocked(
+        artifact: ChapterArtifactStore,
+        orderedPages: List<PageKey>,
+        corpusFingerprint: String,
+    ): EnvelopeWorkBuild {
         val corpus = corpusEntriesFromCheckpoints(artifact, orderedPages, orderedPages.size)
             ?: return EnvelopeWorkBuild.CorpusDrift(
                 "T924 envelope plan deferred: corpus checkpoints changed under the run",
@@ -2731,12 +2771,17 @@ internal class ChapterProfileBatchCoordinator(
         )
         val workPages = linkedMapOf<String, PageDispatchWork>()
         val plannerPages = mutableListOf<EnvelopePlannerPage>()
-        for (entry in corpus.entries) {
+        // T934 LI-4: per-page progress for the (potentially minutes-long)
+        // resume-hydration loop — one listener call per corpus entry, mapped
+        // to a Channel trySend in the tracker; trivially cheap per page.
+        val rebuildTotal = corpus.entries.size
+        corpus.entries.forEachIndexed { rebuildIndex, entry ->
+            listener.envelopePlanProgress(rebuildIndex + 1, rebuildTotal)
             val snapshot = store.snapshot(entry.storagePageKey)
             val page = snapshot.page ?: return EnvelopeWorkBuild.CorpusDrift(
                 "T924 envelope plan deferred: live page state missing for ${entry.storagePageKey}",
             )
-            if (pageEnvelopeDone(entry.storagePageKey, page)) continue
+            if (pageEnvelopeDone(entry.storagePageKey, page)) return@forEachIndexed
             // Resume hydration: a page restored from the artifact store after
             // process death is a synthesized placeholder WITHOUT blocks — the
             // durable OCR content lives in the checkpoint's page-snapshot
@@ -2783,7 +2828,7 @@ internal class ChapterProfileBatchCoordinator(
                 )
                 plannerBlocks += EnvelopePlannerBlock(stableBlockId = stableId, sourceText = block.text)
             }
-            if (dispatchBlocks.isEmpty()) continue
+            if (dispatchBlocks.isEmpty()) return@forEachIndexed
             workPages[entry.storagePageKey] = PageDispatchWork(
                 pageKey = entry.storagePageKey,
                 naturalPageIndex = entry.naturalPageIndex,

@@ -194,6 +194,29 @@ open class BatchScheduleListener {
      */
     open fun ocrDeferred(pageKey: String, owner: PageWriteOrigin?) {}
 
+    /**
+     * T934 LI-4: the coordinator began rebuilding the envelope dispatch work
+     * (resume hydration / plan re-derivation). [totalPages] is the ordered
+     * page-set size the rebuild iterates. The window used to run silently for
+     * minutes with zero progress events, freezing the progress sheet on a
+     * stale snapshot. No-op default so unaffected listeners stay no-ops.
+     */
+    open fun envelopePlanStarted(totalPages: Int) {}
+
+    /**
+     * T934 LI-4: per-page progress within the envelope plan-build window.
+     * [done] counts corpus entries processed so far out of [total]. Fired
+     * every page; the tracker side is a Channel trySend plus a projection
+     * recompute, deliberately trivial per call.
+     */
+    open fun envelopePlanProgress(done: Int, total: Int) {}
+
+    /**
+     * T934 LI-4: the envelope plan is durable again (published, or an
+     * identical fingerprint was reused) — the rebuild window has ended.
+     */
+    open fun envelopePlanCommitted() {}
+
     companion object {
         val NOOP: BatchScheduleListener = BatchScheduleListener()
     }

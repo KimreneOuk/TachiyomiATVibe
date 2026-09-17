@@ -223,6 +223,33 @@ fun TranslationProgressSheet(
                 }
             }
 
+            // T934 LI-5: a terminal persistence-rejected presentation. The
+            // tracker carried the typed rejection reason in the snapshot's
+            // nonDurableFailureReason but nothing rendered it (the abort
+            // banner's twin). Same red-banner presentation as the abort
+            // banner; abort keeps precedence so both banners never stack.
+            // The reason is bounded — it can embed a whole rejection chain.
+            if (snapshot.nonDurableFailure && !snapshot.aborted) {
+                val rejectionReason = snapshot.nonDurableFailureReason.orEmpty().take(200)
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                        Text(
+                            text = stringResource(ATMR.strings.manga_batch_not_saved, rejectionReason),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+
             // TachiyomiAT T918: a terminal-aborted (cancelled) or terminal-failed
             // batch must not dead-end in the banner — offer the restart the truth
             // projection allows, only when the caller wired a restart callback.

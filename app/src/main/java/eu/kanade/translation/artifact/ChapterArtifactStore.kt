@@ -943,6 +943,47 @@ class ChapterArtifactStore(
         return TransactionOutcome.Committed(updated, commitPoint = commitPoint)
     }
 
+    /**
+     * T934 LI-x: [publishSidecarPointers] with the store's standard ONE-shot
+     * stale-manifest rebase-retry ([retryOnStaleManifest], seam-tagged), for
+     * the resume-hydration seams whose caller can hold a snapshot that predates
+     * durable publications performed outside the façade (the background health
+     * verify's `legacyMigration` stamp) — the page-registration write of the
+     * adoption path. On a stale-manifest rejection ONLY, [updatePointers] is
+     * re-run against the freshly re-read durable manifest — the mutation must
+     * be a pure function of the base manifest so the rebase carries every
+     * fresh durable field forward. Every other rejection reason is returned
+     * as-is (T924-SC-20/22); a retry that also fails surfaces the retry's own
+     * rejection, exactly like the store's other wrapped seams.
+     */
+    @Synchronized
+    internal fun publishSidecarPointersWithStaleRetry(
+        manifest: ChapterArtifactManifest,
+        sidecars: List<SidecarPublication>,
+        updatePointers: (ChapterArtifactManifest) -> ChapterArtifactManifest,
+        nowEpochMs: Long = System.currentTimeMillis(),
+        commitPoint: CommitPoint? = null,
+        seam: String,
+    ): TransactionOutcome = retryOnStaleManifest(
+        firstAttempt = publishSidecarPointers(
+            manifest = manifest,
+            sidecars = sidecars,
+            updatePointers = updatePointers,
+            nowEpochMs = nowEpochMs,
+            commitPoint = commitPoint,
+        ),
+        callerManifest = manifest,
+        seam = seam,
+    ) { fresh ->
+        publishSidecarPointers(
+            manifest = fresh,
+            sidecars = sidecars,
+            updatePointers = updatePointers,
+            nowEpochMs = nowEpochMs,
+            commitPoint = commitPoint,
+        )
+    }
+
     /** Outcome of reading an OCR checkpoint through its manifest pointer. */
     sealed interface OcrCheckpointRead {
         /** Semantically valid at a supported schema version. */
@@ -1909,7 +1950,7 @@ class ChapterArtifactStore(
     private val STALE_MANIFEST_REJECTION_REASON = "stale manifest snapshot"
 
     private fun staleManifestRejection(manifest: ChapterArtifactManifest): String? {
-        val durable = readManifest()
+        val durable = casBaselineManifest()
             ?: return "manifest is not durable: chapter=${layout.chapterKey}"
         return if (durable == manifest) {
             null
@@ -1923,6 +1964,16 @@ class ChapterArtifactStore(
         (this as? TransactionOutcome.Rejected)
             ?.reason
             ?.takeIf { it.startsWith(STALE_MANIFEST_REJECTION_REASON) }
+
+    /**
+     * T934 LI-x: stale-manifest CAS detection exposed to the one seam whose
+     * publication lives OUTSIDE this store ([EnvelopePlanPublication.publish]):
+     * the CAS there keys on the same [STALE_MANIFEST_REJECTION_REASON] prefix
+     * so every other rejection reason keeps failing exactly as before
+     * (T924-SC-20/22).
+     */
+    internal fun isStaleManifestRejection(outcome: TransactionOutcome): Boolean =
+        outcome.staleManifestRejectionOrNull() != null
 
     /**
      * T924 LI-4: one-shot stale-manifest retry for the flagged Batch lane's
@@ -1952,7 +2003,7 @@ class ChapterArtifactStore(
         retry: (ChapterArtifactManifest) -> TransactionOutcome,
     ): TransactionOutcome {
         firstAttempt.staleManifestRejectionOrNull() ?: return firstAttempt
-        val fresh = readManifest() ?: return firstAttempt
+        val fresh = casBaselineManifest() ?: return firstAttempt
         logcat(LogPriority.WARN) {
             "TachiyomiAT artifact stale manifest retried once: seam=$seam " +
                 "chapter=${layout.chapterKey} " +
@@ -2155,6 +2206,92 @@ class ChapterArtifactStore(
         readManifestDocument(backupName())?.schemaVersion?.let { it > ChapterArtifactManifest.SCHEMA_VERSION }
             ?: false
 
+    // ------------------------------------------------------------------
+    // T934 LI-x: adoption-write manifest coalescing for the batch-resume
+    // rebuild. The resume hydration loop (`buildEnvelopeDispatchWork` →
+    // `adoptCheckpointSnapshot` → the façade's open/persist/promote candidate
+    // transactions) republished the FULL manifest JSON once or more PER PAGE
+    // (~340 rewrites of a ~360KB document on a 206-page chapter, ~1.3s apart),
+    // contributing to a main-thread ANR. While a coalescing window is open
+    // (the coordinator brackets the rebuild in begin/try/finally-end), each
+    // manifest publication only STASHES the intended manifest (last
+    // writer wins — the transaction chain is serialized by the store monitor,
+    // so the stash is always the newest intended state); the durable rewrite
+    // happens at most once per [MANIFEST_COALESCING_FLUSH_EVERY] stashed
+    // publications and ALWAYS on [endManifestCoalescing]. Failure semantics:
+    // a mid-window flush failure fails the owning transaction exactly as a
+    // direct publication failure would (callers see Rejected); the final flush
+    // is best-effort with a WARN — resume re-derives adopted state from the
+    // durable checkpoints. Crash safety is unchanged: the window only widens
+    // the existing sidecar-then-pointer crash window (pointer moves delayed,
+    // sidecar files content-addressed and idempotent); a crash before the
+    // flush leaves the prior manifest authoritative and the resume re-adopts.
+    //
+    // The CAS baseline follows the stash ([casBaselineManifest]): while a
+    // window is open the intended (stashed) manifest — not the lagging file —
+    // is what [staleManifestRejection] compares against, so the serialized
+    // transaction chain never stale-rejects against its own deferred writes
+    // and never rebases onto a manifest that would drop them. With no window
+    // open the baseline is the durable file exactly as before T934.
+    // ------------------------------------------------------------------
+
+    /** Bounded unflushed state: a durable manifest rewrite at most every N stashed publications. */
+    private val MANIFEST_COALESCING_FLUSH_EVERY = 32
+
+    private var manifestCoalescingDepth = 0
+    private var coalescedManifest: ChapterArtifactManifest? = null
+    private var coalescedSyncToDisk = false
+    private var coalescedPublications = 0
+
+    /**
+     * Opens one coalescing window. Callers MUST close it with
+     * [endManifestCoalescing] (a try/finally bracket), which performs the
+     * mandatory final flush. Nesting is counted; the outermost end flushes.
+     */
+    @Synchronized
+    fun beginManifestCoalescing() {
+        manifestCoalescingDepth += 1
+    }
+
+    /**
+     * Closes one coalescing window and flushes the stashed manifest when the
+     * OUTERMOST window ends (T934 LI-x: the rebuild always ends coherent —
+     * `store.artifactManifest` tracks each Committed manifest, so after the
+     * final flush the façade equals the durable file). A failed final flush is
+     * logged and dropped: the transactions already reported Committed, and the
+     * durable state heals on the next resume via the checkpoint sidecars.
+     */
+    @Synchronized
+    fun endManifestCoalescing() {
+        if (manifestCoalescingDepth > 0) manifestCoalescingDepth -= 1
+        if (manifestCoalescingDepth > 0) return
+        val pending = coalescedManifest
+        coalescedManifest = null
+        val sync = coalescedSyncToDisk
+        coalescedSyncToDisk = false
+        coalescedPublications = 0
+        if (pending != null && !documents.publishJson(layout.manifestFileName, pending, syncToDisk = sync)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT manifest coalescing final flush failed; prior manifest retained: " +
+                    "chapter=${layout.chapterKey} pendingUpdatedAt=${pending.updatedAtEpochMs}"
+            }
+        }
+    }
+
+    /**
+     * T934 LI-x: the manifest CAS baseline — the coalesced (intended) manifest
+     * while a window is open, else the durable file. Must only be called under
+     * the store monitor (every caller is a [Synchronized] transaction).
+     */
+    private fun casBaselineManifest(): ChapterArtifactManifest? =
+        coalescedManifest ?: readManifest()
+
+    // T934 LI-x: @Synchronized because this is also reached WITHOUT the store
+    // monitor (the background legacy-health verifier's raw publications), and
+    // the coalescing stash below must not race with the transaction chain.
+    // Reentrant for the [Synchronized] transaction callers; lock order
+    // (store monitor → per-name document lock) is the pre-existing order.
+    @Synchronized
     internal fun publishManifestInternal(manifest: ChapterArtifactManifest, syncToDisk: Boolean = false): Boolean {
         if (readManifestDocument(layout.manifestFileName)?.schemaVersion
                 ?.let { it > ChapterArtifactManifest.SCHEMA_VERSION } == true
@@ -2171,6 +2308,27 @@ class ChapterArtifactStore(
                     "chapter=${layout.chapterKey}"
             }
             return false
+        }
+        if (manifestCoalescingDepth > 0) {
+            coalescedManifest = manifest
+            if (syncToDisk) coalescedSyncToDisk = true
+            coalescedPublications += 1
+            if (coalescedPublications % MANIFEST_COALESCING_FLUSH_EVERY == 0) {
+                // T934 LI-x: bounded unflushed state — flush through the normal
+                // path WITHOUT closing the window (depth stays > 0).
+                val pending = coalescedManifest
+                coalescedManifest = null
+                val pendingSync = coalescedSyncToDisk
+                coalescedSyncToDisk = false
+                if (pending != null && !documents.publishJson(layout.manifestFileName, pending, syncToDisk = pendingSync)) {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT manifest coalescing flush failed: " +
+                            "chapter=${layout.chapterKey} pendingUpdatedAt=${pending.updatedAtEpochMs}"
+                    }
+                    return false
+                }
+            }
+            return true
         }
         return documents.publishJson(layout.manifestFileName, manifest, syncToDisk = syncToDisk)
     }

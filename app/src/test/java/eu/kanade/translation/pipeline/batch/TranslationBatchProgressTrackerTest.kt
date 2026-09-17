@@ -8,6 +8,8 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressStage
+import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -91,6 +93,54 @@ class TranslationBatchProgressTrackerTest {
 
         tracker.snapshot.value.pages.single().stage shouldBe TranslationProgressStage.FAILED
         tracker.snapshot.value.perStage.getValue(BatchPhase.OCR).failed shouldBe 1
+        tracker.close()
+    }
+
+    @Test
+    fun `envelope plan events flip the phase to rebuilding and committed ends the window`() = runTest {
+        val store = ChapterTranslationStore(null, null)
+        store.preRegisterPages(listOf("001.jpg", "002.jpg"))
+        val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg", "002.jpg"), this)
+
+        tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.FIRST_PASS
+
+        // T934 LI-4: the plan-build window is live work — the projection must
+        // leave FIRST_PASS while the coordinator re-adopts pages, and the
+        // adoption counter must track each event (the sheet recomputes its
+        // store-derived counters on every emission).
+        tracker.markEnvelopePlanStarted(2)
+        tracker.markEnvelopePlanProgress(1, 2)
+        runCurrent()
+
+        tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.REBUILDING
+        tracker.snapshot.value.rebuildProgress.shouldNotBeNull()
+        tracker.snapshot.value.rebuildProgress!!.restoredPages shouldBe 1
+        tracker.snapshot.value.rebuildProgress!!.totalPages shouldBe 2
+
+        tracker.markEnvelopePlanProgress(2, 2)
+        runCurrent()
+        tracker.snapshot.value.rebuildProgress!!.restoredPages shouldBe 2
+
+        tracker.markEnvelopePlanCommitted()
+        runCurrent()
+
+        tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.FIRST_PASS
+        tracker.snapshot.value.rebuildProgress.shouldBeNull()
+        tracker.close()
+    }
+
+    @Test
+    fun `envelope plan progress never mutates the store`() = runTest {
+        val store = ChapterTranslationStore(null, null)
+        store.preRegisterPages(listOf("001.jpg"))
+        val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg"), this)
+
+        tracker.markEnvelopePlanStarted(1)
+        tracker.markEnvelopePlanProgress(1, 1)
+        tracker.markEnvelopePlanCommitted()
+        runCurrent()
+
+        store.state.value.getValue("001.jpg").ocrStatus shouldBe StageStatus.PENDING
         tracker.close()
     }
 

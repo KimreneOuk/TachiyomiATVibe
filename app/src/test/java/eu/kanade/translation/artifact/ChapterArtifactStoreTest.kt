@@ -288,6 +288,71 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
+    fun `verify stamps the CURRENT durable manifest when it changed after open`() {
+        // T934 LI-6: the health verify used to republish the OPEN-TIME
+        // manifest, silently reverting a concurrent durable write (lost
+        // update — e.g. the batch resume-hydration adoption moving pointers).
+        // The VERIFIED stamp must land on the freshly re-read durable
+        // manifest so the concurrent change survives alongside the stamp.
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-health-race".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        val migrated = artifactStore(io).loadOrMigrate(
+            legacySnapshotForSource(sourceBytes).copy(
+                pages = mapOf(
+                    "page.jpg" to LegacyPageFacts(
+                        displayablePage().copy(
+                            cleanedImageName = null,
+                            inpaintStatus = StageStatus.SKIPPED,
+                            renderStatus = StageStatus.SKIPPED,
+                        ),
+                        CleanedFileState.NONE_RECORDED,
+                    ),
+                ),
+            ),
+        )
+        val record = migrated.manifest.pages.getValue("page.jpg")
+        val healthy = migrated.manifest.copy(
+            pages = mapOf(
+                "page.jpg" to record.copy(
+                    displayState = PageDisplayState.DISPLAY_READY,
+                    legacyVisible = null,
+                ),
+            ),
+        )
+        artifactStore(io).publishManifest(healthy) shouldBe true
+
+        // The caller's open-time snapshot goes stale: a concurrent writer (the
+        // adoption path) moves the durable manifest forward between open and
+        // verify. The stale snapshot does NOT carry expectedPageCount.
+        val staleOpen = artifactStore(io).readManifest().shouldNotBeNull()
+        val durableNewer = staleOpen.copy(
+            expectedPageCount = 5,
+            expectedPageCountTrusted = true,
+            updatedAtEpochMs = 50L,
+        )
+        artifactStore(io).publishManifest(durableNewer) shouldBe true
+
+        val result = artifactStore(io).verifyLegacyArtifactHealth(
+            staleOpen,
+            currentVersionCode = staleOpen.legacyMigration!!.migratedByVersionCode + 1,
+            nowEpochMs = 100L,
+        )
+
+        result.verified shouldBe true
+        // The stamp is VERIFIED...
+        result.manifest.legacyMigration!!.health shouldBe LegacyMigrationHealth.VERIFIED
+        result.manifest.legacyMigration!!.lastVerifiedAtEpochMs shouldBe 100L
+        // ...AND the concurrent durable change was carried forward, not
+        // reverted to the open-time snapshot.
+        result.manifest.expectedPageCount shouldBe 5
+        result.manifest.expectedPageCountTrusted shouldBe true
+        val durable = artifactStore(io).readManifest().shouldNotBeNull()
+        durable.legacyMigration!!.health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.expectedPageCount shouldBe 5
+    }
+
+    @Test
     fun `health gate retains preserved source for same version or warning page`() {
         val io = FakeChapterDocumentIo()
         val sourceBytes = "legacy-health-warning".toByteArray()

@@ -17,8 +17,9 @@ import org.junit.jupiter.api.Test
  * T934 U.1/U.7: the run record → rebuild/restore phase truth and its
  * transitions across a resumed run's lifecycle
  * (rebuild → restoring → running → finished). The derivation is pure: a
- * record in the preflight preamble projects the rebuild/restore phases with
- * the restored/remaining payload; every post-preflight or terminal state
+ * record in the preflight preamble (or the T934 LI-4 ENVELOPE_PLAN
+ * plan-build window) projects the rebuild/restore phases with the
+ * restored/remaining payload; every other post-preflight or terminal state
  * projects NO rebuild phase, so ordinary running and finished work is never
  * restamped.
  */
@@ -99,9 +100,21 @@ class T934RebuildTruthTransitionsTest {
     fun `post preflight running states project no rebuild phase`() {
         rebuildTruthFromRunRecord(record(ChapterRunState.OCR_PREFLIGHT, counters(70))).shouldBeNull()
         rebuildTruthFromRunRecord(record(ChapterRunState.ANALYSIS_CHUNKS)).shouldBeNull()
-        rebuildTruthFromRunRecord(record(ChapterRunState.ENVELOPE_PLAN)).shouldBeNull()
         rebuildTruthFromRunRecord(record(ChapterRunState.TRANSLATE)).shouldBeNull()
         rebuildTruthFromRunRecord(record(ChapterRunState.FINALIZE)).shouldBeNull()
+    }
+
+    @Test
+    fun `envelope plan record projects the rebuilding phase`() {
+        // T934 LI-4: the run record parks in ENVELOPE_PLAN while the
+        // coordinator rebuilds the dispatch work (resume hydration). It used
+        // to project null, freezing the sheet on a stale numeric hero for the
+        // whole window; it is a rebuild phase now.
+        val truth = rebuildTruthFromRunRecord(record(ChapterRunState.ENVELOPE_PLAN, counters(37)))
+
+        truth!!.first shouldBe TranslationBatchPhase.REBUILDING
+        truth.second!!.restoredPages shouldBe 37
+        truth.second!!.totalPages shouldBe 70
     }
 
     @Test

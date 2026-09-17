@@ -567,6 +567,23 @@ internal class BatchChapterTranslator(
                     override fun ocrDeferred(pageKey: String, owner: PageWriteOrigin?) {
                         deferredPages.putIfAbsent(pageKey, owner)
                     }
+
+                    // T934 LI-4: the envelope plan-build window (resume
+                    // hydration) used to emit NOTHING — the sheet sat frozen
+                    // for minutes. Map the coordinator's rebuild events to
+                    // tracker emissions; each is a Channel trySend plus one
+                    // projection recompute from live store state.
+                    override fun envelopePlanStarted(totalPages: Int) {
+                        tracker?.markEnvelopePlanStarted(totalPages)
+                    }
+
+                    override fun envelopePlanProgress(done: Int, total: Int) {
+                        tracker?.markEnvelopePlanProgress(done, total)
+                    }
+
+                    override fun envelopePlanCommitted() {
+                        tracker?.markEnvelopePlanCommitted()
+                    }
                 }
 
                 val batchLaneWorkers = BatchLaneWorkers(

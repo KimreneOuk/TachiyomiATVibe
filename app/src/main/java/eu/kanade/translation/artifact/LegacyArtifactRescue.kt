@@ -260,7 +260,18 @@ internal class LegacyArtifactRescue(
             lastVerifiedByVersionCode = currentVersionCode,
             lastVerifiedAtEpochMs = nowEpochMs,
         )
-        val verifiedManifest = manifest.copy(
+        // T934 LI-6: the health probe above validated the OPEN-TIME manifest,
+        // but between store open and this background verify a concurrent
+        // writer (the batch resume-hydration adoption path) can move the
+        // durable manifest forward. Publishing the open-time snapshot here
+        // silently REVERTED that concurrent write (lost update — the verified
+        // stamp also invited later clobbers). Re-read the durable manifest
+        // once and apply the VERIFIED stamp onto THAT fresh manifest instead;
+        // if nothing durable is readable, fall back to the open-time manifest
+        // exactly as before. Deliberately one-shot, best-effort: the verify is
+        // retriable background work, not a transaction.
+        val stampBase = store.readManifest() ?: manifest
+        val verifiedManifest = stampBase.copy(
             legacyMigration = verifiedMetadata,
             updatedAtEpochMs = nowEpochMs,
         )

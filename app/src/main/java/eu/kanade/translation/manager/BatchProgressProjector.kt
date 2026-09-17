@@ -77,6 +77,16 @@ internal fun rebuildTruthFromRunRecord(
                 totalPages = total,
             )
         }
+        // T934 LI-4: the envelope plan-build window. The run record parks in
+        // ENVELOPE_PLAN while the coordinator rebuilds the dispatch work (the
+        // resume hydration loop) — without a branch this window projected null
+        // and the sheet froze on a stale numeric hero. REBUILDING (no rendered
+        // counter) also keeps the record-driven stamp from fighting the live
+        // tracker's own EnvelopePlanProgress events during the same window.
+        ChapterRunState.ENVELOPE_PLAN -> TranslationBatchPhase.REBUILDING to BatchRebuildProgress(
+            restoredPages = done.coerceAtLeast(0),
+            totalPages = total.coerceAtLeast(0),
+        )
         else -> null
     }
 }

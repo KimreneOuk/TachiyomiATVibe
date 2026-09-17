@@ -7,6 +7,8 @@ import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 
 /**
  * T924 Stage-6 slice A — envelope plan publication (T924-ST-11, SC-20).
@@ -39,6 +41,24 @@ internal object EnvelopePlanPublication {
      * Publishes the envelope plan + its manifest pointer in ONE transaction.
      * The caller supplies the freshly re-planned [EnvelopePlan]; the
      * publication verifies the SC-10 fingerprint before writing.
+     *
+     * T934 LI-x: the resume path rebuilds dispatch work (adopting durable
+     * checkpoints page by page, each adoption republishing the manifest)
+     * BEFORE publishing the plan, and the caller's manifest snapshot can also
+     * be invalidated by the >8-page open path's background health verify — a
+     * guaranteed `stale manifest snapshot` CAS rejection that aborted the
+     * whole batch with PERSISTENCE_REJECTED. On a stale-manifest rejection
+     * ONLY ([ChapterArtifactStore.isStaleManifestRejection]), the publication
+     * re-reads the durable manifest ONCE and re-runs the SAME pointer move
+     * against THAT fresh manifest (the pointer move is a pure
+     * `envelopePlan`-pointer set, so every fresh durable field is carried
+     * forward by construction; the plan sidecar itself is content-addressed
+     * and idempotent). The retry is one-shot with the store's
+     * `retryOnStaleManifest` semantics replicated locally (the mutation
+     * lambda lives outside the store): a retry that does not commit — or a
+     * durable manifest that vanished — returns the ORIGINAL Rejected
+     * unchanged, and every non-stale rejection keeps failing exactly as
+     * before (T924-SC-20/22).
      */
     fun publish(
         artifact: ChapterArtifactStore,
@@ -56,27 +76,39 @@ internal object EnvelopePlanPublication {
             )
         }
         val fileName = artifact.envelopePlanSidecarName(plan.planFingerprint)
-        return artifact.publishSidecarPointers(
-            manifest = manifest,
-            sidecars = listOf(
-                artifact.jsonSidecarPublication(
-                    fileName = fileName,
-                    contentFingerprint = plan.planFingerprint,
-                    document = plan,
-                    serializer = EnvelopePlan.serializer(),
-                ),
-            ),
-            updatePointers = { current ->
-                current.copy(
-                    envelopePlan = SidecarPointer(
+        fun publishPointers(on: ChapterArtifactManifest): ChapterArtifactStore.TransactionOutcome =
+            artifact.publishSidecarPointers(
+                manifest = on,
+                sidecars = listOf(
+                    artifact.jsonSidecarPublication(
                         fileName = fileName,
-                        schemaVersion = EnvelopePlan.SCHEMA_VERSION,
                         contentFingerprint = plan.planFingerprint,
+                        document = plan,
+                        serializer = EnvelopePlan.serializer(),
                     ),
-                )
-            },
-            nowEpochMs = nowEpochMs,
-        )
+                ),
+                updatePointers = { current ->
+                    current.copy(
+                        envelopePlan = SidecarPointer(
+                            fileName = fileName,
+                            schemaVersion = EnvelopePlan.SCHEMA_VERSION,
+                            contentFingerprint = plan.planFingerprint,
+                        ),
+                    )
+                },
+                nowEpochMs = nowEpochMs,
+            )
+        val firstAttempt = publishPointers(manifest)
+        if (!artifact.isStaleManifestRejection(firstAttempt)) return firstAttempt
+        val fresh = artifact.readManifest() ?: return firstAttempt
+        logcat(LogPriority.WARN) {
+            "TachiyomiAT artifact stale manifest retried once: seam=envelope-plan " +
+                "chapter=${fresh.chapterKey} " +
+                "staleUpdatedAt=${manifest.updatedAtEpochMs} " +
+                "freshUpdatedAt=${fresh.updatedAtEpochMs}"
+        }
+        val retry = publishPointers(fresh)
+        return if (retry is ChapterArtifactStore.TransactionOutcome.Committed) retry else firstAttempt
     }
 
     /** Why a manifest's envelope-plan pointer is (not) usable at a resume point. */

@@ -6,6 +6,8 @@ import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.artifact.LegacyMigrationHealth
+import eu.kanade.translation.artifact.LegacyMigrationMetadata
 import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
 import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
 import eu.kanade.translation.translator.contextual.EnvelopePlanResult
@@ -123,5 +125,101 @@ class EnvelopePlanPublicationTest {
 
         val read = EnvelopePlanPublication.readValidatedPlan(artifact, manifest())
         read.shouldBeInstanceOf<EnvelopePlanPublication.EnvelopePlanRead.NotUsable>()
+    }
+
+    // ------------------------------------------------------------------
+    // T934 LI-x: the resume rebuild adopts durable checkpoints page by page
+    // (each adoption republishing the manifest) and the >8-page open path's
+    // background health verify republishes the VERIFIED manifest behind the
+    // façade's back — so the caller's plan-publish snapshot is stale by
+    // construction and the whole batch aborted with PERSISTENCE_REJECTED.
+    // The publication now rebases onto the fresh durable manifest ONCE on a
+    // stale-manifest rejection only.
+    // ------------------------------------------------------------------
+
+    /**
+     * Mirrors the real background writer: `verifyLegacyArtifactHealth`
+     * republishes the manifest with the VERIFIED health marker and a bumped
+     * timestamp, behind the caller's back.
+     */
+    private fun bumpBehindCallersBack(nowEpochMs: Long) {
+        val current = manifest()
+        val metadata = (current.legacyMigration ?: LegacyMigrationMetadata(sourceFileName = "Chapter 1.json"))
+            .copy(
+                health = LegacyMigrationHealth.VERIFIED,
+                lastVerifiedByVersionCode = 63L,
+                lastVerifiedAtEpochMs = nowEpochMs,
+            )
+        check(artifact.publishManifest(current.copy(legacyMigration = metadata, updatedAtEpochMs = nowEpochMs))) {
+            "fixture: concurrent verify publication failed"
+        }
+    }
+
+    @Test
+    fun `plan publication rebases onto a drifted durable manifest and preserves the concurrent change`() {
+        bootstrapManifest()
+        val callerSnapshot = manifest()
+        // The rebuild's adoptions / background verify drift the durable
+        // manifest AFTER the caller cached its snapshot.
+        bumpBehindCallersBack(nowEpochMs = 2L)
+
+        val plan = plan()
+        val outcome = EnvelopePlanPublication.publish(artifact, callerSnapshot, plan, nowEpochMs = 3L)
+
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val durable = manifest()
+        // The plan pointer landed on the FRESH manifest…
+        durable.envelopePlan.shouldNotBeNull().contentFingerprint shouldBe plan.planFingerprint
+        committed.manifest shouldBe durable
+        // …and the intervening durable change was NOT reverted.
+        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.updatedAtEpochMs shouldBe 3L
+        EnvelopePlanPublication.readValidatedPlan(artifact, durable)
+            .shouldBeInstanceOf<EnvelopePlanPublication.EnvelopePlanRead.Usable>()
+    }
+
+    @Test
+    fun `a non-stale rejection still fails as-is without a retry`() {
+        bootstrapManifest()
+        // The manifest is CURRENT; the plan sidecar promotion rename is armed
+        // to fail — the resulting rejection is a real publication failure,
+        // not the stale-manifest CAS.
+        val plan = plan()
+        val fileName = artifact.envelopePlanSidecarName(plan.planFingerprint)
+        io.ownedRenamesToFail += "$fileName.tmp"
+
+        val outcome = EnvelopePlanPublication.publish(artifact, manifest(), plan, nowEpochMs = 7L)
+
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        rejected.reason shouldContain "sidecar publication failed"
+        // Exactly ONE sidecar write attempt — no rebase-retry on a non-stale
+        // rejection — and the manifest stays authoritative and untouched.
+        io.writtenNames.count { it.contains(fileName) } shouldBe 1
+        manifest().envelopePlan shouldBe null
+    }
+
+    @Test
+    fun `retry exhaustion surfaces the original stale rejection without looping`() {
+        bootstrapManifest()
+        val callerSnapshot = manifest()
+        bumpBehindCallersBack(nowEpochMs = 2L)
+
+        // Attempt 1 is stale-rejected before any byte is written; the armed
+        // sidecar failure then fails the ONE retry — the ORIGINAL stale
+        // rejection must surface, with no second retry loop.
+        val plan = plan()
+        val fileName = artifact.envelopePlanSidecarName(plan.planFingerprint)
+        io.ownedRenamesToFail += "$fileName.tmp"
+
+        val outcome = EnvelopePlanPublication.publish(artifact, callerSnapshot, plan, nowEpochMs = 3L)
+
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        rejected.reason shouldContain "stale manifest snapshot"
+        // Exactly ONE sidecar write attempt (the retry; the stale first
+        // attempt never reaches the sidecar), and NOTHING was published —
+        // the concurrent VERIFIED marker stands, no plan pointer moved.
+        io.writtenNames.count { it.contains(fileName) } shouldBe 1
+        manifest().envelopePlan shouldBe null
+        manifest().legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
     }
 }

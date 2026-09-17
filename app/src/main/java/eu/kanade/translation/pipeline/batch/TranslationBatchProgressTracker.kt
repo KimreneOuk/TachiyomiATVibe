@@ -3,6 +3,7 @@ package eu.kanade.translation.pipeline.batch
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.AiBatchProgress
 import eu.kanade.translation.model.AiPageProgressState
+import eu.kanade.translation.model.BatchRebuildProgress
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageCount
@@ -110,6 +111,17 @@ class TranslationBatchProgressTracker(
         reason: String,
     ) = phase(pageKey, BatchPhase.RENDER, PhaseStatus.FAILED, reason)
     fun markRenderSkipped(pageKey: String) = phase(pageKey, BatchPhase.RENDER, PhaseStatus.SKIPPED)
+
+    // T934 LI-4: rebuild-window progress. The coordinator's envelope plan
+    // build (resume hydration) fires these through the schedule listener so
+    // the projection flips to REBUILDING while the window runs and returns to
+    // FIRST_PASS when the plan commits — the sheet's indeterminate bar and
+    // store-derived counters stay live instead of freezing for minutes.
+    fun markEnvelopePlanStarted(totalPages: Int) =
+        emit(TranslationBatchEvent.EnvelopePlanProgress(done = 0, total = totalPages))
+    fun markEnvelopePlanProgress(done: Int, total: Int) =
+        emit(TranslationBatchEvent.EnvelopePlanProgress(done = done, total = total))
+    fun markEnvelopePlanCommitted() = emit(TranslationBatchEvent.EnvelopePlanCommitted)
 
     private fun phase(pageKey: String, phase: BatchPhase, status: PhaseStatus, reason: String? = null) = emit(
         TranslationBatchEvent.PagePhase(pageKey, indexResolver[pageKey] ?: 0, phase, status, reason = reason),
@@ -222,6 +234,9 @@ class TranslationBatchProgressTracker(
             // T917 Phase 5 (spec §4.1): bounded non-durable publication warning.
             nonDurableFailure = state.nonDurableFailure,
             nonDurableFailureReason = state.nonDurableFailureReason,
+            // T934 LI-4: the tracker-driven rebuild window carries its own
+            // adoption counter alongside the REBUILDING phase.
+            rebuildProgress = state.rebuildProgress,
         )
     }
 
@@ -237,6 +252,9 @@ class TranslationBatchProgressTracker(
         val nextEligibleRetryAtEpochMs: Long? = null,
         val nonDurableFailure: Boolean = false,
         val nonDurableFailureReason: String? = null,
+        // T934 LI-4: live envelope-plan rebuild counter while batchPhase is
+        // REBUILDING; cleared when the plan commits.
+        val rebuildProgress: BatchRebuildProgress? = null,
         /** T917 Phase 5: keys settled as cancelled by a batch abort. */
         val cancelledPageKeys: Set<String> = emptySet(),
     )
@@ -282,7 +300,24 @@ class TranslationBatchProgressTracker(
                 // exactly the aborted remainder this projection settles as cancelled.
                 cancelledPageKeys = event.failedPageKeys,
             )
-            else -> previous
+            is TranslationBatchEvent.EnvelopePlanProgress -> previous.copy(
+                // T934 LI-4: the plan-build window is live work — REBUILDING
+                // keeps the sheet's indeterminate bar and its store-derived
+                // counters moving while the coordinator re-adopts pages.
+                batchPhase = TranslationBatchPhase.REBUILDING,
+                rebuildProgress = BatchRebuildProgress(
+                    restoredPages = event.done.coerceAtLeast(0),
+                    totalPages = event.total.coerceAtLeast(0),
+                ),
+            )
+            is TranslationBatchEvent.EnvelopePlanCommitted -> previous.copy(
+                // T934 LI-4: the plan is durable again — the rebuild window
+                // ends and ordinary first-pass projection resumes.
+                batchPhase = TranslationBatchPhase.FIRST_PASS,
+                rebuildProgress = null,
+            )
+            // T934 LI-4: the when is exhaustive over the sealed event surface
+            // again — a future event type must be reduced explicitly here.
         }
 
         private fun PhaseStatus.toStageStatus(): String = when (this) {

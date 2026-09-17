@@ -2056,26 +2056,66 @@ class ChapterTranslationStore(
         val expectedCountChanged = expectedPageCount != manifest.expectedPageCount ||
             expectedPageCountTrusted != manifest.expectedPageCountTrusted
         if (registrationKeys.isNotEmpty() || expectedCountChanged) {
-            val added = manifest.copy(
-                pages = manifest.pages + registrationKeys.associateWith {
-                    eu.kanade.translation.artifact.PageArtifactRecord(pageKey = it)
-                },
-                expectedPageCount = expectedPageCount,
-                expectedPageCountTrusted = expectedPageCountTrusted,
-                updatedAtEpochMs = System.currentTimeMillis(),
-            )
-            if (!store.publishManifest(added)) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact page registration failed: pageKey=$pageKey count=${registrationKeys.size}"
+            // T934 LI-x: this publication used to blind-publish
+            // (`publishManifest`) a manifest rebuilt from the FAÇADE snapshot,
+            // silently reverting any newer durable field: the >8-page open
+            // path's background `verifyLegacyArtifactHealth` stamps
+            // `legacyMigration.health=VERIFIED` into the durable manifest
+            // WITHOUT refreshing the façade, so the next resume-hydration
+            // adoption's registration write clobbered it back to
+            // INITIAL_CUTOVER (and every adoption pointer move since). Route
+            // through the CAS'd sidecar-pointer transaction instead: the
+            // registration mutation (page-set + expected count) is recomputed
+            // against the FRESH durable manifest on a stale-manifest rejection
+            // — one-shot, the same semantics as the envelope-plan seam — so
+            // the mutation is pointer-set-only and every other durable field
+            // (legacyMigration included) is carried forward by construction.
+            when (
+                val registration = store.publishSidecarPointersWithStaleRetry(
+                    manifest = manifest,
+                    sidecars = emptyList(),
+                    updatePointers = { current ->
+                        val keys = (pendingArtifactPageRegistrations + pageKey)
+                            .filter { it.isNotEmpty() && it !in current.pages }
+                        val currentFirstReaderBaseline =
+                            if (current.expectedPageCount == null && pendingExpectedPageCount == null) {
+                                pages.size
+                            } else {
+                                0
+                            }
+                        current.copy(
+                            pages = current.pages + keys.associateWith {
+                                eu.kanade.translation.artifact.PageArtifactRecord(pageKey = it)
+                            },
+                            expectedPageCount = maxOf(
+                                current.expectedPageCount ?: 0,
+                                pendingExpectedPageCount ?: 0,
+                                currentFirstReaderBaseline,
+                            ).takeIf { it > 0 },
+                            expectedPageCountTrusted =
+                                current.expectedPageCountTrusted || pendingExpectedPageCountTrusted,
+                        )
+                    },
+                    nowEpochMs = System.currentTimeMillis(),
+                    seam = "page-registration",
+                )
+            ) {
+                is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                    manifest = registration.manifest
+                    artifactManifest = manifest
+                    pendingArtifactPageRegistrations.removeAll(registrationKeys.toSet())
+                    if (expectedCountChanged) {
+                        pendingExpectedPageCount = null
+                        pendingExpectedPageCountTrusted = false
+                    }
                 }
-                return false
-            }
-            manifest = added
-            artifactManifest = manifest
-            pendingArtifactPageRegistrations.removeAll(registrationKeys.toSet())
-            if (expectedCountChanged) {
-                pendingExpectedPageCount = null
-                pendingExpectedPageCountTrusted = false
+                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT artifact page registration failed: pageKey=$pageKey " +
+                            "count=${registrationKeys.size} reason=${registration.reason}"
+                    }
+                    return false
+                }
             }
         }
         val record = manifest.pages.getValue(pageKey)
