@@ -202,6 +202,36 @@ class EightKilobyteComplianceTest {
     }
 
     @Test
+    fun `batch_v1 output cap must cover the response scaffolding the model emits`() {
+        val constraints = TranslationContextChunkPlanner.constraintsFor(
+            TranslationContextChunkPlanner.Profile.DEFAULT,
+        )
+        val reserve = TranslationContextChunkPlanner.batchResponseOverheadTokens(
+            blockCount = 44,
+            pageCount = 16,
+        )
+        // Text-only estimate of a 44-block envelope: far below the JSON
+        // scaffolding needed to emit the whole BATCH_V1 response. Before the
+        // fix the cap equaled the text estimate alone, guaranteeing truncated
+        // JSON and a protocol pause on every multi-block envelope.
+        val textEstimate = 256
+        val cap = StreamingChunkPlanner.effectiveOutputCap(
+            promptTokens = 1_000,
+            requestedOutputTokens = textEstimate,
+            constraints = constraints,
+            protocol = ContextualRequestProtocol.BATCH_V1,
+            blockCount = 44,
+            pageCount = 16,
+        )
+
+        (cap >= textEstimate + reserve) shouldBe true
+        (
+            1_000 + cap + constraints.safetyMargin + reserve <=
+                constraints.maxContextTokens
+            ) shouldBe true
+    }
+
+    @Test
     fun `legacy envelope shape is subjected to execution-time token check and pauses when oversized`() = runTest {
         val store = lazyStore()
         val pageKey = "p1"

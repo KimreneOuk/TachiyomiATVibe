@@ -581,7 +581,7 @@ internal class ProfileEnvelopeExecutor(
                 credentialScope = work.credentialScope,
             ),
             estimatedInputTokens = prepared.estimatedInputTokens,
-            reservedOutputTokens = envelope.estimatedOutputTokens,
+            reservedOutputTokens = prepared.chunk.maxOutputTokens,
             operation = "translation_envelope",
             envelopeId = envelope.envelopeId,
             priority = AdmissionPriority.BACKGROUND,
@@ -591,7 +591,7 @@ internal class ProfileEnvelopeExecutor(
                 translateAiChunkWithAdaptiveRetry(
                     translator = textTranslator,
                     chunk = prepared.chunk,
-                    requestedOutputTokens = envelope.estimatedOutputTokens,
+                    requestedOutputTokens = prepared.chunk.maxOutputTokens,
                     profile = providerProfile,
                     label = "t924-${envelope.envelopeId}#$batchIndex",
                     retryDepth = 0,

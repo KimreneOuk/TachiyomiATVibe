@@ -250,7 +250,12 @@ class StreamingChunkPlanner(
             if (available < constraints.minOutputTokens) {
                 return -1
             }
-            return requestedOutputTokens
+            // The BATCH_V1 reserve is scaffolding the model must EMIT, not
+            // merely context to fit: the JSON envelope rides inside
+            // maxOutputTokens, so it is part of the request — still bounded
+            // by the same post-reserve window so
+            // prompt + output + reserve <= maxContextTokens.
+            return (requestedOutputTokens + protocolReserve)
                 .coerceAtLeast(constraints.minOutputTokens)
                 .coerceAtMost(available)
         }
