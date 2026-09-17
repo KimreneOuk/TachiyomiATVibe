@@ -3895,9 +3895,18 @@ internal class ChapterProfileBatchCoordinator(
             }
             when (result) {
                 is ChapterTranslationStore.PatchResult.Accepted -> Unit
-                is ChapterTranslationStore.PatchResult.Rejected -> throw IllegalStateException(
-                    "t924 preflight durable failure record rejected: ${result.reason}",
-                )
+                is ChapterTranslationStore.PatchResult.Rejected -> {
+                    // T934: the run is already failing — the durable RECORD of
+                    // that failure is best-effort and must never escalate or
+                    // throw. Log WARN and continue so the ORIGINAL failure
+                    // surfaces cleanly (what counts as a run failure is
+                    // unchanged); [recordPageFailure]'s catch remains as
+                    // defense in depth for the whole recorder seam.
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t924 preflight durable failure record rejected " +
+                            "pageHash=${pageHash(failure.pageKey)} reason=${result.reason}"
+                    }
+                }
             }
         }
 

@@ -131,7 +131,22 @@ sealed interface BatchHeroProjection {
             // Terminal batch without page data and without failures: show the
             // completed phase, not a numeric 0/0.
             if (isTerminal) {
-                return Phase(phase = BatchHeroPhase.COMPLETED)
+                // T934 completion oracle (mirrors TranslationUiTruth
+                // .isCompletedOutcome; the model layer cannot import ui, so
+                // the finished-run facts are re-checked here): a FINISHED run
+                // that still carries failure/attention facts — failure
+                // groups, an unsaved result, or a pause — never renders the
+                // celebratory completed phase. Aborted/ERROR/failed-count
+                // runs already routed to FAILED_NO_PAGES above.
+                val attentionPresent = snapshot.nonDurableFailure ||
+                    snapshot.pauseReason != null ||
+                    snapshot.state == Translation.State.PAUSED ||
+                    snapshot.groupedFailures.isNotEmpty()
+                return if (attentionPresent) {
+                    Phase(phase = BatchHeroPhase.FAILED_NO_PAGES, isError = true)
+                } else {
+                    Phase(phase = BatchHeroPhase.COMPLETED)
+                }
             }
 
             // Unknown translation total: show the owning phase, never 0/0.

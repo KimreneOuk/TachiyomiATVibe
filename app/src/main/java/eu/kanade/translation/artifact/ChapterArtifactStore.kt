@@ -409,12 +409,28 @@ class ChapterArtifactStore(
      * ([eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.resumeFinalizeOrComplete])
      * keys on this pointer, so clearing it forces the next run to start fresh
      * instead of returning a zero-work finished outcome over demoted displays.
+     *
+     * T924 LI-4 / T934: a stale-manifest CAS rejection (the >8-page open
+     * path's background health verify republishing after the caller cached its
+     * copy) triggers ONE retry against the freshly re-read durable manifest —
+     * the batch resume teardown must not surface a spurious rejection on a
+     * healthy chapter. Every other rejection reason is returned as-is.
      */
     @Synchronized
     fun retireActiveRun(
         manifest: ChapterArtifactManifest,
         reason: String,
         nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome = retryOnStaleManifest(
+        firstAttempt = retireActiveRunOnce(manifest, reason, nowEpochMs),
+        callerManifest = manifest,
+        seam = "retireActiveRun",
+    ) { fresh -> retireActiveRunOnce(fresh, reason, nowEpochMs) }
+
+    private fun retireActiveRunOnce(
+        manifest: ChapterArtifactManifest,
+        reason: String,
+        nowEpochMs: Long,
     ): TransactionOutcome {
         staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
         if (manifest.activeRun == null) {
@@ -1178,6 +1194,16 @@ class ChapterArtifactStore(
      * Persists the mutable live candidate in its own immutable sidecar and
      * advances only the candidate pointer. The committed pointer is untouched
      * until [promoteLiveCandidate] succeeds.
+     *
+     * T924 LI-4 / T934: a stale-manifest CAS rejection (the leading
+     * [candidateWriteRejection] check) triggers ONE retry against the freshly
+     * re-read durable manifest — this is the store transaction behind the
+     * façade's stage-patch/candidate persistence, and the batch resume path
+     * must not surface a spurious ARTIFACT_PUBLICATION_FAILED whole-batch
+     * abort on a healthy chapter. The whole transaction re-runs against the
+     * FRESH manifest, so genuine drift still rejects with its real reason.
+     * Every other rejection reason is returned as-is.
+     * [persistLiveCandidateAndFailure] delegates here and inherits the retry.
      */
     @Synchronized
     fun persistLiveCandidate(
@@ -1191,6 +1217,47 @@ class ChapterArtifactStore(
         sourceIdentity: SourceIdentity? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
         durableFailure: DurableFailureMetadata? = null,
+    ): TransactionOutcome = retryOnStaleManifest(
+        firstAttempt = persistLiveCandidateOnce(
+            manifest,
+            pageKey,
+            generationId,
+            expectedPageVersion,
+            expectedDependencyFingerprint,
+            pageSnapshot,
+            origin,
+            sourceIdentity,
+            nowEpochMs,
+            durableFailure,
+        ),
+        callerManifest = manifest,
+        seam = "persistLiveCandidate",
+    ) { fresh ->
+        persistLiveCandidateOnce(
+            fresh,
+            pageKey,
+            generationId,
+            expectedPageVersion,
+            expectedDependencyFingerprint,
+            pageSnapshot,
+            origin,
+            sourceIdentity,
+            nowEpochMs,
+            durableFailure,
+        )
+    }
+
+    private fun persistLiveCandidateOnce(
+        manifest: ChapterArtifactManifest,
+        pageKey: String,
+        generationId: String,
+        expectedPageVersion: Long,
+        expectedDependencyFingerprint: String,
+        pageSnapshot: PageTranslation,
+        origin: ArtifactOrigin,
+        sourceIdentity: SourceIdentity?,
+        nowEpochMs: Long,
+        durableFailure: DurableFailureMetadata?,
     ): TransactionOutcome {
         val rejection = candidateWriteRejection(
             manifest,
@@ -1287,6 +1354,14 @@ class ChapterArtifactStore(
      * committed pointer. Both snapshots are published before the manifest
      * pointer changes, so a crash can only leave an orphan candidate file,
      * never a committed pointer to a missing or partial page.
+     *
+     * T924 LI-4 / T934: a stale-manifest CAS rejection (the leading
+     * [candidateWriteRejection] check) triggers ONE retry against the freshly
+     * re-read durable manifest — the batch resume's candidate-promotion
+     * transaction must not surface a spurious ARTIFACT_PUBLICATION_FAILED
+     * whole-batch abort on a healthy chapter. The whole transaction re-runs
+     * against the FRESH manifest, so genuine drift still rejects with its real
+     * reason. Every other rejection reason is returned as-is.
      */
     @Synchronized
     fun promoteLiveCandidate(
@@ -1299,6 +1374,44 @@ class ChapterArtifactStore(
         origin: ArtifactOrigin,
         sourceIdentity: SourceIdentity? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome = retryOnStaleManifest(
+        firstAttempt = promoteLiveCandidateOnce(
+            manifest,
+            pageKey,
+            generationId,
+            expectedPageVersion,
+            expectedDependencyFingerprint,
+            pageSnapshot,
+            origin,
+            sourceIdentity,
+            nowEpochMs,
+        ),
+        callerManifest = manifest,
+        seam = "promoteLiveCandidate",
+    ) { fresh ->
+        promoteLiveCandidateOnce(
+            fresh,
+            pageKey,
+            generationId,
+            expectedPageVersion,
+            expectedDependencyFingerprint,
+            pageSnapshot,
+            origin,
+            sourceIdentity,
+            nowEpochMs,
+        )
+    }
+
+    private fun promoteLiveCandidateOnce(
+        manifest: ChapterArtifactManifest,
+        pageKey: String,
+        generationId: String,
+        expectedPageVersion: Long,
+        expectedDependencyFingerprint: String,
+        pageSnapshot: PageTranslation,
+        origin: ArtifactOrigin,
+        sourceIdentity: SourceIdentity?,
+        nowEpochMs: Long,
     ): TransactionOutcome {
         val rejection = candidateWriteRejection(
             manifest,
@@ -1504,6 +1617,15 @@ class ChapterArtifactStore(
      * flipped to ARTIFACTS so later opens can no longer resync it from legacy
      * bytes. Preconditions bind the caller to the current page version and
      * dependency fingerprint (stale workers are rejected).
+     *
+     * T924 LI-4 / T934: a stale-manifest CAS rejection (the >8-page open
+     * path's background health verify republishing after the façade cached its
+     * copy) triggers ONE retry against the freshly re-read durable manifest —
+     * the batch resume's first candidate open must not surface a spurious
+     * ARTIFACT_PUBLICATION_FAILED whole-batch abort on a healthy chapter. The
+     * whole transaction (identity checks included) re-runs against the FRESH
+     * manifest, so genuine drift still rejects — with a non-stale reason, on
+     * the retry attempt. Every other rejection reason is returned as-is.
      */
     @Synchronized
     fun openCandidate(
@@ -1513,6 +1635,35 @@ class ChapterArtifactStore(
         expectedPageVersion: Long,
         dependencyFingerprint: String,
         nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome = retryOnStaleManifest(
+        firstAttempt = openCandidateOnce(
+            manifest,
+            pageKey,
+            origin,
+            expectedPageVersion,
+            dependencyFingerprint,
+            nowEpochMs,
+        ),
+        callerManifest = manifest,
+        seam = "openCandidate",
+    ) { fresh ->
+        openCandidateOnce(
+            fresh,
+            pageKey,
+            origin,
+            expectedPageVersion,
+            dependencyFingerprint,
+            nowEpochMs,
+        )
+    }
+
+    private fun openCandidateOnce(
+        manifest: ChapterArtifactManifest,
+        pageKey: String,
+        origin: ArtifactOrigin,
+        expectedPageVersion: Long,
+        dependencyFingerprint: String,
+        nowEpochMs: Long,
     ): TransactionOutcome {
         staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
         val page = manifest.pages[pageKey]
@@ -1748,10 +1899,12 @@ class ChapterArtifactStore(
 
     /**
      * T924 LI-4: stable reason prefix of the stale-manifest CAS rejection. The
-     * one-shot retry on [publishActiveRun] and [checkpointOcr] keys on this
-     * prefix — every OTHER rejection reason (identity drift, publication
-     * failure, future-schema guard) must keep failing the caller exactly as
-     * before.
+     * one-shot retry on the first-publication seams ([publishActiveRun],
+     * [checkpointOcr], [openCandidate], [retireActiveRun],
+     * [persistLiveCandidate] — including [persistLiveCandidateAndFailure] —
+     * and [promoteLiveCandidate]) keys on this prefix — every OTHER rejection
+     * reason (identity drift, publication failure, future-schema guard) must
+     * keep failing the caller exactly as before.
      */
     private val STALE_MANIFEST_REJECTION_REASON = "stale manifest snapshot"
 
@@ -1784,6 +1937,13 @@ class ChapterArtifactStore(
      * A retry that also fails — or a durable manifest that vanished — returns
      * the original Rejected outcome unchanged, so the caller-visible contract
      * stays "Committed or Rejected".
+     *
+     * T934: the same race aborted the whole batch RESUME at its other
+     * first-publication seams (candidate open, stage-patch candidate
+     * persist/promote, run-pointer retirement), so the wrapped set now covers
+     * every seam the resume path hits. [recordDurableFailure]'s RecordOutcome
+     * is intentionally OUT of scope — the failure-ledger write is best-effort
+     * by contract (the coordinator logs and continues).
      */
     private fun retryOnStaleManifest(
         firstAttempt: TransactionOutcome,

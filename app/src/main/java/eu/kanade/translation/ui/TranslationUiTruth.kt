@@ -4,6 +4,7 @@ import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
+import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.Translation
@@ -628,6 +629,71 @@ object TranslationUiTruth {
     // surface (sheet, reader bar, tests) imports them directly.
     // ------------------------------------------------------------------
 
+    // ------------------------------------------------------------------
+    // T934 completion oracle: the celebratory "Completed / All pages
+    // translated" state is a CLAIM about every page, so it is gated on the
+    // run's failure/attention facts — never on the batch phase alone. The
+    // device trace that motivated this (T934) showed the sheet's green
+    // "Completed" pill and "All pages translated" subtitle while the same
+    // run's trace recorded outcome=failure and "1 pages need attention":
+    // FINISHED (which ERROR/READY_WITH_WARNINGS chapters also map to) was
+    // treated as completion regardless of unresolved pages. Every completed
+    // surface keys on [isCompletedOutcome]; a run that fails the oracle
+    // renders the attention/failed wording instead. Presentation truth only
+    // — no pipeline state is added or changed.
+    // ------------------------------------------------------------------
+
+    /** One page's attention fact: a failed stage/AI attempt or a PARTIAL (retryable, never clean success) result. A page whose committed display is ready and non-partial is success, matching the sheet's page-chip precedence. */
+    private fun pageNeedsAttention(page: TranslationProgressSnapshot.Page): Boolean = when {
+        page.displayReady && !page.partial -> false
+        page.stage == TranslationProgressStage.FAILED -> true
+        page.aiState == AiPageProgressState.FAILED -> true
+        page.partial -> true
+        else -> false
+    }
+
+    /**
+     * T934 completion oracle: whether any page in the snapshot needs user
+     * attention — the batch failure counter, the failure groups, a
+     * non-durable (unsaved) result, or a per-page failed/partial fact.
+     */
+    fun hasPagesNeedingAttention(snapshot: TranslationProgressSnapshot): Boolean =
+        snapshot.failedCount > 0 ||
+            snapshot.nonDurableFailure ||
+            snapshot.groupedFailures.isNotEmpty() ||
+            snapshot.pages.any(::pageNeedsAttention)
+
+    /**
+     * T934 completion oracle: the count behind the "N pages need attention"
+     * wording. Never zero while attention exists, so an attention run whose
+     * facts live outside the per-page list (unsaved result) still reads
+     * honestly.
+     */
+    fun pagesNeedingAttentionCount(snapshot: TranslationProgressSnapshot): Int {
+        if (!hasPagesNeedingAttention(snapshot)) return 0
+        return maxOf(
+            snapshot.pages.count(::pageNeedsAttention),
+            snapshot.failedCount,
+            1,
+        )
+    }
+
+    /**
+     * T934 completion oracle: the run may render "Completed / All pages
+     * translated" ONLY when the batch phase finished AND zero pages need
+     * attention AND the run outcome is not failed/paused/aborted/unsaved. A
+     * run with failure or attention pages NEVER classifies as completed.
+     */
+    fun isCompletedOutcome(snapshot: TranslationProgressSnapshot): Boolean =
+        snapshot.batchPhase == TranslationBatchPhase.FINISHED &&
+            !snapshot.aborted &&
+            !snapshot.nonDurableFailure &&
+            snapshot.pauseReason == null &&
+            snapshot.state != Translation.State.ERROR &&
+            snapshot.state != Translation.State.PAUSED &&
+            !hasPagesNeedingAttention(snapshot)
+
+
     /**
      * The single chapter-level status-line priority chain (U.3):
      * requestState → queuePosition → pauseReason → coordinator
@@ -754,10 +820,19 @@ object TranslationUiTruth {
                 kind = BatchStatusLineKind.FINALIZING,
                 fallback = "Finalizing translated chapter...",
             )
-            TranslationBatchPhase.FINISHED -> BatchStatusLine(
-                kind = BatchStatusLineKind.COMPLETED,
-                fallback = "All pages translated and ready to read",
-            )
+            TranslationBatchPhase.FINISHED -> when {
+                // T934 completion oracle: only a run with zero attention pages
+                // and no failed/paused/aborted outcome may claim completion.
+                isCompletedOutcome(snapshot) -> BatchStatusLine(
+                    kind = BatchStatusLineKind.COMPLETED,
+                    fallback = "All pages translated and ready to read",
+                )
+                else -> BatchStatusLine(
+                    kind = BatchStatusLineKind.ATTENTION_REQUIRED,
+                    formatArgs = listOf(pagesNeedingAttentionCount(snapshot)),
+                    fallback = "${pagesNeedingAttentionCount(snapshot)} pages need attention",
+                )
+            }
             // The rebuild/restore kinds are resolved by [rebuildStatusLine]
             // (higher priority); this branch is unreachable through
             // [batchStatusLine] and exists only for exhaustiveness.
@@ -940,6 +1015,14 @@ enum class BatchStatusLineKind {
     FIRST_PASS_PAGES,
     FINALIZING,
     COMPLETED,
+
+    /**
+     * T934 completion oracle: the batch phase finished but the run carries
+     * failure/attention pages or a failed/paused/unsaved outcome — the
+     * attention state that replaces the celebratory completed copy.
+     * [formatArgs] carries the attention page count.
+     */
+    ATTENTION_REQUIRED,
     NO_ACTIVE_BATCH,
 }
 

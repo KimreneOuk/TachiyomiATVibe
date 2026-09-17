@@ -1157,9 +1157,23 @@ class ChapterArtifactStoreTest {
             start.countDown()
 
             val outcomes = futures.map { it.get(5, TimeUnit.SECONDS) }
+            // T934: the second opener's stale-CAS rejection retries once
+            // against the fresh manifest — where the first opener's committed
+            // candidate has already advanced the page version. That is
+            // GENUINE drift, so the retry rejects with the real drift reason,
+            // never the spurious stale-snapshot one: exactly one Committed,
+            // one Rejected.
             outcomes.count { it is ChapterArtifactStore.TransactionOutcome.Committed } shouldBe 1
-            outcomes.count { it is ChapterArtifactStore.TransactionOutcome.Rejected } shouldBe 1
-            store.readManifest()?.pages?.getValue("page.jpg")?.candidate.shouldNotBeNull()
+            val rejected = outcomes
+                .filterIsInstance<ChapterArtifactStore.TransactionOutcome.Rejected>()
+                .single()
+            rejected.reason shouldBe "stale page version: pageKey=page.jpg expected=0 actual=1"
+            val committed = outcomes
+                .filterIsInstance<ChapterArtifactStore.TransactionOutcome.Committed>()
+                .single()
+            val durable = store.readManifest().shouldNotBeNull()
+            durable.pages.getValue("page.jpg").candidate.shouldNotBeNull().generationId shouldBe committed.generationId
+            durable.activeCandidateGenerationIds shouldBe setOf(committed.generationId)
         } finally {
             executor.shutdownNow()
         }

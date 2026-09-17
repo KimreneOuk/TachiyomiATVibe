@@ -13,7 +13,7 @@ import java.security.MessageDigest
 
 /**
  * T924 LI-4: a one-shot stale-manifest retry inside [ChapterArtifactStore] for
- * the two first-publication seams the flagged Batch lane hits. When a chapter
+ * the first-publication seams the flagged Batch lane hits. When a chapter
  * with more than 8 pages opens, the ARTIFACTS path launches the background
  * `verifyLegacyArtifactHealth`, which republishes a VERIFIED manifest AFTER the
  * façade cached the pre-verification copy — so a dispatch started in that
@@ -21,6 +21,16 @@ import java.security.MessageDigest
  * (`checkpointOcr` / `publishActiveRun`) and was CAS-rejected, surfacing a
  * spurious CHECKPOINT_REJECTED preflight failure or a PAUSED run on a healthy
  * chapter.
+ *
+ * T934: the same race aborted the whole batch RESUME at the remaining
+ * first-publication seams — `openCandidate` (the "artifact candidate open
+ * rejected" log), the stage-patch candidate transactions (`persistLiveCandidate`
+ * / `promoteLiveCandidate`, the "stage patch rejected …
+ * ARTIFACT_PUBLICATION_FAILED" façade mapping), and the run-pointer teardown
+ * (`retireActiveRun`). The tests below extend the LI-4 contract to each of
+ * them: a stale-manifest rejection triggers exactly ONE fresh-read retry that
+ * commits; a fresh state that drifted further rejects with its REAL reason
+ * (no second retry); every non-stale rejection reason is returned as-is.
  *
  * Contract after the fix: on a stale-manifest CAS rejection specifically, the
  * store re-reads the durable manifest ONCE, rebuilds the intended mutation
@@ -332,5 +342,247 @@ class ChapterArtifactStoreStaleManifestRetryTest {
         val durable = fx.store.readManifest().shouldNotBeNull()
         durable.ocrCheckpoints.getValue("page.jpg").contentFingerprint shouldBe hex64("ocr-content")
         fx.io.files.containsKey(layout.ocrCheckpointFile("page.jpg", hex64("stale-ocr-content"))) shouldBe false
+    }
+
+    // ------------------------------------------------------------------
+    // T934: the batch-resume seams join the same one-shot retry.
+    // ------------------------------------------------------------------
+
+    /** Authority-flip fixture: ARTIFACTS manifest, no candidate yet. */
+    private fun authorityFlipFixture(): ChapterArtifactStore {
+        val artifact = ChapterArtifactStore(AtomicChapterDocuments(FakeChapterDocumentIo()), layout)
+        var manifest = artifact
+            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+            .manifest
+        manifest = manifest.copy(
+            authority = ManifestAuthority.ARTIFACTS,
+            cutoverAtEpochMs = 1L,
+            migratedFromLegacyAtEpochMs = 1L,
+            updatedAtEpochMs = 1L,
+        )
+        check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
+        return artifact
+    }
+
+    private fun li4RunRecord(runId: String) = ChapterRunRecord(
+        runId = runId,
+        state = ChapterRunState.RUN_SNAPSHOT,
+        frozenConfig = eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.frozenRunConfig(
+            sourceLang = "ja",
+            targetLang = "en",
+            ocrEngine = "FakeOcrEngine",
+            inpaintMode = "OFF",
+            providerKey = "fake:provider",
+        ),
+        frozenRunConfigFingerprint = hex64("frozen-config"),
+        orderedSourceDigest = hex64("ordered-source"),
+        analysisPolicyFingerprint = hex64("analysis-policy"),
+        envelopePolicyFingerprint = hex64("envelope-policy"),
+        createdAtEpochMs = 1L,
+        updatedAtEpochMs = 1L,
+    )
+
+    @Test
+    fun `openCandidate with a stale snapshot retries once and preserves the concurrent verify marker`() {
+        val artifact = authorityFlipFixture()
+        val callerCopy = artifact.readManifest().shouldNotBeNull()
+        bumpBehindCallersBack(artifact, callerCopy, nowEpochMs = 2L)
+
+        val outcome = artifact.openCandidate(
+            manifest = callerCopy,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps-v1",
+            nowEpochMs = 3L,
+        )
+
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        committed.generationId.shouldNotBeNull()
+        val durable = artifact.readManifest().shouldNotBeNull()
+        // The candidate landed on the BUMPED manifest…
+        durable.pages.getValue("page.jpg").candidate.shouldNotBeNull()
+            .dependencyFingerprint shouldBe "deps-v1"
+        committed.manifest shouldBe durable
+        // …and the concurrent publication's changes were NOT reverted.
+        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.updatedAtEpochMs shouldBe 3L
+    }
+
+    @Test
+    fun `openCandidate whose fresh state also drifted still rejects without a second retry`() {
+        val artifact = authorityFlipFixture()
+        val callerCopy = artifact.readManifest().shouldNotBeNull()
+        // A concurrent writer opens the candidate against the FRESH manifest
+        // while the stale caller was mid-flight: page version 0 -> 1.
+        artifact.openCandidate(
+            artifact.readManifest().shouldNotBeNull(),
+            "page.jpg",
+            ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps-v1",
+            nowEpochMs = 2L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val concurrentGenerationId = artifact.readManifest().shouldNotBeNull()
+            .pages.getValue("page.jpg").candidate.shouldNotBeNull().generationId
+
+        val outcome = artifact.openCandidate(
+            manifest = callerCopy,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps-v1",
+            nowEpochMs = 3L,
+        )
+
+        // The retry re-validated the WHOLE transaction against the fresh
+        // manifest and rejected on the real drift (page version) — exactly
+        // one retry, no second one, and the concurrent candidate stands.
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        rejected.reason shouldContain "stale page version"
+        artifact.readManifest().shouldNotBeNull().pages.getValue("page.jpg")
+            .candidate.shouldNotBeNull().generationId shouldBe concurrentGenerationId
+    }
+
+    @Test
+    fun `openCandidate with a genuinely wrong page version still rejects as-is with no retry`() {
+        val artifact = authorityFlipFixture()
+        val current = artifact.readManifest().shouldNotBeNull()
+
+        val outcome = artifact.openCandidate(
+            manifest = current,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 7L,
+            dependencyFingerprint = "deps-v1",
+            nowEpochMs = 3L,
+        )
+
+        // The manifest is NOT stale, so the rejection is the caller's real
+        // identity drift, returned exactly as before the retry existed.
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        rejected.reason shouldContain "stale page version"
+        artifact.readManifest() shouldBe current
+    }
+
+    @Test
+    fun `persistLiveCandidate with a stale snapshot retries once and preserves the concurrent verify marker`() {
+        val fx = checkpointFixtureWithConcurrentVerify()
+        val callerPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion
+
+        val outcome = fx.store.persistLiveCandidate(
+            manifest = fx.callerCopy,
+            pageKey = "page.jpg",
+            generationId = fx.generationId,
+            expectedPageVersion = callerPageVersion,
+            expectedDependencyFingerprint = "deps-v1",
+            pageSnapshot = fx.ocrSnapshot,
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 5_001L,
+        )
+
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val durable = fx.store.readManifest().shouldNotBeNull()
+        // The snapshot pointer advanced on the BUMPED manifest…
+        durable.pages.getValue("page.jpg").pageVersion shouldBe callerPageVersion + 1
+        committed.manifest shouldBe durable
+        // …and the concurrent publication's changes were NOT reverted.
+        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+    }
+
+    @Test
+    fun `persistLiveCandidate with a fresh manifest and a wrong generation still rejects as-is`() {
+        val fx = checkpointFixtureWithConcurrentVerify()
+
+        val outcome = fx.store.persistLiveCandidate(
+            manifest = fx.store.readManifest().shouldNotBeNull(),
+            pageKey = "page.jpg",
+            generationId = "g-other",
+            expectedPageVersion = fx.store.readManifest().shouldNotBeNull()
+                .pages.getValue("page.jpg").pageVersion,
+            expectedDependencyFingerprint = "deps-v1",
+            pageSnapshot = fx.ocrSnapshot,
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 5_001L,
+        )
+
+        // Non-stale rejection reason: returned as-is, no retry, manifest
+        // unchanged.
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        rejected.reason shouldContain "candidate mismatch"
+    }
+
+    @Test
+    fun `promoteLiveCandidate with a stale snapshot retries once and preserves the concurrent verify marker`() {
+        val fx = checkpointFixtureWithConcurrentVerify()
+        val callerPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion
+
+        val outcome = fx.store.promoteLiveCandidate(
+            manifest = fx.callerCopy,
+            pageKey = "page.jpg",
+            generationId = fx.generationId,
+            expectedPageVersion = callerPageVersion,
+            expectedDependencyFingerprint = "deps-v1",
+            pageSnapshot = fx.ocrSnapshot,
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 5_001L,
+        )
+
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val durable = fx.store.readManifest().shouldNotBeNull()
+        // The candidate closed and the committed pointer landed on the BUMPED
+        // manifest…
+        durable.pages.getValue("page.jpg").candidate shouldBe null
+        durable.pages.getValue("page.jpg").committed.shouldNotBeNull()
+            .generationId shouldBe fx.generationId
+        committed.manifest shouldBe durable
+        // …and the concurrent publication's changes were NOT reverted.
+        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+    }
+
+    @Test
+    fun `promoteLiveCandidate with a fresh manifest and drifted dependencies still rejects as-is`() {
+        val fx = checkpointFixtureWithConcurrentVerify()
+
+        val outcome = fx.store.promoteLiveCandidate(
+            manifest = fx.store.readManifest().shouldNotBeNull(),
+            pageKey = "page.jpg",
+            generationId = fx.generationId,
+            expectedPageVersion = fx.store.readManifest().shouldNotBeNull()
+                .pages.getValue("page.jpg").pageVersion,
+            expectedDependencyFingerprint = "deps-stale",
+            pageSnapshot = fx.ocrSnapshot,
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 5_001L,
+        )
+
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        rejected.reason shouldContain "dependency fingerprint changed"
+    }
+
+    @Test
+    fun `retireActiveRun with a stale snapshot retries once and preserves the concurrent verify marker`() {
+        val artifact = authorityFlipFixture()
+        val record = li4RunRecord("run-li4-retire-1")
+        check(
+            artifact.publishActiveRun(
+                manifest = artifact.readManifest().shouldNotBeNull(),
+                record = record,
+                contentFingerprint = hex64("li4-retire-run"),
+                nowEpochMs = 2L,
+            ) is ChapterArtifactStore.TransactionOutcome.Committed,
+        ) { "fixture: run record publication failed" }
+        val callerCopy = artifact.readManifest().shouldNotBeNull()
+        bumpBehindCallersBack(artifact, callerCopy, nowEpochMs = 3L)
+
+        val outcome = artifact.retireActiveRun(callerCopy, "batch resume teardown", nowEpochMs = 4L)
+
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val durable = artifact.readManifest().shouldNotBeNull()
+        // The pointer retired on the BUMPED manifest…
+        durable.activeRun shouldBe null
+        committed.manifest shouldBe durable
+        // …and the concurrent publication's changes were NOT reverted.
+        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
     }
 }

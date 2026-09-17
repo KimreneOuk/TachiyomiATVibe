@@ -643,11 +643,16 @@ private fun LiveStatusPill(
     paused: Boolean,
     isResuming: Boolean = false,
 ) {
-    val isTerminal = snapshot.batchPhase == TranslationBatchPhase.FINISHED
     val isAborted = snapshot.aborted
     // TachiyomiAT T911 slice 1: the pill must not say "Idle" while a batch
     // request is accepted/waiting for the chapter download.
     val requestPhase = snapshot.requestState?.phase
+    // T934 completion oracle: FINISHED alone is NOT completion — a run with
+    // failure/attention pages or a failed/paused outcome renders the
+    // attention/failed pill, never the celebratory green "Completed".
+    val isTerminal = snapshot.batchPhase == TranslationBatchPhase.FINISHED &&
+        TranslationUiTruth.isCompletedOutcome(snapshot)
+    val finishedWithAttention = snapshot.batchPhase == TranslationBatchPhase.FINISHED && !isTerminal
     val isTranslating = isResuming ||
         snapshot.batchPhase == TranslationBatchPhase.FIRST_PASS ||
         snapshot.batchPhase == TranslationBatchPhase.FINALIZING ||
@@ -671,6 +676,11 @@ private fun LiveStatusPill(
         isAborted -> MaterialTheme.colorScheme.error
         paused -> WarningAmber
         isTerminal -> SuccessGreen
+        // T934 completion oracle: finished-but-not-completed — error color
+        // when the run outcome itself failed, attention amber otherwise.
+        finishedWithAttention && snapshot.state == eu.kanade.translation.model.Translation.State.ERROR ->
+            MaterialTheme.colorScheme.error
+        finishedWithAttention -> WarningAmber
         requestPhase == TranslationRequestPhase.DOWNLOAD_FAILED ||
             requestPhase == TranslationRequestPhase.CANCELLED ||
             requestPhase == TranslationRequestPhase.ADMISSION_FAILED -> MaterialTheme.colorScheme.error
@@ -703,6 +713,12 @@ private fun LiveStatusPill(
                     isAborted -> "Aborted"
                     paused -> stringResource(ATMR.strings.manga_batch_status_paused)
                     isTerminal -> "Completed"
+                    // T934 completion oracle: finished-but-not-completed
+                    // renders the failed/attention state, never the
+                    // celebratory completed label.
+                    finishedWithAttention &&
+                        snapshot.state == eu.kanade.translation.model.Translation.State.ERROR -> "Failed"
+                    finishedWithAttention -> "Ready (Warnings)"
                     requestPhase != null -> when (requestPhase) {
                         TranslationRequestPhase.STARTING ->
                             stringResource(ATMR.strings.manga_batch_phase_accepted)
@@ -1119,7 +1135,13 @@ internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, is
             }
         }
         TranslationBatchPhase.FINALIZING -> "Finalizing translated chapter..."
-        TranslationBatchPhase.FINISHED -> "All pages translated and ready to read"
+        TranslationBatchPhase.FINISHED -> when {
+            // T934 completion oracle: a run with failure/attention pages (or a
+            // failed/paused/aborted outcome) never renders the celebratory
+            // completed subtitle — it renders the attention state instead.
+            TranslationUiTruth.isCompletedOutcome(snapshot) -> "All pages translated and ready to read"
+            else -> "${TranslationUiTruth.pagesNeedingAttentionCount(snapshot)} pages need attention"
+        }
         // T934 U.1/U.6: the resume rebuild/restore phases render the truth
         // chain's English fallback in this plain (non-composable) function;
         // the composable call site (batchHeaderStatusText) resolves the

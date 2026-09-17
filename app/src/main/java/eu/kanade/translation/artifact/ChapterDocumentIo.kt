@@ -332,15 +332,35 @@ class AtomicChapterDocuments(
 
     fun exists(name: String): Boolean = io.exists(name)
 
+    /**
+     * T934: the whole write→validate→rotate→rename sequence runs under the
+     * PROCESS-WIDE per-document-name lock ([lockFor] is companion state). The
+     * temp name is deterministic ([tempNameFor]), so two in-process writers
+     * targeting the same document from DIFFERENT store/documents instances
+     * (the batch preflight publishing the run record vs. the >8-page open
+     * path's background `verifyLegacyArtifactHealth` manifest republisher)
+     * used to collide on `name.tmp` and interleave the rotation renames — the
+     * loser got a mechanical `false` with no diagnostics and every caller
+     * mapped that to a fatal Rejected. Serializing per name eliminates both
+     * the tmp collision and the rotate/rename interleaving regardless of which
+     * instance the racing writer holds. No nesting: [publish] never calls
+     * [publish], and the inner io calls take no other locks — no deadlock
+     * risk. Writers to DIFFERENT names proceed in parallel.
+     */
     fun publish(
         name: String,
         bytes: ByteArray,
         syncToDisk: Boolean = false,
         validate: (ByteArray) -> Boolean,
-    ): Boolean {
+    ): Boolean = synchronized(lockFor(name)) {
         val tempName = tempNameFor(name)
         val backupName = backupNameFor(name)
-        if (!io.write(tempName, bytes, syncToDisk = syncToDisk)) return false
+        if (!io.write(tempName, bytes, syncToDisk = syncToDisk)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter document publish failed: stage=tmp-write name=$name"
+            }
+            return false
+        }
         val written = io.read(tempName)
         val matches = if (io.isFileBacked() && GroupCommitConfiguration.enabled) {
             // T930 Slice B3: read-back elision on File-backed storage (parse-validate only)
@@ -350,18 +370,27 @@ class AtomicChapterDocuments(
         }
         if (!matches) {
             io.delete(tempName)
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter document publish failed: stage=tmp-readback-validate name=$name"
+            }
             return false
         }
         io.delete(backupName)
         if (io.exists(name) && !io.renameOwned(name, backupName)) {
             io.delete(tempName)
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter document publish failed: stage=backup-rotation name=$name"
+            }
             return false
         }
         if (!io.renameOwned(tempName, name)) {
             if (io.exists(backupName)) io.renameOwned(backupName, name)
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter document publish failed: stage=promote-rename name=$name"
+            }
             return false
         }
-        return true
+        true
     }
 
     inline fun <reified T> publishJson(
@@ -466,6 +495,21 @@ class AtomicChapterDocuments(
         fun tempNameFor(name: String): String = "$name.tmp"
         fun backupNameFor(name: String): String = "$name.bak"
         fun corruptNameFor(name: String): String = "$name.corrupt"
+
+        /**
+         * T934: the process-wide per-document publication locks. Companion
+         * state ON PURPOSE: the racing writer may hold a DIFFERENT
+         * [AtomicChapterDocuments] instance (a second store instance over the
+         * same chapter), so an instance-level map would not serialize them.
+         * Keyed by document name; same-named documents in different chapters
+         * share a lock, which only costs concurrency, never correctness.
+         * Entries are one bare monitor each and bounded by the set of
+         * document names this process has ever published.
+         */
+        private val publicationLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
+        /** The process-wide monitor guarding the whole publish of [name]. */
+        internal fun lockFor(name: String): Any = publicationLocks.computeIfAbsent(name) { Any() }
 
         private const val MAX_COLLISION_SUFFIX = 16
     }

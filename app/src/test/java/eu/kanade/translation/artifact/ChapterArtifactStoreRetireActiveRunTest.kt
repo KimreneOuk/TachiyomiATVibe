@@ -85,13 +85,38 @@ class ChapterArtifactStoreRetireActiveRunTest {
     }
 
     @Test
-    fun `retireActiveRun rejects a stale manifest snapshot and keeps the pointer`() {
-        val (artifact, pointer, _, _) = artifactWithCompleteRun()
+    fun `retireActiveRun with a stale manifest snapshot recovers through the one-shot retry`() {
+        val (artifact, _, _, _) = artifactWithCompleteRun()
+        // T934: the retirement seam joined the T924 LI-4 one-shot stale-manifest
+        // retry (the batch resume teardown hit the same spurious stale-CAS
+        // rejection the publish/checkpoint seams did — same contract, same
+        // adaptation this test made when LI-4 wrapped checkpointOcr). A stale
+        // snapshot now triggers exactly ONE fresh-read retry that retires the
+        // pointer; a retry that also fails still returns Rejected.
         val stale = artifact.readManifest().shouldNotBeNull().copy(updatedAtEpochMs = 99L)
 
         val outcome = artifact.retireActiveRun(stale, "chapter data reset")
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        committed.manifest.activeRun shouldBe null
+        artifact.readManifest().shouldNotBeNull().activeRun shouldBe null
+    }
+
+    @Test
+    fun `retireActiveRun publication failure still rejects as-is without a retry`() {
+        val (artifact, pointer, _, documents) = artifactWithCompleteRun()
+        val durable = artifact.readManifest().shouldNotBeNull()
+        val io = documents.rawIo() as FakeChapterDocumentIo
+        val layout = ChapterArtifactLayout("Chapter 1")
+        // Fail ONLY the manifest promotion rename: the first attempt rejects
+        // with the publication reason (never the stale CAS), so the retry
+        // wrapper must return it as-is with no second attempt.
+        io.ownedRenamesToFail.add(AtomicChapterDocuments.tempNameFor(layout.manifestFileName))
+
+        val outcome = artifact.retireActiveRun(durable, "chapter data reset")
+
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        rejected.reason shouldBe "manifest publication failed; active run pointer unchanged"
         artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull() shouldBe pointer
     }
 
