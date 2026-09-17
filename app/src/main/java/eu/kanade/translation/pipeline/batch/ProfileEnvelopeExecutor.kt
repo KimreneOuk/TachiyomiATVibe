@@ -6,7 +6,6 @@ import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.TranslationBlockPatch
 import eu.kanade.translation.TranslationStagePatch
-import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.PlannedEnvelope
@@ -15,6 +14,8 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.ocrBlockFingerprints
+import eu.kanade.translation.ocrFingerprint
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderFailure
@@ -28,6 +29,7 @@ import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.translator.SystemProviderRequestClock
 import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
 import eu.kanade.translation.translator.contextual.ProfileSubsetMatcher
 import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
 import eu.kanade.translation.translator.contextual.TranslationContextChunk
@@ -37,8 +39,6 @@ import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulne
 import eu.kanade.translation.translator.retry.AiChunkOutcome
 import eu.kanade.translation.translator.retry.AiTranslationRetryPolicy
 import eu.kanade.translation.translator.retry.translateAiChunkWithAdaptiveRetry
-import eu.kanade.translation.ocrBlockFingerprints
-import eu.kanade.translation.ocrFingerprint
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -425,16 +425,23 @@ internal class ProfileEnvelopeExecutor(
     /**
      * Slice B D5: splits the held pages into deterministic whole-page
      * sub-batches whose ACTUAL enriched payload (source lines + profile
-     * subset + scene context + rolling history) fits the provider context
-     * window. Greedy prefix packing in plan order — the same planner
-     * discipline as the global planner, never a page split. Pages that alone
-     * exceed the window are returned as [SplitPlan.oversized] (rejected, not
-     * sent). Without a frozen profile (legacy shape) this is the identity
-     * split: ONE batch, slice-A behavior unchanged. The context reserve is
-     * re-derived per CANDIDATE batch (wave-7a F-W7-1) — a full-range estimate
-     * is not a strict upper bound because AVAILABLE_FROM facts gate on the
-     * sub-batch's own first page and the subset cap can pick different
-     * entries on a narrower range.
+     * subset + scene context + rolling history) AND estimated translation
+     * response fit the provider context window. Greedy prefix packing in
+     * plan order — the same planner discipline as the global planner, never
+     * a page split. Pages that alone exceed the window are returned as
+     * [SplitPlan.oversized] (rejected, not sent). Without a frozen profile
+     * (legacy shape) this is the identity split: ONE batch, slice-A behavior
+     * unchanged. The context reserve is re-derived per CANDIDATE batch
+     * (wave-7a F-W7-1) — a full-range estimate is not a strict upper bound
+     * because AVAILABLE_FROM facts gate on the sub-batch's own first page
+     * and the subset cap can pick different entries on a narrower range.
+     *
+     * Device fix 2026-09-17: the candidate predicate previously reserved
+     * only minOutputTokens for the response, so a 64-block envelope shipped
+     * with a maxOutput that its own JSON reserve nearly exhausted — every
+     * response truncated mid-JSON and the retry budget burned down to the
+     * "ambiguous (protocol)" discard. The translation output is now part of
+     * the reservation (planner estimator v2, per-block framing + expansion).
      */
     private fun splitForTokenFit(held: List<HeldPage>, rollingContext: String): SplitPlan {
         val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
@@ -448,6 +455,15 @@ internal class ProfileEnvelopeExecutor(
         fun contextTokensFor(pages: List<HeldPage>): Int =
             estimateEnrichedContextTokens(pages, rollingContext)
 
+        // Estimated provider output for the candidate batch's translations
+        // (JSON block framing + target-text expansion, planner estimator).
+        fun outputEstimateFor(pages: List<HeldPage>): Int =
+            pages.sumOf { page ->
+                page.dispatchBlocks.sumOf { block ->
+                    GlobalEnvelopePlanner.estimateOutputTokens(block.sourceText)
+                }
+            }
+
         val fitted = ArrayList<List<HeldPage>>()
         val oversized = ArrayList<HeldPage>()
         var batch = ArrayList<HeldPage>()
@@ -458,7 +474,8 @@ internal class ProfileEnvelopeExecutor(
                 val page = batch.single()
                 val pageTokens = pageLineEstimate(page)
                 val blocks = page.dispatchBlocks.size
-                val available = promptAvailableTokens(constraints, blocks, pageCount = 1)
+                val available = promptAvailableTokens(constraints, blocks, pageCount = 1) -
+                    outputEstimateFor(batch)
                 if (pageTokens + contextTokensFor(batch) > available) {
                     oversized += page
                 } else {
@@ -474,8 +491,10 @@ internal class ProfileEnvelopeExecutor(
             val pageTokens = pageLineEstimate(page)
             if (batch.isNotEmpty()) {
                 val candidateBlocks = batch.sumOf { it.dispatchBlocks.size } + page.dispatchBlocks.size
-                val available = promptAvailableTokens(constraints, candidateBlocks, pageCount = batch.size + 1)
-                if (batchLineTokens + pageTokens + contextTokensFor(batch + page) > available) {
+                val candidatePages = batch + page
+                val available = promptAvailableTokens(constraints, candidateBlocks, pageCount = candidatePages.size) -
+                    outputEstimateFor(candidatePages)
+                if (batchLineTokens + pageTokens + contextTokensFor(candidatePages) > available) {
                     flush()
                 }
             }
@@ -623,87 +642,89 @@ internal class ProfileEnvelopeExecutor(
             )
         }
 
-            // ---- DR-A Option 1 classification over the typed outcome. ----
-            val refused = outcome.blockTranslations.values.any {
-                TranslationResponseFaithfulness.isStructuralRefusal(it)
-            }
-            val fullyCovered = held.filter { page ->
-                page.dispatchBlocks.all { it.stableBlockId in outcome.blockTranslations }
-            }
-            val partiallyCovered = held - fullyCovered.toSet()
-            val ambiguousProtocol = when (outcome) {
-                is AiChunkOutcome.Terminal -> outcome.failure.kind == ProviderFailureKind.PROTOCOL
-                is AiChunkOutcome.Paused ->
-                    outcome.failure.kind == ProviderFailureKind.PROTOCOL &&
-                        partiallyCovered.isNotEmpty()
-                is AiChunkOutcome.Complete -> false
-            }
-            return when {
-                // REFUSAL (structural marker or provider refusal): discard the
-                // WHOLE response — nothing commits — typed terminal pause.
-                refused ||
-                    (outcome is AiChunkOutcome.Terminal &&
-                        outcome.failure.kind == ProviderFailureKind.REFUSAL) ->
-                    discardAndPause(
-                        held,
-                        failure = ProviderFailure(
-                            kind = ProviderFailureKind.REFUSAL,
-                            retryability = ProviderFailureRetryability.TERMINAL,
-                            safeSummary = "provider refused translation of envelope ${envelope.envelopeId}",
-                            requestId = outcome.envelopeId,
-                        ),
-                        reason = "T924 envelope ${envelope.envelopeId} refused; response discarded",
-                    )
+        // ---- DR-A Option 1 classification over the typed outcome. ----
+        val refused = outcome.blockTranslations.values.any {
+            TranslationResponseFaithfulness.isStructuralRefusal(it)
+        }
+        val fullyCovered = held.filter { page ->
+            page.dispatchBlocks.all { it.stableBlockId in outcome.blockTranslations }
+        }
+        val partiallyCovered = held - fullyCovered.toSet()
+        val ambiguousProtocol = when (outcome) {
+            is AiChunkOutcome.Terminal -> outcome.failure.kind == ProviderFailureKind.PROTOCOL
+            is AiChunkOutcome.Paused ->
+                outcome.failure.kind == ProviderFailureKind.PROTOCOL &&
+                    partiallyCovered.isNotEmpty()
+            is AiChunkOutcome.Complete -> false
+        }
+        return when {
+            // REFUSAL (structural marker or provider refusal): discard the
+            // WHOLE response — nothing commits — typed terminal pause.
+            refused ||
+                (
+                    outcome is AiChunkOutcome.Terminal &&
+                        outcome.failure.kind == ProviderFailureKind.REFUSAL
+                    ) ->
+                discardAndPause(
+                    held,
+                    failure = ProviderFailure(
+                        kind = ProviderFailureKind.REFUSAL,
+                        retryability = ProviderFailureRetryability.TERMINAL,
+                        safeSummary = "provider refused translation of envelope ${envelope.envelopeId}",
+                        requestId = outcome.envelopeId,
+                    ),
+                    reason = "T924 envelope ${envelope.envelopeId} refused; response discarded",
+                )
 
-                // AMBIGUOUS_PROTOCOL: parser violations survived the allowed
-                // retry budget. The response as a whole is untrustworthy —
-                // NOTHING partial commits from it; typed (PROTOCOL / PAUSE).
-                ambiguousProtocol ->
-                    discardAndPause(
-                        held,
-                        failure = when (outcome) {
-                            is AiChunkOutcome.Terminal -> outcome.failure
-                            is AiChunkOutcome.Paused -> outcome.failure
-                            is AiChunkOutcome.Complete ->
-                                ProviderFailure(
-                                    kind = ProviderFailureKind.PROTOCOL,
-                                    retryability = ProviderFailureRetryability.PAUSE,
-                                    safeSummary = "defensive: complete outcome with uncovered pages",
-                                    requestId = outcome.envelopeId,
-                                )
-                        }.copy(retryability = ProviderFailureRetryability.PAUSE),
-                        reason = "T924 envelope ${envelope.envelopeId} ambiguous (protocol); response discarded",
-                    )
+            // AMBIGUOUS_PROTOCOL: parser violations survived the allowed
+            // retry budget. The response as a whole is untrustworthy —
+            // NOTHING partial commits from it; typed (PROTOCOL / PAUSE).
+            ambiguousProtocol ->
+                discardAndPause(
+                    held,
+                    failure = when (outcome) {
+                        is AiChunkOutcome.Terminal -> outcome.failure
+                        is AiChunkOutcome.Paused -> outcome.failure
+                        is AiChunkOutcome.Complete ->
+                            ProviderFailure(
+                                kind = ProviderFailureKind.PROTOCOL,
+                                retryability = ProviderFailureRetryability.PAUSE,
+                                safeSummary = "defensive: complete outcome with uncovered pages",
+                                requestId = outcome.envelopeId,
+                            )
+                    }.copy(retryability = ProviderFailureRetryability.PAUSE),
+                    reason = "T924 envelope ${envelope.envelopeId} ambiguous (protocol); response discarded",
+                )
 
-                // MISSING_ONLY retention: independently complete pages commit
-                // and advance; partially covered pages commit NOTHING. A
-                // TERMINAL transport outcome still pauses after its commits.
-                else -> {
-                    val committed =
-                        commitPages(held, fullyCovered, outcome, work, frontier)
-                    if (committed is EnvelopeDispatchResult.Paused) return committed
-                    val remaining = held - fullyCovered.toSet()
-                    when (outcome) {
-                        is AiChunkOutcome.Terminal -> EnvelopeDispatchResult.Paused(
-                            reason = "T924 envelope ${envelope.envelopeId} terminal: " +
-                                "${outcome.failure.safeSummary}; committed ${fullyCovered.size} " +
-                                "page(s), ${remaining.size} remain pending",
-                            anchorPageKey = remaining.firstOrNull()?.pageKey,
-                            failure = outcome.failure,
-                            nextEligibleRetryAtEpochMs = outcome.failure.retryAfterAtEpochMs,
-                        )
-                        is AiChunkOutcome.Paused -> EnvelopeDispatchResult.Paused(
-                            reason = "T924 envelope ${envelope.envelopeId} paused: " +
-                                "${outcome.failure.safeSummary}; committed ${fullyCovered.size} " +
-                                "page(s), ${remaining.size} remain pending",
-                            anchorPageKey = remaining.firstOrNull()?.pageKey,
-                            failure = outcome.failure,
-                            nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
-                        )
-                        is AiChunkOutcome.Complete -> committed
-                    }
+            // MISSING_ONLY retention: independently complete pages commit
+            // and advance; partially covered pages commit NOTHING. A
+            // TERMINAL transport outcome still pauses after its commits.
+            else -> {
+                val committed =
+                    commitPages(held, fullyCovered, outcome, work, frontier)
+                if (committed is EnvelopeDispatchResult.Paused) return committed
+                val remaining = held - fullyCovered.toSet()
+                when (outcome) {
+                    is AiChunkOutcome.Terminal -> EnvelopeDispatchResult.Paused(
+                        reason = "T924 envelope ${envelope.envelopeId} terminal: " +
+                            "${outcome.failure.safeSummary}; committed ${fullyCovered.size} " +
+                            "page(s), ${remaining.size} remain pending",
+                        anchorPageKey = remaining.firstOrNull()?.pageKey,
+                        failure = outcome.failure,
+                        nextEligibleRetryAtEpochMs = outcome.failure.retryAfterAtEpochMs,
+                    )
+                    is AiChunkOutcome.Paused -> EnvelopeDispatchResult.Paused(
+                        reason = "T924 envelope ${envelope.envelopeId} paused: " +
+                            "${outcome.failure.safeSummary}; committed ${fullyCovered.size} " +
+                            "page(s), ${remaining.size} remain pending",
+                        anchorPageKey = remaining.firstOrNull()?.pageKey,
+                        failure = outcome.failure,
+                        nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
+                    )
+                    is AiChunkOutcome.Complete -> committed
                 }
             }
+        }
     }
 
     /** Releases every held lease and returns a typed pause (response discarded). */

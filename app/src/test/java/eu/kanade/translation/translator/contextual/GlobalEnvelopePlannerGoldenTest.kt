@@ -307,7 +307,12 @@ class GlobalEnvelopePlannerGoldenTest {
         GlobalEnvelopePlanner.estimateSourceTokens("a".repeat(8)) shouldBe 10 // 2 + 8 framing
         GlobalEnvelopePlanner.estimateSourceTokens("a".repeat(9)) shouldBe 11 // ceil(9/4)=3 + 8
         GlobalEnvelopePlanner.estimateSourceTokens("") shouldBe 8
-        GlobalEnvelopePlanner.estimateOutputTokens("a".repeat(9)) shouldBe 5 // ceil(9/2)
+        // Estimator v2 (device-calibrated 2026-09-17): per-block output
+        // framing + target-text expansion at 1 token per source char, with
+        // a 4-token floor. v1 (ceil(len/2), no framing) requested caps that
+        // truncated the model mid-JSON on 64-block envelopes.
+        GlobalEnvelopePlanner.estimateOutputTokens("a".repeat(9)) shouldBe 15 // 6 framing + ceil(9/1)
+        GlobalEnvelopePlanner.estimateOutputTokens("a".repeat(2)) shouldBe 10 // 6 framing + floor 4
         GlobalEnvelopePlanner.estimateOutputTokens("") shouldBe 0
     }
 
@@ -397,6 +402,6 @@ class GlobalEnvelopePlannerGoldenTest {
     private companion object {
         const val GOLDEN_RESOURCE = "/t924/golden/envelope-plan-small.json"
         const val GOLDEN_PLAN_FINGERPRINT =
-            "5643a00c7f98e158e61246c6ad7413f933ff1eaade91b3efa06f45e6b0339df8"
+            "bfb6d47d0d90e2f3e5e1b493f70a9591eff0d3b62ac4b666c4fca107b9c12345"
     }
 }

@@ -21,15 +21,14 @@ import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.ocrFingerprint
 import eu.kanade.translation.ocrBlockFingerprints
+import eu.kanade.translation.ocrFingerprint
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.translator.analysis.AnalysisCoverage
 import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
@@ -37,8 +36,8 @@ import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
 import eu.kanade.translation.translator.analysis.GlossaryEntry
 import eu.kanade.translation.translator.analysis.GlossaryEntryKind
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
+import eu.kanade.translation.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.translator.analysis.ValidatedEntity
 import eu.kanade.translation.translator.analysis.ValidatedTerm
 import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
@@ -49,7 +48,6 @@ import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.providers.AiTranslator
-import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
@@ -107,6 +105,22 @@ class ProfileEnvelopePromptEnrichmentTest {
         sourceFingerprint = hex64("source-$pageKey"),
         detectionFingerprint = hex64("detection-$pageKey"),
         ocrFingerprint = hex64("ocr-$pageKey"),
+        inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 10, 10, 1)),
+    )
+
+    private fun ocrPage(pageKey: String, texts: List<String>) = PageTranslation(
+        sourceFileName = pageKey,
+        blocks = texts.mapIndexedTo(mutableListOf()) { index, blockText ->
+            block(blockText).copy(blockId = "b$index")
+        },
+        imgWidth = 100f,
+        imgHeight = 160f,
+        decodeSampleSize = 1,
+        ocrStatus = StageStatus.READY,
+        inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+        sourceFingerprint = hex64("source-$pageKey"),
+        detectionFingerprint = hex64("detection-$pageKey"),
+        ocrFingerprint = hex64("ocr-$pageKey-blocks"),
         inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 10, 10, 1)),
     )
 
@@ -388,16 +402,27 @@ class ProfileEnvelopePromptEnrichmentTest {
         val pageKeys = (1..3).map { "p$it" }
         store.preRegisterPages(pageKeys)
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
-        // ~4.2k ACTUAL tokens per page: plans well under the structural
-        // ceilings (never a plan-time rejection) but two pages together
-        // exceed the provider prompt window, forcing the whole-page split.
-        val bigText = textOfApproxTokens(4_200)
+        // 2 blocks x 1300 kana CHARS per page (raw counts — the response-
+        // budget predicate estimates on raw chars while source LINES are
+        // encoder-measured, and kana tokenization varies ~0.45-1.1
+        // tokens/char, so token-based sizing is band-unstable). Sized so
+        // each page alone fits prompt+response+enriched-context (capped at
+        // the 1500-token rolling budget) in the window at ANY rate, while
+        // any pair exceeds it at ANY rate: the whole-page split must fire
+        // deterministically. Plans well under the structural ceilings
+        // (never a plan-time rejection).
+        val bigText = "あ".repeat(1_300)
         val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
         // Substitute the big text: OCR pages must carry it so the wire lines
         // are actually oversized.
         val oversizedWorker = object : NativeLaneWorker by FakePreflightOcrWorker(store) {
             override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? =
-                this@ProfileEnvelopePromptEnrichmentTest.runFakeOcrWithText(store, pageKey, pageIndex, bigText)
+                this@ProfileEnvelopePromptEnrichmentTest.runFakeOcrWithBlocks(
+                    store,
+                    pageKey,
+                    pageIndex,
+                    blocks = listOf(bigText + "a", bigText + "b"),
+                )
         }
 
         val outcome = ChapterProfileBatchCoordinator(
@@ -426,14 +451,26 @@ class ProfileEnvelopePromptEnrichmentTest {
             translationSublimitGate = BatchRequestSublimitGate(),
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+
         outcome.status shouldBe BatchPass1Status.COMPLETED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
 
         // ONE planned envelope became THREE whole-page provider requests —
-        // never a block split.
+        // never a block split. Rolling history advances gap-free as the
+        // split sub-batches commit: the first request has no priors, each
+        // later request carries the prior page's accepted pairs (the
+        // frontier records through the global BatchContextFrontier).
         translator.requests.size shouldBe 3
         translator.requests.forEach { request -> request.pages.size shouldBe 1 }
-        translator.requests.forEach { request -> request.rollingContext shouldBe "" }
+        translator.requests.first().rollingContext shouldBe ""
+        translator.requests.drop(1).forEachIndexed { index, request ->
+            // updateRollingContext keeps a bounded recent-pair window: each
+            // request carries the pair of the page committed just before it
+            // (its last block's stable wire id).
+            request.rollingContext shouldContain "translated-p${index}_b1"
+        }
         translator.maxObservedInFlight shouldBe 1
 
         pageKeys.forEach { key ->
@@ -448,6 +485,79 @@ class ProfileEnvelopePromptEnrichmentTest {
         ((counters["envelopeSplits"] ?: 0) >= 1) shouldBe true
         counters["promptShapeEnriched"] shouldBe 3
         counters["pagesTranslated"] shouldBe 3
+        counters["envelopeFailures"] shouldBe 0
+    }
+
+    @Test
+    fun `response budget forces a whole-page split when the prompt alone would fit`() = runTest {
+        val store = lazyStore()
+        val pageKeys = (1..4).map { "p$it" }
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        // Device regression (2026-09-17): each page's source LINES fit the
+        // window easily, but 12 blocks per page carry a translation output
+        // estimate comparable to the lines themselves — with the JSON
+        // reserve the batch's response cannot fit the window. The old
+        // predicate reserved only minOutputTokens, shipped maximal batches
+        // whole, and the model truncated mid-JSON on every attempt
+        // ("ambiguous (protocol); response discarded"). The split must now
+        // fire on the response budget; page atomicity kept. Raw char counts
+        // (150/block) keep the band stable across kana tokenization rates;
+        // the exact split points may still vary, so only the invariant is
+        // pinned: more than one whole-page request, strictly sequential,
+        // zero failures.
+        val bubbleText = "あ".repeat(150)
+        val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
+        val bubbleWorker = object : NativeLaneWorker by FakePreflightOcrWorker(store) {
+            override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? =
+                this@ProfileEnvelopePromptEnrichmentTest.runFakeOcrWithBlocks(
+                    store,
+                    pageKey,
+                    pageIndex,
+                    blocks = (1..12).map { index -> bubbleText + index },
+                )
+        }
+
+        val outcome = ChapterProfileBatchCoordinator(
+            store = store,
+            nativeWorker = bubbleWorker,
+            frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
+                sourceLang = "ja",
+                targetLang = "en",
+                ocrEngine = "FakeOcrEngine",
+                inpaintMode = "OFF",
+                providerKey = "fake:provider",
+            ).copy(
+                envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 64, maxPages = 8),
+            ),
+            envelopePlannerPolicy = EnvelopePlannerPolicy(
+                maxBlocksPerEnvelope = 64,
+                maxContributingPages = 8,
+                maxEstimatedInputTokens = 16_384,
+                maxEstimatedOutputTokens = 8_192,
+            ),
+            orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
+            releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+            analysisChunkRunner = FakeAnalyzer(),
+            glossarySynthesizer = emptyGlossarySynthesizer,
+            textTranslator = translator,
+            translationSublimitGate = BatchRequestSublimitGate(),
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+
+        (translator.requests.size > 1) shouldBe true
+        translator.maxObservedInFlight shouldBe 1
+
+        pageKeys.forEach { key ->
+            store.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        }
+
+        val (_, counters) = runCounters(store)
+        counters["envelopeSplits"].shouldNotBeNull()
+        ((counters["envelopeSplits"] ?: 0) >= 1) shouldBe true
+        counters["pagesTranslated"] shouldBe 4
         counters["envelopeFailures"] shouldBe 0
     }
 
@@ -484,15 +594,51 @@ class ProfileEnvelopePromptEnrichmentTest {
         )
     }
 
+    private suspend fun runFakeOcrWithBlocks(
+        store: ChapterTranslationStore,
+        pageKey: String,
+        pageIndex: Int,
+        blocks: List<String>,
+    ): OcrReadyPageRef {
+        val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val before = store.snapshot(pageKey)
+        store.mergeOcr(
+            OcrStagePatch(
+                pageKey = pageKey,
+                generation = before.generation,
+                expectedPageVersion = before.pageVersion,
+                expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
+                ocrResult = ocrPage(pageKey, blocks),
+                expectedLeaseToken = lease.token,
+            ),
+            description = "t924 fake preflight ocr (multi-block response budget)",
+        ).shouldBeInstanceOf<StagePatchResult.Accepted>()
+        val after = store.snapshot(pageKey)
+        return OcrReadyPageRef(
+            pageKey = pageKey,
+            pageIndex = pageIndex,
+            generation = after.generation,
+            blockFingerprints = emptyList(),
+            leaseToken = lease.token,
+            candidateGenerationId = after.candidateGenerationId,
+            dependencyFingerprint = after.dependencyFingerprint,
+            artifactPageVersion = after.artifactPageVersion,
+        )
+    }
+
     @Test
     fun `single token-oversized page is rejected with a typed pause and zero provider calls`() = runTest {
         val store = lazyStore()
         val pageKeys = listOf("p1")
         store.preRegisterPages(pageKeys)
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
-        // ~9k ACTUAL tokens: plans under the structural ceilings (never a
-        // plan-time rejection) but exceeds the provider prompt window alone.
-        val bigText = textOfApproxTokens(9_000)
+        // 8k kana CHARS in one block: the plan-time output ceiling passes
+        // (8006 ≤ 8192) but the execution-time prompt+response budget goes
+        // negative, so the page alone exceeds the provider window and is
+        // rejected. Raw char count keeps the station deterministic across
+        // kana tokenization rates (~0.45-1.1 tokens/char).
+        val bigText = "あ".repeat(8_000)
         val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
         val oversizedWorker = object : NativeLaneWorker by FakePreflightOcrWorker(store) {
             override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? =

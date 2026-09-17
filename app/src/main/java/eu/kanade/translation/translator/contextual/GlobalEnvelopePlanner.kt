@@ -47,7 +47,14 @@ data class EnvelopePlannerPolicy(
     val maxContributingPages: Int = 3,
     /** Estimated source-token input budget (always stricter than context ceiling). */
     val maxEstimatedInputTokens: Int = 4_096,
-    /** Estimated output-token reserve (framing + target expansion). */
+    /**
+     * Estimated output-token reserve (framing + target expansion). Together
+     * with [maxEstimatedInputTokens] it sums to the default 8k window minus
+     * the safety margin, so envelopes pack adaptively to what one response
+     * can carry. Estimator v2's honest per-block output makes this ceiling
+     * split text-heavy groups at PLAN time instead of shipping a request
+     * whose response cannot fit (device fix 2026-09-17).
+     */
     val maxEstimatedOutputTokens: Int = 3_584,
     /**
      * Prefer closing the envelope at a frozen-profile scene start
@@ -114,7 +121,7 @@ sealed class EnvelopePlanResult {
 object GlobalEnvelopePlanner {
 
     /** Pure-planner algorithm version (T924-SC §1.5 `plannerVersion`). */
-    const val PLANNER_VERSION = 1
+    const val PLANNER_VERSION = 2
 
     /**
      * Serialization sanity cap per contributing page (UTF-8 bytes). The plan
@@ -123,12 +130,20 @@ object GlobalEnvelopePlanner {
      */
     const val SERIALIZATION_CAP_BYTES_PER_PAGE = 256 * 1024
 
-    // Token estimator v1 (PROPOSED-GATE calibration, deterministic):
-    // CJK-heavy OCR source ≈ 4 chars/token; per-block request framing overhead.
+    // Token estimator v2 (device-calibrated 2026-09-17, deterministic):
+    // CJK-heavy OCR source ≈ 4 chars/token on INPUT; per-block request
+    // framing overhead. v1 estimated output at ceil(len/2) with no framing
+    // floor, capping a 64-block envelope at ~345 text tokens — the requested
+    // maxOutput could not carry its own JSON reserve plus the translations
+    // and the model truncated mid-JSON on every attempt (device cascade:
+    // "ambiguous (protocol); response discarded"). Latin-script targets
+    // expand to roughly one output token per source char, and each block
+    // re-emits framing; budget both.
     private const val CHARS_PER_TOKEN = 4
     private const val BLOCK_FRAMING_TOKENS = 8
-    // Target-text expansion: conservative 1 token per 2 source chars for output.
-    private const val OUTPUT_CHARS_PER_TOKEN = 2
+    private const val OUTPUT_BLOCK_FRAMING_TOKENS = 6
+    private const val OUTPUT_MIN_BLOCK_TOKENS = 4
+    private const val OUTPUT_CHARS_PER_TOKEN = 1
 
     /** Estimated provider input tokens for one block (pure, versioned by planner). */
     fun estimateSourceTokens(sourceText: String): Int =
@@ -136,7 +151,15 @@ object GlobalEnvelopePlanner {
 
     /** Estimated provider output tokens for one block (pure, versioned by planner). */
     fun estimateOutputTokens(sourceText: String): Int =
-        (sourceText.length + OUTPUT_CHARS_PER_TOKEN - 1) / OUTPUT_CHARS_PER_TOKEN
+        if (sourceText.isEmpty()) {
+            0
+        } else {
+            OUTPUT_BLOCK_FRAMING_TOKENS +
+                maxOf(
+                    OUTPUT_MIN_BLOCK_TOKENS,
+                    (sourceText.length + OUTPUT_CHARS_PER_TOKEN - 1) / OUTPUT_CHARS_PER_TOKEN,
+                )
+        }
 
     /** In-memory serialization budget for a plan over [contributingPageCount] pages. */
     fun serializationBudgetBytes(contributingPageCount: Int): Int =
