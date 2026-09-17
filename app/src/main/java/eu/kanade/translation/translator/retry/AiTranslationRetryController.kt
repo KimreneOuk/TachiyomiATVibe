@@ -190,7 +190,13 @@ private data class AiTranslationAccumulator(
         val merged = LinkedHashMap(translations)
         var duplicates = duplicateCount + response.duplicateIds.size
         var conflicts = conflictCount + response.conflictIds.size
-        var issue = protocolIssue || response.protocolIssue
+        // Per-merge state: the accumulated set is tainted only when THIS
+        // response introduces a violation. An earlier attempt's violation
+        // must not veto a later fully recovered set — whole/missing repair
+        // exists precisely to recover from it. Conflicting repeats below
+        // still poison the current merge, and a same-response violation
+        // raises response.protocolIssue.
+        var issue = response.protocolIssue
         response.accepted.forEach { (stableId, translation) ->
             val existing = merged[stableId]
             if (existing == null) {

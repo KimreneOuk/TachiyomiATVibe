@@ -94,6 +94,55 @@ class AiTranslationRetryControllerTest {
     }
 
     @Test
+    fun `clean targeted repair completes even after an earlier protocol violation`() = runTest {
+        // Device reproduction (T934): attempt 1 carried a protocol issue,
+        // the whole repair and the targeted missing repair then returned
+        // clean, fully covering the envelope. The accumulator must judge
+        // the CURRENT merge, not latch the earlier violation — otherwise a
+        // recovered response is discarded as ambiguous protocol.
+        val translator = ScriptedTranslator { attempt, current ->
+            when (attempt) {
+                1 -> {
+                    // Truncated whole response: one block missing AND a
+                    // stray unknown id carrying the protocol issue.
+                    val request = ContextualRequestBuilder.build(
+                        current,
+                        TextRecognizerLanguage.JAPANESE,
+                        TextTranslatorLanguage.ENGLISH,
+                    )
+                    val junk = ContextualTranslationResult(
+                        id = "unknown-extra",
+                        targetKey = null,
+                        text = "unrequested",
+                        status = ContextualTranslationResult.Status.TRANSLATED,
+                    )
+                    ContextualRequestBuilder.toBatch(
+                        request,
+                        request.orderedIds.filterNot { it == requestIds(current).last() }
+                            .map { id ->
+                                ContextualTranslationResult(
+                                    id = id,
+                                    targetKey = request.idMap[id],
+                                    text = "translated-$id",
+                                    status = ContextualTranslationResult.Status.TRANSLATED,
+                                )
+                            } + junk,
+                    )
+                }
+                2 -> response(current, omit = setOf(requestIds(current).last()))
+                else -> response(current)
+            }
+        }
+
+        val outcome = translate(chunk(), translator)
+
+        val complete = outcome.shouldBeInstanceOf<AiChunkOutcome.Complete>()
+        translator.calls shouldBe 3
+        complete.wholeEnvelopeRetries shouldBe 1
+        complete.acceptedBlockIds shouldBe setOf("p4_b0", "p4_b1")
+    }
+
+    @Test
     fun `missing budget exhaustion returns paused partial outcome`() = runTest {
         val translator = ScriptedTranslator { _, current ->
             response(current, omit = requestIds(current).toSet())
