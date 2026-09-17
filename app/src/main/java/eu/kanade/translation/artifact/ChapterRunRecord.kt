@@ -81,12 +81,18 @@ data class AnalysisPolicySnapshot(
 @Serializable
 data class EnvelopePolicySnapshot(
     /**
-     * Director decision (2026-09-16): pack ~5 pages per translation call to
-     * cut provider calls ~5×. 64 blocks ≈ 5 typical manhwa pages; the token
-     * budgets still split dense chapters adaptively.
+     * T924 envelope packing caps. maxBlocks stays the structural budget; the
+     * token budgets may still split dense chapters into SMALLER envelopes.
+     *
+     * Director decision (2026-09-17, hard cap): maxPages is FIXED at 5 —
+     * "5 pages fixed, no matter what". On-device evidence 2026-09-17: an
+     * 8-page/64-block envelope of a dense chapter truncated at the output
+     * cap on every retry attempt and the whole envelope was discarded as
+     * ambiguous (protocol); 5-page envelopes bound the per-call output so
+     * the budget holds.
      */
     val maxBlocks: Int = 64,
-    val maxPages: Int = 8,
+    val maxPages: Int = 5,
 )
 
 /**
