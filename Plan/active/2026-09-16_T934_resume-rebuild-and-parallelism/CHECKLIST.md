@@ -218,3 +218,35 @@ firstRun; C) distinct-page decode discriminator in
 StandardPipelineCoexistenceTest (legacy page-serial still fails it);
 D) authoritative 30s teardown join (no runCatching) in all three
 MangaScreenModel fixtures. GATE-W2 run re-exercises all six classes.
+
+## 2026-09-17 — Device fix-loop: stale-publication abort ELIMINATED (commit e2054e6, build 507)
+
+- Defect chain reproduced on OnePlus (build 506): resume of Chapter 37 aborted at
+  page 011.jpg with ARTIFACT_PUBLICATION_FAILED; sheet showed false "Completed".
+  Root cause (two compounding): (1) AtomicChapterDocuments.publish used a
+  deterministic `name.tmp` with an unserialized write/rotate/rename sequence —
+  the >8-page open path's background health-verify republisher collided with
+  batch publications (mechanical "manifest publication failed", silent);
+  (2) the T924 LI-4 one-shot stale-manifest retry covered only publishActiveRun
+  and checkpointOcr, not openCandidate / persistLiveCandidate /
+  promoteLiveCandidate / retireActiveRun.
+- Fix (commit e2054e6): process-wide per-document-name publication lock + WARN
+  logging on every publish failure stage; LI-4 retry extended to the four resume
+  seams (wrapper+Once pattern, contract unchanged); durable-failure RECORD made
+  non-fatal in the coordinator; completion oracle — FINISHED never renders
+  "Completed / All pages translated" when failure/attention facts exist (sheet,
+  pill, status line, hero).
+- Verification (personally): eu.kanade.translation.* + presentation sweep green
+  (206 targeted tests incl. 20 new; 2 harness-race test bugs found and fixed in
+  review). On-device rerun of Chapter 37 (24 pages, resume): schedule_end
+  pages=24 wallMs=412499 **outcome=success**; **zero** rejection/abort lines;
+  the stale-manifest retry fired and recovered 4×
+  (persistLiveCandidate ×2, openCandidate ×1, publishActiveRun ×1) — on 506 the
+  first of these was fatal. Translated pages render correctly in the reader
+  (verified visually, pages 8 and 13).
+- Residual follow-up (logged, non-blocking): after process death on a chapter
+  whose last run FAILED, the resume fast path re-derives batchPhase=FINISHED
+  from the stale activeRun pointer and the rebuilt snapshot carries no failure
+  facts, so the sheet can show "Completed" over 0% pre-run. Presentation oracle
+  cannot see facts the snapshot lacks; fix belongs in resumeFinalizeOrComplete
+  classification (next task).
