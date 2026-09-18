@@ -6,6 +6,8 @@ import eu.kanade.translation.ocr.OcrTextFilter
 import eu.kanade.translation.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.ocr.paddle.batch.PaddleOcrFallbackKind
+import eu.kanade.translation.ocr.paddle.batch.PaddleOcrRotation
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -102,11 +104,303 @@ internal object VerticalLineOcr {
 
     internal suspend fun recognizeSingleLine(engine: RoiOcrEngine, crop: Bitmap, language: TextRecognizerLanguage): String {
         val (text, conf) = engine.recognizeWithConf(crop)
+        return filterRecognizedText(text, conf, language)
+    }
+
+    /**
+     * Plans the same final line/column/glyph leaves as [recognizeMultiLine], but
+     * stops before recognition so a page coordinator can bucket the leaves.
+     * Geometry and ordering deliberately mirror the existing sequential path.
+     */
+    internal suspend fun planMultiLine(
+        crop: Bitmap,
+        paddleDet: PaddleOcrV6DetEngine?,
+        verticalFallback: Boolean,
+        language: TextRecognizerLanguage,
+        isClosed: () -> Boolean,
+    ): PaddleVerticalRecognitionPlan {
+        if (paddleDet != null) {
+            val lines = try {
+                paddleDet.detectLines(crop, thresh = 0.2f, boxThresh = DbPostProcess.Defaults.BOX_THRESH)
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) {
+                    "[paddle_det] failed while planning; falling back to " +
+                        if (verticalFallback) "ink-gap heuristic" else "single read"
+                }
+                emptyList()
+            }
+            if (lines.isNotEmpty()) {
+                return planDetColumns(crop, lines, language, prefersHorizontalText = true, isClosed)
+            }
+            logcat(LogPriority.INFO) {
+                "[paddle_det] returned 0 usable lines while planning; falling back to " +
+                    if (verticalFallback) "ink-gap heuristic" else "single read"
+            }
+        }
+        return if (verticalFallback) {
+            planHeuristicColumns(crop, language, isClosed)
+        } else {
+            planWholeRegion(crop)
+        }
+    }
+
+    /** Reconstructs one region's text from the ordered batch rows. */
+    internal fun composePlan(
+        plan: PaddleVerticalRecognitionPlan,
+        results: List<Pair<String, Float>>,
+        language: TextRecognizerLanguage,
+    ): String {
+        require(results.size == plan.leaves.size) {
+            "Paddle page plan expected ${plan.leaves.size} results, got ${results.size}"
+        }
+        return plan.groups.map { group ->
+            group.mapNotNull { index ->
+                val (text, confidence) = results[index]
+                filterRecognizedText(text, confidence, language, plan.filterConfidence).takeIf { it.isNotEmpty() }
+            }.joinToString(plan.separator)
+        }.filter { it.isNotEmpty() }.joinToString(plan.separator)
+    }
+
+    /** Shared confidence/text filtering for sequential and page-batch paths. */
+    internal fun filterRecognizedText(
+        text: String,
+        confidence: Float,
+        language: TextRecognizerLanguage,
+        applyConfidence: Boolean = true,
+    ): String {
         // PaddleOCR's CTC decoder reports a meaningful confidence; MangaOcr returns
         // default 1.0 (no real score). The conf < 1f guard keeps MangaOcr's default
         // from being filtered here.
-        if (conf < OCR_MIN_CONFIDENCE && conf < 1f) return ""
+        if (applyConfidence && confidence < OCR_MIN_CONFIDENCE && confidence < 1f) return ""
         return if (text.isNotEmpty() && OcrTextFilter.isUsable(text, language)) text else ""
+    }
+
+    private fun planWholeRegion(crop: Bitmap): PaddleVerticalRecognitionPlan {
+        val leaf = PaddleVerticalLeafPlan(
+            crop = cropBitmap(crop, 0, 0, crop.width, crop.height),
+            lineIndex = null,
+            glyphIndex = null,
+            rotation = PaddleOcrRotation.NONE,
+            fallbackKind = PaddleOcrFallbackKind.WHOLE_REGION,
+        )
+        return PaddleVerticalRecognitionPlan(
+            leaves = listOf(leaf),
+            groups = listOf(listOf(0)),
+            separator = "",
+        )
+    }
+
+    private suspend fun planDetColumns(
+        crop: Bitmap,
+        lines: List<eu.kanade.translation.ocr.TextLine>,
+        language: TextRecognizerLanguage,
+        prefersHorizontalText: Boolean,
+        isClosed: () -> Boolean,
+    ): PaddleVerticalRecognitionPlan {
+        data class Item(val bbox: IntArray, val vertical: Boolean, val sortKey: Int)
+        val items = lines.mapNotNull { line ->
+            val bbox = line.bbox
+            if (bbox.size < 4 || bbox[2] <= bbox[0] || bbox[3] <= bbox[1]) return@mapNotNull null
+            val width = bbox[2] - bbox[0]
+            val height = bbox[3] - bbox[1]
+            if (width < MIN_DET_LINE_PX || height < MIN_DET_LINE_PX) return@mapNotNull null
+            if (width > MAX_COLUMN_WIDTH_PX || height > MAX_COLUMN_HEIGHT_PX) return@mapNotNull null
+            val vertical = height > width * 1.5f
+            val sortKey = if (vertical) -(bbox[0] + bbox[2]) / 2 else (bbox[1] + bbox[3]) / 2
+            Item(bbox, vertical, sortKey)
+        }.sortedBy { it.sortKey }
+
+        if (items.isEmpty()) {
+            val rotated = rotateCcw(crop)
+            return PaddleVerticalRecognitionPlan(
+                leaves = listOf(
+                    PaddleVerticalLeafPlan(
+                        crop = rotated,
+                        lineIndex = null,
+                        glyphIndex = null,
+                        rotation = PaddleOcrRotation.CCW_90,
+                        fallbackKind = PaddleOcrFallbackKind.WHOLE_REGION,
+                    ),
+                ),
+                groups = listOf(listOf(0)),
+                separator = language.joinSeparator(),
+                filterConfidence = false,
+            )
+        }
+
+        val verticalCjk = language == TextRecognizerLanguage.JAPANESE ||
+            language == TextRecognizerLanguage.CHINESE ||
+            language == TextRecognizerLanguage.KOREAN
+        val leaves = ArrayList<PaddleVerticalLeafPlan>()
+        val groups = ArrayList<List<Int>>(items.size)
+        try {
+            items.forEachIndexed { lineIndex, item ->
+                check(!isClosed()) { "ONNX recognition engine closed during OCR geometry planning" }
+                val lineGroup = ArrayList<Int>()
+                val columnCrop = cropBitmap(crop, item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3])
+                try {
+                    when {
+                        item.vertical && verticalCjk && prefersHorizontalText -> {
+                            addVerticalGlyphLeaves(
+                                columnCrop = columnCrop,
+                                lineIndex = lineIndex,
+                                fallbackKind = PaddleOcrFallbackKind.GLYPH,
+                                leaves = leaves,
+                                group = lineGroup,
+                                isClosed = isClosed,
+                            )
+                        }
+
+                        item.vertical && prefersHorizontalText -> {
+                            val rotated = rotateCcw(columnCrop)
+                            leaves += PaddleVerticalLeafPlan(
+                                crop = rotated,
+                                lineIndex = lineIndex,
+                                glyphIndex = null,
+                                rotation = PaddleOcrRotation.CCW_90,
+                                fallbackKind = PaddleOcrFallbackKind.DETECTOR_LINE,
+                            )
+                            lineGroup += leaves.lastIndex
+                        }
+
+                        else -> {
+                            val horizontal = cropBitmap(columnCrop, 0, 0, columnCrop.width, columnCrop.height)
+                            leaves += PaddleVerticalLeafPlan(
+                                crop = horizontal,
+                                lineIndex = lineIndex,
+                                glyphIndex = null,
+                                rotation = PaddleOcrRotation.NONE,
+                                fallbackKind = PaddleOcrFallbackKind.DETECTOR_LINE,
+                            )
+                            lineGroup += leaves.lastIndex
+                        }
+                    }
+                } finally {
+                    columnCrop.recycle()
+                }
+                groups += lineGroup
+            }
+            return PaddleVerticalRecognitionPlan(leaves, groups, language.joinSeparator())
+        } catch (failure: Throwable) {
+            leaves.forEach { it.crop.recycle() }
+            throw failure
+        }
+    }
+
+    private suspend fun planHeuristicColumns(
+        crop: Bitmap,
+        language: TextRecognizerLanguage,
+        isClosed: () -> Boolean,
+    ): PaddleVerticalRecognitionPlan {
+        val columns = detectVerticalColumns(crop)
+        val verticalCjk = language == TextRecognizerLanguage.JAPANESE ||
+            language == TextRecognizerLanguage.CHINESE ||
+            language == TextRecognizerLanguage.KOREAN
+        if (columns.size <= 1) {
+            val rotated = rotateCcw(crop)
+            return PaddleVerticalRecognitionPlan(
+                leaves = listOf(
+                    PaddleVerticalLeafPlan(
+                        crop = rotated,
+                        lineIndex = 0,
+                        glyphIndex = null,
+                        rotation = PaddleOcrRotation.CCW_90,
+                        fallbackKind = PaddleOcrFallbackKind.HEURISTIC_LINE,
+                    ),
+                ),
+                groups = listOf(listOf(0)),
+                separator = language.joinSeparator(),
+                filterConfidence = false,
+            )
+        }
+
+        val leaves = ArrayList<PaddleVerticalLeafPlan>()
+        val groups = ArrayList<List<Int>>(columns.size)
+        try {
+            for (columnIndex in columns.indices.reversed()) {
+                check(!isClosed()) { "ONNX recognition engine closed during OCR geometry planning" }
+                val (x0, x1) = columns[columnIndex]
+                if (x1 - x0 < MIN_COLUMN_WIDTH_PX) continue
+                val lineIndex = groups.size
+                val lineGroup = ArrayList<Int>()
+                val columnCrop = Bitmap.createBitmap(crop, x0, 0, x1 - x0, crop.height)
+                try {
+                    if (verticalCjk) {
+                        addVerticalGlyphLeaves(
+                            columnCrop = columnCrop,
+                            lineIndex = lineIndex,
+                            fallbackKind = PaddleOcrFallbackKind.HEURISTIC_LINE,
+                            leaves = leaves,
+                            group = lineGroup,
+                            isClosed = isClosed,
+                        )
+                    } else {
+                        val rotated = rotateCcw(columnCrop)
+                        leaves += PaddleVerticalLeafPlan(
+                            crop = rotated,
+                            lineIndex = lineIndex,
+                            glyphIndex = null,
+                            rotation = PaddleOcrRotation.CCW_90,
+                            fallbackKind = PaddleOcrFallbackKind.HEURISTIC_LINE,
+                        )
+                        lineGroup += leaves.lastIndex
+                    }
+                } finally {
+                    columnCrop.recycle()
+                }
+                groups += lineGroup
+            }
+            return PaddleVerticalRecognitionPlan(leaves, groups, language.joinSeparator())
+        } catch (failure: Throwable) {
+            leaves.forEach { it.crop.recycle() }
+            throw failure
+        }
+    }
+
+    private suspend fun addVerticalGlyphLeaves(
+        columnCrop: Bitmap,
+        lineIndex: Int,
+        fallbackKind: PaddleOcrFallbackKind,
+        leaves: MutableList<PaddleVerticalLeafPlan>,
+        group: MutableList<Int>,
+        isClosed: () -> Boolean,
+    ) {
+        val rows = detectVerticalGlyphRows(columnCrop)
+        if (rows.size <= 1) {
+            val rotated = rotateCcw(columnCrop)
+            leaves += PaddleVerticalLeafPlan(
+                crop = rotated,
+                lineIndex = lineIndex,
+                glyphIndex = null,
+                rotation = PaddleOcrRotation.CCW_90,
+                fallbackKind = if (fallbackKind == PaddleOcrFallbackKind.GLYPH) {
+                    PaddleOcrFallbackKind.DETECTOR_LINE
+                } else {
+                    fallbackKind
+                },
+            )
+            group += leaves.lastIndex
+            return
+        }
+        var glyphIndex = 0
+        for ((y0, y1) in rows) {
+            check(!isClosed()) { "ONNX recognition engine closed during OCR geometry planning" }
+            if (y1 - y0 < MIN_COLUMN_WIDTH_PX) continue
+            val glyphCrop = Bitmap.createBitmap(columnCrop, 0, y0, columnCrop.width, y1 - y0)
+            try {
+                val rotated = rotateCcw(glyphCrop)
+                leaves += PaddleVerticalLeafPlan(
+                    crop = rotated,
+                    lineIndex = lineIndex,
+                    glyphIndex = glyphIndex++,
+                    rotation = PaddleOcrRotation.CCW_90,
+                    fallbackKind = PaddleOcrFallbackKind.GLYPH,
+                )
+                group += leaves.lastIndex
+            } finally {
+                glyphCrop.recycle()
+            }
+        }
     }
 
     /**

@@ -9,6 +9,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceModel
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.model.Detection
 import eu.kanade.translation.detection.OnnxPageTextDetector
 import eu.kanade.translation.detection.OnnxPanelDetector
@@ -28,9 +29,12 @@ import eu.kanade.translation.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchSize
+import eu.kanade.translation.ocr.paddle.batch.PaddleOcrPageGeneration
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
+import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationSafetyPrimitives
 import eu.kanade.translation.webtoon.WebtoonSlidingDetector
@@ -41,6 +45,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.OcrModel
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.atomic.AtomicLong
 
 class RoiPageRecognitionEngine(
     private val context: Context,
@@ -66,6 +71,8 @@ class RoiPageRecognitionEngine(
      */
     private var bubbleSegmenter: OnnxBubbleSegmenter? = null
     private var roiOcrEngine: RoiOcrEngine? = null
+    private var paddlePageOcrCoordinator: PaddlePageOcrCoordinator? = null
+    private val paddlePageGenerationCounter = AtomicLong(0L)
 
     /**
      * TachiyomiAT: PP-OCRv6 small **det** engine, used to split a vertical-text
@@ -219,6 +226,12 @@ class RoiPageRecognitionEngine(
                                 "ONNX init: PaddleOCR det asset missing; using ink-gap heuristic"
                             }
                         }
+                        // The coordinator owns page-scoped leaf mapping and the
+                        // explicit recognizer-call serialization seam.
+                        paddlePageOcrCoordinator = PaddlePageOcrCoordinator(
+                            engine = it,
+                            validatedBatchSize = PaddleOcrBatchSize.B1,
+                        )
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
                 }
@@ -286,6 +299,7 @@ class RoiPageRecognitionEngine(
             ?: throw IllegalStateException("ONNX detector closed mid-analyze")
         val localOcrEngine = roiOcrEngine
             ?: throw IllegalStateException("ONNX OCR engine closed mid-analyze")
+        val localPaddlePageCoordinator = paddlePageOcrCoordinator
         val startTime = System.nanoTime()
         TranslationMemoryBudget.logSnapshot("analyze_start", bitmap.width, bitmap.height)
         // TachiyomiAT: hold nativeGuard across detect + the per-ROI OCR loop so
@@ -395,6 +409,45 @@ class RoiPageRecognitionEngine(
                     },
                 )
                 openRecognitionSpan = ocrSpan
+                val paddleRegionResults = if (
+                    engine is PaddleOcrV6SmallEngine && localPaddlePageCoordinator != null
+                ) {
+                    val traceIdentity = TranslationTrace.currentRun()?.identity
+                    val pageId = traceIdentity?.page?.takeUnless { it.isBlank() || it == "none" }
+                        ?: "roi-page"
+                    val pageGeneration = PaddleOcrPageGeneration(
+                        pageId = pageId,
+                        generation = paddlePageGenerationCounter.incrementAndGet(),
+                    )
+                    val mode = when (traceIdentity?.mode) {
+                        TranslationTraceMode.AUTO -> PaddlePageOcrMode.AUTO
+                        TranslationTraceMode.BATCH -> PaddlePageOcrMode.CHAPTER
+                        TranslationTraceMode.MANUAL,
+                        null,
+                        -> PaddlePageOcrMode.MANUAL
+                    }
+                    localPaddlePageCoordinator.recognizePage(
+                        pageGeneration = pageGeneration,
+                        bitmap = bitmap,
+                        detections = filteredDetections,
+                        paddleDet = paddleDet,
+                        language = language,
+                        isVerticalLanguage = isVerticalLanguage,
+                        mode = mode,
+                        isClosed = { closed },
+                    ).also { results ->
+                        val waitMs = localPaddlePageCoordinator.lastBatchTrace.sumOf {
+                            it.queueWaitMs + it.admissionWaitMs
+                        }
+                        logcat(LogPriority.INFO) {
+                            "Paddle page generation=${pageGeneration.generation} mode=${mode.name.lowercase()} " +
+                                "leaves=${localPaddlePageCoordinator.lastResolvedLeafCount} " +
+                                "batches=${localPaddlePageCoordinator.lastBatchTrace.size} waitMs=$waitMs"
+                        }
+                    }
+                } else {
+                    null
+                }
                 if (!engine.prefersHorizontalText) {
                     if (closed) throw IllegalStateException("ONNX recognition engine closed before batch OCR")
                     val crops = filteredDetections.map { detection ->
@@ -470,7 +523,35 @@ class RoiPageRecognitionEngine(
                         )
                     }
                 } else {
-                    for (detection in filteredDetections) {
+                    for ((detectionIndex, detection) in filteredDetections.withIndex()) {
+                        // The Paddle adapter has already completed every final
+                        // line/glyph leaf for this page. Other horizontal engines
+                        // stay on the original sequential crop path below.
+                        if (paddleRegionResults != null) {
+                            if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR mapping")
+                            val result = paddleRegionResults.getOrNull(detectionIndex)
+                                ?: error("Paddle page result missing for region=$detectionIndex")
+                            val text = result.text
+                            val rotatedForOcr = result.rotatedForOcr
+                            if (resolveDiagnostics()) {
+                                logcat(LogPriority.INFO) {
+                                    "[ocr_block] box=[${detection.bbox[0].toInt()},${detection.bbox[1].toInt()},${detection.bbox[2].toInt()},${detection.bbox[3].toInt()}] " +
+                                        "size=${(detection.bbox[2] - detection.bbox[0]).toInt()}x${(detection.bbox[3] - detection.bbox[1]).toInt()} " +
+                                        "rotated=${if (rotatedForOcr) "90ccw" else "no"} chars=${text.length}"
+                                }
+                            }
+                            appendRecognizedBlock(
+                                bitmap = bitmap,
+                                detection = detection,
+                                text = text,
+                                isVerticalLanguage = isVerticalLanguage,
+                                bubbles = bubbles,
+                                bubbleMasks = bubbleMasks,
+                                lockedRecognizedBlocks = lockedRecognizedBlocks,
+                            )
+                            continue
+                        }
+
                         // TachiyomiAT: cooperative close — bail out of the per-ROI OCR
                         // loop if close() ran between iterations, before the native call.
                         if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
@@ -528,51 +609,14 @@ class RoiPageRecognitionEngine(
                                     "rotated=${if (rotatedForOcr) "90ccw" else "no"} chars=${text.length}"
                             }
                         }
-                        val boxWidth = (bbox[2] - bbox[0]).toFloat()
-                        val boxHeight = (bbox[3] - bbox[1]).toFloat()
-                        val centerX = (bbox[0] + bbox[2]) / 2.0
-                        val centerY = (bbox[1] + bbox[3]) / 2.0
-                        val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
-                        val parentBbox = rawParent?.let { rp ->
-                            val siblings = bubbles.filter { it !== rp }.map { it.bbox }
-                            trimParentBbox(rp.bbox, bbox, siblings)
-                        } ?: rawParent?.bbox
-                        val renderColors = RenderColorEstimator.estimate(
-                            bitmap,
-                            bbox[0],
-                            bbox[1],
-                            bbox[2],
-                            bbox[3],
-                            parentBbox,
-                        )
-                        val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
-                        lockedRecognizedBlocks.add(
-                            RecognizedBlock(
-                                detection = detection,
-                                block = TranslationBlock(
-                                    text = text,
-                                    width = boxWidth,
-                                    height = boxHeight,
-                                    x = bbox[0].toFloat(),
-                                    y = bbox[1].toFloat(),
-                                    symWidth = boxWidth * 0.1f,
-                                    symHeight = boxHeight * 0.1f,
-                                    angle = 0f,
-                                    label = detection.label,
-                                    score = detection.score,
-                                    parentX = parentBbox?.get(0)?.toFloat() ?: 0f,
-                                    parentY = parentBbox?.get(1)?.toFloat() ?: 0f,
-                                    parentWidth = parentBbox?.let { (it[2] - it[0]).toFloat() } ?: 0f,
-                                    parentHeight = parentBbox?.let { (it[3] - it[1]).toFloat() } ?: 0f,
-                                    textColor = renderColors.first,
-                                    strokeColor = renderColors.second,
-                                    strokeWidth = renderColors.third,
-                                    direction = direction,
-                                    segmentationMask = bubbleMasks.firstOrNull { rle ->
-                                        rle.overlapPixels(centerX.toInt(), centerY.toInt(), centerX.toInt() + 1, centerY.toInt() + 1) > 0
-                                    },
-                                ),
-                            ),
+                        appendRecognizedBlock(
+                            bitmap = bitmap,
+                            detection = detection,
+                            text = text,
+                            isVerticalLanguage = isVerticalLanguage,
+                            bubbles = bubbles,
+                            bubbleMasks = bubbleMasks,
+                            lockedRecognizedBlocks = lockedRecognizedBlocks,
                         )
                     }
                 }
@@ -712,6 +756,64 @@ class RoiPageRecognitionEngine(
                 "inpaintRoute=${inpainting?.lastAcceptedRoute ?: "n/a"}"
         }
         return result
+    }
+
+    private fun appendRecognizedBlock(
+        bitmap: Bitmap,
+        detection: Detection,
+        text: String,
+        isVerticalLanguage: Boolean,
+        bubbles: List<Detection>,
+        bubbleMasks: List<BubbleMaskRle>,
+        lockedRecognizedBlocks: MutableList<RecognizedBlock>,
+    ) {
+        val bbox = detection.bbox
+        val boxWidth = (bbox[2] - bbox[0]).toFloat()
+        val boxHeight = (bbox[3] - bbox[1]).toFloat()
+        val centerX = (bbox[0] + bbox[2]) / 2.0
+        val centerY = (bbox[1] + bbox[3]) / 2.0
+        val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
+        val parentBbox = rawParent?.let { rp ->
+            val siblings = bubbles.filter { it !== rp }.map { it.bbox }
+            trimParentBbox(rp.bbox, bbox, siblings)
+        } ?: rawParent?.bbox
+        val renderColors = RenderColorEstimator.estimate(
+            bitmap,
+            bbox[0],
+            bbox[1],
+            bbox[2],
+            bbox[3],
+            parentBbox,
+        )
+        val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
+        lockedRecognizedBlocks.add(
+            RecognizedBlock(
+                detection = detection,
+                block = TranslationBlock(
+                    text = text,
+                    width = boxWidth,
+                    height = boxHeight,
+                    x = bbox[0].toFloat(),
+                    y = bbox[1].toFloat(),
+                    symWidth = boxWidth * 0.1f,
+                    symHeight = boxHeight * 0.1f,
+                    angle = 0f,
+                    label = detection.label,
+                    score = detection.score,
+                    parentX = parentBbox?.get(0)?.toFloat() ?: 0f,
+                    parentY = parentBbox?.get(1)?.toFloat() ?: 0f,
+                    parentWidth = parentBbox?.let { (it[2] - it[0]).toFloat() } ?: 0f,
+                    parentHeight = parentBbox?.let { (it[3] - it[1]).toFloat() } ?: 0f,
+                    textColor = renderColors.first,
+                    strokeColor = renderColors.second,
+                    strokeWidth = renderColors.third,
+                    direction = direction,
+                    segmentationMask = bubbleMasks.firstOrNull { rle ->
+                        rle.overlapPixels(centerX.toInt(), centerY.toInt(), centerX.toInt() + 1, centerY.toInt() + 1) > 0
+                    },
+                ),
+            ),
+        )
     }
 
     /**
@@ -884,6 +986,7 @@ class RoiPageRecognitionEngine(
             logcat(LogPriority.ERROR, e) { "Error closing roiOcrEngine" }
         } finally {
             roiOcrEngine = null
+            paddlePageOcrCoordinator = null
         }
         try {
             paddleDet?.close()
