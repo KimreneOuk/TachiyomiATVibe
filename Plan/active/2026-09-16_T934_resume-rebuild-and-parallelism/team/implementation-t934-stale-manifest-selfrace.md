@@ -239,3 +239,81 @@ ONLY the parked page's block and the chapter finishes).
    brief: "zero fully-covered pages"); parking alone does not reset the
    streak — a provider that returns pure garbage still pauses after 3
    envelopes, exactly as specified.
+
+## Separator-salvage parsing (fourth implementer)
+
+Date: 2026-09-18. Basis: `diagnosis-omitted-blocks.md` (7-run replay;
+separator substitution on short emphatic last-page lines, `>` for `|`
+observed 7/7 on p12_b6).
+
+### Change
+
+`ContextualResponseParser.parseBatch` salvage rule — strict parsing kept for
+everything else.
+
+- Rule: `app/src/main/java/eu/kanade/translation/translator/contextual/ContextualResponseParser.kt`
+  - Doc comment + pattern: lines 27–45 (`corruptedSeparatorLineRegex`
+    `^(p\d+_b\d+)([^|\w])(.*)$` IGNORE_CASE).
+  - Hook in the no-`|` (`separator <= 0`) branch: lines 143–175.
+  - Candidate evaluator `salvageCorruptedSeparator`: lines 236–252.
+  - Only lines with NO usable `|` are eligible (the observed corruption class);
+    lines containing `|` keep today's unknown-id/duplicate semantics untouched.
+
+### Guard rails
+
+1. ID must normalize to a REQUESTED id of the current envelope
+   (`request.idMap` keys, normalized) — hallucinated/unknown ids stay
+   malformed/dropped (echo prevention).
+2. Greedy digit run makes digit-extension ambiguity fail closed:
+   `p12_b67>Ku` parses as id `p12_b67` (not requested) → dropped; it can never
+   masquerade as requested `p12_b6`.
+3. Remainder must be non-empty after trim; `p12_b6>`, `p12_b6   `, bare
+   `p12_b6` stay malformed, as today.
+4. Duplicate handling unchanged: salvaged lines flow through the existing
+   unknown → duplicate (`seenIds`) → blank → translated pipeline, so first
+   wins and a later duplicate (valid or salvaged) is REJECTED.
+5. Thinking-tag strip, envelope-marker/comment skipping, blank handling,
+   missing-id accounting, `framingRecovered`/error aggregation: untouched.
+
+### Diagnostics
+
+- WARN per salvaged line (parser lines 163–167):
+  `event=batch_separator_salvage envelope=<ShortHash of orderedIds>
+  block=<id> separator=U+XXXX targetLength=<n>` — envelope id, block id,
+  separator codepoint, translation char length; never the text. Quantifies
+  the on-device corruption rate flagged in the diagnosis (16–20/30 blocks).
+
+### Tests
+
+`app/src/test/java/eu/kanade/translation/translator/contextual/ContextualResponseParserTest.kt`
+(+6, T934-tagged region; suite now 24 tests):
+
+1. `salvage accepts corrupted separator with exact requested id` (`>`).
+2. `salvage accepts colon and full-width colon separators` (`:` / `：`).
+3. `salvage rejects unknown block id with corrupted separator`.
+4. `salvage rejects blank remainder and digit-extended ids`
+   (`p12_b6>` / `p12_b6   ` / `p12_b67>Ku...!` / bare `p12_b6`).
+5. `duplicate handling unchanged with mixed valid and salvaged lines`
+   (first wins in both orders).
+6. `salvage rescues t934 last-page separator corruption envelope`
+   (e-0-shaped: last page all-`>`, whole envelope completes,
+   `framingRecovered=true`).
+
+Results: filtered class run 24/24 green; full `:app:testStandardDebugUnitTest`
+BUILD SUCCESSFUL — **2073 tests, 0 failures, 0 errors, 65 skipped (pre-existing
+env-dependent skips)** in 2m18s.
+
+### Deviations
+
+1. Salvage scope limited to lines with no `|` at all; a line like
+   `p12_b6>Ku|!` (corrupted separator PLUS a later `|`) still takes the strict
+   unknown-id path. Not part of the observed failure class; extending would
+   touch unknown-id semantics, which the brief froze.
+2. Whitespace-run separator keeps any following punctuation in the
+   translation (`p12_b6 - Ku` → `- Ku`) — the single-glyph form (`p12_b6-Ku`)
+   strips it. Conservative: never swallow possible translation glyphs.
+3. "Envelope id" in the WARN log is `ShortHash.hash(orderedIds.joinToString(","))`
+   — `Request` carries no envelope id; this is stable per id-set, mirroring the
+   codebase's `ShortHash` correlation convention.
+4. Legacy `b<num>`-only ids are NOT salvage-eligible (regex requires the full
+   `p<num>_b<num>` grammar the batch protocol actually emits).

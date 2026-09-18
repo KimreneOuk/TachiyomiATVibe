@@ -401,6 +401,155 @@ class ContextualResponseParserTest {
         assertFalse(failure.safeSummary().contains("private source"))
     }
 
+    // region T934 separator-salvage (corrupted `ID|text` frame on short emphatic last-page lines)
+
+    @Test
+    fun `salvage accepts corrupted separator with exact requested id`() {
+        val (chunk, request) = singlePageRequest("first", "second")
+        val batch = ContextualResponseParser.parseBatch(
+            "p0_b0|First translation\np0_b1>Hnn...!",
+            request,
+        )
+
+        assertTrue(batch.isStructurallyValid)
+        assertTrue(batch.framingRecovered)
+        applyBatchToChunk(chunk, batch)
+        val page = chunk.pages.getValue("page.jpg")
+        page.blocks[0].translation shouldBe "First translation"
+        page.blocks[1].translation shouldBe "Hnn...!"
+    }
+
+    @Test
+    fun `salvage accepts colon and full-width colon separators`() {
+        val (chunk, request) = singlePageRequest("first", "second", "third")
+        val batch = ContextualResponseParser.parseBatch(
+            "p0_b0:First translation\np0_b1：Second translation\np0_b2|Third translation",
+            request,
+        )
+
+        assertTrue(batch.isStructurallyValid)
+        applyBatchToChunk(chunk, batch)
+        chunk.pages.getValue("page.jpg").blocks.map { it.translation } shouldBe
+            listOf("First translation", "Second translation", "Third translation")
+    }
+
+    @Test
+    fun `salvage rejects unknown block id with corrupted separator`() {
+        val (chunk, request) = singlePageRequest("first")
+        val batch = ContextualResponseParser.parseBatch("p0_b9>Hnn...!", request)
+
+        assertFalse(batch.isStructurallyValid)
+        assertTrue(batch.validationErrors.any { it.contains("Malformed line") })
+        applyBatchToChunk(chunk, batch)
+        chunk.pages.getValue("page.jpg").blocks.single().translation shouldBe ""
+    }
+
+    @Test
+    fun `salvage rejects blank remainder and digit-extended ids`() {
+        val (chunk, request) = singlePageRequest(*Array(7) { "gasp$it" }, naturalPageIndex = 12)
+        val batch = ContextualResponseParser.parseBatch(
+            "p12_b0|Hnn...!\n" +
+                "p12_b6>\n" +
+                "p12_b67>Ku...!\n" +
+                "p12_b6",
+            request,
+        )
+
+        assertFalse(batch.isStructurallyValid)
+        assertTrue(batch.validationErrors.all { it.contains("Malformed line") || it.startsWith("Missing") })
+        applyBatchToChunk(chunk, batch)
+        val page = chunk.pages.getValue("page.jpg")
+        page.blocks[0].translation shouldBe "Hnn...!"
+        page.blocks[6].translation shouldBe ""
+    }
+
+    @Test
+    fun `duplicate handling unchanged with mixed valid and salvaged lines`() {
+        val (chunk, request) = singlePageRequest("first", "second")
+        val batch = ContextualResponseParser.parseBatch(
+            "p0_b0|First.\n" +
+                "p0_b0>Salvaged duplicate.\n" +
+                "p0_b1>Salvaged second.\n" +
+                "p0_b1|Valid duplicate.",
+            request,
+        )
+
+        assertFalse(batch.isStructurallyValid)
+        assertTrue(batch.duplicateIds.contains("p0_b0"))
+        assertTrue(batch.duplicateIds.contains("p0_b1"))
+        applyBatchToChunk(chunk, batch)
+        val page = chunk.pages.getValue("page.jpg")
+        page.blocks[0].translation shouldBe "First."
+        page.blocks[1].translation shouldBe "Salvaged second."
+    }
+
+    @Test
+    fun `salvage rescues t934 last-page separator corruption envelope`() {
+        // Mirror of the 2026-09-17 on-device failure (envelope e-0): every line of
+        // the envelope's LAST page comes back with `>` instead of `|`; the strict
+        // parser dropped them, retries re-corrupted, budget exhausted. The whole
+        // envelope must now parse and complete on the first attempt.
+        val earlyPage = PageTranslation(blocks = mutableListOf(block("He stepped closer.", x = 0f)))
+        val lastPage = PageTranslation(
+            blocks = mutableListOf(
+                block("く...ッ!", x = 0f),
+                block("ん...っ", x = 10f),
+                block("あ...ッ", x = 20f),
+            ),
+        )
+        val chunk = TranslationContextChunk(
+            pages = linkedMapOf("p009.jpg" to earlyPage, "p013.jpg" to lastPage),
+            blockCount = 4,
+            rollingContext = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = 256,
+            pageIndexes = mapOf("p009.jpg" to 8, "p013.jpg" to 12),
+        )
+        val request = ContextualRequestBuilder.build(
+            chunk,
+            TextRecognizerLanguage.JAPANESE,
+            TextTranslatorLanguage.ENGLISH,
+        )
+
+        val batch = ContextualResponseParser.parseBatch(
+            "p8_b0|He stepped closer.\n" +
+                "p12_b0>Ku...!\n" +
+                "p12_b1>Hnn...!\n" +
+                "p12_b2>Ahh...!",
+            request,
+        )
+
+        assertTrue(batch.isStructurallyValid)
+        assertTrue(batch.framingRecovered)
+        applyBatchToChunk(chunk, batch)
+        lastPage.blocks.map { it.translation } shouldBe listOf("Ku...!", "Hnn...!", "Ahh...!")
+        earlyPage.blocks.single().translation shouldBe "He stepped closer."
+    }
+
+    // endregion
+
+    private fun singlePageRequest(
+        vararg blocks: String,
+        naturalPageIndex: Int = 0,
+    ): Pair<TranslationContextChunk, ContextualRequestBuilder.Request> {
+        val page = PageTranslation(
+            blocks = blocks.mapIndexed { index, text -> block(text, x = index * 10f) }.toMutableList(),
+        )
+        val chunk = TranslationContextChunk(
+            pages = linkedMapOf("page.jpg" to page),
+            blockCount = blocks.size,
+            rollingContext = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = 256,
+            pageIndexes = mapOf("page.jpg" to naturalPageIndex),
+        )
+        return chunk to ContextualRequestBuilder.build(
+            chunk,
+            TextRecognizerLanguage.JAPANESE,
+            TextTranslatorLanguage.ENGLISH,
+        )
+    }
+
     private fun linkedIdMap(vararg entries: Pair<String, Int>): LinkedHashMap<String, AnchoredTargetKey> {
         val map = LinkedHashMap<String, AnchoredTargetKey>()
         entries.forEach { (id, blockIdx) -> map[id] = AnchoredTargetKey(0, blockIdx) }
