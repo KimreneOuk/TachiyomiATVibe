@@ -639,6 +639,17 @@ class ChapterTranslationStore(
         expectedToken: Long,
     ): Boolean = pageStageLeaseTable.releasePageStageLeaseIfUnattached(pageKey, origin, expectedToken)
 
+    /**
+     * T934 track V: undoes a same-origin sibling attach (see
+     * `PageStageLeaseTable.detachPageStageLeaseIfAttached`); returns true when
+     * an attach was undone.
+     */
+    suspend fun detachPageStageLeaseIfAttached(
+        pageKey: String,
+        origin: PageWriteOrigin,
+        expectedToken: Long,
+    ): Boolean = pageStageLeaseTable.detachPageStageLeaseIfAttached(pageKey, origin, expectedToken)
+
     /** Cancels the active artifact candidate and releases its matching writer lease. */
     suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
         pageStageLeaseTable.cancelPageStageWork(pageKey, origin)

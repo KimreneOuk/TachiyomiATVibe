@@ -750,4 +750,295 @@ class OverlapSchedulerTest {
             ChapterTranslationStore.artifactImageProbe = productionProbe
         }
     }
+
+    // ------------------------------------------------------------------
+    // T934 track V — continuous overlap admission (Director decision
+    // 2026-09-18). On-device evidence: strictly window-gated admission
+    // throttled overlap inpaint to roughly once per envelope gap (~8 pages/min
+    // against ~12 pages/min committed by the envelopes) while the NPU idled
+    // ~90%. The loop now drains on EVERY wake event — window open, window
+    // close (the envelope commit boundary), and bare producer nudges —
+    // independent of envelope boundaries. The fences that must not regress:
+    // the 047/052 lease-staleness rule (skip/re-acquire, never abort-waste),
+    // the write-slot-busy deferral, single-flight lane concurrency, and the
+    // end-of-pass serial drain backstop.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `continuous admission inpaints with no window at all - executor triggers are just one producer`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedOcrOnlyPage(store, it) }
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(store, identities)
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        // NO window is ever opened: the bare producer nudge is the only
+        // trigger — the regression core for "admission must not wait for the
+        // envelope cadence".
+        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+        scheduler.notifyCandidatesChanged()
+        testScheduler.advanceUntilIdle()
+        scheduler.stopOverlap()
+        loopJob.cancel()
+
+        lane.inpainted shouldBe pageKeys
+        lane.ocrEntries shouldBe emptyList()
+        lane.concurrent.observedMax() shouldBe 1
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 2L
+        // ZERO envelope windows: admission is independent of them.
+        scheduler.counters.snapshot()["overlapWindowsCount"] shouldBe 0L
+        pageKeys.forEach { key ->
+            store.snapshot(key).leaseToken shouldBe null
+        }
+    }
+
+    @Test
+    fun `inpaint drains while the envelope request is in flight and re-admits at the commit boundary`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2", "p3")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedOcrOnlyPage(store, it) }
+        // Simulated envelope hold: p3's BATCH write slot is held by its own
+        // in-flight translation (dispatch→commit), so the mid-flight drain
+        // must defer it — skipped, never wasted.
+        store.tryAcquirePageStageLease("p3", PageStage.Translation, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>()
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(store, identities)
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+        scheduler.onRemoteWindowOpened()
+        testScheduler.advanceUntilIdle()
+
+        // MID-FLIGHT (the window is still open — the request has not
+        // returned): p1 and p2 already committed. The old window-gated loop
+        // could not serve pages while nothing re-triggered it; the continuous
+        // drain runs straight through the in-flight request.
+        lane.inpainted shouldBe listOf("p1", "p2")
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 2L
+        // p3 skipped-not-wasted: the envelope's lease record is untouched.
+        store.snapshot("p3").leaseToken.shouldNotBeNull()
+
+        // The commit boundary: the request completes, the envelope commits and
+        // releases its hold. A boundary producer (in production, the next
+        // envelope's window-open drain serves this role; the nudge is the
+        // same trigger without a window) re-admits p3.
+        scheduler.onRemoteWindowClosed()
+        store.releasePageStageLease("p3", PageWriteOrigin.BATCH)
+        scheduler.notifyCandidatesChanged()
+        testScheduler.advanceUntilIdle()
+
+        lane.inpainted shouldBe pageKeys
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 3L
+        // Exactly ONE window produced all three commits.
+        scheduler.counters.snapshot()["overlapWindowsCount"] shouldBe 1L
+        // And the window-CLOSE itself never triggered a drain (it would have
+        // re-attempted the still-unreleased p3 and pushed serialFallbacks to 2):
+        // the boundary re-admission above came from the nudge alone.
+        scheduler.counters.snapshot()["serialFallbacks"] shouldBe 1L
+        store.snapshot("p3").leaseToken shouldBe null
+        scheduler.stopOverlap()
+        loopJob.cancel()
+    }
+
+    @Test
+    fun `sibling attach onto a live envelope hold is detected and detached - never rides the writer token`() = runTest {
+        val store = lazyStore()
+        store.preRegisterPages(listOf("p1", "p2"))
+        seedOcrOnlyPage(store, "p1")
+        seedOcrOnlyPage(store, "p2")
+        // A live BATCH Translation hold (the envelope's dispatch→commit lease).
+        val envLease = store.tryAcquirePageStageLease("p1", PageStage.Translation, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(store, identities)
+        val scheduler = scheduler(store, lane, pageKeys = listOf("p1", "p2"), identities = identities)
+
+        // The ownership claim's stage proof: the same-origin re-acquire is a
+        // SIBLING ATTACH (the record's Translation stage + token, not a fresh
+        // Inpaint grant) — the exact residual race the 047/052 rule closes.
+        // The claim must undo the attach and skip — no write, no record removal.
+        val ownership = scheduler.tryClaimInpaintOwnership("p1")
+        ownership.shouldBeInstanceOf<OverlapScheduler.InpaintOwnership.SiblingAttach>()
+        lane.inpainted shouldBe emptyList()
+        // The envelope's record survives INTACT (same token) — the next
+        // acquire could not have minted a fresh token to fail-close on.
+        store.snapshot("p1").leaseToken shouldBe envLease.token
+        // The attach was undone: the envelope's attach-aware release sees a
+        // clean record again (this is what the plain-release disaster broke).
+        store.releasePageStageLeaseIfUnattached("p1", PageWriteOrigin.BATCH, envLease.token) shouldBe true
+
+        // Control: a free page yields a FRESH inpaint-stage grant.
+        val granted = scheduler.tryClaimInpaintOwnership("p2")
+            .shouldBeInstanceOf<OverlapScheduler.InpaintOwnership.Granted>()
+        granted.lease.lease.stage shouldBe PageStage.Inpaint
+        store.releasePageStageLease("p2", PageWriteOrigin.BATCH)
+    }
+
+    @Test
+    fun `single flight holds under overlapping producers - lane concurrency stays one`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2", "p3", "p4")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedOcrOnlyPage(store, it) }
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(store, identities)
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+        // Overlapping producers: the executor's window brackets AND bare
+        // nudges from sibling coroutines, fired while the loop is draining.
+        scheduler.onRemoteWindowOpened()
+        launch { scheduler.notifyCandidatesChanged() }
+        launch { scheduler.notifyCandidatesChanged() }
+        launch { scheduler.notifyCandidatesChanged() }
+        testScheduler.advanceUntilIdle()
+        scheduler.onRemoteWindowClosed()
+        testScheduler.advanceUntilIdle()
+        scheduler.stopOverlap()
+        loopJob.cancel()
+
+        // Every page committed EXACTLY once, strictly serially.
+        lane.inpainted.size shouldBe pageKeys.size
+        lane.inpainted.toSet() shouldBe pageKeys.toSet()
+        lane.concurrent.observedMax() shouldBe 1
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 4L
+    }
+
+    @Test
+    fun `serial drain still sweeps the slot-busy backlog at end of pass`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2", "p3")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedOcrOnlyPage(store, it) }
+        // p2's write slot is busy for the whole continuous phase (in-flight
+        // envelope page): the deferral fail-safe must keep it out of the lane.
+        store.tryAcquirePageStageLease("p2", PageStage.Translation, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>()
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(store, identities)
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+        scheduler.notifyCandidatesChanged()
+        testScheduler.advanceUntilIdle()
+
+        // Continuous admission served p1/p3 and deferred p2 (slot busy).
+        lane.inpainted shouldBe listOf("p1", "p3")
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 2L
+        scheduler.counters.snapshot()["serialFallbacks"] shouldBe 1L
+        store.snapshot("p2").leaseToken.shouldNotBeNull()
+
+        // End-of-pass backstop (FINALIZE): the serial drain sweeps the
+        // backlog once the envelope released its hold. The sweep's candidate
+        // order is deterministic: p2 (the only remaining candidate).
+        store.releasePageStageLease("p2", PageWriteOrigin.BATCH)
+        scheduler.drainSerial()
+        loopJob.cancel()
+
+        lane.inpainted shouldBe listOf("p1", "p3", "p2")
+        scheduler.counters.snapshot()["serialInpaintsExecuted"] shouldBe 1L
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 2L
+        pageKeys.forEach { key ->
+            store.snapshot(key).page?.inpaintStatus shouldBe StageStatus.READY
+            store.snapshot(key).leaseToken shouldBe null
+        }
+    }
+
+    /**
+     * The track-V lane stand-in for an in-flight provider round-trip: the
+     * page parks INSIDE the native lane until [release] (the parked transport
+     * the window wraps), exactly where the scheduler's one-native-job mutex
+     * holds it. Stand-alone (the same durable guarded merge as
+     * [FakeInpaintLane]) because the shared fixture is final.
+     */
+    private inner class GatedInpaintLane(
+        private val store: ChapterTranslationStore,
+        private val identities: ConcurrentHashMap<String, BatchWriteIdentity>,
+        private val gate: kotlinx.coroutines.CompletableDeferred<Unit>,
+    ) : NativeLaneWorker {
+        val inpainted = mutableListOf<String>()
+        val ocrEntries = mutableListOf<String>()
+        val concurrent = AtomicIntegerMax()
+
+        override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
+            ocrEntries += pageKey
+            return null
+        }
+
+        override suspend fun runInpaintStage(pageKey: String) {
+            runInpaintStage(pageKey, null)
+        }
+
+        override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
+            gate.await()
+            inpainted += pageKey
+            concurrent.enter()
+            try {
+                val identity = identities[pageKey]
+                    ?: error("overlap scheduler must register the write identity for $pageKey")
+                store.updatePageGuarded(
+                    pageKey = pageKey,
+                    expected = ChapterTranslationStore.PatchPrecondition(
+                        generation = identity.generation,
+                        pageVersion = identity.pageVersion,
+                        leaseToken = identity.leaseToken,
+                        candidateGenerationId = identity.candidateGenerationId,
+                        dependencyFingerprint = identity.dependencyFingerprint,
+                        artifactPageVersion = identity.artifactPageVersion,
+                    ),
+                    description = "t934 track V gated inpaint",
+                ) { page ->
+                    page!!.apply { inpaintStatus = StageStatus.READY }
+                }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+            } finally {
+                concurrent.exit()
+            }
+        }
+
+        fun release() {
+            gate.complete(Unit)
+        }
+    }
+
+    @Test
+    fun `drain keeps serving candidates after the window closes mid-page`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        pageKeys.forEach { seedOcrOnlyPage(store, it) }
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = GatedInpaintLane(store, identities, kotlinx.coroutines.CompletableDeferred())
+        val scheduler = scheduler(store, lane, pageKeys, identities)
+
+        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
+        scheduler.onRemoteWindowOpened()
+        testScheduler.advanceUntilIdle()
+        // p1 is parked INSIDE the lane (the in-flight round-trip); the drain
+        // is suspended on it and nothing else was attempted.
+        lane.inpainted shouldBe emptyList()
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 0L
+
+        // The window closes while p1 still owns the lane (legal: the current
+        // page finishes through it); the round-trip then settles. The drain
+        // must CONTINUE to p2 with NO window open anymore — the continuous
+        // admission property the old windowOpen-gated loop did not have.
+        scheduler.onRemoteWindowClosed()
+        lane.release()
+        testScheduler.advanceUntilIdle()
+        scheduler.stopOverlap()
+        loopJob.cancel()
+
+        lane.inpainted shouldBe pageKeys
+        scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 2L
+        scheduler.counters.snapshot()["overlapWindowsCount"] shouldBe 1L
+        lane.ocrEntries shouldBe emptyList()
+        lane.concurrent.observedMax() shouldBe 1
+        pageKeys.forEach { key ->
+            store.snapshot(key).leaseToken shouldBe null
+        }
+    }
 }

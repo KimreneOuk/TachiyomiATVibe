@@ -25,9 +25,21 @@ import java.util.concurrent.atomic.AtomicLong
  * in-flight remote translation request.
  *
  * Binding rules (never-rules, enforced structurally):
- *  - Inpaint work runs EXCLUSIVELY while [onRemoteWindowOpened] has been
- *    signalled (the coordinator wraps the Batch sub-limit gate so every
- *    provider envelope dispatch opens exactly one window) or in the serial
+ *  - T934 track V (Director decision 2026-09-18): admission is CONTINUOUS
+ *    for the whole batch pass. [runOverlapLoop] no longer gates work on the
+ *    window flag: every wake event (window open — the executor's per-dispatch
+ *    trigger, now just one producer among several — and
+ *    [notifyCandidatesChanged]) runs ONE full drain pass that attempts
+ *    candidates back-to-back, straight through the in-flight provider
+ *    round-trip, and only then parks back on the event channel (no polling,
+ *    no timers — virtual-time safe). On-device evidence (2026-09-17 run):
+ *    strictly window-gated admission throttled overlap inpaint to roughly
+ *    once per envelope gap (~8 pages/min against ~12 pages/min committed by
+ *    the envelopes) while the NPU idled ~90%. Bounded by structure: one
+ *    attempt per page per drain (the T934 round-2 anti-spin rule,
+ *    generalized from one-attempt-per-window) and strictly one native
+ *    inpaint at a time ([inpaintMutex]).
+ *  - Inpaint work runs EXCLUSIVELY inside those drain passes or in the serial
  *    post-translate drain ([drainSerial] — the legacy post-translate serial
  *    semantics, the gate-6.5 "keep serial" arm). T934 track I decoupling
  *    (2026-09-16): candidate admission NO LONGER waits for the page's own
@@ -159,6 +171,9 @@ internal class OverlapScheduler(
     private sealed interface LoopEvent {
         data object WindowOpened : LoopEvent
         data object WindowClosed : LoopEvent
+
+        /** T934 track V: a producer nudge (no window attached — see [notifyCandidatesChanged]). */
+        data object Nudged : LoopEvent
         data object Stopped : LoopEvent
     }
 
@@ -184,6 +199,17 @@ internal class OverlapScheduler(
         windowOpenedAtMs.set(nowEpochMs())
         progressedInWindow = false
         events.trySend(LoopEvent.WindowOpened)
+    }
+
+    /**
+     * T934 track V: producer nudge — schedules a drain pass WITHOUT opening a
+     * window. The executor's window brackets are one producer among several;
+     * any observer of a state change that may have freed a candidate (a slot
+     * released, a deferral invalidated) can call this. Coalesces harmlessly:
+     * a nudge arriving mid-drain queues one more bounded pass.
+     */
+    fun notifyCandidatesChanged() {
+        events.trySend(LoopEvent.Nudged)
     }
 
     fun onRemoteWindowClosed() {
@@ -226,50 +252,107 @@ internal class OverlapScheduler(
     // ------------------------------------------------------------------
 
     /**
-     * Window-driven loop: runs while the TRANSLATE phase is dispatching.
-     * Between pages it suspends on the event channel (no polling); when the
-     * window closes mid-page the CURRENT page finishes (it owns the native
-     * lane) and no new page starts. Exports nothing — all durable progress is
-     * store state.
+     * T934 track V continuous admission loop: runs while the TRANSLATE phase
+     * is active. Every wake event — window open (the executor's per-dispatch
+     * trigger, now just one producer among several) and
+     * [notifyCandidatesChanged] nudges — triggers one FULL
+     * [drainAvailableWork] pass that runs straight through the in-flight
+     * provider round-trip and beyond (the window flag is never consulted),
+     * so the native lane works DURING the LLM wait instead of only at the
+     * envelope gaps. A backlog longer than one envelope cycle keeps the
+     * drain running across cycles; a caught-up lane parks back on the event
+     * channel (no polling, no timers — virtual-time safe). Even a bracket
+     * that already closed before the loop was dispatched drains: on virtual
+     * time that mid-run drain is exactly the pinned behavior of
+     * StandardPipelineCoordinatorTest's onFirstInpaint test (first inpaint
+     * lands while the run state is still TRANSLATE). The guards that keep a
+     * pass safe everywhere are structural, not the window state: the
+     * write-slot pre-check and ownership claim in [inpaintOne] defer any
+     * page a live writer holds, and the pass ends the moment [stopOverlap]
+     * sets the stop flag. The window-CLOSE event is deliberately not a
+     * trigger: the envelope still holds its pages' write slots until its
+     * commit settles, so the next window open (or a nudge) is the earliest
+     * a freed page can actually be claimed.
+     * Exports nothing — all durable progress is store state.
      */
     suspend fun runOverlapLoop() {
         for (event in events) {
             when (event) {
                 LoopEvent.Stopped -> return
                 LoopEvent.WindowClosed -> Unit
-                LoopEvent.WindowOpened -> {
-                    while (windowOpen.get() && !stopped.get()) {
-                        val pageKey = nextInpaintCandidate() ?: break
-                        when (inpaintOne(pageKey, overlap = true)) {
-                            InpaintOutcome.Committed, InpaintOutcome.NoWork ->
-                                progressedInWindow = true
-                            // One attempt per window (T934 round 2): the lane
-                            // just settled this page's outcome as failed — it
-                            // is not re-attempted until the NEXT window opens
-                            // (or the serial drain starts). Re-selecting it
-                            // inside the still-open window spun the loop hot
-                            // on virtual time (the T5 hang) and on real lanes.
-                            InpaintOutcome.Failed -> {
-                                deferredUntilNextWindow += pageKey
-                                progressedInWindow = true
-                            }
-                            // Yielded to a concurrent writer — the page is
-                            // settled for this pass (progress = the loop moved
-                            // past it, so the window can close cleanly).
-                            InpaintOutcome.Deferred -> progressedInWindow = true
-                            // Lease-denial accounting is per deferred PAGE
-                            // (serialFallbacks inside inpaintOne); the loop
-                            // keeps trying the remaining candidates. SlotBusy
-                            // is the same shape (the page went to
-                            // [deferredUntilNextWindow] inside inpaintOne).
-                            InpaintOutcome.LeaseDenied, InpaintOutcome.SlotBusy -> Unit
-                        }
-                    }
-                    // Window still open but nothing left to inpaint right now:
-                    // wait for the close (new candidates are picked up by the
-                    // next window or the serial drain).
-                }
+                LoopEvent.WindowOpened, LoopEvent.Nudged -> drainAvailableWork()
             }
+        }
+    }
+
+    /**
+     * ONE continuous-admission pass: every candidate the safety gates
+     * currently allow is attempted back-to-back, independent of envelope
+     * boundaries. A backlog longer than one envelope cycle keeps the lane
+     * busy across cycles; a caught-up lane idles at the event channel instead
+     * of the NPU idling between envelope gaps. Still strictly serialized:
+     * [inpaintOne] holds [inpaintMutex], so even overlapping producers can
+     * never run two native inpaints.
+     */
+    private suspend fun drainAvailableWork() {
+        // A new drain is a state change (slot holds settle while the previous
+        // pass ran): every deferred page gets exactly one fresh attempt per
+        // pass — the T934 round-2 one-attempt-per-window rule, generalized to
+        // one-attempt-per-drain.
+        deferredUntilNextWindow.clear()
+        while (!stopped.get()) {
+            val pageKey = nextInpaintCandidate() ?: break
+            when (inpaintOne(pageKey, overlap = true)) {
+                // Telemetry fires on COMMIT only (a NoWork scan must not
+                // re-log the same throughput milestone).
+                InpaintOutcome.Committed -> {
+                    progressedInWindow = true
+                    logInpaintThroughput()
+                }
+                InpaintOutcome.NoWork -> progressedInWindow = true
+                // One attempt per pass (T934 round 2): the lane just settled
+                // this page's outcome as failed — it is not re-attempted
+                // inside the same drain. Re-selecting it inside the same pass
+                // spun the loop hot on virtual time (the T5 hang) and on real
+                // lanes.
+                InpaintOutcome.Failed -> {
+                    deferredUntilNextWindow += pageKey
+                    progressedInWindow = true
+                }
+                // Yielded to a concurrent writer — the page is settled for
+                // this pass (progress = the drain moved past it).
+                InpaintOutcome.Deferred -> progressedInWindow = true
+                // Lease-denial accounting is per deferred PAGE (serialFallbacks
+                // inside inpaintOne); the drain keeps trying the remaining
+                // candidates. SlotBusy is the same shape (the page went to
+                // [deferredUntilNextWindow] inside inpaintOne).
+                InpaintOutcome.LeaseDenied, InpaintOutcome.SlotBusy -> Unit
+            }
+        }
+    }
+
+    /** Telemetry cadence: one INFO throughput line per this many overlap commits. */
+    private val firstOverlapCommitAtMs = AtomicLong(0)
+
+    /**
+     * T934 track V telemetry: every [THROUGHPUT_LOG_EVERY_PAGES] overlap
+     * commits, one concise INFO line in the existing `[translation_perf]`
+     * shape so the next on-device run can verify cleaning throughput against
+     * the envelope commit rate (target: ≥ translation throughput).
+     */
+    private fun logInpaintThroughput() {
+        val committed = counters.overlapInpaintsExecuted.get()
+        if (committed <= 0L || committed % THROUGHPUT_LOG_EVERY_PAGES != 0L) return
+        val startedAt = firstOverlapCommitAtMs.get()
+        val elapsedMs = (nowEpochMs() - startedAt).coerceAtLeast(1L)
+        val ratePerMin = committed * 60_000.0 / elapsedMs
+        val rateText = "%.1f".format(ratePerMin)
+        val snapshot = counters.snapshot()
+        logcat(LogPriority.INFO) {
+            "[translation_perf] stage=inpainting overlapPages=$committed " +
+                "rate=$rateText/min windows=${snapshot["overlapWindowsCount"]} " +
+                "serialFallbacks=${snapshot["serialFallbacks"]} " +
+                "failures=${snapshot["overlapInpaintFailures"]}"
         }
     }
 
@@ -455,6 +538,66 @@ internal class OverlapScheduler(
 
     private enum class InpaintOutcome { Committed, Failed, NoWork, LeaseDenied, SlotBusy, Deferred }
 
+    /**
+     * T934 track V: the outcome of ONE ownership claim for a candidate page
+     * (atomic acquire + post-acquire re-validation). Internal + sealed so the
+     * 047/052 rule is unit-testable in isolation.
+     */
+    internal sealed interface InpaintOwnership {
+        /**
+         * A FRESH inpaint-stage BATCH grant — this scheduler owns the page's
+         * write slot; [snapshot] was captured right after the grant.
+         */
+        data class Granted(
+            val lease: LeaseAcquisition.Granted,
+            val snapshot: ChapterTranslationStore.PageSnapshot,
+        ) : InpaintOwnership
+
+        /**
+         * The grant rode an EXISTING BATCH hold (a same-origin SIBLING ATTACH
+         * — the pre-check's snapshot went stale). The attach was already
+         * undone ([store.detachPageStageLeaseIfAttached]); the caller defers
+         * the page and moves on — never writes, never removes the record.
+         */
+        data object SiblingAttach : InpaintOwnership
+
+        /** A foreign owner (MANUAL/native) holds the stage — never preempted. */
+        data class LeaseDenied(val denial: LeaseAcquisition.Denied) : InpaintOwnership
+    }
+
+    /**
+     * T934 track V ownership claim: acquire the page's BATCH inpaint lease and
+     * RE-VALIDATE the grant. The acquire is atomic, so the 047/052 staleness
+     * is detected, not raced: a SIBLING ATTACH grants the EXISTING record's
+     * token AND stage (`PageStageLeaseTable.tryAcquirePageStageLease`), while
+     * a fresh grant always carries [PageStage.Inpaint]. On a sibling detect,
+     * the attach is undone (detach — never a plain release, which would remove
+     * a live writer's record mid-dispatch and fail-close its commit) and the
+     * page is skipped: rejected WITHOUT waste, logged at DEBUG (WARN if the
+     * detach finds the record already moved on).
+     */
+    internal suspend fun tryClaimInpaintOwnership(pageKey: String): InpaintOwnership {
+        val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Inpaint, PageWriteOrigin.BATCH)
+        if (lease is LeaseAcquisition.Denied) {
+            return InpaintOwnership.LeaseDenied(lease)
+        }
+        val granted = lease as LeaseAcquisition.Granted
+        if (granted.lease.stage != PageStage.Inpaint) {
+            val undone = store.detachPageStageLeaseIfAttached(
+                pageKey,
+                PageWriteOrigin.BATCH,
+                granted.lease.token,
+            )
+            logcat(if (undone) LogPriority.DEBUG else LogPriority.WARN) {
+                "TachiyomiAT t934 overlap inpaint skipped pageHash=${pageKey.hashCode()} " +
+                    "(sibling attach on a live BATCH ${granted.lease.stage} hold; " +
+                    "attach ${if (undone) "detached — re-admitted at the next drain" else "already moved on"})"
+            }
+            return InpaintOwnership.SiblingAttach
+        }
+        return InpaintOwnership.Granted(granted, store.snapshot(pageKey))
+    }
+
     private suspend fun inpaintOne(pageKey: String, overlap: Boolean): InpaintOutcome {
         return inpaintMutex.withLock {
             inFlightPage = pageKey
@@ -472,16 +615,14 @@ internal class OverlapScheduler(
                 // under it — the writer's commit fails closed
                 // ("Batch persistence publication rejected", the D7/D2
                 // signature). The hold is transient, so the page is deferred:
-                // re-admitted at the NEXT window (overlap arm — the decoupled
-                // overlap never waits for translation DATA, only for the
-                // page's own in-flight batch WRITE to settle) or attempted
-                // once by the serial drain (its existing defer-for-this-drain
-                // discipline). The unsynchronized residual: a same-origin
-                // writer acquiring between this snapshot and the acquire below
-                // yields a sibling grant; the sibling's plain release then
-                // retires the record per the R1 sibling contract and the
-                // writer heals (guarded refresh) or pauses — a narrow race
-                // versus the deterministic breakage this check removes.
+                // re-admitted at the NEXT drain pass (overlap arm — T934 track
+                // V wakes the loop at every envelope commit boundary, so the
+                // deferral no longer waits a whole window) or attempted once
+                // by the serial drain (its existing defer-for-this-drain
+                // discipline). The unsynchronized residual — a same-origin
+                // writer acquiring between this snapshot and the claim below —
+                // is now DETECTED and cleanly skipped by the claim's stage
+                // proof (see [tryClaimInpaintOwnership]) instead of ridden.
                 if (store.snapshot(pageKey).leaseToken != null) {
                     if (overlap) {
                         deferredUntilNextWindow += pageKey
@@ -493,104 +634,119 @@ internal class OverlapScheduler(
                     }
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT t924 overlap inpaint deferred pageHash=${pageKey.hashCode()} " +
-                            "(batch write slot busy; re-admitted at the next window or the serial drain)"
+                            "(batch write slot busy; re-admitted at the next drain or the serial drain)"
                     }
                     return@withLock InpaintOutcome.SlotBusy
                 }
-                // Native admission unchanged: BATCH attaches behind MANUAL,
-                // never preempts (a denied lease skips the page — the serial
-                // drain / a later run reconciles it).
-                val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Inpaint, PageWriteOrigin.BATCH)
-                if (lease !is LeaseAcquisition.Granted) {
-                    // Never preempt the owning origin: defer the page for the
-                    // rest of the pass (a MANUAL/native owner's outcome is
-                    // authoritative; a later run reconciles).
-                    deferredByLeaseOwner += pageKey
-                    if (overlap) {
-                        // Gate-6.5 accounting: this page could not ride the
-                        // overlap window and falls back to the serial arm.
-                        counters.serialFallbacks.incrementAndGet()
-                    }
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT t924 overlap inpaint deferred pageHash=${pageKey.hashCode()} " +
-                            "(lease owned by ${if (lease is LeaseAcquisition.Denied) lease.owner else "unknown"})"
-                    }
-                    return@withLock InpaintOutcome.LeaseDenied
-                }
-                val snapshot = store.snapshot(pageKey)
-                val live = snapshot.page
-                // Fresh-snapshot re-check mirroring [nextInpaintCandidate]'s
-                // T934 relaxed gate: OCR-final + has mask, translation status
-                // irrelevant (inpaint's data dependency is detection/OCR only).
-                if (live == null ||
-                    live.ocrStatus != StageStatus.READY ||
-                    live.blocks.isEmpty() ||
-                    live.inpaintStatus == StageStatus.READY ||
-                    live.isTextlessTerminal
-                ) {
-                    return@withLock InpaintOutcome.NoWork
-                }
-                // Fresh identity so the EXISTING lane's guarded INPAINT merges
-                // (and the cleaned-image publication substage) fence against
-                // the lease THIS scheduler just acquired.
-                val identity = BatchWriteIdentity(
-                    generation = snapshot.generation,
-                    pageVersion = snapshot.pageVersion,
-                    leaseToken = lease.lease.token,
-                    candidateGenerationId = snapshot.candidateGenerationId,
-                    dependencyFingerprint = snapshot.dependencyFingerprint,
-                    artifactPageVersion = snapshot.artifactPageVersion,
-                )
-                batchWriteIdentities[pageKey] = identity
-                var committed = false
-                try {
-                    nativeWorker.runInpaintStage(pageKey)
-                    val after = store.snapshot(pageKey)
-                    committed = after.page?.inpaintStatus == StageStatus.READY
-                    if (committed) {
+                when (val ownership = tryClaimInpaintOwnership(pageKey)) {
+                    is InpaintOwnership.LeaseDenied -> {
+                        // Never preempt the owning origin: defer the page for
+                        // the rest of the pass (a MANUAL/native owner's outcome
+                        // is authoritative; a later run reconciles).
+                        deferredByLeaseOwner += pageKey
                         if (overlap) {
-                            counters.overlapInpaintsExecuted.incrementAndGet()
+                            // Gate-6.5 accounting: this page could not ride the
+                            // overlap window and falls back to the serial arm.
+                            counters.serialFallbacks.incrementAndGet()
+                        }
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT t924 overlap inpaint deferred pageHash=${pageKey.hashCode()} " +
+                                "(lease owned by ${ownership.denial.owner ?: "unknown"})"
+                        }
+                        InpaintOutcome.LeaseDenied
+                    }
+                    // T934 track V: the acquire raced a same-origin writer's
+                    // hold and the attach was cleanly undone — the page is
+                    // deferred exactly like a pre-check slot-busy hit (no
+                    // write, no record removal, no wasted pass).
+                    InpaintOwnership.SiblingAttach -> {
+                        if (overlap) {
+                            deferredUntilNextWindow += pageKey
+                            counters.serialFallbacks.incrementAndGet()
                         } else {
-                            counters.serialInpaintsExecuted.incrementAndGet()
+                            deferredByLeaseOwner += pageKey
                         }
-                        runCatching { onInpaintCommitted?.invoke(pageKey) }.onFailure { t ->
-                            logcat(LogPriority.WARN) {
-                                "TachiyomiAT t924 overlap post-inpaint hook failed pageHash=${pageKey.hashCode()}: $t"
+                        InpaintOutcome.SlotBusy
+                    }
+                    is InpaintOwnership.Granted -> {
+                        val lease = ownership.lease
+                        val snapshot = ownership.snapshot
+                        val live = snapshot.page
+                        // Fresh-snapshot re-check mirroring [nextInpaintCandidate]'s
+                        // T934 relaxed gate: OCR-final + has mask, translation status
+                        // irrelevant (inpaint's data dependency is detection/OCR only).
+                        if (live == null ||
+                            live.ocrStatus != StageStatus.READY ||
+                            live.blocks.isEmpty() ||
+                            live.inpaintStatus == StageStatus.READY ||
+                            live.isTextlessTerminal
+                        ) {
+                            return@withLock InpaintOutcome.NoWork
+                        }
+                        // Fresh identity so the EXISTING lane's guarded INPAINT merges
+                        // (and the cleaned-image publication substage) fence against
+                        // the lease THIS scheduler just acquired.
+                        val identity = BatchWriteIdentity(
+                            generation = snapshot.generation,
+                            pageVersion = snapshot.pageVersion,
+                            leaseToken = lease.lease.token,
+                            candidateGenerationId = snapshot.candidateGenerationId,
+                            dependencyFingerprint = snapshot.dependencyFingerprint,
+                            artifactPageVersion = snapshot.artifactPageVersion,
+                        )
+                        batchWriteIdentities[pageKey] = identity
+                        var committed = false
+                        try {
+                            nativeWorker.runInpaintStage(pageKey)
+                            val after = store.snapshot(pageKey)
+                            committed = after.page?.inpaintStatus == StageStatus.READY
+                            if (committed) {
+                                if (overlap) {
+                                    counters.overlapInpaintsExecuted.incrementAndGet()
+                                    firstOverlapCommitAtMs.compareAndSet(0L, nowEpochMs())
+                                } else {
+                                    counters.serialInpaintsExecuted.incrementAndGet()
+                                }
+                                runCatching { onInpaintCommitted?.invoke(pageKey) }.onFailure { t ->
+                                    logcat(LogPriority.WARN) {
+                                        "TachiyomiAT t924 overlap post-inpaint hook failed pageHash=${pageKey.hashCode()}: $t"
+                                    }
+                                }
+                            } else {
+                                counters.overlapInpaintFailures.incrementAndGet()
                             }
+                            if (committed) InpaintOutcome.Committed else InpaintOutcome.Failed
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: BatchContentionRejectedException) {
+                            // T925 coexistence: the page's guarded publication lost a
+                            // precondition race with a concurrent writer (typically the
+                            // reader's live translate-on-view lane) even after a
+                            // fresh-snapshot retry. The concurrent owner's committed
+                            // outcome is authoritative — defer the page for the rest
+                            // of the pass; the owner (or a later run) reconciles it.
+                            // Retrying here livelocked the whole ordered drain.
+                            counters.overlapInpaintFailures.incrementAndGet()
+                            deferredByLeaseOwner += pageKey
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT t924 overlap inpaint yielded pageHash=${pageKey.hashCode()} " +
+                                    "(concurrent writer owns the page; owner outcome or a later run reconciles)"
+                            }
+                            InpaintOutcome.Deferred
+                        } catch (t: Throwable) {
+                            counters.overlapInpaintFailures.incrementAndGet()
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT t924 overlap inpaint failed pageHash=${pageKey.hashCode()} " +
+                                    "error=${t::class.java.simpleName}: ${t.message ?: "no message"}"
+                            }
+                            InpaintOutcome.Failed
+                        } finally {
+                            batchWriteIdentities.remove(pageKey)
+                            // TX-06 discipline: the lease is released only after the
+                            // inpaint attempt settled (commit, failure, or teardown).
+                            runCatching { releaseBatchLease(pageKey) }
                         }
-                    } else {
-                        counters.overlapInpaintFailures.incrementAndGet()
                     }
-                    if (committed) InpaintOutcome.Committed else InpaintOutcome.Failed
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: BatchContentionRejectedException) {
-                    // T925 coexistence: the page's guarded publication lost a
-                    // precondition race with a concurrent writer (typically the
-                    // reader's live translate-on-view lane) even after a
-                    // fresh-snapshot retry. The concurrent owner's committed
-                    // outcome is authoritative — defer the page for the rest
-                    // of the pass; the owner (or a later run) reconciles it.
-                    // Retrying here livelocked the whole ordered drain.
-                    counters.overlapInpaintFailures.incrementAndGet()
-                    deferredByLeaseOwner += pageKey
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT t924 overlap inpaint yielded pageHash=${pageKey.hashCode()} " +
-                            "(concurrent writer owns the page; owner outcome or a later run reconciles)"
-                    }
-                    InpaintOutcome.Deferred
-                } catch (t: Throwable) {
-                    counters.overlapInpaintFailures.incrementAndGet()
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT t924 overlap inpaint failed pageHash=${pageKey.hashCode()} " +
-                            "error=${t::class.java.simpleName}: ${t.message ?: "no message"}"
-                    }
-                    InpaintOutcome.Failed
-                } finally {
-                    batchWriteIdentities.remove(pageKey)
-                    // TX-06 discipline: the lease is released only after the
-                    // inpaint attempt settled (commit, failure, or teardown).
-                    runCatching { releaseBatchLease(pageKey) }
                 }
             } finally {
                 inFlightPage = null
@@ -598,5 +754,12 @@ internal class OverlapScheduler(
         }
     }
 
-    companion object
+    companion object {
+
+        /**
+         * T934 track V telemetry cadence: one INFO throughput line per this
+         * many overlap commits ([logInpaintThroughput]).
+         */
+        private const val THROUGHPUT_LOG_EVERY_PAGES = 10L
+    }
 }

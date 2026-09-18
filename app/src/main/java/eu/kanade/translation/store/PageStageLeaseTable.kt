@@ -193,6 +193,43 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
         }
     }
 
+    /**
+     * T934 track V (continuous overlap admission): undoes a same-origin
+     * SIBLING ATTACH made in error. The overlap scheduler re-validates its
+     * grant AFTER the atomic acquire: when the granted token carries the
+     * record's stage instead of the requested one, the acquire attached to a
+     * LIVE batch writer's record (the admission pre-check's snapshot went
+     * stale). The rider must then skip WITHOUT writing and WITHOUT removing
+     * the record — a plain release mid-dispatch would let the next acquire
+     * mint a fresh token and fail-close every identity fenced on the old one
+     * (the 2026-09-16 pages 047/052 shape). The attach count is decremented
+     * instead, so the owner's attach-aware release
+     * ([releasePageStageLeaseIfUnattached]) sees a clean record again.
+     * Returns true when a matching attach was undone; a record that moved on
+     * (re-minted token, other origin, gone, or no attach to undo) is a no-op.
+     */
+    suspend fun detachPageStageLeaseIfAttached(
+        pageKey: String,
+        origin: PageWriteOrigin,
+        expectedToken: Long,
+    ): Boolean = withContext(NonCancellable) {
+        mutex.withLock {
+            synchronized(pageLeases) {
+                val record = pageLeases[pageKey]
+                if (record != null &&
+                    record.origin == origin &&
+                    record.token == expectedToken &&
+                    record.attaches > 0
+                ) {
+                    pageLeases[pageKey] = record.copy(attaches = record.attaches - 1)
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
     /** Cancels the active artifact candidate and releases its matching writer lease. */
     suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
         withContext(NonCancellable) {

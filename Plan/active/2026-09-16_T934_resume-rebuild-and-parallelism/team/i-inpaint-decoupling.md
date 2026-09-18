@@ -533,3 +533,143 @@ Verification still owed (Main Leader, Gradle): `OverlapSchedulerTest`,
 `StandardLaneMultiPageCompletionTest`, `D2ManualBatchInterleavingTest`,
 Stage7 cluster) to confirm the sweep is behavior-neutral where no page is
 display-complete at drain.
+
+---
+
+# ROUND 3 (continuation, 2026-09-18) — finishing the track-V in-flight work
+
+Context: the previous implementer died mid-task; its track-V work-in-progress
+was uncommitted in this worktree. This round verified it, fixed two defects in
+it, added one pin test plus one assertion, and re-verified it against the
+recorded Gradle evidence. No git-mutating command was run; no Gradle run.
+
+## R3.1 — What was found in the recovered diff (all verified coherent)
+
+- `OverlapScheduler.kt` (~426 lines): the continuous-admission rewrite —
+  `drainAvailableWork()` (one full back-to-back pass per wake event, no
+  windowOpen bound), `LoopEvent.Nudged` + `notifyCandidatesChanged()` producer
+  API, the round-2 anti-spin rule generalized to one-attempt-per-drain,
+  `tryClaimInpaintOwnership()` (atomic acquire + post-acquire stage proof +
+  clean detach), `inpaintOne` restructured around the claim, a
+  `[translation_perf]` throughput line every 10 overlap commits, KDoc rewritten
+  for the new admission semantics. The I.1 relaxed candidate gate and the
+  never-rules are intact (only `runInpaintStage` is ever called; the
+  `inpaintMutex` envelope is untouched; the end-of-pass `drainSerial` and its
+  round-2.8 stamp sweep are unchanged).
+- `PageStageLeaseTable.kt` (+37): `detachPageStageLeaseIfAttached` — see R3.2.
+- `ChapterTranslationStore.kt` (+11): same-signature delegating stub for the
+  detach, matching the file's existing stub idiom (T909/T934 R1.2 style).
+- `OverlapSchedulerTest.kt` (+192): 5 new track-V tests — nudge-only admission
+  (zero windows), mid-flight drain + commit-boundary re-admission, the
+  sibling-attach claim as a unit (record survives intact, token unchanged),
+  single-flight under overlapping producers, and the end-of-pass serial-drain
+  sweep of a slot-busy backlog. No pre-existing assertion touched (audit of
+  the full diff: additions only).
+- Verified against the store API surface (`PageSnapshot` fields,
+  `PatchPrecondition`, `updatePageGuarded`, `PatchResult`), the test helpers,
+  and the loop lifecycle at the coordinator call sites (both lanes wrap the
+  phase in a scope: launch loop → run phase → `stopOverlap()` → `loop.join()`,
+  so no drain can straddle into FINALIZE).
+
+## R3.2 — Fence verdict on the dirty PageStageLeaseTable change
+
+`detachPageStageLeaseIfAttached` is CONSISTENT with the lease/write-gate
+fences:
+
+- It decrements `attaches` only on an exact origin+token match with
+  `attaches > 0`, and NEVER removes the record — the owner's attach-aware
+  release then sees a clean record again, and no token is ever invalidated
+  (the plain-release disaster shape from round 2 cannot recur through it).
+- A record that moved on (re-minted token, foreign origin, gone, or nothing
+  to undo) is a no-op returning false — it can never detach someone else's
+  attach.
+- Locking matches the table's dual discipline exactly (store mutex +
+  `synchronized(pageLeases)`, `NonCancellable`), same as
+  `releasePageStageLeaseIfUnattached`.
+- Balance: the sibling-attach path increments once; the single detach on the
+  detect path decrements once; the caller then neither writes nor releases.
+- T917 ownership fence untouched: the scheduler still heals nothing itself —
+  a live hold is deferred (SlotBusy), the owner's outcome stays authoritative.
+- Residual (already documented in code): detection fires only when the
+  admission pre-check's snapshot went stale between the check and the
+  acquire; the stage proof is exact because a sibling grant carries the
+  record's stage while a fresh grant always carries the requested stage.
+
+## R3.3 — What round 3 completed (edits on top of the recovered diff)
+
+1. Telemetry defect: the throughput line printed a literal format placeholder
+   (`rate=%.1f/min` verbatim — the computed rate variable was unused). Fixed
+   by formatting the value into the line.
+2. Telemetry cadence: the throughput log moved to the Committed branch only —
+   a NoWork scan re-logged the same milestone under the combined branch.
+3. New pin test `drain keeps serving candidates after the window closes
+   mid-page` (with the `GatedInpaintLane` helper that parks a page INSIDE the
+   native lane): the window closes while the page is mid-lane; after the
+   round-trip settles, the drain must continue to the next candidate with no
+   window open — the core run-through property of track V, which the old
+   per-iteration windowOpen check did not have. Asserts zero OCR entries,
+   max lane concurrency 1, exactly one counted window, both pages committed,
+   leases released.
+4. Strengthened the commit-boundary test with a `serialFallbacks == 1` pin:
+   proves the window-CLOSE event is not itself a drain trigger (a close
+   trigger would have re-attempted the still-held page and bumped the
+   counter to 2).
+5. KDoc precision: `runOverlapLoop`'s doc now names the real safety guards
+   (structural write-slot pre-check + ownership claim, the stop flag, and
+   close-is-not-a-trigger) instead of implying window state is consulted.
+
+Net: `OverlapSchedulerTest` is now 17 tests (16 recorded green + 1 new).
+No existing assertion weakened or deleted.
+
+## R3.4 — A rejected alternative, for the record
+
+A stale-bracket trigger gate (ignore a window-open event whose bracket
+already closed — round 2's guard semantics, kept only at trigger time) was
+implemented and then REVERTED. Rationale: the recorded 2026-09-18 11:34
+Gradle run proves the ungated drain already produces the intended mid-run
+behavior — the failing coordinator test's trace records the SECOND translate
+state (the mid-run first inpaint fired), and a concurrent lane is converting
+that suite to the continuous semantics. Gating stale brackets would have
+re-hidden the mid-run drain behind round-2 behavior and re-broken that
+conversion. Unconditional drains are the design; the guards are structural.
+
+## R3.5 — Concurrent work in the same worktree (for the commit)
+
+While this lane worked, OTHER uncommitted changes appeared in this worktree
+(NOT produced by this lane, outside its allowlist):
+
+- `ChapterProfileBatchCoordinator.kt` (+172), `TranslationBatchProgressTracker.kt`
+  (+10) — a concurrent T934 stranded-page lane (failure-grouping by the
+  page's active stage error; coordinator-side work).
+- `StandardPipelineCoordinatorTest.kt` (+18/-8) — converts the
+  onFirstInpaint state expectation to the continuous semantics (the hook
+  tolerates the translate phase, and the recorded state list gains the
+  mid-run translate entry).
+
+Recorded-run status for that suite: its "standard run translates in order"
+test was still RED at 11:34 — the finalize record was missing from the
+recorded states at assertion time. The owning lane is iterating on that file
+right now; do NOT attribute it to track V (the scheduler-side behavior it
+exercises — the mid-run drain — is exactly the intended new semantics).
+
+## R3.6 — Remaining work and risks for review
+
+1. `notifyCandidatesChanged()` has no production caller yet. Window-open
+   drains already deliver the continuous admission (the run-through property
+   means the lane keeps working after the window closes); wiring
+   commit-boundary nudges in the envelope executor/coordinator is the natural
+   follow-up for the lane that owns those files.
+2. `StandardPipelineCoordinatorTest` red at the recorded run (finalize record
+   missing at assertion time) — owned by the concurrent lane (R3.5).
+3. Gradle verification owed for this round's deltas (Main Leader):
+   `OverlapSchedulerTest` (now 17 tests), then the recorded-green set
+   (Stage7 cluster was GREEN under the ungated loop in the same recorded run,
+   as were all 16 pre-round-3 scheduler tests).
+4. Cosmetic: the telemetry rate uses default-locale decimal formatting
+   (log-only).
+5. Dead state for a later sweep: `windowOpen` is now maintained but unread
+   (the gate wrapper's bookkeeping), and `progressedInWindow` was already
+   write-only at the round-2 HEAD. Both harmless; candidates for cleanup once
+   the nudge wiring lands.
+6. D7 (b) remains expected-RED per R2.5 (production fix outside this lane's
+   allowlist).
