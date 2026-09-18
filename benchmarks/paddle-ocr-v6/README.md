@@ -91,6 +91,32 @@ Poll for `complete.marker`, then pull the results:
 & $adb -s $serial pull "$base/run-full" benchmarks\paddle-ocr-v6\results\run-full
 ```
 
+## Exact B1 parity mode
+
+Run the committed 640/1600 fixtures through both the existing per-crop
+`recognizeWithConf` path and the `recognizeBucketBatch(..., maxBatch=1)` wrapper
+in the same initialized session. The runner compares real text and raw
+single-precision confidence bits; a mismatch fails the run with page/region/
+leaf/stage identity and blocks B4/B8 or accelerator promotion.
+
+```powershell
+$parity = "$base/reference-sm8650-b1-parity"
+& $adb -s $serial shell am force-stop $pkg
+& $adb -s $serial shell am start -S -W -n $component `
+    --ei pageLimit 0 `
+    --ez includeDownloadedCorpus false `
+    --ez includeExternalCorpus false `
+    --ez parityMode true `
+    --es outputDir $parity
+& $adb -s $serial shell "ls $parity/complete.marker"
+& $adb -s $serial pull "$parity" benchmarks\paddle-ocr-v6\results\reference-sm8650-b1-parity
+```
+
+The parity artifact records the exact reference/B1 text, confidence values and
+raw confidence bits for every fixture crop. This crop-only benchmark does not
+invoke Detector v4; the detector-present/absent and fallback-heavy matrix is
+covered by the deterministic JVM suite.
+
 Every run emits:
 
 - `paddle_benchmark.json`: device/SoC/API/ABI/RAM, thermal state, model

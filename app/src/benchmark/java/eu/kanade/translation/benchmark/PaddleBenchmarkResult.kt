@@ -8,6 +8,7 @@ data class PaddleBenchmarkConfig(
     val includeDownloadedCorpus: Boolean = true,
     val includeExternalCorpus: Boolean,
     val outputDirectory: java.io.File,
+    val parityMode: Boolean = false,
 )
 
 data class BenchmarkPage(
@@ -58,6 +59,32 @@ data class SampleTiming(
     val warmRun2Ms: Double,
     val confidence: Float,
     val text: String,
+)
+
+data class PaddleB1ParitySample(
+    val sampleId: String,
+    val pageId: String,
+    val regionId: String,
+    val leafId: String,
+    val stage: String,
+    val widthBucket: Int,
+    val inputShape: List<Long>,
+    val referenceText: String,
+    val batchText: String,
+    val referenceConfidence: Float,
+    val batchConfidence: Float,
+    val referenceConfidenceBits: Int,
+    val batchConfidenceBits: Int,
+    val exactText: Boolean,
+    val exactConfidence: Boolean,
+)
+
+data class PaddleB1ParityResult(
+    val mode: String,
+    val passed: Boolean,
+    val detectorConfiguration: String,
+    val comparedSamples: Int,
+    val samples: List<PaddleB1ParitySample>,
 )
 
 data class BucketSummary(
@@ -147,4 +174,5 @@ data class PaddleBenchmarkResult(
     val pagesProcessed: Int,
     val downloadedCorpusStatus: String,
     val externalCorpusStatus: String,
+    val parity: PaddleB1ParityResult? = null,
 )

@@ -43,6 +43,7 @@ class PaddleBenchmarkRunner(private val context: Context) {
         var providerLabel = "uninitialized"
         var pagesProcessed = 0
         var coldSessionConsumed = false
+        val paritySamples = mutableListOf<PaddleB1ParitySample>()
 
         pssSampler.start()
         try {
@@ -83,6 +84,40 @@ class PaddleBenchmarkRunner(private val context: Context) {
                     val warm2 = measureInference(stageTimer, "warm_inference_2") {
                         runBlocking { engine.recognizeWithConf(sample.bitmap) }
                     }
+                    if (config.parityMode) {
+                        val batch = runBlocking {
+                            engine.recognizeBucketBatch(
+                                crops = listOf(sample.bitmap),
+                                widthBucket = widthBucket,
+                                maxBatch = 1,
+                            ).single()
+                        }
+                        val reference = warm2.value
+                        val exactText = reference.first == batch.first
+                        val exactConfidence = reference.second.toRawBits() == batch.second.toRawBits()
+                        paritySamples += PaddleB1ParitySample(
+                            sampleId = sample.id,
+                            pageId = sample.pageId,
+                            regionId = sample.id,
+                            leafId = sample.id,
+                            stage = "recognizer_b1",
+                            widthBucket = widthBucket,
+                            inputShape = shape,
+                            referenceText = reference.first,
+                            batchText = batch.first,
+                            referenceConfidence = reference.second,
+                            batchConfidence = batch.second,
+                            referenceConfidenceBits = reference.second.toRawBits(),
+                            batchConfidenceBits = batch.second.toRawBits(),
+                            exactText = exactText,
+                            exactConfidence = exactConfidence,
+                        )
+                        check(engine.lastBatchTelemetry?.downgradeReason == null) {
+                            "B1 parity batch fallback page=${sample.pageId} region=${sample.id} " +
+                                "leaf=${sample.id} stage=recognizer_b1 " +
+                                "reason=${engine.lastBatchTelemetry?.downgradeReason}"
+                        }
+                    }
                     samples += SampleTiming(
                         sampleId = sample.id,
                         pageId = sample.pageId,
@@ -117,14 +152,39 @@ class PaddleBenchmarkRunner(private val context: Context) {
                 .sorted(),
             providerLibraryDigests = BenchmarkProviderLibraryCollector.collect(context),
             measuredBatchSize = 1,
-            batched = false,
+            batched = config.parityMode,
         )
+        val parity = if (config.parityMode) {
+            PaddleB1ParityResult(
+                mode = "recognizeWithConf_vs_recognizeBucketBatch_B1",
+                passed = paritySamples.isNotEmpty() && paritySamples.all {
+                    it.exactText && it.exactConfidence
+                },
+                detectorConfiguration = "crop-only benchmark; detector-present/absent parity is covered by JVM fixtures",
+                comparedSamples = paritySamples.size,
+                samples = paritySamples.toList(),
+            )
+        } else {
+            null
+        }
+        if (parity != null && !parity.passed) {
+            val mismatches = parity.samples.filterNot { it.exactText && it.exactConfidence }.joinToString("; ") {
+                "page=${it.pageId} region=${it.regionId} leaf=${it.leafId} stage=${it.stage} " +
+                    "text=${it.referenceText}/${it.batchText} " +
+                    "confidenceBits=${it.referenceConfidenceBits}/${it.batchConfidenceBits}"
+            }
+            error("B1 parity mismatch; B4/B8 and accelerator promotion remain blocked: $mismatches")
+        }
         val bucketSummaries = listOf(640, 1600).map { bucket ->
             summarizeBucket(samples.filter { it.widthBucket == bucket }, bucket)
         }
         return PaddleBenchmarkResult(
-            schemaVersion = 1,
-            benchmarkName = "paddle_ocr_v6_small_current_main_b1",
+            schemaVersion = if (config.parityMode) 2 else 1,
+            benchmarkName = if (config.parityMode) {
+                "paddle_ocr_v6_b1_parity"
+            } else {
+                "paddle_ocr_v6_small_current_main_b1"
+            },
             commit = BuildConfig.COMMIT_SHA,
             startedAtEpochMs = startedAtEpochMs,
             durationMs = elapsedMs(startedAtNanos),
@@ -142,6 +202,7 @@ class PaddleBenchmarkRunner(private val context: Context) {
             pagesProcessed = pagesProcessed,
             downloadedCorpusStatus = downloadedDiscovery.status,
             externalCorpusStatus = supplementalDiscovery.externalStatus,
+            parity = parity,
         )
     }
 

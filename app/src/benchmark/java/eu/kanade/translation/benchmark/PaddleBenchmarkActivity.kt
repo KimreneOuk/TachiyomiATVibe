@@ -51,6 +51,7 @@ class PaddleBenchmarkActivity : Activity() {
             includeDownloadedCorpus = intent.getBooleanExtra(EXTRA_INCLUDE_DOWNLOADED, true),
             includeExternalCorpus = intent.getBooleanExtra(EXTRA_INCLUDE_EXTERNAL, false),
             outputDirectory = File(intent.getStringExtra(EXTRA_OUTPUT_DIR) ?: defaultOutput.absolutePath),
+            parityMode = intent.getBooleanExtra(EXTRA_PARITY_MODE, false),
         )
     }
 
@@ -63,5 +64,6 @@ class PaddleBenchmarkActivity : Activity() {
         const val EXTRA_INCLUDE_DOWNLOADED = "includeDownloadedCorpus"
         const val EXTRA_INCLUDE_EXTERNAL = "includeExternalCorpus"
         const val EXTRA_OUTPUT_DIR = "outputDir"
+        const val EXTRA_PARITY_MODE = "parityMode"
     }
 }
