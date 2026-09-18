@@ -424,10 +424,15 @@ class StandardPipelineCoordinatorTest {
             },
         )
         val inpaintLane = FakeOverlapInpaintLane(store, identities, onFirstInpaint = {
-            // The FINALIZE record is durable before the inpaint drain.
-            val record = durableRunRecord(store).shouldNotBeNull()
-            observedStates += record.state
-            record.state shouldBe ChapterRunState.FINALIZE
+            // T934 track V continuous admission: the first inpaint now drains
+            // DURING the TRANSLATE phase (a translated page's slot is free
+            // while a later page's translate window is open), so TRANSLATE is
+            // the expected state here — FINALIZE stays legal for a page that
+            // only the serial drain reaches. What must never have happened
+            // yet: the COMPLETE publication.
+            val state = durableRunRecord(store).shouldNotBeNull().state
+            observedStates += state
+            (state == ChapterRunState.TRANSLATE || state == ChapterRunState.FINALIZE) shouldBe true
         })
         val scheduler = OverlapScheduler(
             store = store,
@@ -460,13 +465,19 @@ class StandardPipelineCoordinatorTest {
 
         // Record sequence: the first durable state observable at OCR time is
         // OCR_PLAN (RUN_SNAPSHOT is published before the OCR loop begins and
-        // is pinned by the preflight-completion assertions) → TRANSLATE →
-        // FINALIZE; COMPLETE was never published before FINALIZE.
+        // is pinned by the preflight-completion assertions) → TRANSLATE (the
+        // first provider call) → TRANSLATE (the T934 track V
+        // continuous-admission first inpaint, drained mid-translate — see the
+        // onFirstInpaint hook above). No hook samples FINALIZE anymore: the
+        // continuous drain completes every inpaint during TRANSLATE, so the
+        // serial drain reaches FINALIZE with nothing left to observe;
+        // FINALIZE → COMPLETE durability stays pinned by the run-record
+        // assertions above.
         observedStates.first() shouldBe ChapterRunState.OCR_PLAN
         observedStates shouldContainExactly listOf(
             ChapterRunState.OCR_PLAN,
             ChapterRunState.TRANSLATE,
-            ChapterRunState.FINALIZE,
+            ChapterRunState.TRANSLATE,
         )
 
         // Pages: translated (READY, render PENDING) or no-text SKIPPED.

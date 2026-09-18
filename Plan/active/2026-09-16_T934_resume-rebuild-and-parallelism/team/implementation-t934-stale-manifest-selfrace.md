@@ -317,3 +317,164 @@ env-dependent skips)** in 2m18s.
    codebase's `ShortHash` correlation convention.
 4. Legacy `b<num>`-only ids are NOT salvage-eligible (regex requires the full
    `p<num>_b<num>` grammar the batch protocol actually emits).
+
+## Continuous overlap inpaint (fifth implementer)
+
+Date: 2026-09-18. Basis: Director decision 2026-09-18 ("go ahead and
+install") + on-device run logcat 2026-09-17 (inpaint ~8 pages/min vs
+envelope commits ~12 pages/min; NPU idle ~90%; per-page inpaint 0.3-1.2 s
+on the QNN HTP route).
+
+### Gating mechanism found (discovery step)
+
+Admission was strictly WINDOW-GATED, synchronized to the envelope cadence
+by construction — three cooperating mechanisms in `OverlapScheduler.kt`:
+
+1. `runOverlapLoop` admitted work ONLY inside `LoopEvent.WindowOpened`
+   processing, under `while (windowOpen.get() && !stopped.get())`.
+   `windowOpen` is set exclusively between `WindowSignallingGate`
+   `.executeBatch` entry/exit — the coordinator's gate wrapper brackets
+   ONLY the provider round-trip of each (sub-)batch dispatch
+   (`ProfileEnvelopeExecutor.dispatchSingleHeldBatch` :672). Not "the
+   executor invoking the scheduler after each dispatch" and not a time
+   gate: the window flag plus a one-shot channel event were the only
+   producers.
+2. The one-attempt-per-WINDOW deferral: every candidate whose BATCH write
+   slot was busy at admission (the envelope holds its pages' Translation
+   leases for the whole dispatch→commit) was parked in
+   `deferredUntilNextWindow`, cleared only at the NEXT window open — retry
+   cadence locked to envelope boundaries.
+3. Event coalescing: the UNLIMITED channel delivered one WindowOpened per
+   window; a queued event consumed after the window had already closed ran
+   the handler with `windowOpen == false` → zero attempts for that window
+   (lost wakeup).
+
+### Change — continuous admission (T934 track V)
+
+- `runOverlapLoop`: every wake event — window open (the executor trigger,
+  now one producer among several) and `notifyCandidatesChanged()` (new
+  `LoopEvent.Nudged`) — runs ONE full `drainAvailableWork()` pass that
+  attempts candidates back-to-back, straight through the in-flight
+  provider round-trip (the window flag is no longer consulted), then parks
+  back on the channel. No polling, no timers — virtual-time safe
+  (TestScheduler suites cannot hang). A backlog longer than one envelope
+  cycle keeps the lane busy across cycles; a caught-up lane idles at the
+  channel instead of the NPU idling between gaps. Window-CLOSE is
+  deliberately NOT a trigger: the envelope still holds its pages' write
+  slots until its commit settles, so the next window open is the earliest
+  a freed page is claimable.
+- Telemetry: every 10 overlap commits, one INFO line in the existing
+  `[translation_perf]` shape — `stage=inpainting overlapPages=N
+  rate=X.X/min windows=W serialFallbacks=F failures=F` — so the next
+  on-device run can verify cleaning throughput against the envelope commit
+  rate.
+- Sibling-attach OWNERSHIP PROOF (the 047/052 rule, now enforced):
+  `tryClaimInpaintOwnership` + sealed `InpaintOwnership`. The lease acquire
+  is atomic; a same-origin SIBLING ATTACH grants the EXISTING record's
+  token AND stage, a fresh grant always carries `PageStage.Inpaint`. On
+  sibling detection the attach is UNDONE via the new
+  `detachPageStageLeaseIfAttached` (`PageStageLeaseTable.kt:211`, store
+  facade `ChapterTranslationStore.kt:647`) — the record is never removed
+  mid-dispatch (a plain release would mint the next acquire a fresh token
+  and fail-close every identity fenced on the old one), no write is
+  performed, the page is deferred skip-and-move-on, logged at DEBUG (WARN
+  if the record already moved on). `inpaintOne` funnels every attempt
+  through the claim.
+
+### Fences kept (all verified in place)
+
+- Per-page write-gate ownership: fresh `BatchWriteIdentity` minted AFTER
+  the acquire from the post-acquire snapshot; T917 heal fence untouched.
+- Lease re-acquire per attempt (047/052): acquire INSIDE the attempt,
+  TX-06 release in `finally`; identity never held across an envelope
+  boundary; the residual pre-check↔acquire race is now detected +
+  detached, never ridden.
+- Memory budget: unchanged — `runInpaintStage`'s preflight gate +
+  `CrossOriginBitmapBudget` permit ride every admission; `inpaintMutex`
+  keeps strictly one native inpaint (concurrency 1 — structurally one loop
+  coroutine + mutex).
+- Slot-busy deferral kept ("re-admitted at the next drain or the serial
+  drain"; one attempt per page per drain — the T934 round-2 anti-spin
+  rule, generalized from one-attempt-per-window).
+- End-of-pass serial drain backstop unchanged (`drainSerial` →
+  `stopOverlap` → sweep → render-terminal stamp sweep).
+
+### Display-commit finding
+
+No separate per-gap pacing exists for the display path: the "committed
+display" publication rides `onInpaintCommitted` →
+`renderJoin.publishPersistedLayoutForCompletedPage` (per inpaint commit;
+the coordinator installs the hook per lane) — it publishes as soon as
+translation+inpaint are committed. Continuous inpaint admission therefore
+automatically keeps ready-pages paced with commits. No change needed.
+
+### Tests (OverlapSchedulerTest.kt unless noted)
+
+1. `continuous admission inpaints with no window at all - executor
+   triggers are just one producer` (:768) — regression core: full
+   admission with ZERO windows (`overlapWindowsCount == 0`).
+2. `inpaint drains while the envelope request is in flight and re-admits
+   at the commit boundary` (:798) — 2 pages commit mid-flight inside the
+   open window; the slot-busy page is skipped-not-wasted and re-admitted
+   at the boundary by a producer nudge without a new window (3 pages,
+   1 window).
+3. `sibling attach onto a live envelope hold is detected and detached -
+   never rides the writer token` (:848) — 047/052: record survives intact,
+   attach undone (attach-aware release succeeds again), fresh-grant
+   control.
+4. `single flight holds under overlapping producers - lane concurrency
+   stays one` (:882) — window + 3 nudges; every page exactly once,
+   `observedMax() == 1`.
+5. `serial drain still sweeps the slot-busy backlog at end of pass`
+   (:912) — continuous phase order [p1, p3]; serial arm sweeps p2;
+   counters split pinned.
+6. `drain keeps serving candidates after the window closes mid-page`
+   (:1008; added by a parallel lane against the same design; compile-fixed
+   to a stand-alone lane) — drain continues to p2 with the window closed.
+
+Neighbor update (contract legitimately changed — the first inpaint now
+fires mid-TRANSLATE instead of at FINALIZE): `StandardPipelineCoordinatorTest`
+T2 `onFirstInpaint` hook + observedStates pin — the sequence is now
+[OCR_PLAN, TRANSLATE, TRANSLATE] (TRANSLATE-or-FINALIZE tolerance in the
+hook); FINALIZE-first ordering stays pinned by the Stage7 finalize suites,
+which are unchanged and green.
+
+### Results (real output)
+
+- Targeted: `OverlapSchedulerTest`, `StandardPipelineCoordinatorTest`,
+  `Stage7FinalizeCoordinatorTest`,
+  `Stage7FinalizeResumeCoordinatorTest`, `ProfileEnvelopeDispatchTest`,
+  `BatchDispatchResumeWiringTest` — green.
+- FULL `:app:testStandardDebugUnitTest`: **BUILD SUCCESSFUL — 2083 tests,
+  0 failures, 0 errors, 65 skipped (pre-existing env-dependent skips)**
+  (fourth-implementer baseline was 2073/65; +6 mine, +4 parallel-lane
+  additions).
+
+### Deviations / environment notes
+
+1. Idle backoff replaced by channel parking: the brief's "short idle
+   backoff" as a timed poll would hang virtual-time coordinator suites
+   (the T5 hang shape); event-driven parking bounds every pass with no
+   timers. Same effect, no spinning.
+2. Window-close is not a drain trigger (see above) — a freed page waits at
+   most until the next envelope's dispatch; with the observed 10-15 s
+   round-trips vs 0.3-1.2 s pages this still clears a 5-page envelope per
+   cycle (~19+/min ≥ the 12/min target), and a 91-page backlog runs the
+   lane continuously across cycles.
+3. CONCURRENT WRITERS in this worktree during the lane: the orchestrator
+   committed this lane's main-source + OverlapSchedulerTest work as
+   879fc8f at 11:52 while I was testing (I did NOT commit); a parallel
+   stranded-page/progress lane had `ChapterProfileBatchCoordinator`,
+   `TranslationBatchProgressTracker`(+Test),
+   `StrandedPageTerminalRoutingTest`, `fix-stranded-pages.md` in flight
+   (I added one missing import to their new test to unblock the shared
+   compile, and compile-fixed their GatedInpaintLane test in
+   OverlapSchedulerTest to extend NativeLaneWorker directly). Several
+   full-suite runs were corrupted by parallel Gradle runs sharing
+   `app/build` (stale-classpath NoClassDefFound, daemon stop mid-run);
+   the reported green run is the final clean pass.
+4. Files changed by THIS lane: `OverlapScheduler.kt`,
+   `PageStageLeaseTable.kt`, `ChapterTranslationStore.kt`,
+   `OverlapSchedulerTest.kt` (all committed in 879fc8f, including the
+   GatedInpaintLane compile fix) and `StandardPipelineCoordinatorTest.kt`
+   (working tree, uncommitted).

@@ -453,11 +453,20 @@ class TranslationBatchProgressTracker(
                 } else {
                     pageMap.values.count { it.translationStatus == StageStatus.PARTIAL }
                 },
+                // T934 stranded-page fix: the group key is the page's best
+                // available reason ([activeError] = per-stage errors, then the
+                // generic errorMessage), not errorMessage alone — a failed
+                // page whose reason lives in a stage field used to fall into
+                // the generic "Unknown error" bucket in the sheet's failure
+                // groups. The INCLUSION set is unchanged (failed or
+                // errorMessage-carrying pages only), so a stale stage error on
+                // an eventually-successful page never becomes a phantom
+                // failure row.
                 pageMap.entries.filter {
                     it.value.isStageFailed ||
                         it.value.errorMessage != null
                 }.groupBy({
-                    it.value.errorMessage ?: "Unknown error"
+                    it.value.activeError ?: "Unknown error"
                 }, { it.key }),
                 System.currentTimeMillis(),
                 batchPhase = batchPhase,

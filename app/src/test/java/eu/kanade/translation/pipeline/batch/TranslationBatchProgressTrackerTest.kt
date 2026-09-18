@@ -97,6 +97,43 @@ class TranslationBatchProgressTrackerTest {
     }
 
     @Test
+    fun `failure groups carry the page's best reason, never a generic unknown`() = runTest {
+        // T934 stranded-page fix: the group key is the page's best available
+        // reason (activeError: per-stage errors, then errorMessage) — a failed
+        // page whose reason lives in a stage field used to fall into the
+        // generic "Unknown error" bucket in the sheet's failure groups.
+        val store = ChapterTranslationStore(
+            null,
+            null,
+            initialPages = mapOf(
+                "001.jpg" to PageTranslation(
+                    ocrStatus = StageStatus.FAILED,
+                    ocrError = "onnx session unavailable",
+                ),
+                "002.jpg" to PageTranslation(
+                    translationStatus = StageStatus.FAILED,
+                ).apply {
+                    // body var, not a constructor parameter
+                    errorMessage = "stranded page reconciled at FINALIZE: no translatable text"
+                },
+            ),
+        )
+        val tracker = TranslationBatchProgressTracker(
+            1,
+            store,
+            listOf("001.jpg", "002.jpg"),
+            this,
+        )
+        tracker.rebuildFromStore()
+
+        val groups = tracker.snapshot.value.groupedFailures
+        groups.getValue("onnx session unavailable") shouldBe listOf("001.jpg")
+        groups.getValue("stranded page reconciled at FINALIZE: no translatable text") shouldBe
+            listOf("002.jpg")
+        tracker.close()
+    }
+
+    @Test
     fun `envelope plan events flip the phase to rebuilding and committed ends the window`() = runTest {
         val store = ChapterTranslationStore(null, null)
         store.preRegisterPages(listOf("001.jpg", "002.jpg"))

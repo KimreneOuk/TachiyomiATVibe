@@ -2085,15 +2085,19 @@ internal class ChapterProfileBatchCoordinator(
         for (pageKey in orderedPages.map { it.first }) {
             val page = stateNow[pageKey]
             if (t924PageTerminalAtFinalize(page, store.currentGeneration)) continue
-            val reason = if (page == null) {
-                "expected page is missing from the store"
-            } else {
-                "translation left non-terminal at FINALIZE (status=${page.translationStatus})"
-            }
+            // T934 stranded-page fix: the reason must name the page's actual
+            // work state (all-translated, textless, user-owned, or genuinely
+            // unfinished) — a bare status is what made these pages show as a
+            // generic "Unknown error" class in the progress sheet.
+            val reason = strandedPageReason(page)
             logcat(LogPriority.WARN) {
                 "TachiyomiAT t924 stranded page at FINALIZE pageHash=${ShortHash.hash(pageKey)} reason=$reason"
             }
-            persistEnvelopeStructuralFailure(pageKey, "stranded page reconciled at FINALIZE: $reason")
+            persistEnvelopeStructuralFailure(
+                pageKey,
+                reason,
+                carrier = "stranded page reconciled at FINALIZE",
+            )
             strandedReconciled++
         }
 
@@ -2828,7 +2832,18 @@ internal class ChapterProfileBatchCoordinator(
                 )
                 plannerBlocks += EnvelopePlannerBlock(stableBlockId = stableId, sourceText = block.text)
             }
-            if (dispatchBlocks.isEmpty()) return@forEachIndexed
+            if (dispatchBlocks.isEmpty()) {
+                // T934 stranded-page fix: a non-terminal page with NO
+                // dispatchable blocks used to be silently skipped EVERY
+                // planning round — a self-perpetuating deadlock (its blocks
+                // all carry translations or user edits from an earlier
+                // interrupted run, or an adopted checkpoint yielded no
+                // translatable text) that FINALIZE then stamped with a
+                // generic stranded failure. Route it to an explicit
+                // terminal state instead.
+                stampUnplannablePageTerminal(entry.storagePageKey, effectivePage)
+                return@forEachIndexed
+            }
             workPages[entry.storagePageKey] = PageDispatchWork(
                 pageKey = entry.storagePageKey,
                 naturalPageIndex = entry.naturalPageIndex,
@@ -2889,6 +2904,119 @@ internal class ChapterProfileBatchCoordinator(
         }
         val committed = store.artifactManifest?.pages?.get(pageKey)?.committed ?: return false
         return committed.hasManualEdits
+    }
+
+    /**
+     * T934 stranded-page fix: explicit terminal routing for a page that is
+     * not envelope-done yet yields no dispatchable blocks (the dispatch-work
+     * build used to skip it silently every round). Two honest terminal
+     * classes reach here:
+     *  - every text block already carries a valid translation or a user edit
+     *    (an earlier interrupted run wrote block-level translations whose
+     *    page-level commit never landed): adopt the page as
+     *    translation-terminal (READY). It is NOT a failure — the reader
+     *    already draws these block translations — and READY routes the page
+     *    to the display/compose tail like any other completed page;
+     *  - no translatable text at all (an adopted block-less checkpoint
+     *    page): the [finalizePostOcrStage] textless idiom — translation and
+     *    render SKIPPED — so the page becomes durably textless-terminal
+     *    instead of PENDING forever.
+     * Best-effort: a rejected stamp leaves the page pending, where the
+     * FINALIZE sweep's specific per-page reasons still name it — never a
+     * silent drop.
+     */
+    private suspend fun stampUnplannablePageTerminal(pageKey: String, page: PageTranslation) {
+        val textBlocks = page.blocks.filter { it.text.isNotBlank() }
+        val completeBlocks = textBlocks.count { block ->
+            block.userEditedAt != null ||
+                (
+                    block.translation.isNotBlank() &&
+                        block.translation.trim() != block.text.trim()
+                    )
+        }
+        if (textBlocks.isNotEmpty() && completeBlocks < textBlocks.size) {
+            // Defensive: a requestable text block would have been dispatched;
+            // the caller only routes empty dispatch sets here. Never stamp.
+            return
+        }
+        val textless = textBlocks.isEmpty()
+        val reason = when {
+            textless -> "page has no translatable text (blocks=${page.blocks.size})"
+            textBlocks.all { it.userEditedAt != null } ->
+                "all ${textBlocks.size} text blocks are user-authoritative"
+            else -> "all ${textBlocks.size} text blocks already carry translations"
+        }
+        when (store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)) {
+            is LeaseAcquisition.Granted -> Unit
+            else -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t934 terminal adoption lease denied pageHash=${pageHash(pageKey)} reason=$reason"
+                }
+                return
+            }
+        }
+        try {
+            // Snapshot AFTER the (re)acquire: the fence compares the token the
+            // lease table holds right now (same-origin re-acquire reuses the
+            // run's token; a fresh acquire mints the one this write owns).
+            val before = store.snapshot(pageKey)
+            val outcome = store.updatePageGuarded(
+                pageKey = pageKey,
+                expected = ChapterTranslationStore.PatchPrecondition(
+                    generation = before.generation,
+                    pageVersion = before.pageVersion,
+                    leaseToken = before.leaseToken,
+                ),
+                description = "t934 stranded fix: adopt unplannable page terminal",
+            ) { current ->
+                (current ?: page).apply {
+                    if (textless) {
+                        if (translationStatus == StageStatus.PENDING ||
+                            translationStatus == StageStatus.RUNNING ||
+                            translationStatus == StageStatus.CANCELLED
+                        ) {
+                            translationStatus = StageStatus.SKIPPED
+                        }
+                        if (renderStatus == StageStatus.PENDING ||
+                            renderStatus == StageStatus.RUNNING ||
+                            renderStatus == StageStatus.CANCELLED
+                        ) {
+                            renderStatus = StageStatus.SKIPPED
+                        }
+                        // The finalizePostOcrStage parity rule: no mask boxes
+                        // means nothing to erase — the scheduler's own
+                        // empty-block preservation skip never inpaints this
+                        // page, so stamp it SKIPPED to complete the textless
+                        // terminal shape.
+                        if (inpaintStatus == StageStatus.PENDING && inpaintMaskBoxes.isEmpty()) {
+                            inpaintStatus = StageStatus.SKIPPED
+                        }
+                    } else {
+                        if (translationStatus == StageStatus.PENDING ||
+                            translationStatus == StageStatus.RUNNING ||
+                            translationStatus == StageStatus.CANCELLED
+                        ) {
+                            translationStatus = StageStatus.READY
+                        }
+                    }
+                    errorMessage = null
+                    updatedAt = nowEpochMs()
+                }
+            }
+            when (outcome) {
+                is ChapterTranslationStore.PatchResult.Accepted ->
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT t934 page adopted terminal pageHash=${pageHash(pageKey)} reason=$reason"
+                    }
+                is ChapterTranslationStore.PatchResult.Rejected ->
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t934 page terminal adoption rejected pageHash=${pageHash(pageKey)} " +
+                            "reason=${outcome.reason}"
+                    }
+            }
+        } finally {
+            store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+        }
     }
 
     /**
@@ -3037,12 +3165,46 @@ internal class ChapterProfileBatchCoordinator(
         }
 
     /**
+     * T924 terminal predicate companion: the SPECIFIC reason a non-terminal
+     * page was stranded at FINALIZE. Names the page's actual work state so
+     * the durable failure (and the progress sheet's failure groups) carries
+     * something actionable instead of a bare stage status.
+     */
+    private fun strandedPageReason(page: PageTranslation?): String {
+        if (page == null) return "expected page is missing from the store"
+        val textBlocks = page.blocks.filter { it.text.isNotBlank() }
+        val resolved = textBlocks.count { block ->
+            block.userEditedAt != null ||
+                (
+                    block.translation.isNotBlank() &&
+                        block.translation.trim() != block.text.trim()
+                    )
+        }
+        return when {
+            textBlocks.isEmpty() ->
+                "no translatable text (status=${page.translationStatus}, blocks=${page.blocks.size})"
+            resolved == textBlocks.size ->
+                "all ${textBlocks.size} text blocks already translated or user-edited " +
+                    "(status=${page.translationStatus})"
+            else ->
+                "translation left non-terminal (status=${page.translationStatus}, " +
+                    "textBlocks=${textBlocks.size}, unfinished=${textBlocks.size - resolved})"
+        }
+    }
+
+    /**
      * ST-11 terminal: a page that cannot fit any legal envelope takes a
      * durable structural failure (SOURCE category — the page content, not
      * the transport, cannot fit the policy) so later runs do not re-plan it
      * silently. Best-effort: a rejected record keeps the typed pause.
+     * The [carrier] names the sweep that failed the page (planner rejection
+     * vs the FINALIZE stranded sweep) so the recorded reason is accurate.
      */
-    private suspend fun persistEnvelopeStructuralFailure(pageKey: String, reason: String) {
+    private suspend fun persistEnvelopeStructuralFailure(
+        pageKey: String,
+        reason: String,
+        carrier: String = "envelope planner rejected the page",
+    ) {
         try {
             val snapshot = store.snapshot(pageKey)
             val metadata = DurableFailureMetadata(
@@ -3051,7 +3213,7 @@ internal class ChapterProfileBatchCoordinator(
                 status = ArtifactStageStatus.FAILED_RETRYABLE,
                 category = FailureCategory.SOURCE,
                 retryCount = 1,
-                lastFailureMessage = "envelope planner rejected the page: $reason",
+                lastFailureMessage = "$carrier: $reason",
                 lastFailedAtEpochMs = nowEpochMs(),
                 nextEligibleRetryAtEpochMs = null,
             )
