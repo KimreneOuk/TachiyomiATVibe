@@ -1890,6 +1890,10 @@ internal class ChapterProfileBatchCoordinator(
                     sublimitGate = dispatchGate,
                     providerProfile = providerChunkProfile(),
                     nowEpochMs = nowEpochMs,
+                    // T934 track V: freed write slots wake the overlap lane at
+                    // the commit settle — deferred inpaint candidates no longer
+                    // wait a whole envelope cycle for the next window's open.
+                    onCommitSettled = { overlapScheduler?.notifyCandidatesChanged() },
                 )
                 val overlapLoop: suspend (suspend () -> ProfileEnvelopeExecutor.PhaseOutcome) -> ProfileEnvelopeExecutor.PhaseOutcome =
                     { runPhase ->
@@ -1974,6 +1978,10 @@ internal class ChapterProfileBatchCoordinator(
      *     post-translate serial schedule — the gate-6.5 keep-serial arm; when
      *     the scheduler is absent this is a no-op and the run keeps the
      *     pre-Stage-7 completion semantics).
+     *  2b. T934 display-tail drain: pages whose translate+inpaint work is
+     *     done but whose committed display never landed are finished here
+     *     (bounded), or given a SPECIFIC typed terminal — the run still
+     *     completes, as a warning. See [drainFinalizeAndComplete] step 2b.
      *  3. Per-page persisted-layout publication sweep (D2): any page with
      *     committed translation + committed inpaint that the overlap hook did
      *     not publish gets its TX-23 plan publication here; failures keep the
@@ -2043,6 +2051,11 @@ internal class ChapterProfileBatchCoordinator(
      *  2. Serial inpaint drain through the overlap scheduler — pages whose
      *     inpaint already committed are skipped by the scheduler's candidate
      *     rule (never re-inpainted); with no scheduler this is a no-op.
+     *  2b. T934 display-tail drain: pages whose translate+inpaint work is
+     *     done but whose committed display (render-terminal stamp →
+     *     promotion) never landed are drained to completion here, bounded;
+     *     a page the drain cannot finish takes a SPECIFIC typed terminal and
+     *     the run still completes (as a warning).
      *  3. Persisted-layout publication sweep (idempotent per page).
      *  4. Stranded-page reconciliation (safe re-run: terminal pages skip).
      *  5. NonCancellable flush + retention reconciliation.
@@ -2061,6 +2074,20 @@ internal class ChapterProfileBatchCoordinator(
 
         // 2. Serial post-translate inpaint drain (overlap-fallback arm).
         overlapScheduler?.drainSerial()
+
+        // 2b. T934 display-tail drain: COMPLETE means "every page readable",
+        //     not "every ingredient done". The inpaint lane's render-terminal
+        //     stamp only fires when the page's translation was ALREADY
+        //     terminal at inpaint time, so order-inverted pages (inpaint
+        //     committed before the envelope translation — the decoupled
+        //     candidacy norm) stay render-PENDING with ALL work done and are
+        //     invisible to the stranded sweep below (translation READY is
+        //     terminal there). Drain that tail to completion here — bounded
+        //     passes, each a fresh snapshot so a stale-write rejection
+        //     retries — and give a page the drain genuinely cannot finish a
+        //     SPECIFIC typed terminal instead of publishing COMPLETE over a
+        //     silently frozen ORIGINAL_ONLY page.
+        val displayTail = drainDisplayTailBeforeComplete(orderedPages.map { it.first })
 
         // 3. Persisted-layout publication sweep for any page the per-page
         //    hook missed (idempotent — pages with a published plan skip).
@@ -2117,28 +2144,43 @@ internal class ChapterProfileBatchCoordinator(
         //    a rejected (or unpublishable) closure leaves the run durably at
         //    FINALIZE, so the coordinator pauses instead of reporting a
         //    completion the record disagrees with (RUN_CLOSURE_REJECTED_REASON).
-        when (val closure = publishRecord(
-            artifact,
-            record(
-                runId,
-                ChapterRunState.COMPLETE,
-                frozenFingerprint,
-                sourceDigest,
-                baseCounters +
-                    mapOf(
-                        COUNTER_FINALIZE to 1,
-                        COUNTER_RUN_COMPLETE to 1,
-                        COUNTER_LAYOUTS_PUBLISHED to layoutsPublished,
-                        COUNTER_STRANDED_RECONCILED to strandedReconciled,
-                    ),
-                ocrCorpusFingerprint = corpusFingerprint,
-                profilePointer = store.artifactManifest?.profile,
-            ),
-        )) {
+        //
+        //    T934 round 3: the publication CASes against the façade manifest
+        //    snapshot while the drain steps above move durable state through
+        //    their own store transactions. One fresh-baseline retry — re-read
+        //    the durable manifest into the façade, then re-publish — keeps
+        //    the closure off the typed pause when the snapshot is merely
+        //    stale (the same one-shot rebase every artifact-store seam gets
+        //    from retryOnStaleManifest); a genuine rejection still pauses.
+        fun completeRecord() = record(
+            runId,
+            ChapterRunState.COMPLETE,
+            frozenFingerprint,
+            sourceDigest,
+            baseCounters +
+                mapOf(
+                    COUNTER_FINALIZE to 1,
+                    COUNTER_RUN_COMPLETE to 1,
+                    COUNTER_LAYOUTS_PUBLISHED to layoutsPublished,
+                    COUNTER_STRANDED_RECONCILED to strandedReconciled,
+                    COUNTER_DISPLAY_TAIL_DRAINED to displayTail.drained,
+                    COUNTER_DISPLAY_TAIL_FAILED to displayTail.failed.size,
+                ),
+            ocrCorpusFingerprint = corpusFingerprint,
+            profilePointer = store.artifactManifest?.profile,
+        )
+        var closure = publishRecord(artifact, completeRecord())
+        if (closure !is ChapterArtifactStore.TransactionOutcome.Committed) {
+            artifact.readManifest()?.let { store.artifactManifest = it }
+            closure = publishRecord(artifact, completeRecord())
+        }
+        when (closure) {
             is ChapterArtifactStore.TransactionOutcome.Committed -> {
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT t924 run COMPLETE pages=${allPageKeys.size} stranded=$strandedReconciled " +
-                        "layouts=$layoutsPublished overlap=${overlapScheduler?.counters?.snapshot() ?: emptyMap()}"
+                        "layouts=$layoutsPublished displayTailDrained=${displayTail.drained} " +
+                        "displayTailFailed=${displayTail.failed.size} " +
+                        "overlap=${overlapScheduler?.counters?.snapshot() ?: emptyMap()}"
                 }
                 return BatchPass1Outcome(
                     needsTranslation = emptyList(),
@@ -3091,32 +3133,82 @@ internal class ChapterProfileBatchCoordinator(
      * a rejection only skips the stamp (the page re-plans as before).
      */
     private suspend fun stampAdoptedRenderTerminal(pageKey: String) {
-        val before = store.snapshot(pageKey)
-        val page = before.page ?: return
-        val displayComplete = (page.translationStatus == StageStatus.READY || page.translationStatus == StageStatus.PARTIAL) &&
-            page.inpaintStatus == StageStatus.READY &&
-            page.cleanedImageName != null &&
-            page.renderStatus == StageStatus.PENDING &&
-            page.blocks.any { it.translation.isNotBlank() }
-        if (!displayComplete) return
+        stampRenderTerminalIfDisplayComplete(
+            pageKey,
+            "t924 resume: stamp adopted display-complete page render-terminal",
+        )
+    }
+
+    /**
+     * One [stampRenderTerminalIfDisplayComplete] attempt's result. [Committed]
+     * leaves the page display-committed (already stamped, or stamped now).
+     * [PublicationRejected] means the lease was held and the display evidence
+     * was complete, yet the guarded write still lost — the generic store-side
+     * publication rejection ([REJECTED_ARTIFACT_PUBLICATION], a CAS drift the
+     * next fresh-snapshot attempt heals, or a display base the store could not
+     * validate). That page is HEALTHY: its work is intact and the write may
+     * land on a later attempt, so it stays pending for a re-drain — typed-
+     * failing it would mislabel good work (the 2026-09-17 D10 regression).
+     * [Blocked] carries the specific lease/evidence reason the drain cannot
+     * resolve this run.
+     */
+    private sealed interface RenderStampOutcome {
+        data object Committed : RenderStampOutcome
+        data object PublicationRejected : RenderStampOutcome
+        data class Blocked(val reason: String) : RenderStampOutcome
+    }
+
+    /**
+     * T934 display-tail drain: stamps [pageKey] render-terminal when it
+     * carries the full display evidence (translation READY/PARTIAL, inpaint
+     * READY, cleaned image, a translated block) and renderStatus is still
+     * PENDING — the exact durable shape of an order-inverted page whose
+     * inpaint committed before its envelope translation (the in-lane stamp
+     * only fires when translation was ALREADY terminal at inpaint time).
+     * The guarded write carries hasRenderedResult, which fires the committed
+     * display promotion ([ChapterTranslationStore.promoteDisplayIfReadyLocked]
+     * via publishLocked) and flips the reader gate. Idempotent.
+     */
+    private suspend fun stampRenderTerminalIfDisplayComplete(
+        pageKey: String,
+        description: String,
+    ): RenderStampOutcome {
         when (store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)) {
             is LeaseAcquisition.Granted -> Unit
-            else -> return
+            else -> return RenderStampOutcome.Blocked(
+                "render-terminal stamp could not acquire the Render lease " +
+                    "(owned by MANUAL/native; never preempted)",
+            )
         }
         try {
+            // The guarded write's lease fence is checked against the CURRENT
+            // page lease (render-stage token just acquired), so the page is
+            // snapshotted AFTER the acquire — the same idiom the overlap
+            // scheduler's drain-side stamp uses (a pre-acquire snapshot would
+            // fence on a null token and reject every free page).
+            val held = store.snapshot(pageKey)
+            val page = held.page
+                ?: return RenderStampOutcome.Blocked("expected page is missing from the store")
+            if (page.renderStatus == StageStatus.READY) return RenderStampOutcome.Committed
+            val displayComplete = (page.translationStatus == StageStatus.READY || page.translationStatus == StageStatus.PARTIAL) &&
+                page.inpaintStatus == StageStatus.READY &&
+                page.cleanedImageName != null &&
+                page.renderStatus == StageStatus.PENDING &&
+                page.blocks.any { it.translation.isNotBlank() }
+            if (!displayComplete) return RenderStampOutcome.Blocked(displayTailFailureReason(page))
             val expected = ChapterTranslationStore.PatchPrecondition(
-                generation = before.generation,
-                pageVersion = before.pageVersion,
-                blockFingerprints = before.blockFingerprints,
-                leaseToken = before.leaseToken,
-                candidateGenerationId = before.candidateGenerationId,
-                dependencyFingerprint = before.dependencyFingerprint,
-                artifactPageVersion = before.artifactPageVersion,
+                generation = held.generation,
+                pageVersion = held.pageVersion,
+                blockFingerprints = held.blockFingerprints,
+                leaseToken = held.leaseToken,
+                candidateGenerationId = held.candidateGenerationId,
+                dependencyFingerprint = held.dependencyFingerprint,
+                artifactPageVersion = held.artifactPageVersion,
             )
             val outcome = store.updatePageGuarded(
                 pageKey = pageKey,
                 expected = expected,
-                description = "t924 resume: stamp adopted display-complete page render-terminal",
+                description = description,
             ) { current ->
                 (current ?: page).apply {
                     if (renderStatus == StageStatus.PENDING) {
@@ -3129,9 +3221,213 @@ internal class ChapterProfileBatchCoordinator(
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT t924 render stamp rejected pageHash=${pageHash(pageKey)} reason=${outcome.reason}"
                 }
+                return if (outcome.reason == REJECTED_ARTIFACT_PUBLICATION) {
+                    RenderStampOutcome.PublicationRejected
+                } else {
+                    RenderStampOutcome.Blocked("render-terminal write rejected: ${outcome.reason}")
+                }
             }
+            return RenderStampOutcome.Committed
         } finally {
             store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+        }
+    }
+
+    private class DisplayTailDrain(
+        val drained: Int,
+        val failed: List<String>,
+    )
+
+    /**
+     * The exact durable shape of a display-tail page: translate+inpaint work
+     * DONE (translation READY/PARTIAL, inpaint READY, cleaned image, a
+     * translated block) with the display commit still missing (renderStatus
+     * PENDING — the render-terminal stamp never landed). Textless terminals,
+     * genuinely unfinished pages and already-stamped pages are NOT tail: they
+     * belong to the stranded sweep / the healthy COMPLETE path.
+     */
+    private fun displayTailPending(page: PageTranslation?): Boolean =
+        page != null &&
+            page.renderStatus == StageStatus.PENDING &&
+            (page.translationStatus == StageStatus.READY || page.translationStatus == StageStatus.PARTIAL) &&
+            page.inpaintStatus == StageStatus.READY &&
+            page.cleanedImageName != null &&
+            page.blocks.any { it.translation.isNotBlank() }
+
+    /**
+     * T934: drains the display/compose tail before the run may publish
+     * COMPLETE — every page whose translate+inpaint work is DONE but whose
+     * display commit (render-terminal stamp → committed promotion) has not
+     * landed. The overlap scheduler's drain-side sweep
+     * ([OverlapScheduler.drainSerial] → stampRenderTerminalOrphans) heals the
+     * tail in one pass; a lease denial or a rejected write silently skips a
+     * page there, and nothing re-checks — that silent skip is the frozen-52
+     * signature of the 2026-09-17 run (ready trailed cleaning all pass long,
+     * then froze at COMPLETE).
+     *
+     * Bounded: at most [MAX_DISPLAY_TAIL_DRAIN_PASSES] passes over the
+     * remaining tail, each recomputed from FRESH snapshots (a stale-write
+     * rejection heals on the retry; a MANUAL Render owner does not). A page
+     * still pending after the last pass takes the typed terminal
+     * ([persistDisplayTailFailure]) — the run still completes, surfacing the
+     * page in the pages-need-attention UI with its specific reason instead of
+     * publishing a clean COMPLETE over a frozen ORIGINAL_ONLY page. A page
+     * whose attempts failed ONLY with publication rejections is the exception:
+     * it is work-complete and healthy, so it stays pending (invisible to the
+     * stranded sweep — translation READY is terminal there) for the next run's
+     * re-drain instead of taking a false typed failure. All progress is store
+     * state — a run killed mid-drain re-enters FINALIZE and re-runs this
+     * idempotently.
+     */
+    private suspend fun drainDisplayTailBeforeComplete(orderedPageKeys: List<String>): DisplayTailDrain {
+        var drained = 0
+        var pending = orderedPageKeys
+            .map { pageKey -> pageKey to store.snapshot(pageKey).page }
+            .filter { (_, page) -> displayTailPending(page) }
+            .map { (pageKey, _) -> pageKey }
+        // Pages whose LAST attempt failed only with a publication rejection,
+        // and the specific blocker of every other pending page (a later
+        // attempt of either kind supersedes the earlier classification).
+        val publicationRejected = mutableSetOf<String>()
+        val blockedReasons = mutableMapOf<String, String>()
+        repeat(MAX_DISPLAY_TAIL_DRAIN_PASSES) {
+            if (pending.isEmpty()) return DisplayTailDrain(drained, emptyList())
+            pending = pending.filter { pageKey ->
+                when (
+                    val outcome = stampRenderTerminalIfDisplayComplete(
+                        pageKey,
+                        "t934 finalize: drain display-complete page tail to its committed display",
+                    )
+                ) {
+                    is RenderStampOutcome.Committed -> {
+                        drained++
+                        publicationRejected.remove(pageKey)
+                        blockedReasons.remove(pageKey)
+                        false
+                    }
+                    is RenderStampOutcome.PublicationRejected -> {
+                        publicationRejected += pageKey
+                        true
+                    }
+                    is RenderStampOutcome.Blocked -> {
+                        publicationRejected.remove(pageKey)
+                        blockedReasons[pageKey] = outcome.reason
+                        true
+                    }
+                }
+            }
+        }
+        val blocked = pending.filter { it !in publicationRejected }
+        if (publicationRejected.isNotEmpty()) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT t934 display tail left pending on publication rejections: " +
+                    "count=${publicationRejected.size}"
+            }
+        }
+        blocked.forEach { pageKey ->
+            val reason = blockedReasons[pageKey]
+                ?: displayTailFailureReason(store.snapshot(pageKey).page)
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT t934 display tail page not committed at FINALIZE " +
+                    "pageHash=${ShortHash.hash(pageKey)} reason=$reason"
+            }
+            persistDisplayTailFailure(pageKey, reason)
+        }
+        return DisplayTailDrain(drained, blocked)
+    }
+
+    /**
+     * T934 display-tail companion of [strandedPageReason]: the SPECIFIC reason
+     * a translate+inpaint-complete page still lacks its display commit after
+     * the bounded drain. Names the blocking evidence so the durable failure is
+     * actionable instead of a bare stage status.
+     */
+    private fun displayTailFailureReason(page: PageTranslation?): String {
+        if (page == null) return "expected page is missing from the store"
+        return when {
+            page.renderStatus == StageStatus.READY -> "display commit landed after the drain gave up"
+            page.inpaintStatus != StageStatus.READY ->
+                "inpaint no longer terminal (status=${page.inpaintStatus})"
+            page.cleanedImageName == null -> "cleaned image reference missing"
+            page.translationStatus != StageStatus.READY && page.translationStatus != StageStatus.PARTIAL ->
+                "translation no longer terminal (status=${page.translationStatus})"
+            else ->
+                "display evidence incomplete: no translated block to show " +
+                    "(translation=${page.translationStatus}, inpaint=${page.inpaintStatus}, " +
+                    "render=${page.renderStatus})"
+        }
+    }
+
+    /**
+     * T934: the typed terminal for a page whose display work genuinely cannot
+     * finish this run — a durable retryable LAYOUT-stage failure (the
+     * render-terminal stamp's stage) plus the live renderStatus FAILED flip,
+     * mirroring the stranded-page sweep's carrier/reason style. The run still
+     * completes: the reconciled outcome carries the page as a warning
+     * (BatchProgressReconciler.reconcileFlaggedCompleted) and the next run's
+     * drain (or the reader's manual retry) re-attempts the stamp. Best-effort:
+     * a rejected record keeps the page pending, where the next FINALIZE
+     * re-drains it — never a silent drop. Only [RenderStampOutcome.Blocked]
+     * pages route here — a page rejected merely on its publication
+     * ([RenderStampOutcome.PublicationRejected]) is work-complete and stays
+     * pending, never typed-failed.
+     */
+    private suspend fun persistDisplayTailFailure(
+        pageKey: String,
+        reason: String,
+    ) {
+        try {
+            val carrier = "display commit did not land at FINALIZE"
+            val metadata = DurableFailureMetadata(
+                pageKey = pageKey,
+                stage = ArtifactStage.LAYOUT,
+                status = ArtifactStageStatus.FAILED_RETRYABLE,
+                category = FailureCategory.TRANSIENT,
+                retryCount = 1,
+                lastFailureMessage = "$carrier: $reason",
+                lastFailedAtEpochMs = nowEpochMs(),
+                nextEligibleRetryAtEpochMs = null,
+            )
+            suspend fun patch(expected: ChapterTranslationStore.PageSnapshot) =
+                store.persistDurableStageFailure(
+                    pageKey = pageKey,
+                    expected = ChapterTranslationStore.PatchPrecondition(
+                        generation = expected.generation,
+                        pageVersion = expected.pageVersion,
+                        leaseToken = expected.leaseToken,
+                    ),
+                    failure = metadata,
+                    description = "t934 finalize display tail failure",
+                ) { current ->
+                    (current ?: PageTranslation(sourceFileName = pageKey)).apply {
+                        sourceFileName = pageKey
+                        renderStatus = StageStatus.FAILED
+                        errorMessage = metadata.lastFailureMessage
+                        updatedAt = nowEpochMs()
+                    }
+                }
+            // T934 round 3: result-aware (the persistDurablePreflightFailure
+            // idiom) — a Rejected must surface its store reason, never vanish.
+            // One fresh-snapshot retry heals a fence drifted between the
+            // classification and this persist (the stamp attempts of the
+            // intervening drain passes move page/lease state); the page flip
+            // and the durable failure record share ONE publication per
+            // attempt, so a retry that lands keeps them atomic.
+            var result = patch(store.snapshot(pageKey))
+            if (result is ChapterTranslationStore.PatchResult.Rejected) {
+                result = patch(store.snapshot(pageKey))
+            }
+            if (result is ChapterTranslationStore.PatchResult.Rejected) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t934 display tail failure record rejected " +
+                        "pageHash=${ShortHash.hash(pageKey)} reason=${result.reason}"
+                }
+            }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT t934 display tail failure record rejected pageHash=" +
+                    "${ShortHash.hash(pageKey)} error=${e::class.java.simpleName}"
+            }
         }
     }
 
@@ -3910,6 +4206,33 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_RUN_COMPLETE = "runComplete"
         const val COUNTER_LAYOUTS_PUBLISHED = "layoutPlansPublished"
         const val COUNTER_STRANDED_RECONCILED = "strandedPagesReconciled"
+
+        /**
+         * T934 display-tail drain counters: pages whose committed display was
+         * produced by the FINALIZE drain, and pages left without one (typed
+         * terminal, run completes as a warning). Pages left pending on
+         * publication rejections count in neither bucket.
+         */
+        const val COUNTER_DISPLAY_TAIL_DRAINED = "displayTailDrained"
+        const val COUNTER_DISPLAY_TAIL_FAILED = "displayTailFailed"
+
+        /**
+         * T934 display-tail drain bound: the first pass retries the overlap
+         * scheduler's single orphan sweep (a stale-write rejection heals on a
+         * fresh snapshot); the third exists so one transient rejection never
+         * typed-fails a healthy page. A MANUAL Render owner persists across
+         * all passes by design — that page takes the typed terminal.
+         */
+        const val MAX_DISPLAY_TAIL_DRAIN_PASSES = 3
+
+        /**
+         * The guarded page write's generic whole-publication rejection reason
+         * ([ChapterTranslationStore.updatePageGuarded] maps every internal
+         * publish failure to it). The drain's classification boundary: a stamp
+         * rejected with it is a HEALTHY page left pending, never a typed
+         * failure.
+         */
+        private const val REJECTED_ARTIFACT_PUBLICATION = "ARTIFACT_PUBLICATION_FAILED"
 
         /**
          * Analysis output budget (T924-AP-03 `outputBudget`): free-form

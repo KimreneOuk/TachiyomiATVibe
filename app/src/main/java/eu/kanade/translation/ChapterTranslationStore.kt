@@ -2163,9 +2163,22 @@ class ChapterTranslationStore(
         // candidate provenance in that narrow no-lease window; otherwise a
         // READER_ADHOC candidate would be misclassified as BATCH and its next
         // snapshot could never be persisted.
-        val origin = pageLeases[pageKey]?.origin?.toArtifactOrigin()
-            ?: record.candidate?.origin
-            ?: ArtifactOrigin.BATCH
+        //
+        // T934 round 3: a durable-FAILURE publication is a page-level ledger
+        // write, not work product — keep the live candidate's own provenance
+        // when one exists. Deriving the origin from the CURRENT lease holder
+        // routed the failure persist through cancelLiveCandidate +
+        // openCandidate under a FOREIGN origin (the display-tail drain
+        // persists its typed failure while a MANUAL reader lease holds the
+        // page's Render stage), splitting the ONE atomic page+failure
+        // publication the API documents into a cancel/reopen/persist chain
+        // against a candidate the failure writer does not own.
+        val leaseOrigin = pageLeases[pageKey]?.origin?.toArtifactOrigin()
+        val origin = when {
+            durableFailure != null && record.candidate != null -> record.candidate.origin
+            leaseOrigin != null -> leaseOrigin
+            else -> record.candidate?.origin ?: ArtifactOrigin.BATCH
+        }
         val candidate = record.candidate
         val dependencyFingerprint = expected?.dependencyFingerprint
             ?: candidate?.dependencyFingerprint

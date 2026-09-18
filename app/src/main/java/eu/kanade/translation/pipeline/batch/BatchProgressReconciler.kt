@@ -164,15 +164,35 @@ object BatchProgressReconciler {
         val unexpectedPageKeys = pageMap.keys - expectedKeys.toSet()
         var doneCount = 0
         var partialCount = 0
+        var displayFailedCount = 0
         for (pageKey in expectedKeys) {
-            if (pageMap[pageKey]?.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL) {
-                partialCount++
-            } else {
-                doneCount++
+            val page = pageMap[pageKey]
+            when {
+                page?.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL -> {
+                    partialCount++
+                }
+                // T934 display-tail drain: a page whose translate+inpaint work
+                // is terminal but whose committed display never landed takes
+                // the FINALIZE typed terminal (render FAILED, durable retryable
+                // LAYOUT failure). The run still completes — as a warning, not
+                // a clean TRANSLATED and not a stranded ERROR: the page
+                // surfaces in the pages-need-attention UI with its specific
+                // reason and re-drains on the next run.
+                page != null &&
+                    page.renderStatus == eu.kanade.translation.model.StageStatus.FAILED &&
+                    (
+                        page.translationStatus == eu.kanade.translation.model.StageStatus.READY ||
+                            page.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL
+                        ) -> {
+                    displayFailedCount++
+                }
+                else -> {
+                    doneCount++
+                }
             }
         }
         return ReconciliationResult(
-            chapterStatus = if (partialCount > 0) {
+            chapterStatus = if (partialCount > 0 || displayFailedCount > 0) {
                 Translation.State.READY_WITH_WARNINGS
             } else {
                 Translation.State.TRANSLATED
