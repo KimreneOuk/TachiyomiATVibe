@@ -92,7 +92,7 @@ android {
             isDebuggable = false
             isProfileable = true
             versionNameSuffix = "-benchmark"
-            applicationIdSuffix = ".benchmark"
+            applicationIdSuffix = ".debug"
         }
     }
 
