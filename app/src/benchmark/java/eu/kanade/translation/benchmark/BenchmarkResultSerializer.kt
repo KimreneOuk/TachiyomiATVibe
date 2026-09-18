@@ -38,6 +38,7 @@ class BenchmarkResultSerializer {
         put("pagesProcessed", result.pagesProcessed)
         put("downloadedCorpusStatus", result.downloadedCorpusStatus)
         put("externalCorpusStatus", result.externalCorpusStatus)
+        put("parity", result.parity?.let(::parityJson) ?: JSONObject.NULL)
     }
 
     private fun configJson(config: PaddleBenchmarkConfig): JSONObject = JSONObject().apply {
@@ -48,6 +49,7 @@ class BenchmarkResultSerializer {
         put("includeDownloadedCorpus", config.includeDownloadedCorpus)
         put("includeExternalCorpus", config.includeExternalCorpus)
         put("outputDirectory", config.outputDirectory.absolutePath)
+        put("parityMode", config.parityMode)
     }
 
     private fun deviceJson(device: DeviceMetadata): JSONObject = JSONObject().apply {
@@ -115,6 +117,32 @@ class BenchmarkResultSerializer {
         put("maxMs", bucket.maxMs ?: JSONObject.NULL)
     }
 
+    private fun parityJson(parity: PaddleB1ParityResult): JSONObject = JSONObject().apply {
+        put("mode", parity.mode)
+        put("passed", parity.passed)
+        put("detectorConfiguration", parity.detectorConfiguration)
+        put("comparedSamples", parity.comparedSamples)
+        put("samples", JSONArray().apply { parity.samples.forEach { put(paritySampleJson(it)) } })
+    }
+
+    private fun paritySampleJson(sample: PaddleB1ParitySample): JSONObject = JSONObject().apply {
+        put("sampleId", sample.sampleId)
+        put("pageId", sample.pageId)
+        put("regionId", sample.regionId)
+        put("leafId", sample.leafId)
+        put("stage", sample.stage)
+        put("widthBucket", sample.widthBucket)
+        put("inputShape", JSONArray(sample.inputShape))
+        put("referenceText", sample.referenceText)
+        put("batchText", sample.batchText)
+        put("referenceConfidence", sample.referenceConfidence)
+        put("batchConfidence", sample.batchConfidence)
+        put("referenceConfidenceBits", sample.referenceConfidenceBits)
+        put("batchConfidenceBits", sample.batchConfidenceBits)
+        put("exactText", sample.exactText)
+        put("exactConfidence", sample.exactConfidence)
+    }
+
     private fun pssJson(pss: PssSummary): JSONObject = JSONObject().apply {
         put("intervalMs", pss.intervalMs)
         put("sampleCount", pss.sampleCount)
@@ -164,7 +192,13 @@ class BenchmarkResultSerializer {
     }
 
     private fun toReport(result: PaddleBenchmarkResult): String = buildString {
-        appendLine("# Paddle OCR v6 B1 Android baseline")
+        appendLine(
+            if (result.parity == null) {
+                "# Paddle OCR v6 B1 Android baseline"
+            } else {
+                "# Paddle OCR v6 B1 Android parity"
+            },
+        )
         appendLine()
         appendLine("- Evidence: **CONFIRMED** on `${result.device.model}` / `${result.device.socModel}` (API ${result.device.androidApi}, `${result.device.primaryAbi}`).")
         appendLine("- Provider: **CONFIRMED** actual registered provider `${result.provider.actualRegisteredProvider}`; runtime `${result.provider.runtimeVersion}`; requested route `${result.provider.requestedRoute}`.")
@@ -172,6 +206,21 @@ class BenchmarkResultSerializer {
         appendLine("- Memory: **CONFIRMED** PSS sampled every ${result.pss.intervalMs} ms (${result.pss.sampleCount} samples); peak ${result.pss.peakPssKb} KiB; peak Java heap ${result.pss.peakJavaHeapBytes} bytes; thermal at peak `${result.pss.thermalStatusAtPeak}`.")
         appendLine("- Session creation: `${format(result.sessionCreationMs)} ms`; model preparation: `${format(result.modelPreparationMs)} ms`; total: `${format(result.durationMs)} ms`.")
         appendLine("- Corpus: ${result.pagesProcessed}/${result.pagesAvailable} pages processed; downloaded corpus `${result.downloadedCorpusStatus}`; external corpus `${result.externalCorpusStatus}`.")
+        result.parity?.let { parity ->
+            appendLine("- B1 parity: **${if (parity.passed) "CONFIRMED" else "FAILED"}** exact text and confidence-bit equality for ${parity.comparedSamples} samples.")
+            appendLine("- Detector matrix: `${parity.detectorConfiguration}`.")
+            appendLine()
+            appendLine("## B1 parity samples")
+            appendLine()
+            appendLine("| Page | Region | Leaf | Bucket | Text exact | Confidence exact | Reference confidence bits | B1 confidence bits |")
+            appendLine("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |")
+            parity.samples.forEach { sample ->
+                appendLine(
+                    "| ${sample.pageId} | ${sample.regionId} | ${sample.leafId} | ${sample.widthBucket} | " +
+                        "${sample.exactText} | ${sample.exactConfidence} | ${sample.referenceConfidenceBits} | ${sample.batchConfidenceBits} |",
+                )
+            }
+        }
         appendLine()
         appendLine("## Width buckets")
         appendLine()
