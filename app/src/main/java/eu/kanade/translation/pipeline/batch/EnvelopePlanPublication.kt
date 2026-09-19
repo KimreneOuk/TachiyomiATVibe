@@ -8,7 +8,6 @@ import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
-import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -38,26 +37,6 @@ import tachiyomi.core.common.util.system.logcat
  * rejected, never published.
  */
 internal object EnvelopePlanPublication {
-
-    /** Compatibility overload retained while callers migrate to the facade seam. */
-    @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
-    fun publish(
-        artifact: ChapterArtifactEngine,
-        manifest: ChapterArtifactManifest,
-        plan: EnvelopePlan,
-        nowEpochMs: Long,
-    ): ChapterArtifactEngine.TransactionOutcome = runBlocking {
-        publish(
-            store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
-                artifactStore = artifact,
-            ),
-            manifest = manifest,
-            plan = plan,
-            nowEpochMs = nowEpochMs,
-        )
-    }
 
     /**
      * Publishes the envelope plan + its manifest pointer in ONE transaction.
@@ -151,20 +130,6 @@ internal object EnvelopePlanPublication {
      * hash hold. Any failure is [EnvelopePlanRead.NotUsable] — the caller
      * re-plans (a pure recomputation) and heals.
      */
-    fun readValidatedPlan(
-        artifact: ChapterArtifactEngine,
-        manifest: ChapterArtifactManifest,
-    ): EnvelopePlanRead = runBlocking {
-        readValidatedPlan(
-            store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
-                artifactStore = artifact,
-            ),
-            manifest = manifest,
-        )
-    }
-
     suspend fun readValidatedPlan(
         store: ChapterTranslationStore,
         manifest: ChapterArtifactManifest,

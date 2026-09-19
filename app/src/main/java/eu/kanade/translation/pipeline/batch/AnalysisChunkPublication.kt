@@ -14,7 +14,6 @@ import eu.kanade.translation.artifact.ExtractedTerm
 import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import kotlinx.coroutines.runBlocking
 import java.security.MessageDigest
 
 /**
@@ -39,26 +38,6 @@ internal object AnalysisChunkPublication {
 
     /** Reason prefix used by the coordinator's typed diagnostics. */
     const val ORDINAL_REJECTION = "chunk ordinal out of order"
-
-    /** Compatibility overload retained while callers migrate to the facade seam. */
-    @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
-    fun publish(
-        artifact: ChapterArtifactEngine,
-        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
-        result: AnalysisChunkResult,
-        nowEpochMs: Long,
-    ): ChapterArtifactEngine.TransactionOutcome = runBlocking {
-        publish(
-            store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
-                artifactStore = artifact,
-            ),
-            manifest = manifest,
-            result = result,
-            nowEpochMs = nowEpochMs,
-        )
-    }
 
     /**
      * Publishes one validated chunk result. `expectedOrdinal` is the current

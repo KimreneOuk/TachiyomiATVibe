@@ -93,7 +93,16 @@ class ChapterContextCrossFeedProbeTest {
         artifact.publishManifest(ChapterArtifactManifest(chapterKey = "Chapter 1"))
         val manifest = artifact.readManifest().shouldNotBeNull()
         val profile = createProfile(1, "Kyle")
-        ProfileFreezePublication.publish(artifact, manifest, profile, nowEpochMs = 1000L)
+        ProfileFreezePublication.publish(
+            ChapterTranslationStore(
+                translationFile = null,
+                fileCreator = null,
+                artifactStore = artifact,
+            ),
+            manifest,
+            profile,
+            nowEpochMs = 1000L,
+        )
 
         val store = ChapterTranslationStore(
             translationFile = null,

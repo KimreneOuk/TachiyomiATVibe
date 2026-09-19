@@ -6,7 +6,6 @@ import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.ProfilePointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
-import kotlinx.coroutines.runBlocking
 
 /**
  * T924 Stage 5 slice B — profile freeze publication (T924-TX-22, ST-10).
@@ -35,26 +34,6 @@ import kotlinx.coroutines.runBlocking
  * rejected, never published.
  */
 internal object ProfileFreezePublication {
-
-    /** Compatibility overload retained while callers migrate to the facade seam. */
-    @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
-    fun publish(
-        artifact: ChapterArtifactEngine,
-        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
-        profile: ChapterTranslationProfile,
-        nowEpochMs: Long,
-    ): ChapterArtifactEngine.TransactionOutcome = runBlocking {
-        publish(
-            store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
-                artifactStore = artifact,
-            ),
-            manifest = manifest,
-            profile = profile,
-            nowEpochMs = nowEpochMs,
-        )
-    }
 
     /**
      * Publishes the frozen profile + pointer in ONE transaction.
@@ -151,22 +130,6 @@ internal object ProfileFreezePublication {
      * Any failure is [FrozenProfileRead.NotReusable] — the caller runs the
      * normal analysis path.
      */
-    fun readReusableFrozenProfile(
-        artifact: ChapterArtifactEngine,
-        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
-        expectedInputFingerprint: String,
-    ): FrozenProfileRead = runBlocking {
-        readReusableFrozenProfile(
-            store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
-                artifactStore = artifact,
-            ),
-            manifest = manifest,
-            expectedInputFingerprint = expectedInputFingerprint,
-        )
-    }
-
     suspend fun readReusableFrozenProfile(
         store: ChapterTranslationStore,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
