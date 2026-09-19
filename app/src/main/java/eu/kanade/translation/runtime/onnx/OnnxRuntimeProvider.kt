@@ -460,7 +460,6 @@ object OnnxRuntimeProvider {
         routeOverride: HardwareDiscoveryEngine.HardwareRoute? = null,
         tripCircuitBreakerOnRegistrationFailure: Boolean = true,
         configure: (OrtSession.SessionOptions) -> Unit = {},
-        routeOverride: HardwareDiscoveryEngine.HardwareRoute? = null,
     ): SessionOptionsWithRegistration {
         val route = routeOverride ?: when {
             useAccelerator -> HardwareDiscoveryEngine.resolveRoute()
