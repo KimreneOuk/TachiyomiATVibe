@@ -99,7 +99,7 @@ class T934ProjectorRebuildTruthTest {
     private fun projector(
         activeStores: ActiveChapterStoreRegistry,
         registry: TranslationBatchTrackerRegistry,
-    ): BatchProgressProjector = BatchProgressProjector(
+    ): TranslationProgressProjection = TranslationProgressProjection(
         activeStoresProvider = { activeStores },
         batchTrackerRegistryProvider = { registry },
         queueStateProvider = { MutableStateFlow(emptyList()) },

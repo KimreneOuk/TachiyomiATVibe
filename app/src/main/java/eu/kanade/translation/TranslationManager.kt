@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ArtifactManifestProbe
+import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
@@ -21,7 +23,7 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
-import eu.kanade.translation.manager.BatchProgressProjector
+import eu.kanade.translation.manager.TranslationProgressProjection
 import eu.kanade.translation.manager.ChapterDataResetController
 import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey
@@ -1020,11 +1022,10 @@ class TranslationManager(
         removeFromTranslationQueue(chapter)
     }
 
-    // T909 Phase 11: status/progress projection flow graph moved to
-    // manager/BatchProgressProjector.kt (flows only, no locks). Same-signature
-    // stubs keep the manager's public seams.
-    private val progressProjector: BatchProgressProjector
-        get() = BatchProgressProjector(
+    // Progress flow orchestration lives in TranslationProgressProjection;
+    // page/display/status truth is projected by ChapterTranslationStore.
+    private val progressProjection: TranslationProgressProjection
+        get() = TranslationProgressProjection(
             activeStoresProvider = { activeStores },
             batchTrackerRegistryProvider = { batchTrackerRegistry },
             queueStateProvider = { queueState },
@@ -1059,7 +1060,7 @@ class TranslationManager(
         scanlator: String?,
         title: String,
         sourceId: Long,
-    ): Translation.State = progressProjector.getChapterTranslationStatus(
+    ): Translation.State = progressProjection.getChapterTranslationStatus(
         chapterId,
         chapterName,
         scanlator,
@@ -1073,7 +1074,7 @@ class TranslationManager(
         scanlator: String?,
         title: String,
         sourceId: Long,
-    ): Flow<Translation.State> = progressProjector.observeChapterTranslationStatus(
+    ): Flow<Translation.State> = progressProjection.observeChapterTranslationStatus(
         chapterId,
         chapterName,
         scanlator,
@@ -1644,24 +1645,60 @@ class TranslationManager(
         chapterId: Long,
         durableStateHint: Translation.State? = null,
     ): Flow<TranslationProgressSnapshot> =
-        progressProjector.observeBatchProgress(chapterId, durableStateHint)
+        progressProjection.observeBatchProgress(chapterId, durableStateHint)
 
     fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
-        progressProjector.observeTranslationProgress(chapterId)
+        progressProjection.observeTranslationProgress(chapterId)
 
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? =
-        progressProjector.observePageView(chapterId, pageKey)
+        progressProjection.observePageView(chapterId, pageKey)
 
-    // T909 Phase 11: pure projection bodies moved to BatchProgressProjector; these
-    // same-signature stubs stay because TranslationManagerPausedAffordanceTest
-    // invokes them reflectively on TranslationManager.
+    // Compatibility seams retained for the paused-affordance characterization
+    // tests. Store-backed progress now applies durable pause metadata directly;
+    // these pure helpers remain stable for the manager's historical reflective
+    // contract and for the durable-terminal reconstruction path below.
     private fun TranslationProgressSnapshot.withDurablePause(
         store: ChapterTranslationStore,
-    ): TranslationProgressSnapshot = progressProjector.withDurablePauseOf(this, store)
+    ): TranslationProgressSnapshot {
+        if (state != Translation.State.PAUSED) return this
+        val failure = store.durableFailuresSnapshot().values
+            .firstOrNull {
+                it.stage == ArtifactStage.TRANSLATION &&
+                    it.status == ArtifactStageStatus.FAILED_RETRYABLE
+            }
+            ?: return this
+        return copy(
+            pauseAnchorPageKey = pauseAnchorPageKey ?: failure.pageKey,
+            pauseReason = pauseReason ?: failure.lastFailureMessage,
+            nextEligibleRetryAtEpochMs = nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
+        )
+    }
 
     private fun TranslationProgressSnapshot.projectQueueStatus(
         queueStatus: Translation.State?,
-    ): TranslationProgressSnapshot = progressProjector.projectQueueStatusOf(this, queueStatus)
+    ): TranslationProgressSnapshot = when (queueStatus) {
+        null -> this
+        Translation.State.QUEUE -> copy(
+            state = queueStatus,
+            batchPhase = eu.kanade.translation.model.TranslationBatchPhase.IDLE,
+            pauseAnchorPageKey = null,
+            pauseReason = null,
+            nextEligibleRetryAtEpochMs = null,
+        )
+        Translation.State.TRANSLATING -> copy(
+            state = queueStatus,
+            batchPhase = if (batchPhase == eu.kanade.translation.model.TranslationBatchPhase.IDLE) {
+                eu.kanade.translation.model.TranslationBatchPhase.FIRST_PASS
+            } else {
+                batchPhase
+            },
+        )
+        Translation.State.PAUSED -> copy(
+            state = queueStatus,
+            batchPhase = eu.kanade.translation.model.TranslationBatchPhase.FINISHED,
+        )
+        else -> copy(state = queueStatus)
+    }
 
     // T909 Phase 19: the delete/reset region moved to
     // manager/ChapterDataResetController.kt as a pure move (the copy-paste

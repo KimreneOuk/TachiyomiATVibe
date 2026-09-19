@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
 /**
  * T912 ANR regression guard: the chapter translation status chain
  * (`TranslationManager.getChapterTranslationStatus` →
- * `BatchProgressProjector.getChapterTranslationStatus` →
+ * `TranslationProgressProjection.getChapterTranslationStatus` →
  * `DurableChapterStatusResolver.persistedChapterStatus`) used
  * `runBlocking(Dispatchers.IO)` around the durable store resolution, parking
  * the calling thread for O(pages) SAF/FUSE reads (5-9s on a 68-page translated
@@ -181,7 +181,7 @@ class ChapterTranslationStatusOffMainThreadTest {
             mangaTitle: String,
             sourceId: Long,
         ) -> Translation.State?,
-    ): BatchProgressProjector = BatchProgressProjector(
+    ): TranslationProgressProjection = TranslationProgressProjection(
         activeStoresProvider = { ActiveChapterStoreRegistry() },
         batchTrackerRegistryProvider = { TranslationBatchTrackerRegistry() },
         queueStateProvider = { MutableStateFlow(emptyList()) },

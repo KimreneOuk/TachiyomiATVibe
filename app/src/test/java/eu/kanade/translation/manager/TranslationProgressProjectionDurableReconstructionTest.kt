@@ -32,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap
  * the durable store/artifacts — read-through only: no store is created and no
  * new cache is added.
  */
-class BatchProgressProjectorDurableReconstructionTest {
+class TranslationProgressProjectionDurableReconstructionTest {
 
     private val chapterId = 5L
 
@@ -65,7 +65,7 @@ class BatchProgressProjectorDurableReconstructionTest {
         openOrCreateInvocations: MutableList<Long>,
         registry: TranslationBatchTrackerRegistry = TranslationBatchTrackerRegistry(),
         activeStores: ActiveChapterStoreRegistry = ActiveChapterStoreRegistry(),
-    ): BatchProgressProjector = BatchProgressProjector(
+    ): TranslationProgressProjection = TranslationProgressProjection(
         activeStoresProvider = { activeStores },
         batchTrackerRegistryProvider = { registry },
         queueStateProvider = { MutableStateFlow(emptyList()) },

@@ -4,8 +4,6 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.ActiveChapterStoreRegistry
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.TranslationPipeline
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.model.BatchRebuildProgress
@@ -150,11 +148,14 @@ internal fun isReconstructibleDurableState(state: Translation.State?): Boolean =
 }
 
 /**
- * Batch progress projection moved from `TranslationManager` (T909 Phase 11).
- * Pure flow graph — no locks. Manager state arrives as providers and is
- * re-read on every access, matching the manager's per-access construction.
+ * Manager-facing flow graph for progress projection.
+ *
+ * The store owns page/display/status truth; this class only combines queue,
+ * tracker, and request orchestration around that unified store projection.
+ * Manager state arrives as providers and is re-read on every access, matching
+ * the manager's per-access construction.
  */
-internal class BatchProgressProjector(
+internal class TranslationProgressProjection(
     private val activeStoresProvider: () -> ActiveChapterStoreRegistry,
     private val batchTrackerRegistryProvider: () -> TranslationBatchTrackerRegistry,
     private val queueStateProvider: () -> StateFlow<List<Translation>>,
@@ -343,13 +344,11 @@ internal class BatchProgressProjector(
                                 emit(TranslationProgressSnapshot.empty(chapterId, state))
                             } else {
                                 emitAll(
-                                    combine(resolvedStore.state, resolvedStore.display) { pages, display ->
+                                    combine(resolvedStore.state, resolvedStore.display) { _, _ ->
                                         snapshotFromStore(
                                             chapterId = chapterId,
                                             state = state,
                                             store = resolvedStore,
-                                            pages = pages,
-                                            display = display,
                                         )
                                     },
                                 )
@@ -369,13 +368,11 @@ internal class BatchProgressProjector(
                             )
                         }
                     } else {
-                        combine(store.state, store.display) { pages, display ->
+                        combine(store.state, store.display) { _, _ ->
                             snapshotFromStore(
                                 chapterId = chapterId,
                                 state = state,
                                 store = store,
-                                pages = pages,
-                                display = display,
                             )
                         }
                     }
@@ -456,42 +453,11 @@ internal class BatchProgressProjector(
         chapterId: Long,
         state: Translation.State,
         store: ChapterTranslationStore,
-        pages: Map<String, PageTranslation>,
-        display: Map<String, PageTranslation>,
-    ): TranslationProgressSnapshot = TranslationProgressSnapshot.compute(
+    ): TranslationProgressSnapshot = store.progressSnapshot(
         chapterId = chapterId,
-        state = state,
-        pageMap = pages,
-        displayPageMap = display,
+        orchestrationState = state,
         permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
-        // T917 Phase 5 (D10): the store page set is the trusted source total
-        // only when the manifest says so — a partial download's available
-        // pages must project the unknown-total phase, never a percentage.
-        expectedPageCountTrusted = store.artifactManifest?.expectedPageCountTrusted == true,
-    ).withDurablePause(store)
-
-    private fun TranslationProgressSnapshot.withDurablePause(
-        store: ChapterTranslationStore,
-    ): TranslationProgressSnapshot {
-        if (state != Translation.State.PAUSED) return this
-        val failure = store.durableFailuresSnapshot().values
-            .firstOrNull {
-                it.stage == ArtifactStage.TRANSLATION &&
-                    it.status == ArtifactStageStatus.FAILED_RETRYABLE
-            }
-            ?: return this
-        return copy(
-            pauseAnchorPageKey = pauseAnchorPageKey ?: failure.pageKey,
-            pauseReason = pauseReason ?: failure.lastFailureMessage,
-            nextEligibleRetryAtEpochMs = nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
-        )
-    }
-
-    /** Bridge for the manager's reflection-pinned same-name stub (paused-affordance test). */
-    internal fun withDurablePauseOf(
-        snapshot: TranslationProgressSnapshot,
-        store: ChapterTranslationStore,
-    ): TranslationProgressSnapshot = snapshot.withDurablePause(store)
+    )
 
     /** Bridge for the manager's reflection-pinned same-name stub (paused-affordance test). */
     internal fun projectQueueStatusOf(

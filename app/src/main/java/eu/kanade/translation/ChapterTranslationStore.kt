@@ -37,6 +37,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
@@ -2766,6 +2767,48 @@ class ChapterTranslationStore(
     // T909 Phase 15: body moved to store/StoreStatusProjector.kt.
     // Same-signature stub keeps the call sites.
     fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
+
+    /**
+     * Unified reader/manga progress projection.
+     *
+     * Page counts and display readiness come from this store's live and
+     * committed projections, while terminal status comes from the same
+     * [StoreStatusProjector] authority used by durable status consumers.
+     * Callers supply only the orchestration state (queue/live fallback) and
+     * the current pipeline permit holder; they do not re-derive store truth.
+     */
+    internal fun progressSnapshot(
+        chapterId: Long,
+        orchestrationState: Translation.State,
+        permitHolderPageKey: String?,
+    ): TranslationProgressSnapshot {
+        val projectedState = when (orchestrationState) {
+            Translation.State.QUEUE,
+            Translation.State.TRANSLATING,
+            -> orchestrationState
+            else -> artifactStatus() ?: orchestrationState
+        }
+        val snapshot = TranslationProgressSnapshot.compute(
+            chapterId = chapterId,
+            state = projectedState,
+            pageMap = state.value,
+            displayPageMap = display.value,
+            permitHolderPageKey = permitHolderPageKey,
+            expectedPageCountTrusted = artifactManifest?.expectedPageCountTrusted == true,
+        )
+        if (projectedState != Translation.State.PAUSED) return snapshot
+        val failure = durableFailuresSnapshot().values
+            .firstOrNull {
+                it.stage == ArtifactStage.TRANSLATION &&
+                    it.status == ArtifactStageStatus.FAILED_RETRYABLE
+            }
+            ?: return snapshot
+        return snapshot.copy(
+            pauseAnchorPageKey = snapshot.pauseAnchorPageKey ?: failure.pageKey,
+            pauseReason = snapshot.pauseReason ?: failure.lastFailureMessage,
+            nextEligibleRetryAtEpochMs = snapshot.nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
+        )
+    }
 
     fun translatedPairs(): List<Pair<String, String>> = glossaryStore.translatedPairs()
 
