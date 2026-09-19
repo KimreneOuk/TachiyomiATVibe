@@ -27,7 +27,11 @@ object OcrModelCatalog {
         Entry(
             model = OcrModel.PADDLEOCR_V6_SMALL,
             label = "PaddleOCR v6 small",
-            supportedLanguages = setOf(TextRecognizerLanguage.CHINESE, TextRecognizerLanguage.ENGLISH),
+            supportedLanguages = setOf(
+                TextRecognizerLanguage.CHINESE,
+                TextRecognizerLanguage.JAPANESE,
+                TextRecognizerLanguage.ENGLISH,
+            ),
         ),
         Entry(
             model = OcrModel.MANGAOCR,

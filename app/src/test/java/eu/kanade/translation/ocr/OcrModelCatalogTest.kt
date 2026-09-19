@@ -7,9 +7,10 @@ import tachiyomi.domain.translation.OcrModel
 class OcrModelCatalogTest {
 
     @Test
-    fun `japanese supports mangaocr and mlkit`() {
+    fun `japanese supports mangaocr paddleocr and mlkit`() {
         OcrModelCatalog.entriesFor(TextRecognizerLanguage.JAPANESE).map { it.model } shouldBe listOf(
             OcrModel.MANGAOCR,
+            OcrModel.PADDLEOCR_V6_SMALL,
             OcrModel.MLKIT,
         )
     }
@@ -46,7 +47,7 @@ class OcrModelCatalogTest {
         OcrModelCatalog.coerce(
             OcrModel.PADDLEOCR_V6_SMALL,
             TextRecognizerLanguage.JAPANESE,
-        ) shouldBe OcrModel.MANGAOCR
+        ) shouldBe OcrModel.PADDLEOCR_V6_SMALL
         OcrModelCatalog.coerce(OcrModel.MLKIT, TextRecognizerLanguage.JAPANESE) shouldBe OcrModel.MLKIT
     }
 
@@ -77,7 +78,7 @@ class OcrModelCatalogTest {
         val labels = OcrModelCatalog.labelsFor(TextRecognizerLanguage.JAPANESE)
 
         labels[OcrModel.MANGAOCR] shouldBe "MangaOCR"
-        labels[OcrModel.PADDLEOCR_V6_SMALL] shouldBe null
+        labels[OcrModel.PADDLEOCR_V6_SMALL] shouldBe "PaddleOCR v6 small"
         labels[OcrModel.MLKIT] shouldBe "ML Kit"
         // MangaOCR must NOT appear for a non-Japanese language.
         OcrModelCatalog.labelsFor(TextRecognizerLanguage.CHINESE).containsKey(OcrModel.MANGAOCR) shouldBe false
