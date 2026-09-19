@@ -10,10 +10,11 @@ import java.util.concurrent.CancellationException
 class PaddleOcrV6BatchExecutorTest {
 
     @Test
-    fun `B1 B4 and B8 make one call per microbatch including final partial batch`() {
+    fun `B1 B2 B4 and B8 make one call per microbatch including final partial batch`() {
         val crops = (0 until 10).toList()
         for ((requested, expectedCalls) in listOf(
             1 to listOf(1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+            2 to listOf(2, 2, 2, 2, 2),
             4 to listOf(4, 4, 2),
             8 to listOf(8, 2),
         )) {

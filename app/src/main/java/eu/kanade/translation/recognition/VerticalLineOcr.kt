@@ -187,6 +187,11 @@ internal object VerticalLineOcr {
             leaves = listOf(leaf),
             groups = listOf(listOf(0)),
             separator = "",
+            // This is the det-missing, non-tall degraded branch. The legacy
+            // inline RoiPageRecognitionEngine path applied only isUsable() and
+            // deliberately did not apply Paddle's 0.5 confidence threshold.
+            // Keep that behavior exact while the page coordinator batches it.
+            filterConfidence = false,
         )
     }
 

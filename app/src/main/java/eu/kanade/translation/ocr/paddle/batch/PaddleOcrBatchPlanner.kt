@@ -5,6 +5,7 @@ import java.util.LinkedHashMap
 
 enum class PaddleOcrBatchSize(val value: Int) {
     B1(1),
+    B2(2),
     B4(4),
     B8(8),
 }

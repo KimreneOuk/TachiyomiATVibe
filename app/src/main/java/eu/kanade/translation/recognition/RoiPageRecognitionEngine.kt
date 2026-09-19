@@ -30,9 +30,11 @@ import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchSize
+import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchActivationPolicy
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrPageGeneration
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
+import eu.kanade.translation.runtime.onnx.PaddleOcrProviderTestConfiguration
 import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
 import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.util.TranslationMemoryBudget
@@ -206,7 +208,17 @@ class RoiPageRecognitionEngine(
                     }
                     OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also {
                         val paddlePaths = modelStore.ensurePaddleOcrV6Small()
-                        it.initialize(paddlePaths.recognitionModel, paddlePaths.dictionary)
+                        val activation = PaddleOcrBatchActivationPolicy.current()
+                        val providerConfiguration = if (activation.forceCpuB1EmergencyFallback) {
+                            PaddleOcrProviderTestConfiguration.cpuB1EmergencyFallback()
+                        } else {
+                            null
+                        }
+                        it.initialize(
+                            modelFile = paddlePaths.recognitionModel,
+                            dictionaryFile = paddlePaths.dictionary,
+                            providerConfiguration = providerConfiguration,
+                        )
                         // TachiyomiAT: PaddleOCR rec reads horizontal lines; vertical
                         // columns must be split first. The det model replaces the
                         // ink-gap heuristic for that split (best-effort; falls back
@@ -230,7 +242,7 @@ class RoiPageRecognitionEngine(
                         // explicit recognizer-call serialization seam.
                         paddlePageOcrCoordinator = PaddlePageOcrCoordinator(
                             engine = it,
-                            validatedBatchSize = PaddleOcrBatchSize.B1,
+                            validatedBatchSize = activation.activeBatchSize,
                         )
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)

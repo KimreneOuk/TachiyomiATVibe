@@ -129,3 +129,47 @@ Every run emits:
 PSS uses `Debug.getMemoryInfo()` on a dedicated daemon sampler at 75 ms. The
 last sample is taken after the run, and peak Java heap and thermal status are
 reported with the PSS peak.
+
+## Staged provider / batch matrix
+
+Ticket 06 adds an opt-in matrix mode. It executes every cell in the fixed
+provider × batch × width grid:
+
+| Providers | Batch sizes | Width buckets |
+| --- | --- | --- |
+| CPU, QNN GPU, QNN HTP, NNAPI | B1, B2, B4, B8 | 640, 1600 |
+
+Accelerator cells use an explicit provider request and
+`session.disable_cpu_ep_fallback=1`. Registration is recorded before the run,
+but a cell is only **CONFIRMED** after real inference records execution
+provenance and every batch telemetry row has `downgradeReason=null`. A CPU
+label, allocation/provider downgrade, or missing post-inference provenance
+marks an accelerator cell **FAILED**. The CPU cell is the explicit emergency
+baseline and may use the default CPU/XNNPACK path.
+
+Matrix runs hold a partial wake lock and a foreground service until the
+benchmark writes `complete.marker`; this prevents the cached-process freeze
+observed on long corpus runs. PSS remains sampled by the existing 75 ms daemon,
+and each cell records thermal state, PSS delta, peak input/output tensor bytes,
+rolling-p95 actions, provider label, and raw downgrade reasons.
+
+Run the full deterministic matrix after installing the APK:
+
+```powershell
+$matrix = "$base/reference-sm8650-paddle-matrix"
+& $adb -s $serial shell am force-stop $pkg
+& $adb -s $serial shell am start -S -W -n $component `
+    --ei pageLimit 0 `
+    --ei matrixIterations 20 `
+    --ez includeDownloadedCorpus false `
+    --ez includeExternalCorpus false `
+    --ez matrixMode true `
+    --es outputDir $matrix
+& $adb -s $serial shell "ls $matrix/complete.marker"
+& $adb -s $serial pull "$matrix" benchmarks\paddle-ocr-v6\results\reference-sm8650-paddle-matrix
+```
+
+Do not promote a cell from a host run, from session registration alone, or
+from a dirty-tree APK. The required gate is a fresh post-commit device run
+with exact commit SHA, zero accelerator CPU fallback, output parity, PSS delta,
+thermal, and responsiveness evidence.
