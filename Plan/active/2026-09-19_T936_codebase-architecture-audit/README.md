@@ -43,15 +43,22 @@
 Branch strategy: one branch per phase off `main` (`t936/phase1-zero-risk-purge`, ...).
 One commit per ticket. Every ticket must leave `:app:testDebugUnitTest` green.
 
-### Phase 1 — Zero-Risk Purge (tickets written, awaiting Director review)
+### Phase 1 — Zero-Risk Purge (COMPLETE — implementation + independent review PASS WITH NOTES)
 
-| Ticket | Title | Risk |
+Executed on `t936/phase1-zero-risk-purge` (7 commits @ `e2d8a89`, base `main` @ `7262bf4`):
+2,079×2 flavor unit tests green; APK evidence independently reproduced by reviewer.
+
+| Ticket | Title | Result |
 |---|---|---|
-| [P1-01](ticket/p1-01-delete-disabled-rendering-tests.md) | Delete 8 permanently disabled rendering test suites (~2,900 lines) | Zero |
-| [P1-02](ticket/p1-02-remove-duplicate-segmentation-asset.md) | Delete duplicate asset `best_int8.onnx` (3.28 MB) | Zero |
-| [P1-03](ticket/p1-03-plug-asset-doc-leak.md) | Stop packaging OCR model docs (`.md`/`.yml`/`.gitattributes`) into the APK | Zero |
-| [P1-04](ticket/p1-04-untrack-repo-bloat.md) | Untrack ~74 MB of prototype models & benchmark outputs | Zero |
-| [P1-05](ticket/p1-05-nnapi-excision-blocked.md) | NNAPI excision — **BLOCKED**, premise contradicted by artifact inspection | Deferred |
+| [P1-01](ticket/p1-01-delete-disabled-rendering-tests.md) | Delete 8 permanently disabled rendering test suites (~2,900 lines) | Done |
+| [P1-02](ticket/p1-02-remove-duplicate-segmentation-asset.md) | Delete duplicate asset `best_int8.onnx` (3.28 MB) | Done |
+| [P1-03](ticket/p1-03-plug-asset-doc-leak.md) | Keep OCR model docs out of the APK (corrected: relocate to `docs/models/`; AGP packaging excludes proven placebo for assets) | Done |
+| [P1-04](ticket/p1-04-untrack-repo-bloat.md) | Untrack ~74 MB of prototype models & benchmark outputs | Done |
+| [P1-05](ticket/p1-05-nnapi-excision-blocked.md) | NNAPI excision — **BLOCKED on Director decision** (AAR inspection contradicts audit's dead-subsystem premise) | Deferred |
+
+Reports: [implementation](team/p1-implementation-report.md) · [review](team/p1-review-report.md)
+Corrections made during execution: flavor-qualified Gradle tasks (dev/standard); P1-03 mechanism.
+Awaiting Director: merge decision, P1-05 Option A/B, Phase 2 go.
 
 ### Phases 2–5
 
@@ -67,5 +74,8 @@ Pass 2 overlapped Lane A rolling translation + Lane B concurrent inpainting, ren
 - [x] False-positive correction (verified `aot-512.onnx` is actively required for Qualcomm QNN HTP)
 - [x] Consolidated Director report written to `report/DIRECTOR_REPORT.md`
 - [x] Audit artifacts synced into main workspace
-- [x] Phase 1 tickets written — **awaiting Director review before execution**
-- [ ] Phase 1 execution
+- [x] Phase 1 tickets written — awaiting Director review before execution
+- [x] Phase 1 execution (7 commits on `t936/phase1-zero-risk-purge` @ `e2d8a89`, review PASS WITH NOTES, review notes closed)
+- [ ] Director: merge Phase 1 → main
+- [ ] Director decision: P1-05 NNAPI (Option A defer-and-verify vs B excise now)
+- [ ] Phase 2 ticketing + execution (storage unification & legacy elimination)
