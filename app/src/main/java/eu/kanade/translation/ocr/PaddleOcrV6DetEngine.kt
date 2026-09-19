@@ -7,6 +7,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.runtime.onnx.PaddleOcrProviderResolution
+import eu.kanade.translation.runtime.onnx.PaddleOcrSessionFactory
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -56,6 +58,10 @@ class PaddleOcrV6DetEngine : Closeable {
     var executionProviderLabel: String = "uninitialized"
         private set
 
+    /** Provider requested for this detector; null keeps the legacy automatic route. */
+    var requestedProviderLabel: String = "automatic"
+        private set
+
     @Volatile
     private var closed: Boolean = false
 
@@ -64,26 +70,47 @@ class PaddleOcrV6DetEngine : Closeable {
     // (ORT #16937). Mirrors MangaOcrEngine.inputPixelPool.
     private val inputPixelPool = DirectBufferPool(3 * TARGET * TARGET * 4, maxPoolSize = 2)
 
-    fun initialize(modelFile: File) {
+    fun initialize(
+        modelFile: File,
+        providerResolution: PaddleOcrProviderResolution? = null,
+    ) {
+        requestedProviderLabel = providerResolution?.requestedWireLabel ?: "automatic"
         logcat(LogPriority.INFO) {
             "PaddleOCR v6 det init: model=${modelFile.absolutePath} " +
-                "(${modelFile.length()}B exists=${modelFile.exists()})"
+                "(${modelFile.length()}B exists=${modelFile.exists()}) " +
+                "requestedProvider=$requestedProviderLabel " +
+                "resolvedRoute=${providerResolution?.resolvedRouteLabel ?: "automatic"} " +
+                "probeFallback=${providerResolution?.fallbackReason ?: "none"}"
         }
-        session = OnnxRuntimeProvider.createSessionWithFallback(
-            modelPath = modelFile.absolutePath,
-            useAccelerator = true,
-            configure = { opts ->
-                // PaddleOCR v6 det model uses dynamic input shape ['DynamicDimension.0', 3, 'DynamicDimension.1', 'DynamicDimension.2'].
-                // Fix symbolic dimensions to [1, 3, 736, 736] for accelerator graph partitioning.
-                opts.setSymbolicDimensionValue("DynamicDimension.0", 1L)
-                opts.setSymbolicDimensionValue("DynamicDimension.1", TARGET.toLong())
-                opts.setSymbolicDimensionValue("DynamicDimension.2", TARGET.toLong())
-            },
-            providerSink = { executionProviderLabel = it },
-        )
+        val configure = { opts: OrtSession.SessionOptions ->
+            // PaddleOCR v6 det model uses dynamic input shape ['DynamicDimension.0', 3, 'DynamicDimension.1', 'DynamicDimension.2'].
+            // Fix symbolic dimensions to [1, 3, 736, 736] for accelerator graph partitioning.
+            opts.setSymbolicDimensionValue("DynamicDimension.0", 1L)
+            opts.setSymbolicDimensionValue("DynamicDimension.1", TARGET.toLong())
+            opts.setSymbolicDimensionValue("DynamicDimension.2", TARGET.toLong())
+        }
+        session = if (providerResolution == null) {
+            // Mask-only Paddle detection used by non-Paddle OCR keeps the
+            // existing automatic/global route behavior.
+            OnnxRuntimeProvider.createSessionWithFallback(
+                modelPath = modelFile.absolutePath,
+                useAccelerator = true,
+                configure = configure,
+                providerSink = { executionProviderLabel = it },
+            )
+        } else {
+            PaddleOcrSessionFactory.createSession(
+                modelPath = modelFile.absolutePath,
+                resolution = providerResolution,
+                configure = configure,
+                providerSink = { executionProviderLabel = it },
+            )
+        }
         inputName = session?.inputNames?.firstOrNull() ?: "x"
         logcat(LogPriority.INFO) {
-            "PaddleOCR v6 det loaded (inputs=${session?.inputNames}, outputs=${session?.outputNames})"
+            "PaddleOCR v6 det loaded (requestedProvider=$requestedProviderLabel " +
+                "registeredProvider=$executionProviderLabel inputs=${session?.inputNames}, " +
+                "outputs=${session?.outputNames})"
         }
     }
 
@@ -166,6 +193,7 @@ class PaddleOcrV6DetEngine : Closeable {
                 val t2 = System.nanoTime()
                 logcat(LogPriority.INFO) {
                     "[paddle_det] total=${(t2 - t0) / 1_000_000.0}ms " +
+                        "requestedProvider=$requestedProviderLabel provider=$executionProviderLabel " +
                         "infer=${(t1 - t0) / 1_000_000.0}ms " +
                         "crop=${w}x$h map=${mapWidth}x$mapHeight active=${active.width}x${active.height} " +
                         "lines=${cropLines.size}"

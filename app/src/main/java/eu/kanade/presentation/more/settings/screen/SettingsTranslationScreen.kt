@@ -33,6 +33,7 @@ import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationHardwareAccelerator
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.TranslationReadingOrder
+import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
@@ -214,6 +215,18 @@ object SettingsTranslationScreen : SearchableSettings {
                         onValueChange = { ocrPref.set(it) },
                     )
                 },
+                Preference.PreferenceItem.ListPreference(
+                    pref = translationPreferences.paddleOcrExecutionProvider(),
+                    title = stringResource(ATMR.strings.pref_paddle_ocr_provider),
+                    subtitle = stringResource(ATMR.strings.pref_paddle_ocr_provider_summary),
+                    entries = mapOf(
+                        PaddleOcrExecutionProvider.CPU to stringResource(ATMR.strings.pref_paddle_ocr_provider_cpu),
+                        PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU to
+                            stringResource(ATMR.strings.pref_paddle_ocr_provider_gpu),
+                        PaddleOcrExecutionProvider.QUALCOMM_QNN_HTP to
+                            stringResource(ATMR.strings.pref_paddle_ocr_provider_htp),
+                    ).toImmutableMap(),
+                ),
                 Preference.PreferenceItem.CustomPreference(
                     title = stringResource(ATMR.strings.pref_translate_to),
                 ) {

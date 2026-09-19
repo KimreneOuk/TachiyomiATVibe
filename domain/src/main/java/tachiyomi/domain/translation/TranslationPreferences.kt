@@ -34,6 +34,18 @@ enum class GeminiThinkingMode { DISABLED, AUTO, LOW }
 enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
 
 /**
+ * Temporary execution-provider experiment for the PaddleOCR v6 detector and
+ * recognizer. This is intentionally separate from
+ * [TranslationHardwareAccelerator]: changing it must not reroute unrelated
+ * page-detection, segmentation, or inpainting sessions.
+ *
+ * CPU is the safe persisted default. Accelerator choices are attempted
+ * strictly and are reported as CPU when their probe, registration, or session
+ * creation cannot complete on the current device.
+ */
+enum class PaddleOcrExecutionProvider { CPU, QUALCOMM_QNN_GPU, QUALCOMM_QNN_HTP }
+
+/**
  * TachiyomiAT: source reading order for a manga/comic page. Determines how the
  * recognition engine orders detected blocks and which direction the inpainter
  * assumes for text flow.
@@ -116,6 +128,16 @@ class TranslationPreferences(
 
     fun translationHardwareAccelerator() =
         preferenceStore.getEnum("translation_hardware_accelerator", TranslationHardwareAccelerator.AUTO)
+
+    /**
+     * Temporary PaddleOCR v6-only provider choice. The preference is read when
+     * a recognition engine creates its detector/recognizer sessions, so a
+     * changed value takes effect for a new reader/translation session.
+     */
+    fun paddleOcrExecutionProvider() = preferenceStore.getEnum(
+        "translation_paddle_ocr_execution_provider",
+        PaddleOcrExecutionProvider.CPU,
+    )
 
     /**
      * Legacy experimental QNN toggle.

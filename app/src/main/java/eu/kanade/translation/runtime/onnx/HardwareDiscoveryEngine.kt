@@ -3,6 +3,7 @@ package eu.kanade.translation.runtime.onnx
 import android.os.Build
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.domain.translation.TranslationHardwareAccelerator
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
@@ -79,10 +80,12 @@ object HardwareDiscoveryEngine {
     internal fun resetForTesting(
         route: HardwareRoute? = null,
         customQnnProbe: (() -> Boolean)? = null,
+        customGpuProbe: (() -> Boolean)? = null,
         customNnapiProbe: (() -> Boolean)? = null,
     ) {
         synchronized(this) {
             qnnProbeRunner = customQnnProbe ?: { probeQnnHtp() }
+            gpuProbeRunner = customGpuProbe ?: { probeQnnGpu() }
             nnapiProbeRunner = customNnapiProbe ?: { probeNnapi() }
             circuitBreakerTripped = false
             if (route != null) {
@@ -92,6 +95,44 @@ object HardwareDiscoveryEngine {
                 activeRoute = HardwareRoute.CPU_XNNPACK
                 isResolved = false
             }
+        }
+    }
+
+    /**
+     * Resolves one explicit PaddleOCR experiment choice without touching the
+     * process-wide automatic route or circuit breaker. A null result means the
+     * requested accelerator probe failed; the Paddle-only factory may then
+     * create an explicitly labelled CPU session.
+     *
+     * The probe is an end-to-end strict QNN probe, not merely an EP registration
+     * check, so a successful result is meaningful for the provider attempt.
+     */
+    internal fun resolvePaddleOcrRoute(
+        provider: PaddleOcrExecutionProvider,
+        probeHtp: () -> Boolean = qnnProbeRunner,
+        probeGpu: () -> Boolean = gpuProbeRunner,
+    ): HardwareRoute? {
+        return when (provider) {
+            PaddleOcrExecutionProvider.CPU -> HardwareRoute.CPU_XNNPACK
+            PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU ->
+                runExplicitProbe("qnn_gpu", probeGpu)?.takeIf { it }?.let {
+                    HardwareRoute.QUALCOMM_QNN_GPU
+                }
+            PaddleOcrExecutionProvider.QUALCOMM_QNN_HTP ->
+                runExplicitProbe("qnn_htp", probeHtp)?.takeIf { it }?.let {
+                    HardwareRoute.QUALCOMM_QNN_HTP
+                }
+        }
+    }
+
+    private fun runExplicitProbe(name: String, probe: () -> Boolean): Boolean? {
+        return try {
+            probe()
+        } catch (error: Throwable) {
+            logcat(LogPriority.WARN, error) {
+                "[hardware_discovery] PaddleOCR explicit $name probe threw; marking route unavailable"
+            }
+            null
         }
     }
 

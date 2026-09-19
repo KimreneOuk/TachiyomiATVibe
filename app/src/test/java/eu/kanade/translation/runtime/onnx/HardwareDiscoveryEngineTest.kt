@@ -5,6 +5,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 
 class HardwareDiscoveryEngineTest {
 
@@ -187,5 +188,63 @@ class HardwareDiscoveryEngineTest {
 
         // Subsequent resolveRoute returns CPU_XNNPACK immediately
         HardwareDiscoveryEngine.resolveRoute() shouldBe HardwareRoute.CPU_XNNPACK
+    }
+
+    @Test
+    fun `explicit Paddle GPU selection probes GPU without touching HTP`() {
+        var htpProbes = 0
+        var gpuProbes = 0
+
+        HardwareDiscoveryEngine.resolvePaddleOcrRoute(
+            provider = PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU,
+            probeHtp = {
+                htpProbes++
+                error("HTP must not be probed for an explicit GPU choice")
+            },
+            probeGpu = {
+                gpuProbes++
+                true
+            },
+        ) shouldBe HardwareRoute.QUALCOMM_QNN_GPU
+
+        htpProbes shouldBe 0
+        gpuProbes shouldBe 1
+    }
+
+    @Test
+    fun `explicit Paddle GPU probe failure returns unavailable instead of selecting HTP`() {
+        var htpProbes = 0
+
+        HardwareDiscoveryEngine.resolvePaddleOcrRoute(
+            provider = PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU,
+            probeHtp = {
+                htpProbes++
+                true
+            },
+            probeGpu = { false },
+        ) shouldBe null
+
+        htpProbes shouldBe 0
+    }
+
+    @Test
+    fun `explicit Paddle CPU selection skips accelerator probes`() {
+        var htpProbes = 0
+        var gpuProbes = 0
+
+        HardwareDiscoveryEngine.resolvePaddleOcrRoute(
+            provider = PaddleOcrExecutionProvider.CPU,
+            probeHtp = {
+                htpProbes++
+                true
+            },
+            probeGpu = {
+                gpuProbes++
+                true
+            },
+        ) shouldBe HardwareRoute.CPU_XNNPACK
+
+        htpProbes shouldBe 0
+        gpuProbes shouldBe 0
     }
 }

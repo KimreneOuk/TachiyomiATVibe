@@ -209,11 +209,21 @@ object OnnxRuntimeProvider {
         providerSink: (String) -> Unit = {},
     ): OrtSession {
         val modelName = ModelRoutingEngine.resolveModelId(modelPath)
-        val route = HardwareDiscoveryEngine.activeRoute
+        // Resolve the user's selected route before consulting model-level
+        // compatibility state. Reading activeRoute first leaves the first
+        // normal OCR session gated against the CPU default even when the
+        // persisted accelerator preference has not yet been probed.
+        val route = if (useAccelerator) {
+            HardwareDiscoveryEngine.resolveRoute()
+        } else {
+            HardwareDiscoveryEngine.activeRoute
+        }
         // T922 Phase 5 (plan §3.3): the attempt gate is the coherent
         // accelerator gate — TEMPORARY_FAILURE still owns its one documented
         // recreation attempt (bounded by the SSR retry counter).
-        val canUseAccelerator = useAccelerator && ModelRoutingEngine.isAcceleratorAttemptAllowed(modelName, route)
+        val canUseAccelerator = useAccelerator &&
+            route != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK &&
+            ModelRoutingEngine.isAcceleratorAttemptAllowed(modelName, route)
 
         if (useAccelerator && !canUseAccelerator) {
             logcat(LogPriority.INFO) {
@@ -242,6 +252,7 @@ object OnnxRuntimeProvider {
                     useXnnpack = useXnnpack,
                     disableIntraOpSpinning = disableIntraOpSpinning,
                     contextCacheFile = contextCacheFile,
+                    routeOverride = route.takeIf { canUseAccelerator },
                     configure = configure,
                 ).let { ProviderOptionsBuild(it.options, it.registered) }
             },
@@ -407,9 +418,11 @@ object OnnxRuntimeProvider {
         useXnnpack: Boolean = false,
         disableIntraOpSpinning: Boolean = false,
         contextCacheFile: File? = null,
+        routeOverride: HardwareDiscoveryEngine.HardwareRoute? = null,
+        tripCircuitBreakerOnRegistrationFailure: Boolean = true,
         configure: (OrtSession.SessionOptions) -> Unit = {},
     ): SessionOptionsWithRegistration {
-        val route = when {
+        val route = routeOverride ?: when {
             useAccelerator -> HardwareDiscoveryEngine.resolveRoute()
             useXnnpack -> HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
             else -> null
@@ -477,7 +490,9 @@ object OnnxRuntimeProvider {
                         logcat(LogPriority.INFO) { "Successfully added QNN HTP EP (strict)" }
                     }.onFailure { e ->
                         logcat(LogPriority.ERROR, e) { "Failed to add QNN HTP EP, falling back to CPU!" }
-                        HardwareDiscoveryEngine.tripCircuitBreaker("qnn_htp_add_failed", e)
+                        if (tripCircuitBreakerOnRegistrationFailure) {
+                            HardwareDiscoveryEngine.tripCircuitBreaker("qnn_htp_add_failed", e)
+                        }
                         strictRegistrationFailure = HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP to e
                     }
                 }
@@ -488,7 +503,9 @@ object OnnxRuntimeProvider {
                         logcat(LogPriority.INFO) { "Successfully added QNN GPU EP (strict)" }
                     }.onFailure { e ->
                         logcat(LogPriority.ERROR, e) { "Failed to add QNN GPU EP, falling back to CPU!" }
-                        HardwareDiscoveryEngine.tripCircuitBreaker("qnn_gpu_add_failed", e)
+                        if (tripCircuitBreakerOnRegistrationFailure) {
+                            HardwareDiscoveryEngine.tripCircuitBreaker("qnn_gpu_add_failed", e)
+                        }
                         strictRegistrationFailure = HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU to e
                     }
                 }
@@ -499,7 +516,9 @@ object OnnxRuntimeProvider {
                         logcat(LogPriority.INFO) { "Successfully added NNAPI EP (strict)" }
                     }.onFailure { e ->
                         logcat(LogPriority.ERROR, e) { "Failed to add NNAPI EP, falling back to CPU!" }
-                        HardwareDiscoveryEngine.tripCircuitBreaker("nnapi_add_failed", e)
+                        if (tripCircuitBreakerOnRegistrationFailure) {
+                            HardwareDiscoveryEngine.tripCircuitBreaker("nnapi_add_failed", e)
+                        }
                         strictRegistrationFailure = HardwareDiscoveryEngine.HardwareRoute.NNAPI to e
                     }
                 }
@@ -550,6 +569,8 @@ object OnnxRuntimeProvider {
         useXnnpack: Boolean = false,
         disableIntraOpSpinning: Boolean = false,
         contextCacheFile: File? = null,
+        routeOverride: HardwareDiscoveryEngine.HardwareRoute? = null,
+        tripCircuitBreakerOnRegistrationFailure: Boolean = true,
         configure: (OrtSession.SessionOptions) -> Unit = {},
     ): OrtSession.SessionOptions =
         createSessionOptionsWithRegistration(
@@ -558,5 +579,7 @@ object OnnxRuntimeProvider {
             disableIntraOpSpinning = disableIntraOpSpinning,
             contextCacheFile = contextCacheFile,
             configure = configure,
+            routeOverride = routeOverride,
+            tripCircuitBreakerOnRegistrationFailure = tripCircuitBreakerOnRegistrationFailure,
         ).options
 }

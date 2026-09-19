@@ -30,6 +30,8 @@ import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
+import eu.kanade.translation.runtime.onnx.PaddleOcrProviderResolution
+import eu.kanade.translation.runtime.onnx.PaddleOcrSessionFactory
 import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationSafetyPrimitives
@@ -39,6 +41,8 @@ import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.OcrModel
+import tachiyomi.domain.translation.PaddleOcrExecutionProvider
+import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -168,6 +172,18 @@ class RoiPageRecognitionEngine(
             val startTime = System.nanoTime()
             try {
                 val paths = modelStore.ensureModels()
+                // Resolve the temporary Paddle-only choice once and share the
+                // result between recognizer and line-detector sessions. This
+                // keeps the paired models on the same provider and makes a
+                // probe/CPU fallback visible instead of changing midway.
+                val paddleProvider = if (ocrModel == OcrModel.PADDLEOCR_V6_SMALL) {
+                    resolvePaddleOcrProvider()
+                } else {
+                    // The free-text mask-only detector used by non-Paddle OCR
+                    // keeps its existing automatic/global route. The temporary
+                    // selector is scoped to the v6 recognizer + line detector.
+                    null
+                }
                 logcat(LogPriority.INFO) { "ONNX init: starting detector initialization" }
                 detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel) }
                 logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language, model=$ocrModel)" }
@@ -199,7 +215,11 @@ class RoiPageRecognitionEngine(
                     }
                     OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also {
                         val paddlePaths = modelStore.ensurePaddleOcrV6Small()
-                        it.initialize(paddlePaths.recognitionModel, paddlePaths.dictionary)
+                        it.initialize(
+                            paddlePaths.recognitionModel,
+                            paddlePaths.dictionary,
+                            providerResolution = paddleProvider,
+                        )
                         // TachiyomiAT: PaddleOCR rec reads horizontal lines; vertical
                         // columns must be split first. The det model replaces the
                         // ink-gap heuristic for that split (best-effort; falls back
@@ -207,7 +227,12 @@ class RoiPageRecognitionEngine(
                         if (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable()) {
                             try {
                                 val detPaths = modelStore.ensurePaddleOcrV6Det()
-                                paddleDet = PaddleOcrV6DetEngine().also { it.initialize(detPaths.detectionModel) }
+                                paddleDet = PaddleOcrV6DetEngine().also {
+                                    it.initialize(
+                                        detPaths.detectionModel,
+                                        providerResolution = paddleProvider,
+                                    )
+                                }
                                 logcat(LogPriority.INFO) { "ONNX init: PaddleOCR det OK (replaces ink-gap heuristic)" }
                             } catch (e: Exception) {
                                 logcat(LogPriority.WARN, e) {
@@ -233,7 +258,9 @@ class RoiPageRecognitionEngine(
                 ) {
                     try {
                         val detPaths = modelStore.ensurePaddleOcrV6Det()
-                        paddleDet = PaddleOcrV6DetEngine().also { it.initialize(detPaths.detectionModel) }
+                        paddleDet = PaddleOcrV6DetEngine().also {
+                            it.initialize(detPaths.detectionModel)
+                        }
                         logcat(LogPriority.INFO) {
                             "ONNX init: PaddleOCR det OK (free-text erase mask)"
                         }
@@ -271,6 +298,17 @@ class RoiPageRecognitionEngine(
                 throw e
             }
         }
+    }
+
+    private fun resolvePaddleOcrProvider(): PaddleOcrProviderResolution {
+        val requested = try {
+            Injekt.get<TranslationPreferences>()
+                .paddleOcrExecutionProvider()
+                .get()
+        } catch (_: Throwable) {
+            PaddleOcrExecutionProvider.CPU
+        }
+        return PaddleOcrSessionFactory.resolve(requested)
     }
 
     override suspend fun analyze(bitmap: Bitmap): PageTranslation {

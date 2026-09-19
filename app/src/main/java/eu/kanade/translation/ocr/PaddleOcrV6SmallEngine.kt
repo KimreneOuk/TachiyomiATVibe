@@ -7,6 +7,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.runtime.onnx.PaddleOcrProviderResolution
+import eu.kanade.translation.runtime.onnx.PaddleOcrSessionFactory
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -32,6 +34,10 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     override var executionProviderLabel: String = "uninitialized"
         private set
 
+    /** Provider requested for this recognizer; null keeps the legacy automatic route. */
+    var requestedProviderLabel: String = "automatic"
+        private set
+
     // TachiyomiAT: pooled DIRECT buffer for the rec input. The rec width is bucketed
     // to fixed shapes (640 or 1600), so the pool is sized for MAX_RECOGNITION_WIDTH (1600);
     // each call exposes only [width x height x 3] floats via the buffer limit.
@@ -41,23 +47,43 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         maxPoolSize = 2,
     )
 
-    fun initialize(modelFile: File, dictionaryFile: File) {
+    fun initialize(
+        modelFile: File,
+        dictionaryFile: File,
+        providerResolution: PaddleOcrProviderResolution? = null,
+    ) {
+        requestedProviderLabel = providerResolution?.requestedWireLabel ?: "automatic"
         logcat(LogPriority.INFO) {
             "PaddleOCR v6 small init: model=${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()}), " +
-                "dictionary=${dictionaryFile.absolutePath} (${dictionaryFile.length()}B exists=${dictionaryFile.exists()})"
+                "dictionary=${dictionaryFile.absolutePath} (${dictionaryFile.length()}B exists=${dictionaryFile.exists()}), " +
+                "requestedProvider=$requestedProviderLabel " +
+                "resolvedRoute=${providerResolution?.resolvedRouteLabel ?: "automatic"} " +
+                "probeFallback=${providerResolution?.fallbackReason ?: "none"}"
         }
         dictionary = BufferedReader(InputStreamReader(dictionaryFile.inputStream(), Charsets.UTF_8)).use { reader ->
             reader.lineSequence().map { it.trimEnd() }.toList()
         }
         try {
-            session = OnnxRuntimeProvider.createSessionWithFallback(
-                modelFile.absolutePath,
-                useAccelerator = true,
-                providerSink = { executionProviderLabel = it },
-            )
+            session = if (providerResolution == null) {
+                // Preserve the existing automatic/global route for callers
+                // outside the Paddle-v6 selector experiment.
+                OnnxRuntimeProvider.createSessionWithFallback(
+                    modelPath = modelFile.absolutePath,
+                    useAccelerator = true,
+                    providerSink = { executionProviderLabel = it },
+                )
+            } else {
+                PaddleOcrSessionFactory.createSession(
+                    modelPath = modelFile.absolutePath,
+                    resolution = providerResolution,
+                    providerSink = { executionProviderLabel = it },
+                )
+            }
             inputName = session?.inputNames?.firstOrNull() ?: "x"
             logcat(LogPriority.INFO) {
-                "PaddleOCR v6 small loaded (dictionary=${dictionary.size}, inputs=${session?.inputNames}, outputs=${session?.outputNames})"
+                "PaddleOCR v6 small loaded (dictionary=${dictionary.size}, " +
+                    "requestedProvider=$requestedProviderLabel registeredProvider=$executionProviderLabel " +
+                    "inputs=${session?.inputNames}, outputs=${session?.outputNames})"
             }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "PaddleOCR v6 small session init failed" }
@@ -98,6 +124,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
             if (isDiagnosticsEnabled()) {
                 logcat(LogPriority.INFO) {
                     "[paddle_ocr] total=${(System.nanoTime() - start) / 1_000_000.0}ms " +
+                        "requestedProvider=$requestedProviderLabel provider=$executionProviderLabel " +
                         "crop=${crop.width}x${crop.height} input=${width}x$RECOGNITION_HEIGHT " +
                         "chars=${text.length}"
                 }
