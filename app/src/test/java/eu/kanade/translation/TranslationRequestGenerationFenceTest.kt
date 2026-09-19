@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
@@ -279,6 +280,7 @@ class TranslationRequestGenerationFenceTest {
         val unsafe = theUnsafeField.get(null)
         val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
         val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
+        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
         setField(manager, "scheduler", scheduler)
         setField(manager, "translator", translator)
         setField(manager, "context", mockk<Context>(relaxed = true))
