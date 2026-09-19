@@ -1,8 +1,16 @@
 package eu.kanade.translation.orchestration
 
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.scheduling.TranslationExecutor
+import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.scheduling.TranslationStoreResolver
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.Test
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.manga.model.Manga
 import java.util.concurrent.atomic.AtomicInteger
 
 class TranslationSessionCoordinatorTest {
@@ -91,5 +99,27 @@ class TranslationSessionCoordinatorTest {
 
         coordinator.finishSession()
         coordinator.state.value shouldBe TranslationSessionState.IDLE
+    }
+
+    @Test
+    fun `direct scheduler entry cannot bypass an active batch session`() {
+        val coordinator = TranslationSessionCoordinator()
+        coordinator.requestBatchSession(BatchSessionIntent(setOf(10L)))
+        val scheduler = TranslationScheduler(
+            executor = mockk<TranslationExecutor>(relaxed = true),
+            storeResolver = TranslationStoreResolver { null },
+            sessionCoordinator = coordinator,
+        )
+        val manga = mockk<Manga>(relaxed = true)
+        val chapter = mockk<Chapter>(relaxed = true)
+        val source = mockk<HttpSource>(relaxed = true)
+        every { chapter.id } returns 10L
+
+        scheduler.translatePage(manga, chapter, source, "p0")
+
+        scheduler.manualOutcomeFor(10L, "p0")
+            .shouldBeInstanceOf<eu.kanade.translation.scheduling.SinglePageOutcome.Rejected>()
+            .reason shouldBe "reader session rejected: BATCH_ACTIVE"
+        scheduler.close()
     }
 }

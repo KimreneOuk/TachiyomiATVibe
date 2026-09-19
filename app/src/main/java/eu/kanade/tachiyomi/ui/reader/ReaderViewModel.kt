@@ -616,7 +616,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 } else {
                     resetAutoTranslationState()
                     val wasActive = getCurrentChapter()?.chapter?.id?.let {
-                        translationScheduler.cancelAutoTranslations(it)
+                        translationManager.cancelAutoTranslations(it)
                     } ?: false
                     // TachiyomiAT bug 4 fix: surface the cancellation so the user
                     // sees the toggle had an effect; the dim clear (sync CANCELLED
@@ -2303,7 +2303,7 @@ class ReaderViewModel @JvmOverloads constructor(
             // FAILED (so prepareForcedRetry resets the bookkeeping and the page
             // can be reprocessed), false otherwise (resume optimization). See the
             // resolution above + PageTranslation.prepareForcedRetry.
-            translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
+            translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
         } ?: page.imageUrl?.let { imageUrl ->
             // TachiyomiAT: for online pages not yet cached (originalStream is
             // null), download the image bytes in a cancellable coroutine and
@@ -2333,7 +2333,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     pageKey,
                     streamFn,
                 )
-                translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
+                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
             }
         } ?: run {
             if (pageChapterDownloaded) {
@@ -2343,7 +2343,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT manual translate page request using downloaded chapter fallback: pageKey=$pageKey"
                 }
-                translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
+                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
             }
         }
     }
@@ -2389,7 +2389,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // no-op for a page whose chapter differs from getCurrentChapter().
         val chapterId = page.chapter.chapter.id ?: return
         val pageKey = resolvePageKey(page)
-        translationScheduler.cancelPageTranslation(chapterId, pageKey)
+        translationManager.cancelPageTranslation(chapterId, pageKey)
     }
 
     /**

@@ -22,6 +22,9 @@ import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.orchestration.ReaderSessionIntent
+import eu.kanade.translation.orchestration.SessionAdmission
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -62,6 +65,7 @@ class TranslationScheduler(
     private val executor: TranslationExecutor,
     private val storeResolver: TranslationStoreResolver,
     private val immediateStoreResolver: ((Long) -> ChapterTranslationStore?)? = null,
+    private val sessionCoordinator: TranslationSessionCoordinator = TranslationSessionCoordinator(),
 ) : java.io.Closeable {
 
     override fun close() {
@@ -192,6 +196,19 @@ class TranslationScheduler(
         pageResolver: (Int) -> RollingAutoCoordinator.PageWorkItem?,
         computeClass: TranslatorComputeClass,
     ) {
+        when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(identity.chapterId))) {
+            is SessionAdmission.Admitted,
+            is SessionAdmission.Switched,
+            -> Unit
+
+            is SessionAdmission.Rejected -> {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT reader auto admission rejected at scheduler gate: " +
+                        "reason=${admission.reason} chapterId=${identity.chapterId}"
+                }
+                return
+            }
+        }
         val chapterId = session.chapter.id
         val arbitratedResolver: (Int) -> RollingAutoCoordinator.PageWorkItem? = { idx ->
             val item = pageResolver(idx)
@@ -661,6 +678,26 @@ class TranslationScheduler(
     }
 
     fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String, force: Boolean = false) {
+        when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapter.id))) {
+            is SessionAdmission.Admitted,
+            is SessionAdmission.Switched,
+            -> Unit
+
+            is SessionAdmission.Rejected -> {
+                chapter.id?.let { chapterId ->
+                    recordManualOutcome(
+                        chapterId,
+                        pageKey,
+                        SinglePageOutcome.Rejected(null, "reader session rejected: ${admission.reason}"),
+                    )
+                }
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT reader manual admission rejected at scheduler gate: " +
+                        "reason=${admission.reason} chapterId=${chapter.id} pageKey=$pageKey"
+                }
+                return
+            }
+        }
         val jobKey = "${chapter.id}:$pageKey"
         // TachiyomiAT: do NOT cancel an in-flight job for this page on a
         // duplicate request. The prior activePageJobs[jobKey]?.cancel() made

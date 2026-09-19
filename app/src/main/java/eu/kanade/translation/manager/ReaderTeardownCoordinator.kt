@@ -3,6 +3,8 @@ package eu.kanade.translation.manager
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ActiveChapterStoreRegistry
 import eu.kanade.translation.ChapterTranslator
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
+import eu.kanade.translation.orchestration.TranslationSessionState
 import eu.kanade.translation.scheduling.TranslationScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -32,6 +34,7 @@ internal class ReaderTeardownCoordinator(
     private val schedulerProvider: () -> TranslationScheduler,
     private val activeStoresProvider: () -> ActiveChapterStoreRegistry,
     private val translatorProvider: () -> ChapterTranslator,
+    private val sessionCoordinatorProvider: () -> TranslationSessionCoordinator,
     private val isAnyBatchTranslationActiveProvider: () -> Boolean,
     private val isBatchTranslationRetainedFn: (Long) -> Boolean,
     private val unregisterActiveTranslationStoreFn: (Long) -> Unit,
@@ -50,6 +53,8 @@ internal class ReaderTeardownCoordinator(
     private val activeStores get() = activeStoresProvider()
 
     private val translator get() = translatorProvider()
+
+    private val sessionCoordinator get() = sessionCoordinatorProvider()
 
     private val isAnyBatchTranslationActive get() = isAnyBatchTranslationActiveProvider()
 
@@ -74,6 +79,7 @@ internal class ReaderTeardownCoordinator(
                 if (!isAnyBatchTranslationActive) {
                     translatorStop(reason, closeEngines = false)
                 }
+                sessionCoordinator.finishSession(TranslationSessionState.READER_SESSION)
             }
         }
     }
@@ -98,12 +104,18 @@ internal class ReaderTeardownCoordinator(
                 val chapterIdsToEvict = activeStores.chapterIds()
                     .filter { !isBatchTranslationRetained(it) }
                 chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
+                sessionCoordinator.finishSession(TranslationSessionState.READER_SESSION)
             }
         }
     }
 
-    fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) =
-        scheduler.translatePage(manga, chapter, source, pageKey)
+    fun translatePage(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        force: Boolean = false,
+    ) = scheduler.translatePage(manga, chapter, source, pageKey, force)
 
     /**
      * Cancels the in-flight single-page translation job for one [pageKey] within [chapterId] —
@@ -160,6 +172,9 @@ internal class ReaderTeardownCoordinator(
         if (cancelBatchQueue) {
             translator.clearQueue()
             clearAllPendingTranslationRequests()
+            sessionCoordinator.finishSession()
+        } else {
+            sessionCoordinator.finishSession(TranslationSessionState.READER_SESSION)
         }
     }
 

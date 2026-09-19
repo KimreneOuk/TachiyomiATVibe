@@ -37,6 +37,11 @@ import eu.kanade.translation.manager.TranslationDocument
 import eu.kanade.translation.model.findRunningSameSourceConflict
 import eu.kanade.translation.model.staleQueuedChaptersToEvict
 import eu.kanade.translation.model.toQueuedChapterView
+import eu.kanade.translation.orchestration.BatchSessionIntent
+import eu.kanade.translation.orchestration.ReaderSessionIntent
+import eu.kanade.translation.orchestration.SessionAdmission
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
+import eu.kanade.translation.orchestration.TranslationSessionState
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -98,6 +103,11 @@ class TranslationManager(
 ) {
     private val pipeline = TranslationPipeline(context, provider)
     private val translator = ChapterTranslator(context, provider, pipeline = pipeline)
+
+    /** Single owner for reader/batch admission; lifecycle coordinators delegate here. */
+    val sessionCoordinator = TranslationSessionCoordinator(
+        onBatchSwitchRequested = { translator.pause() },
+    )
 
     // Held here (DI singleton) so deleteTranslation can evict stale reader page-stream closures pointing at the deleted rendered/cleaned PNGs.
     private val streamRegistry: TranslationStreamRegistry = Injekt.get()
@@ -213,6 +223,7 @@ class TranslationManager(
             activeStores.get(chapterId)
         },
         immediateStoreResolver = { chapterId -> activeStores.get(chapterId) },
+        sessionCoordinator = sessionCoordinator,
     )
 
     init {
@@ -238,6 +249,9 @@ class TranslationManager(
                     source = source,
                     mangaId = manga.id,
                 )
+            }
+            if (!isAnyBatchTranslationActive && queueState.value.none { it.status == Translation.State.PAUSED }) {
+                sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
             }
         }
         // NOTE: activeStoreUnregister is intentionally NOT wired. Evicting after
@@ -322,6 +336,22 @@ class TranslationManager(
 
     val isAnyBatchTranslationActive: Boolean
         get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
+
+    private fun admitBatchSession(chapterIds: Set<Long>): Boolean {
+        if (chapterIds.isEmpty()) return false
+        return when (val admission = sessionCoordinator.requestBatchSession(BatchSessionIntent(chapterIds))) {
+            is SessionAdmission.Admitted,
+            is SessionAdmission.Switched,
+            -> true
+
+            is SessionAdmission.Rejected -> {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT batch admission rejected: reason=${admission.reason} chapters=$chapterIds"
+                }
+                false
+            }
+        }
+    }
 
     // T909 Phase 9: bodies moved to manager/TranslationRequestCoordinator.kt;
     // same-signature stubs keep the manager's public (and reflection-tested) seams.
@@ -642,6 +672,7 @@ class TranslationManager(
         val manga = translation.manga
         val chapter = translation.chapter
         val chapterId = chapter.id ?: return
+        if (!admitBatchSession(setOf(chapterId))) return
         synchronized(pendingRequestMutationLock) {
             // The fence accepts the generation from either the live state or
             // the durable record: after a restart the request may exist only
@@ -680,6 +711,7 @@ class TranslationManager(
             schedulerProvider = { scheduler },
             activeStoresProvider = { activeStores },
             translatorProvider = { translator },
+            sessionCoordinatorProvider = { sessionCoordinator },
             isAnyBatchTranslationActiveProvider = { isAnyBatchTranslationActive },
             isBatchTranslationRetainedFn = { chapterId -> isBatchTranslationRetained(chapterId) },
             unregisterActiveTranslationStoreFn = { chapterId -> unregisterActiveTranslationStore(chapterId) },
@@ -722,6 +754,7 @@ class TranslationManager(
     }
 
     fun startTranslation() {
+        if (!admitBatchSession(queueState.value.mapNotNull { it.chapter.id }.toSet())) return
         if (!translator.isRunning) {
             translator.start()
         }
@@ -735,13 +768,16 @@ class TranslationManager(
     }
 
     /** Re-admits retryable paused work without disturbing another active chapter. */
-    suspend fun requeueTranslation(chapterId: Long, force: Boolean = false): Boolean =
-        translator.requeueExisting(chapterId, force)
+    suspend fun requeueTranslation(chapterId: Long, force: Boolean = false): Boolean {
+        if (!admitBatchSession(setOf(chapterId))) return false
+        return translator.requeueExisting(chapterId, force)
+    }
 
     fun clearQueue() {
         translator.clearQueue()
         translator.stop()
         clearAllPendingTranslationRequests()
+        sessionCoordinator.finishSession()
     }
 
     fun getQueuedTranslationOrNull(chapterId: Long): Translation? {
@@ -802,6 +838,7 @@ class TranslationManager(
         autoStart: Boolean = true,
     ) {
         val chapterId = chapters.id ?: return
+        if (!admitBatchSession(setOf(chapterId))) return
         synchronized(pendingRequestMutationLock) {
             if (expectedRequestGeneration != null &&
                 pendingTranslationRequestsState.value[chapterId]?.let { it.generation } !=
@@ -882,6 +919,7 @@ class TranslationManager(
         admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
     ): List<Chapter> {
         if (chapters.isEmpty()) return emptyList()
+        if (!admitBatchSession(chapters.mapNotNull { it.id }.toSet())) return emptyList()
         val admitted = mutableListOf<Chapter>()
         synchronized(pendingRequestMutationLock) {
             chapters.forEach { chapter ->
@@ -1580,6 +1618,19 @@ class TranslationManager(
         pageResolver: (Int) -> eu.kanade.translation.scheduling.RollingAutoCoordinator.PageWorkItem?,
         computeClass: eu.kanade.translation.translator.TranslatorComputeClass,
     ) {
+        when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(identity.chapterId))) {
+            is SessionAdmission.Admitted,
+            is SessionAdmission.Switched,
+            -> Unit
+
+            is SessionAdmission.Rejected -> {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT reader auto admission rejected: reason=${admission.reason} " +
+                        "chapterId=${identity.chapterId}"
+                }
+                return
+            }
+        }
         // T917 D4: same-chapter auto is suppressed for the WHOLE chapter-batch
         // lifetime (queue entry in QUEUE|TRANSLATING|PAUSED retained state).
         // Reader-window updates must not re-arm the rolling coordinator while
@@ -1796,6 +1847,9 @@ class TranslationManager(
                 translator.start()
             }
         }
+        if (!isAnyBatchTranslationActive && queueState.value.none { it.status == Translation.State.PAUSED }) {
+            sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
+        }
     }
 
     // T909 Phase 16: body moved to manager/CleanedImageLifecycleController.kt.
@@ -1826,8 +1880,13 @@ class TranslationManager(
     // dispatcher-constraint comments moved with them). Same-signature stubs
     // keep the public seams.
 
-    fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) =
-        readerTeardown.translatePage(manga, chapter, source, pageKey)
+    fun translatePage(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        force: Boolean = false,
+    ) = readerTeardown.translatePage(manga, chapter, source, pageKey, force)
 
     fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean =
         readerTeardown.cancelPageTranslation(chapterId, pageKey)
