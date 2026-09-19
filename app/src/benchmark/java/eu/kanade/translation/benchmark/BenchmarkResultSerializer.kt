@@ -39,6 +39,7 @@ class BenchmarkResultSerializer {
         put("downloadedCorpusStatus", result.downloadedCorpusStatus)
         put("externalCorpusStatus", result.externalCorpusStatus)
         put("parity", result.parity?.let(::parityJson) ?: JSONObject.NULL)
+        put("matrix", result.matrix?.let(::matrixJson) ?: JSONObject.NULL)
     }
 
     private fun configJson(config: PaddleBenchmarkConfig): JSONObject = JSONObject().apply {
@@ -50,6 +51,8 @@ class BenchmarkResultSerializer {
         put("includeExternalCorpus", config.includeExternalCorpus)
         put("outputDirectory", config.outputDirectory.absolutePath)
         put("parityMode", config.parityMode)
+        put("matrixMode", config.matrixMode)
+        put("matrixIterations", config.matrixIterations)
     }
 
     private fun deviceJson(device: DeviceMetadata): JSONObject = JSONObject().apply {
@@ -165,6 +168,38 @@ class BenchmarkResultSerializer {
         })
     }
 
+    private fun matrixJson(matrix: PaddleBenchmarkMatrixResult): JSONObject = JSONObject().apply {
+        put("deviceProfileEvidence", matrix.deviceProfileEvidence)
+        put("cells", JSONArray().apply {
+            matrix.cells.forEach { cell ->
+                put(
+                    JSONObject().apply {
+                        put("provider", cell.provider.name)
+                        put("requestedBatchSize", cell.requestedBatchSize.value)
+                        put("widthBucket", cell.widthBucket.paddedWidth)
+                        put("evidence", cell.evidence)
+                        put("actualRegisteredProvider", cell.actualRegisteredProvider)
+                        put("strictNoCpuFallback", cell.strictNoCpuFallback)
+                        put("provenanceAfterInference", cell.provenanceAfterInference)
+                        put("noCpuFallbackObserved", cell.noCpuFallbackObserved)
+                        put("downgradeReason", cell.downgradeReason ?: JSONObject.NULL)
+                        put("downgradeReasons", JSONArray(cell.downgradeReasons))
+                        put("measuredBatchSizes", JSONArray(cell.measuredBatchSizes))
+                        put("peakInputBytes", cell.peakInputBytes ?: JSONObject.NULL)
+                        put("peakOutputBytes", cell.peakOutputBytes ?: JSONObject.NULL)
+                        put("p50Ms", cell.p50Ms ?: JSONObject.NULL)
+                        put("p95Ms", cell.p95Ms ?: JSONObject.NULL)
+                        put("pssDeltaKb", cell.pssDeltaKb ?: JSONObject.NULL)
+                        put("thermalStatusAtStart", cell.thermalStatusAtStart)
+                        put("thermalStatusAtEnd", cell.thermalStatusAtEnd)
+                        put("rollingP95Actions", JSONArray(cell.rollingP95Actions))
+                        put("error", cell.error ?: JSONObject.NULL)
+                    },
+                )
+            }
+        })
+    }
+
     private fun stringMapJson(values: Map<String, String>): JSONObject = JSONObject().apply {
         values.toSortedMap().forEach { (key, value) -> put(key, value) }
     }
@@ -193,19 +228,48 @@ class BenchmarkResultSerializer {
 
     private fun toReport(result: PaddleBenchmarkResult): String = buildString {
         appendLine(
-            if (result.parity == null) {
+            if (result.matrix != null) {
+                "# Paddle OCR v6 provider / batch / width matrix"
+            } else if (result.parity == null) {
                 "# Paddle OCR v6 B1 Android baseline"
             } else {
                 "# Paddle OCR v6 B1 Android parity"
             },
         )
         appendLine()
-        appendLine("- Evidence: **CONFIRMED** on `${result.device.model}` / `${result.device.socModel}` (API ${result.device.androidApi}, `${result.device.primaryAbi}`).")
-        appendLine("- Provider: **CONFIRMED** actual registered provider `${result.provider.actualRegisteredProvider}`; runtime `${result.provider.runtimeVersion}`; requested route `${result.provider.requestedRoute}`.")
-        appendLine("- Batch: **CONFIRMED** measured batch size ${result.provider.measuredBatchSize}; `batched=${result.provider.batched}` is recorded from this B1 runner, not inferred from the engine name.")
-        appendLine("- Memory: **CONFIRMED** PSS sampled every ${result.pss.intervalMs} ms (${result.pss.sampleCount} samples); peak ${result.pss.peakPssKb} KiB; peak Java heap ${result.pss.peakJavaHeapBytes} bytes; thermal at peak `${result.pss.thermalStatusAtPeak}`.")
+        appendLine("- Device: `${result.device.model}` / `${result.device.socModel}` (API ${result.device.androidApi}, `${result.device.primaryAbi}`).")
+        if (result.matrix == null) {
+            appendLine("- Evidence: **CONFIRMED** on the recorded Android run.")
+            appendLine("- Provider: **CONFIRMED** actual registered provider `${result.provider.actualRegisteredProvider}`; runtime `${result.provider.runtimeVersion}`; requested route `${result.provider.requestedRoute}`.")
+            appendLine("- Batch: **CONFIRMED** measured batch size ${result.provider.measuredBatchSize}; `batched=${result.provider.batched}` is recorded from this B1 runner, not inferred from the engine name.")
+        } else {
+            appendLine("- Evidence: **PER-CELL**; matrix promotion still requires each cell's post-inference provenance and gate evidence.")
+            appendLine("- Provider: per-cell registration/provenance; runtime `${result.provider.runtimeVersion}`; route labels are not execution proof by themselves.")
+            appendLine("- Batch: per-cell requested/actual telemetry is recorded below; no matrix cell is promoted by this summary alone.")
+        }
+        appendLine("- Memory: PSS sampled every ${result.pss.intervalMs} ms (${result.pss.sampleCount} samples); peak ${result.pss.peakPssKb} KiB; peak Java heap ${result.pss.peakJavaHeapBytes} bytes; thermal at peak `${result.pss.thermalStatusAtPeak}`.")
         appendLine("- Session creation: `${format(result.sessionCreationMs)} ms`; model preparation: `${format(result.modelPreparationMs)} ms`; total: `${format(result.durationMs)} ms`.")
         appendLine("- Corpus: ${result.pagesProcessed}/${result.pagesAvailable} pages processed; downloaded corpus `${result.downloadedCorpusStatus}`; external corpus `${result.externalCorpusStatus}`.")
+        result.matrix?.let { matrix ->
+            val confirmed = matrix.cells.count { it.evidence == "CONFIRMED" }
+            val failed = matrix.cells.count { it.evidence == "FAILED" }
+            val untested = matrix.cells.count { it.evidence == "UNTESTED" }
+            appendLine("- Matrix: **$confirmed CONFIRMED**, $failed FAILED, $untested UNTESTED cells; " +
+                "strict accelerator cells require post-inference provenance and zero CPU fallback.")
+            appendLine()
+            appendLine("## Provider / batch / width matrix")
+            appendLine()
+            appendLine("| Provider | Batch | Width | Evidence | Registered | Proven after inference | No CPU fallback | p95 (ms) | Peak output (bytes) | PSS delta (KiB) |")
+            appendLine("| --- | ---: | ---: | --- | --- | --- | --- | ---: | ---: | ---: |")
+            matrix.cells.forEach { cell ->
+                appendLine(
+                    "| ${cell.provider} | ${cell.requestedBatchSize.value} | ${cell.widthBucket.paddedWidth} | " +
+                        "${cell.evidence} | ${cell.actualRegisteredProvider} | ${cell.provenanceAfterInference} | " +
+                        "${cell.noCpuFallbackObserved} | ${formatNullable(cell.p95Ms)} | " +
+                        "${cell.peakOutputBytes ?: "UNTESTED"} | ${cell.pssDeltaKb ?: "UNTESTED"} |",
+                )
+            }
+        }
         result.parity?.let { parity ->
             appendLine("- B1 parity: **${if (parity.passed) "CONFIRMED" else "FAILED"}** exact text and confidence-bit equality for ${parity.comparedSamples} samples.")
             appendLine("- Detector matrix: `${parity.detectorConfiguration}`.")

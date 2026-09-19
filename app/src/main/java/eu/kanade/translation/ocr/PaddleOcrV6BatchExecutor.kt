@@ -313,11 +313,17 @@ internal class PaddleOcrV6BatchExecutor(
     private fun normalizeBatch(maxBatch: Int): Int = when {
         maxBatch >= MAX_BATCH_SIZE -> MAX_BATCH_SIZE
         maxBatch >= MEDIUM_BATCH_SIZE -> MEDIUM_BATCH_SIZE
+        maxBatch >= SMALL_BATCH_SIZE -> SMALL_BATCH_SIZE
         else -> MIN_BATCH_SIZE
     }
 
     private fun lowerBatch(batchSize: Int): Int = when {
         batchSize >= MAX_BATCH_SIZE -> MEDIUM_BATCH_SIZE
+        // Keep the reviewed B8 -> B4 -> B1 emergency ladder. B2 is an
+        // explicit benchmark size, but a B4 runtime failure still goes
+        // directly to the proven B1 fallback rather than changing the
+        // production downgrade contract.
+        batchSize == SMALL_BATCH_SIZE -> MIN_BATCH_SIZE
         else -> MIN_BATCH_SIZE
     }
 
@@ -326,6 +332,7 @@ internal class PaddleOcrV6BatchExecutor(
     private companion object {
         const val MAX_BATCH_SIZE = 8
         const val MEDIUM_BATCH_SIZE = 4
+        const val SMALL_BATCH_SIZE = 2
         const val MIN_BATCH_SIZE = 1
         const val NANOS_PER_MILLISECOND = 1_000_000.0
     }

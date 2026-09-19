@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.runtime.onnx.PaddleOcrProviderTestConfiguration
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -57,8 +58,9 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         modelFile: File,
         dictionaryFile: File,
         strictProviderMode: Boolean = false,
+        providerConfiguration: PaddleOcrProviderTestConfiguration? = null,
     ) {
-        this.strictProviderMode = strictProviderMode
+        this.strictProviderMode = strictProviderMode || providerConfiguration?.strictNoCpuFallback == true
         logcat(LogPriority.INFO) {
             "PaddleOCR v6 small init: model=${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()}), " +
                 "dictionary=${dictionaryFile.absolutePath} (${dictionaryFile.length()}B exists=${dictionaryFile.exists()})"
@@ -67,12 +69,20 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
             reader.lineSequence().map { it.trimEnd() }.toList()
         }
         try {
-            val createdSession = OnnxRuntimeProvider.createSessionWithFallback(
-                modelFile.absolutePath,
-                useAccelerator = true,
-                providerSink = { executionProviderLabel = it },
-            )
-            if (strictProviderMode && executionProviderLabel.isCpuLikeProvider()) {
+            val createdSession = if (providerConfiguration == null) {
+                OnnxRuntimeProvider.createSessionWithFallback(
+                    modelFile.absolutePath,
+                    useAccelerator = true,
+                    providerSink = { executionProviderLabel = it },
+                )
+            } else {
+                OnnxRuntimeProvider.createSessionForPaddleProvider(
+                    modelPath = modelFile.absolutePath,
+                    configuration = providerConfiguration,
+                    providerSink = { executionProviderLabel = it },
+                )
+            }
+            if (this.strictProviderMode && executionProviderLabel.isCpuLikeProvider()) {
                 createdSession.close()
                 throw IllegalStateException(
                     "Strict Paddle OCR provider mode rejected provider='$executionProviderLabel'; CPU fallback is disabled",

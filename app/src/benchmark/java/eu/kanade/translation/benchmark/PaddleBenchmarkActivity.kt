@@ -11,10 +11,12 @@ class PaddleBenchmarkActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "paddle-benchmark-runner")
     }
+    private var runLease: PaddleBenchmarkRunLease? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val config = configFromIntent()
+        runLease = PaddleBenchmarkRunLease(this).also { it.start() }
         executor.execute {
             try {
                 val result = PaddleBenchmarkRunner(applicationContext).run(config)
@@ -29,13 +31,17 @@ class PaddleBenchmarkActivity : Activity() {
                 )
                 Log.e(TAG, "Paddle benchmark failed; see ${config.outputDirectory}", error)
             } finally {
+                runLease?.close()
+                runLease = null
                 executor.shutdown()
+                runOnUiThread { finish() }
             }
         }
-        finish()
     }
 
     override fun onDestroy() {
+        runLease?.close()
+        runLease = null
         super.onDestroy()
     }
 
@@ -52,6 +58,8 @@ class PaddleBenchmarkActivity : Activity() {
             includeExternalCorpus = intent.getBooleanExtra(EXTRA_INCLUDE_EXTERNAL, false),
             outputDirectory = File(intent.getStringExtra(EXTRA_OUTPUT_DIR) ?: defaultOutput.absolutePath),
             parityMode = intent.getBooleanExtra(EXTRA_PARITY_MODE, false),
+            matrixMode = intent.getBooleanExtra(EXTRA_MATRIX_MODE, false),
+            matrixIterations = intent.getIntExtra(EXTRA_MATRIX_ITERATIONS, 3).coerceIn(1, 20),
         )
     }
 
@@ -65,5 +73,7 @@ class PaddleBenchmarkActivity : Activity() {
         const val EXTRA_INCLUDE_EXTERNAL = "includeExternalCorpus"
         const val EXTRA_OUTPUT_DIR = "outputDir"
         const val EXTRA_PARITY_MODE = "parityMode"
+        const val EXTRA_MATRIX_MODE = "matrixMode"
+        const val EXTRA_MATRIX_ITERATIONS = "matrixIterations"
     }
 }

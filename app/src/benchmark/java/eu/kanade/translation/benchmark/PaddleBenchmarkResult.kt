@@ -9,6 +9,8 @@ data class PaddleBenchmarkConfig(
     val includeExternalCorpus: Boolean,
     val outputDirectory: java.io.File,
     val parityMode: Boolean = false,
+    val matrixMode: Boolean = false,
+    val matrixIterations: Int = 3,
 )
 
 data class BenchmarkPage(
@@ -175,4 +177,5 @@ data class PaddleBenchmarkResult(
     val downloadedCorpusStatus: String,
     val externalCorpusStatus: String,
     val parity: PaddleB1ParityResult? = null,
+    val matrix: PaddleBenchmarkMatrixResult? = null,
 )
