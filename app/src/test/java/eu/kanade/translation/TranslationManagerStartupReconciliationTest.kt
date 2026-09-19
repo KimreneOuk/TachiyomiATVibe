@@ -1,5 +1,6 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import android.content.Context
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -62,6 +63,7 @@ class TranslationManagerStartupReconciliationTest {
         val unsafe = theUnsafeField.get(null)
         val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
         val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
+        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
         setField(
             manager,
             "scheduler",

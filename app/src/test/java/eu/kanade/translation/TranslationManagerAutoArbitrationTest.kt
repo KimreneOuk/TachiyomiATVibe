@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
+import eu.kanade.translation.orchestration.TranslationSessionState
 import android.content.Context
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -139,6 +141,11 @@ class TranslationManagerAutoArbitrationTest {
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
 
+            // The reader window owns the session until reader teardown. End
+            // that lifecycle explicitly before admitting the batch; the phase
+            // 3 gate no longer lets a batch queue behind a live reader owner.
+            manager.sessionCoordinator.finishSession(TranslationSessionState.READER_SESSION)
+
             // Queueing a batch retires the old coordinator...
             manager.translateChapter(manga, chapter)
             manager.reconcileAutoWindow()
@@ -174,6 +181,7 @@ class TranslationManagerAutoArbitrationTest {
             // The gate is a batch-LIFETIME gate: once the queue drains, the
             // reader window arms again.
             queue.value = emptyList()
+            manager.sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
             manager.updateAutoWindow(
                 identity,
                 0,
@@ -199,6 +207,7 @@ class TranslationManagerAutoArbitrationTest {
         val unsafe = theUnsafeField.get(null)
         val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
         val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
+        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
         setField(manager, "scheduler", scheduler)
         setField(manager, "translator", translator)
         setField(manager, "context", mockk<Context>(relaxed = true))
