@@ -1,0 +1,71 @@
+# T936 — Comprehensive Codebase Architecture & Technical Debt Audit → Remediation
+
+## User Request (2026-09-19)
+
+> "You are the lead software architecture auditor and orchestrator.
+> Your job is to coordinate multiple specialist child agents to inspect this codebase for technical debt, unnecessary complexity, poor structure, stale tests, naming problems, oversized files, and overengineering.
+> This phase is AUDIT ONLY.
+> Do not modify production code.
+> Do not refactor files.
+> Do not delete tests.
+> Do not rename anything.
+> Do not implement fixes.
+> The final output should be a comprehensive technical-debt report following the reporting rules defined in AGENT.md."
+
+## Follow-up (2026-09-19, same day)
+
+> Transition to EXECUTION phase. 5 risk-ordered phases:
+> 1. Zero-Risk Purge; 2. Storage Unification; 3. Coexistence Simplification & Pipelined Batch;
+> 4. Monolith Decomposition; 5. Package Architecture, Test Renaming & Comment Hygiene.
+> Write tickets first; wait for Director confirmation before executing.
+
+## Audit Base
+
+- Worktree: `codebase_architecture_audit` (branch `codebase_architecture_audit`, base `main` @ `7262bf4`)
+- Baseline: 1,446 Kotlin files, 254,675 lines total. Translation layer: 573 files, 154,571 lines (60.69% of repository).
+- Artifacts synced from the audit worktree into this folder on 2026-09-19:
+  - `report/DIRECTOR_REPORT.md` — master findings
+  - `engineering/batch-pause-cancel-trace-and-mutual-exclusion-evaluation.md`
+  - `engineering/storage-and-coexistence-architecture-redesign.md`
+
+## Critical Safety Invariants (never violate)
+
+1. **DO NOT DELETE `aot-512.onnx`** — actively required by Qualcomm QNN HTP (NPU) static-shape
+   inpainting (`AOTInpainting.kt:115-124` resolves it via `paths.inpaint512Model`).
+2. **DO NOT TOUCH** downloaded manga chapter images, CBZ archives, reading history, or databases.
+3. Device hardware acceleration routing (CPU, Adreno GPU, Qualcomm NPU) must remain independent
+   and fully functional. See Ticket P1-05: NNAPI removal is **blocked** on runtime evidence —
+   the pinned ONNX Runtime AAR *does* contain the NNAPI execution provider, contradicting the
+   audit's "dead subsystem" proof.
+
+## Execution Phase
+
+Branch strategy: one branch per phase off `main` (`t936/phase1-zero-risk-purge`, ...).
+One commit per ticket. Every ticket must leave `:app:testDebugUnitTest` green.
+
+### Phase 1 — Zero-Risk Purge (tickets written, awaiting Director review)
+
+| Ticket | Title | Risk |
+|---|---|---|
+| [P1-01](ticket/p1-01-delete-disabled-rendering-tests.md) | Delete 8 permanently disabled rendering test suites (~2,900 lines) | Zero |
+| [P1-02](ticket/p1-02-remove-duplicate-segmentation-asset.md) | Delete duplicate asset `best_int8.onnx` (3.28 MB) | Zero |
+| [P1-03](ticket/p1-03-plug-asset-doc-leak.md) | Stop packaging OCR model docs (`.md`/`.yml`/`.gitattributes`) into the APK | Zero |
+| [P1-04](ticket/p1-04-untrack-repo-bloat.md) | Untrack ~74 MB of prototype models & benchmark outputs | Zero |
+| [P1-05](ticket/p1-05-nnapi-excision-blocked.md) | NNAPI excision — **BLOCKED**, premise contradicted by artifact inspection | Deferred |
+
+### Phases 2–5
+
+To be ticketed after Phase 1 lands. Roadmap in `report/DIRECTOR_REPORT.md` §8, with the
+coexistence model corrected by `engineering/batch-pause-cancel-trace-and-mutual-exclusion-evaluation.md` §3
+(mutual-exclusion session model: `IDLE` / `BATCH_SESSION` / `READER_SESSION`, quiescent pause via
+`cancelTranslatorJobAndJoin()` with bounded 3s timeout, Pass 1 sequential OCR push-through,
+Pass 2 overlapped Lane A rolling translation + Lane B concurrent inpainting, render join).
+
+## Status
+
+- [x] Independent specialist investigation & evidence verification (audit phase)
+- [x] False-positive correction (verified `aot-512.onnx` is actively required for Qualcomm QNN HTP)
+- [x] Consolidated Director report written to `report/DIRECTOR_REPORT.md`
+- [x] Audit artifacts synced into main workspace
+- [x] Phase 1 tickets written — **awaiting Director review before execution**
+- [ ] Phase 1 execution
