@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test
  * The retired run-record SIDECAR stays on disk (retention owns deletion: the
  * pointer is gone, so the next reachability sweep reclaims the orphaned file).
  */
-class ChapterArtifactStoreRetireActiveRunTest {
+class ChapterArtifactEngineRetireActiveRunTest {
 
     private fun hex64(tag: String): String =
         java.security.MessageDigest.getInstance("SHA-256")
@@ -27,9 +27,9 @@ class ChapterArtifactStoreRetireActiveRunTest {
      * retention assertions MUST share the same document IO), with ARTIFACTS
      * authority and a durably published run record.
      */
-    private fun artifactWithCompleteRun(): Quadruple<ChapterArtifactStore, SidecarPointer, ChapterRunRecord, AtomicChapterDocuments> {
+    private fun artifactWithCompleteRun(): Quadruple<ChapterArtifactEngine, SidecarPointer, ChapterRunRecord, AtomicChapterDocuments> {
         val documents = AtomicChapterDocuments(FakeChapterDocumentIo())
-        val artifact = ChapterArtifactStore(documents, ChapterArtifactLayout("Chapter 1"))
+        val artifact = ChapterArtifactEngine(documents, ChapterArtifactLayout("Chapter 1"))
         var manifest = artifact
             .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
@@ -60,7 +60,7 @@ class ChapterArtifactStoreRetireActiveRunTest {
             manifest = artifact.readManifest().shouldNotBeNull(),
             record = record,
             contentFingerprint = hex64("complete-run-record"),
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val pointer = publication.manifest.activeRun.shouldNotBeNull()
         return Quadruple(artifact, pointer, record, documents)
     }
@@ -74,14 +74,14 @@ class ChapterArtifactStoreRetireActiveRunTest {
         val durable = artifact.readManifest().shouldNotBeNull()
 
         val outcome = artifact.retireActiveRun(durable, "chapter data reset")
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.manifest.activeRun shouldBe null
         artifact.readManifest().shouldNotBeNull().activeRun shouldBe null
 
         // Idempotent: retiring again commits the unchanged manifest.
         val durableAfterFirst = artifact.readManifest().shouldNotBeNull()
         val second = artifact.retireActiveRun(durableAfterFirst, "chapter data reset")
-        second.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        second.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
             .manifest shouldBe durableAfterFirst
     }
 
@@ -98,7 +98,7 @@ class ChapterArtifactStoreRetireActiveRunTest {
 
         val outcome = artifact.retireActiveRun(stale, "chapter data reset")
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.manifest.activeRun shouldBe null
         artifact.readManifest().shouldNotBeNull().activeRun shouldBe null
     }
@@ -116,7 +116,7 @@ class ChapterArtifactStoreRetireActiveRunTest {
 
         val outcome = artifact.retireActiveRun(durable, "chapter data reset")
 
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldBe "manifest publication failed; active run pointer unchanged"
         artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull() shouldBe pointer
     }
@@ -126,7 +126,7 @@ class ChapterArtifactStoreRetireActiveRunTest {
         val (artifact, pointer, _, documents) = artifactWithCompleteRun()
         val durable = artifact.readManifest().shouldNotBeNull()
         val retirement = artifact.retireActiveRun(durable, "chapter data reset")
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         // The sidecar file is still on disk (the transaction never deletes),
         // but the retired pointer no longer reaches it: the next retention

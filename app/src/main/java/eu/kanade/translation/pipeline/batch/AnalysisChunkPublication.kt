@@ -6,7 +6,7 @@ import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.AnalysisChunkStatus
 import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.EvidenceRef
 import eu.kanade.translation.artifact.ExtractedEntity
 import eu.kanade.translation.artifact.ExtractedRelationship
@@ -14,6 +14,7 @@ import eu.kanade.translation.artifact.ExtractedTerm
 import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
+import kotlinx.coroutines.runBlocking
 import java.security.MessageDigest
 
 /**
@@ -42,47 +43,49 @@ internal object AnalysisChunkPublication {
     /** Compatibility overload retained while callers migrate to the facade seam. */
     @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
     fun publish(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         result: AnalysisChunkResult,
         nowEpochMs: Long,
-    ): ChapterArtifactStore.TransactionOutcome = publish(
-        store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
-            artifactStore = artifact,
-        ),
-        manifest = manifest,
-        result = result,
-        nowEpochMs = nowEpochMs,
-    )
+    ): ChapterArtifactEngine.TransactionOutcome = runBlocking {
+        publish(
+            store = ChapterTranslationStore(
+                translationFile = null,
+                fileCreator = null,
+                artifactStore = artifact,
+            ),
+            manifest = manifest,
+            result = result,
+            nowEpochMs = nowEpochMs,
+        )
+    }
 
     /**
      * Publishes one validated chunk result. `expectedOrdinal` is the current
      * `analysisChunks` size — the ONLY ordinal this transaction accepts.
      */
-    fun publish(
+    suspend fun publish(
         store: ChapterTranslationStore,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         result: AnalysisChunkResult,
         nowEpochMs: Long,
-    ): ChapterArtifactStore.TransactionOutcome {
+    ): ChapterArtifactEngine.TransactionOutcome {
         result.validationError()?.let { reason ->
-            return ChapterArtifactStore.TransactionOutcome.Rejected("analysis chunk invalid: $reason")
+            return ChapterArtifactEngine.TransactionOutcome.Rejected("analysis chunk invalid: $reason")
         }
         if (result.status != AnalysisChunkStatus.VALID) {
             // ST-08: invalid chunks are never persisted.
-            return ChapterArtifactStore.TransactionOutcome.Rejected(
+            return ChapterArtifactEngine.TransactionOutcome.Rejected(
                 "refusing to persist a non-VALID analysis chunk: ${result.chunkId}",
             )
         }
         if (result.chunkOrdinal != manifest.analysisChunks.size) {
-            return ChapterArtifactStore.TransactionOutcome.Rejected(
+            return ChapterArtifactEngine.TransactionOutcome.Rejected(
                 "$ORDINAL_REJECTION: expected ${manifest.analysisChunks.size}, " +
                     "got ${result.chunkOrdinal} (${result.chunkId})",
             )
         }
-        return store.withArtifactEngine { artifact ->
+        return store.withArtifactEngineLocked { artifact ->
             val contentFingerprint = contentFingerprint(result)
             val fileName = artifact.analysisChunkSidecarName(contentFingerprint)
             artifact.publishSidecarPointers(
@@ -106,7 +109,7 @@ internal object AnalysisChunkPublication {
                 },
                 nowEpochMs = nowEpochMs,
             )
-        } ?: ChapterArtifactStore.TransactionOutcome.Rejected("artifact engine unavailable")
+        } ?: ChapterArtifactEngine.TransactionOutcome.Rejected("artifact engine unavailable")
     }
 
     /**

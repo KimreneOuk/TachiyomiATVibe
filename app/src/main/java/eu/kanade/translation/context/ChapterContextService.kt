@@ -312,7 +312,7 @@ class ChapterContextService(
             .joinToString("\n")
 
     private fun defaultEnvelopeSources(pageKeys: List<String>): List<ProfileSubsetMatcher.EnvelopeSource> {
-        val manifestPages = store.artifactStore?.readManifest()?.pages
+        val manifestPages = store.artifactEngine?.readManifest()?.pages
         return pageKeys.mapIndexed { index, pageKey ->
             val page = store.pages[pageKey]
             val naturalIndex = manifestPages?.get(pageKey)?.naturalPageIndex ?: index
@@ -339,7 +339,7 @@ class ChapterContextService(
                 laneCapability = LaneCapability.MANUAL,
             ),
         )
-        val chapterKey = store.artifactStore?.layout?.chapterKey ?: "chapter"
+        val chapterKey = store.artifactEngine?.layout?.chapterKey ?: "chapter"
         val contentFp = ChapterContextSnapshot.computeContentFingerprint(
             chapterKey = chapterKey,
             targetLang = targetLang,

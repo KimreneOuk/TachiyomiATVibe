@@ -7,7 +7,7 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.ArtifactSeed
@@ -113,12 +113,12 @@ class D7EngineEpochStopRaceTest {
         // Bitmap.compress, so the companion image file has no bytes on the fake
         // IO. Seed the one display-base file the promotion validates and give
         // the directly-constructed artifact store the bounded decode probe stub
-        // (JVM has no BitmapFactory; the fixture builds the ChapterArtifactStore
+        // (JVM has no BitmapFactory; the fixture builds the ChapterArtifactEngine
         // itself, so the companion-object seam does not apply) answering the
         // decoded page's 100x100 — TranslationManagerArtifactReadTest precedent.
         val layout = ChapterArtifactLayout(CHAPTER_DIR)
         val imageProbe = CleanedImageProbe { ProbedImage(100, 100) }
-        val artifactStore = ChapterArtifactStore(
+        val artifactStore = ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             layout,
             imageProbe,

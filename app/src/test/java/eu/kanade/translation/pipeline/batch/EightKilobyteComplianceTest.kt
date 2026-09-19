@@ -11,7 +11,7 @@ import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.PlannedEnvelope
 import eu.kanade.translation.artifact.StageFingerprints
@@ -291,7 +291,7 @@ class EightKilobyteComplianceTest {
             createdAtEpochMs = 1L,
         )
 
-        val artifact = store.artifactStore.shouldNotBeNull()
+        val artifact = store.artifactEngine.shouldNotBeNull()
         if (artifact.readManifest() == null) {
             artifact.publishManifest(ChapterArtifactManifest(chapterKey = "Chapter 1"))
         }
@@ -383,7 +383,7 @@ class EightKilobyteComplianceTest {
             createdAtEpochMs = 1L,
         )
 
-        val artifact = store.artifactStore.shouldNotBeNull()
+        val artifact = store.artifactEngine.shouldNotBeNull()
         if (artifact.readManifest() == null) {
             artifact.publishManifest(ChapterArtifactManifest(chapterKey = "Chapter 1"))
         }

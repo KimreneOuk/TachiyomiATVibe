@@ -11,7 +11,7 @@ import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.artifact.EvidenceRef
@@ -126,8 +126,8 @@ class ProfileEnvelopePromptEnrichmentTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -290,7 +290,7 @@ class ProfileEnvelopePromptEnrichmentTest {
     private fun runCounters(store: ChapterTranslationStore): Pair<ChapterRunState, Map<String, Int>> {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
-        val record = (artifact.readRunRecord(pointer) as ChapterArtifactStore.RunRecordRead.Usable).record
+        val record = (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
         return record.state to record.phaseCounters
     }
 
@@ -751,7 +751,7 @@ class ProfileEnvelopePromptEnrichmentTest {
         // pointer, published through the STORE's own artifact store and
         // pushed into the store's manifest view, exactly as the coordinator
         // does in production.
-        val artifact = store.artifactStore.shouldNotBeNull()
+        val artifact = store.artifactEngine.shouldNotBeNull()
         if (artifact.readManifest() == null) {
             artifact.publishManifest(eu.kanade.translation.artifact.ChapterArtifactManifest(chapterKey = "Chapter 1"))
         }
@@ -782,14 +782,14 @@ class ProfileEnvelopePromptEnrichmentTest {
             artifact.readManifest().shouldNotBeNull(),
             profile,
             7L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         store.artifactManifest = profileCommit.manifest
         val planCommit = EnvelopePlanPublication.publish(
             artifact,
             profileCommit.manifest,
             plan,
             7L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         store.artifactManifest = planCommit.manifest
 
         val executor = ProfileEnvelopeExecutor(

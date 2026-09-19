@@ -35,14 +35,14 @@ data class ArtifactSeed(
 )
 
 /** Seeds only the artifact manifest needed by a durability test, then reloads it. */
-fun ChapterArtifactStore.loadArtifact(seed: ArtifactSeed = ArtifactSeed()): ChapterArtifactStore.LoadResult {
+fun ChapterArtifactEngine.loadArtifact(seed: ArtifactSeed = ArtifactSeed()): ChapterArtifactEngine.LoadResult {
     // Existing/future manifests are the subject of the caller's test. Do not
     // overwrite them with fixture pages; an artifact-only load must preserve
     // the durable document exactly as production does.
     val existing = readManifest()
     var manifest = load().manifest
     if (existing != null || (seed.pages.isEmpty() && seed.glossary.isEmpty())) {
-        return ChapterArtifactStore.LoadResult(manifest)
+        return ChapterArtifactEngine.LoadResult(manifest)
     }
 
     val pages = seed.pages.map { (pageKey, facts) ->
@@ -79,5 +79,5 @@ fun ChapterArtifactStore.loadArtifact(seed: ArtifactSeed = ArtifactSeed()): Chap
         manifest = manifest.copy(glossary = pointer)
     }
     check(publishManifest(manifest)) { "artifact test fixture publication failed" }
-    return ChapterArtifactStore.LoadResult(manifest)
+    return ChapterArtifactEngine.LoadResult(manifest)
 }

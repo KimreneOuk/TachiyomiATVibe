@@ -14,8 +14,8 @@ class ChapterArtifactRetentionEventDrivenTest {
 
     private val layout = ChapterArtifactLayout("Chapter 1")
 
-    private fun createStore(io: FakeChapterDocumentIo): ChapterArtifactStore =
-        ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+    private fun createStore(io: FakeChapterDocumentIo): ChapterArtifactEngine =
+        ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     @Test
     fun `deleteKnownOrphans deletes specified managed files and temp files without full tree crawl`() {

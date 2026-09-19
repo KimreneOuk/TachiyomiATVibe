@@ -4,7 +4,7 @@ import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.EvidenceRef
@@ -35,7 +35,7 @@ class ProfileFreezePublicationTest {
 
     private val io = FakeChapterDocumentIo()
     private val layout = ChapterArtifactLayout("Chapter 1")
-    private val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+    private val artifact = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     private fun hex64(tag: String): String =
         java.security.MessageDigest.getInstance("SHA-256")
@@ -84,7 +84,7 @@ class ProfileFreezePublicationTest {
         val profile = profile(1)
         val outcome = ProfileFreezePublication.publish(artifact, manifest(), profile, nowEpochMs = 7L)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val pointer = outcome.manifest.profile.shouldNotBeNull()
         pointer.version shouldBe 1
         pointer.contentFingerprint shouldBe profile.contentFingerprint
@@ -108,7 +108,7 @@ class ProfileFreezePublicationTest {
         bootstrapManifest()
         val tampered = profile(1).copy(contentFingerprint = hex64("tampered"))
         val outcome = ProfileFreezePublication.publish(artifact, manifest(), tampered, 7L)
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldContain "content fingerprint mismatch"
         // Nothing was published: the manifest has no profile pointer and no
         // profile sidecar file exists.
@@ -120,13 +120,13 @@ class ProfileFreezePublicationTest {
     fun `version not monotonic is rejected`() {
         bootstrapManifest()
         ProfileFreezePublication.publish(artifact, manifest(), profile(2), 7L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldContain "version not monotonic"
         ProfileFreezePublication.publish(artifact, manifest(), profile(1), 7L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         // v1 is now frozen; v1 again is NOT monotonic.
         ProfileFreezePublication.publish(artifact, manifest(), profile(1), 8L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldContain "version not monotonic"
     }
 
@@ -142,7 +142,7 @@ class ProfileFreezePublicationTest {
         val badV2 = draft(2, target = "Kaijl", inputTag = "input-1")
             .copy(contentFingerprint = hex64("not-the-real-hash"))
         ProfileFreezePublication.publish(artifact, manifest(), badV2, 8L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
 
         val current = manifest().profile.shouldNotBeNull()
         current shouldBe priorPointer
@@ -159,7 +159,7 @@ class ProfileFreezePublicationTest {
 
         val v2 = profile(2, target = "Kaijl") // different content, same inputs
         ProfileFreezePublication.publish(artifact, manifest(), v2, 8L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         val v2Pointer = manifest().profile.shouldNotBeNull()
         v2Pointer.version shouldBe 2
@@ -177,7 +177,7 @@ class ProfileFreezePublicationTest {
 
         io.writeNamesToFail.add(layout.manifestFileName)
         ProfileFreezePublication.publish(artifact, manifest(), profile(2, target = "Kaijl"), 8L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldContain "prior manifest remains authoritative"
         manifest().profile shouldBe prior
     }

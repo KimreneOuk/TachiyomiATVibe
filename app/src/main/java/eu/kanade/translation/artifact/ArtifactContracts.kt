@@ -148,7 +148,7 @@ data class LegacySourceIdentity(
 
 /**
  * Mtime is diagnostic evidence only; content identity owns adoption.
- * Single canonical copy shared by `ChapterArtifactStore` and
+ * Single canonical copy shared by `ChapterArtifactEngine` and
  * `ChapterArtifactDeletion` (previously duplicated in both).
  */
 internal fun identitiesMatch(expected: LegacySourceIdentity, actual: LegacySourceIdentity): Boolean =

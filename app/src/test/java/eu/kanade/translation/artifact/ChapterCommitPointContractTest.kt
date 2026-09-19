@@ -81,9 +81,9 @@ class ChapterCommitPointContractTest {
         migratedAtEpochMs = 42L,
     )
 
-    private fun createStore(): Pair<ChapterArtifactStore, FakeChapterDocumentIo> {
+    private fun createStore(): Pair<ChapterArtifactEngine, FakeChapterDocumentIo> {
         val io = FakeChapterDocumentIo()
-        val store = ChapterArtifactStore(
+        val store = ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             layout,
             object : CleanedImageProbe {
@@ -103,7 +103,7 @@ class ChapterCommitPointContractTest {
             CommitPoint.USER_STOP_DRAIN,
             CommitPoint.EXPLICIT_FLUSH,
             // T930 group-commit accumulation boundary: real and fsync-forcing
-            // (ChapterTranslationStore.kt:270/:297, ChapterArtifactStore.kt:911).
+            // (ChapterTranslationStore.kt:270/:297, ChapterArtifactEngine.kt:911).
             CommitPoint.BATCH_CHUNK,
         )
         CommitPoint.values().toList() shouldContainExactlyInAnyOrder expected
@@ -129,7 +129,7 @@ class ChapterCommitPointContractTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps-v1",
             nowEpochMs = 500L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
 
         val persisted = store.persistLiveCandidate(
@@ -148,7 +148,7 @@ class ChapterCommitPointContractTest {
                 orientation = "PORTRAIT",
             ),
             nowEpochMs = 501L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         val snapshotFingerprint = StageFingerprints.pageSnapshot(ocrSnapshot)
         val checkpoint = PageOcrCheckpoint(
@@ -187,7 +187,7 @@ class ChapterCommitPointContractTest {
             mode = OcrCheckpointMode.REBASE,
             nowEpochMs = 503L,
         )
-        val rebaseCommitted = rebaseOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val rebaseCommitted = rebaseOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         rebaseCommitted.commitPoint.shouldBeNull()
 
         // 2. CLOSE branch on a fresh store -> commitPoint is CommitPoint.OCR_CHECKPOINT_CLOSE
@@ -200,7 +200,7 @@ class ChapterCommitPointContractTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps-v1",
             nowEpochMs = 500L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId2 = opened2.generationId.shouldNotBeNull()
         val persisted2 = store2.persistLiveCandidate(
             manifest = opened2.manifest,
@@ -218,7 +218,7 @@ class ChapterCommitPointContractTest {
                 orientation = "PORTRAIT",
             ),
             nowEpochMs = 501L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val checkpoint2 = checkpoint.copy(producerGenerationId = generationId2)
 
         val closeOutcome = store2.checkpointOcr(
@@ -231,7 +231,7 @@ class ChapterCommitPointContractTest {
             mode = OcrCheckpointMode.CLOSE,
             nowEpochMs = 504L,
         )
-        val closeCommitted = closeOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val closeCommitted = closeOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         closeCommitted.commitPoint shouldBe CommitPoint.OCR_CHECKPOINT_CLOSE
     }
 
@@ -250,7 +250,7 @@ class ChapterCommitPointContractTest {
             dependencyFingerprint = "deps-v1",
             nowEpochMs = 500L,
         )
-        val openCommitted = openOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val openCommitted = openOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         openCommitted.commitPoint.shouldBeNull()
         val generationId = openCommitted.generationId.shouldNotBeNull()
 
@@ -265,7 +265,7 @@ class ChapterCommitPointContractTest {
             origin = ArtifactOrigin.BATCH,
             nowEpochMs = 501L,
         )
-        val persistCommitted = persistOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val persistCommitted = persistOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         persistCommitted.commitPoint.shouldBeNull()
 
         // Promote candidate -> PAGE_TERMINAL_PROMOTION
@@ -279,7 +279,7 @@ class ChapterCommitPointContractTest {
             origin = ArtifactOrigin.BATCH,
             nowEpochMs = 502L,
         )
-        val promoteCommitted = promoteOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val promoteCommitted = promoteOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         promoteCommitted.commitPoint shouldBe CommitPoint.PAGE_TERMINAL_PROMOTION
     }
 
@@ -309,11 +309,11 @@ class ChapterCommitPointContractTest {
         val fp = hex64("record-fp")
 
         val publishOutcome = store.publishActiveRun(manifest, runRecord, fp, 1000L)
-        val publishCommitted = publishOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val publishCommitted = publishOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         publishCommitted.commitPoint shouldBe CommitPoint.CHAPTER_PHASE_RECORD
 
         val retireOutcome = store.retireActiveRun(publishCommitted.manifest, "test", 1001L)
-        val retireCommitted = retireOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val retireCommitted = retireOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         retireCommitted.commitPoint shouldBe CommitPoint.CHAPTER_PHASE_RECORD
     }
 }

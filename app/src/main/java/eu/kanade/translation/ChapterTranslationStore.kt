@@ -14,7 +14,7 @@ import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterArtifactManifestReader
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.CommittedDisplayRef
@@ -158,7 +158,7 @@ class ChapterTranslationStore(
     internal var translationFile: UniFile?,
     internal val fileCreator: (() -> UniFile)?,
     initialPages: Map<String, PageTranslation> = emptyMap(),
-    internal var artifactStore: ChapterArtifactStore? = null,
+    artifactStore: ChapterArtifactEngine? = null,
     initialCommittedPages: Map<String, PageTranslation> = emptyMap(),
     initialArtifactManifest: ChapterArtifactManifest? = null,
     initialRetiredCleanedImages: Map<String, Set<String>> = emptyMap(),
@@ -178,38 +178,37 @@ class ChapterTranslationStore(
                 eu.kanade.translation.store.ChapterStoreEngineMode.Memory
             }
 
+    /** The durable engine when this mode has been opened; memory and lazy modes are explicit. */
+    internal val artifactEngine: ChapterArtifactEngine?
+        get() = (engineMode as? eu.kanade.translation.store.ChapterStoreEngineMode.Durable)?.artifact
+
     internal val mutex = Mutex()
 
     internal val chapterKey: String?
-        get() = artifactStore?.layout?.chapterKey ?: translationFile?.name?.substringBeforeLast('.')
+        get() = artifactEngine?.layout?.chapterKey ?: translationFile?.name?.substringBeforeLast('.')
 
-    /**
-     * Facade-owned read/write seam for callers that still need an artifact
-     * transaction during the staged merge. Commit 2 removes the nullable
-     * engine exposure after all callers have moved behind this seam.
-     */
-    internal inline fun <T> withArtifactEngine(block: (ChapterArtifactStore) -> T): T? =
-        artifactStore?.let(block)
+    /** Whether the facade has opened its durable engine. */
+    internal fun hasArtifactEngine(): Boolean = artifactEngine != null
 
     /** Runs one external artifact transaction under the facade mutex. */
     internal suspend inline fun <T> withArtifactEngineLocked(
-        crossinline block: (ChapterArtifactStore) -> T,
+        crossinline block: (ChapterArtifactEngine) -> T,
     ): T? = mutex.withLock {
-        artifactStore?.let(block)
+        artifactEngine?.let(block)
     }
 
     /** Read-only run-record projection used by progress/status consumers. */
     internal fun readActiveRunRecord(): ChapterRunRecord? {
         val pointer = artifactManifest?.activeRun ?: return null
-        val artifact = artifactStore ?: return null
-        return (artifact.readRunRecord(pointer) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
+        val artifact = artifactEngine ?: return null
+        return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
     }
 
     /** Read-only manifest projection for context/status consumers. */
-    internal fun readArtifactManifest(): ChapterArtifactManifest? = artifactStore?.readManifest()
+    internal fun readArtifactManifest(): ChapterArtifactManifest? = artifactEngine?.readManifest()
 
     /** Read-only chapter key projection without exposing the engine. */
-    internal fun artifactChapterKey(): String? = artifactStore?.layout?.chapterKey
+    internal fun artifactChapterKey(): String? = artifactEngine?.layout?.chapterKey
 
     @Volatile
     internal var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
@@ -375,14 +374,14 @@ class ChapterTranslationStore(
         if (stagedPageKeys.isEmpty()) {
             if (commitPoint == CommitPoint.EXPLICIT_FLUSH) {
                 artifactManifest?.let { manifest ->
-                    artifactStore?.publishManifestInternal(manifest, syncToDisk = true)
+                    artifactEngine?.publishManifestInternal(manifest, syncToDisk = true)
                 }
             }
             return true
         }
         val keys = stagedPageKeys.toList()
         stagedPageKeys.clear()
-        val store = artifactStore ?: return false
+        val store = artifactEngine ?: return false
         var current = artifactManifest ?: return false
         val sync = (commitPoint == CommitPoint.EXPLICIT_FLUSH || commitPoint == CommitPoint.BATCH_CHUNK)
         for (key in keys) {
@@ -398,7 +397,7 @@ class ChapterTranslationStore(
                 origin = candidate.origin,
                 sourceIdentity = page.sourceIdentity(key),
             )
-            if (res is ChapterArtifactStore.TransactionOutcome.Committed) {
+            if (res is ChapterArtifactEngine.TransactionOutcome.Committed) {
                 current = res.manifest
             }
         }
@@ -631,7 +630,7 @@ class ChapterTranslationStore(
 
     /** Caller holds the store mutex. */
     private fun removeInterruptedCapFailureLocked(pageKey: String) {
-        val artifact = artifactStore ?: return
+        val artifact = artifactEngine ?: return
         val manifest = artifactManifest ?: return
         val key = "$pageKey:${ArtifactStage.TRANSLATION.name}"
         val existing = manifest.durableFailures[key] ?: return
@@ -663,19 +662,14 @@ class ChapterTranslationStore(
                 message = "store is defunct",
             )
         }
-        if (artifactStore != null && artifactManifest != null) {
+        if (engineMode is eu.kanade.translation.store.ChapterStoreEngineMode.Durable && artifactManifest != null) {
             return MutationAdmission.Granted
         }
         // Explicitly memory-only stores are used by pure reducer/unit tests;
         // they have no persistence target and therefore cannot accidentally
         // create a legacy document. Production stores always provide a parent
         // or an already-open artifact document and take the lazy creation path below.
-        if (artifactStore == null &&
-            artifactParent == null &&
-            artifactFileName == null &&
-            translationFile == null &&
-            fileCreator == null
-        ) {
+        if (engineMode is eu.kanade.translation.store.ChapterStoreEngineMode.Memory) {
             return MutationAdmission.Granted
         }
         if (!ensureArtifactStoreLocked()) {
@@ -684,7 +678,7 @@ class ChapterTranslationStore(
                 message = "artifact store creation/publication failed",
             )
         }
-        return if (artifactStore != null && artifactManifest != null) {
+        return if (engineMode is eu.kanade.translation.store.ChapterStoreEngineMode.Durable && artifactManifest != null) {
             MutationAdmission.Granted
         } else {
             MutationAdmission.Rejected(
@@ -1196,7 +1190,7 @@ class ChapterTranslationStore(
     // Validates the store-level fencing identity (TX-02 inputs 1-3:
     // generation, pageVersion, lease token — the lease MUST be held), then
     // delegates the durable publication to
-    // [ChapterArtifactStore.checkpointOcr] (inputs 4-6 against the durable
+    // [ChapterArtifactEngine.checkpointOcr] (inputs 4-6 against the durable
     // manifest). Ordering rule T924-TX-06: validate → publish → install
     // checkpoint pointer + close/rebase candidate; the caller releases the
     // page lease ONLY after a Committed outcome — never before.
@@ -1237,7 +1231,7 @@ class ChapterTranslationStore(
                     "${admission.code}: ${admission.message}",
                 )
             }
-            val artifact = artifactStore
+            val artifact = artifactEngine
             val manifest = artifactManifest
             if (artifact == null || manifest == null) {
                 return@withLock rejectedCheckpoint(description, "artifact store was not established")
@@ -1334,13 +1328,13 @@ class ChapterTranslationStore(
                 nowEpochMs = nowEpochMs,
             )
             when (outcome) {
-                is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                     artifactManifest = outcome.manifest
                     _state.value = snapshotPages()
                     _display.value = displaySnapshotLocked()
                     CheckpointOcrResult.Committed(snapshotLocked(pageKey), outcome.manifest)
                 }
-                is ChapterArtifactStore.TransactionOutcome.Rejected ->
+                is ChapterArtifactEngine.TransactionOutcome.Rejected ->
                     rejectedCheckpoint(description, outcome.reason)
             }
         }
@@ -1354,7 +1348,7 @@ class ChapterTranslationStore(
      *
      * T924-F-1: [pageKey] MUST be the transaction pageKey, never
      * [PageTranslation.sourceFileName] — the TX-03.1 adopt side
-     * ([ChapterArtifactStore.committedOcrContentFingerprint]) canonicalizes
+     * ([ChapterArtifactEngine.committedOcrContentFingerprint]) canonicalizes
      * with `checkpoint.sourceIdentity.pageKey` (the transaction pageKey), so
      * both sides of the drift comparison must share one pageKey source.
      */
@@ -1938,10 +1932,12 @@ class ChapterTranslationStore(
             if (changed) {
                 _state.value = snapshotPages()
             }
-            if (artifactStore == null && artifactParent != null && artifactFileName != null) {
+            if (engineMode !is eu.kanade.translation.store.ChapterStoreEngineMode.Durable &&
+                artifactParent != null && artifactFileName != null
+            ) {
                 ensureArtifactStoreLocked()
             }
-            val store = artifactStore
+            val store = artifactEngine
             val manifest = artifactManifest
             val expected = pendingExpectedPageCount
             val expectedTrusted = when {
@@ -2124,20 +2120,23 @@ class ChapterTranslationStore(
         expected: PatchPrecondition? = null,
         durableFailure: DurableFailureMetadata? = null,
     ): Boolean {
-        if (artifactStore == null) {
-            if (artifactParent == null && artifactFileName == null && translationFile == null && fileCreator == null) {
-                // Pure in-memory stores have no persistence target and never
-                // create a compatibility document as a side effect.
-                // Preserve the historical dirty/flush contract for callers
-                // that use an in-memory store as a persistence probe: an
-                // explicit flush still attempts once and keeps the dirty bit
-                // set because there is no durable artifact to publish.
-                dirty = true
-                return true
-            }
-            if (!ensureArtifactStoreLocked()) {  return false }
+        if (engineMode is eu.kanade.translation.store.ChapterStoreEngineMode.Memory) {
+            // Pure in-memory stores have no persistence target and never
+            // create a compatibility document as a side effect.
+            // Preserve the historical dirty/flush contract for callers
+            // that use an in-memory store as a persistence probe: an
+            // explicit flush still attempts once and keeps the dirty bit
+            // set because there is no durable artifact to publish.
+            dirty = true
+            return true
         }
-        val store = artifactStore ?: run {  return false }
+        if (engineMode !is eu.kanade.translation.store.ChapterStoreEngineMode.Durable &&
+            !ensureArtifactStoreLocked()
+        ) {
+            return false
+        }
+        val store = (engineMode as? eu.kanade.translation.store.ChapterStoreEngineMode.Durable)?.artifact
+            ?: return false
         var manifest = artifactManifest ?: return true
         if (pageKey.isEmpty()) return true
         val firstReaderBaseline = if (
@@ -2200,7 +2199,7 @@ class ChapterTranslationStore(
                     seam = "page-registration",
                 )
             ) {
-                is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                     manifest = registration.manifest
                     artifactManifest = manifest
                     pendingArtifactPageRegistrations.removeAll(registrationKeys.toSet())
@@ -2209,7 +2208,7 @@ class ChapterTranslationStore(
                         pendingExpectedPageCountTrusted = false
                     }
                 }
-                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact page registration failed: pageKey=$pageKey " +
                             "count=${registrationKeys.size} reason=${registration.reason}"
@@ -2275,7 +2274,7 @@ class ChapterTranslationStore(
         if (candidate == null || candidate.origin != origin) {
             val baseManifest = if (candidate != null && candidate.origin != origin) {
                 when (val cancelled = store.cancelLiveCandidate(manifest, pageKey, candidate.generationId)) {
-                    is ChapterArtifactStore.TransactionOutcome.Committed -> cancelled.manifest
+                    is ChapterArtifactEngine.TransactionOutcome.Committed -> cancelled.manifest
                     else -> manifest
                 }
             } else {
@@ -2289,8 +2288,8 @@ class ChapterTranslationStore(
                 dependencyFingerprint = dependencyFingerprint,
             )
             manifest = when (opened) {
-                is ChapterArtifactStore.TransactionOutcome.Committed -> opened.manifest
-                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> opened.manifest
+                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate open rejected: pageKey=$pageKey reason=${opened.reason}"
                     }
@@ -2315,8 +2314,8 @@ class ChapterTranslationStore(
                 sourceIdentity = updated.sourceIdentity(pageKey),
             )
             manifest = when (persisted) {
-                is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
-                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
+                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
                     }
@@ -2340,8 +2339,8 @@ class ChapterTranslationStore(
                 sourceIdentity = updated.sourceIdentity(pageKey),
             )
             manifest = when (promoted) {
-                is ChapterArtifactStore.TransactionOutcome.Committed -> promoted.manifest
-                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> promoted.manifest
+                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
                     }
@@ -2365,8 +2364,8 @@ class ChapterTranslationStore(
                 sourceIdentity = updated.sourceIdentity(pageKey),
             )
             manifest = when (persisted) {
-                is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
-                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
+                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
                     }
@@ -2391,8 +2390,8 @@ class ChapterTranslationStore(
                 sourceIdentity = updated.sourceIdentity(pageKey),
             )
             manifest = when (persisted) {
-                is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
-                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
+                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
                     }
@@ -2412,8 +2411,8 @@ class ChapterTranslationStore(
                     sourceIdentity = updated.sourceIdentity(pageKey),
                 )
                 manifest = when (promoted) {
-                    is ChapterArtifactStore.TransactionOutcome.Committed -> promoted.manifest
-                    is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                    is ChapterArtifactEngine.TransactionOutcome.Committed -> promoted.manifest
+                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                         logcat(LogPriority.WARN) {
                             "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
                         }
@@ -2429,7 +2428,9 @@ class ChapterTranslationStore(
 
     /** Lazily creates the artifact store for a chapter that has no manifest yet. */
     private fun ensureArtifactStoreLocked(): Boolean {
-        artifactStore?.let { return artifactManifest != null }
+        if (engineMode is eu.kanade.translation.store.ChapterStoreEngineMode.Durable) {
+            return artifactManifest != null
+        }
         // Lazy production stores must provide an artifact parent/name. A store
         // opened before its document existed resolves the parent through
         // [fileCreator] here, so the first real write creates the artifact
@@ -2441,9 +2442,8 @@ class ChapterTranslationStore(
         val fileName = artifactFileName ?: translationFile?.name ?: return false
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
-        val store = ChapterArtifactStore(documents, layout)
+        val store = ChapterArtifactEngine(documents, layout)
         val manifest = synchronized(artifactOpenLock(parent, fileName)) { store.load().manifest }
-        artifactStore = store
         engineMode = eu.kanade.translation.store.ChapterStoreEngineMode.Durable(store)
         artifactManifest = manifest
         return true
@@ -2538,7 +2538,7 @@ class ChapterTranslationStore(
         val record = artifactManifest?.pages?.get(pageKey)
         val snapshotFileName = record?.candidate?.pageSnapshotFileName
             ?: record?.committed?.pageSnapshotFileName
-        val store = artifactStore
+        val store = artifactEngine
         if (snapshotFileName != null && store != null) {
             val loaded = store.readPageSnapshot(snapshotFileName)
             if (loaded != null) {
@@ -2626,7 +2626,7 @@ class ChapterTranslationStore(
     /**
      * T924 LI-2: retires the artifact manifest's `activeRun` pointer under the
      * store mutex (the store-side façade over
-     * [ChapterArtifactStore.retireActiveRun], mirroring the
+     * [ChapterArtifactEngine.retireActiveRun], mirroring the
      * [demoteCommittedDisplay] transaction idiom: CAS against the durable
      * manifest, façade snapshot refreshed only on Committed). Reserved for user
      * resets — a reset must retire the recorded run so a future dispatch can
@@ -2637,17 +2637,17 @@ class ChapterTranslationStore(
     suspend fun retireActiveRun(reason: String): Boolean {
         if (defunct) return false
         return mutex.withLock {
-            val artifact = artifactStore ?: return@withLock false
+            val artifact = artifactEngine ?: return@withLock false
             val manifest = artifactManifest ?: return@withLock false
         when (val outcome = artifact.retireActiveRun(manifest, reason)) {
-                is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                     artifactManifest = outcome.manifest
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT artifact active run retired: chapter=${manifest.chapterKey} reason=$reason"
                     }
                     true
                 }
-                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact active run retirement rejected: " +
                             "chapter=${manifest.chapterKey} reject=${outcome.reason} resetReason=$reason"
@@ -2659,14 +2659,14 @@ class ChapterTranslationStore(
     }
 
     internal fun cancelArtifactCandidateLocked(pageKey: String): Boolean {
-        val store = artifactStore ?: return true
+        val store = artifactEngine ?: return true
         val manifest = artifactManifest ?: return true
         val candidate = manifest.pages[pageKey]?.candidate ?: return true
         val outcome = store.cancelLiveCandidate(manifest, pageKey, candidate.generationId)
-        if (outcome is ChapterArtifactStore.TransactionOutcome.Committed) {
+        if (outcome is ChapterArtifactEngine.TransactionOutcome.Committed) {
             artifactManifest = outcome.manifest
             return true
-        } else if (outcome is ChapterArtifactStore.TransactionOutcome.Rejected) {
+        } else if (outcome is ChapterArtifactEngine.TransactionOutcome.Rejected) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact candidate cancel rejected: pageKey=$pageKey reason=${outcome.reason}"
             }
@@ -2675,31 +2675,31 @@ class ChapterTranslationStore(
     }
 
     private fun demoteArtifactPageLocked(pageKey: String) {
-        val store = artifactStore ?: return
+        val store = artifactEngine ?: return
         val manifest = artifactManifest ?: return
         val outcome = store.demoteLivePage(manifest, pageKey)
         when (outcome) {
-            is ChapterArtifactStore.TransactionOutcome.Committed -> artifactManifest = outcome.manifest
-            is ChapterArtifactStore.TransactionOutcome.Rejected -> logcat(LogPriority.WARN) {
+            is ChapterArtifactEngine.TransactionOutcome.Committed -> artifactManifest = outcome.manifest
+            is ChapterArtifactEngine.TransactionOutcome.Rejected -> logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact display demotion rejected: pageKey=$pageKey reason=${outcome.reason}"
             }
         }
     }
 
     private fun deleteArtifactPageLocked(pageKey: String) {
-        val store = artifactStore ?: return
+        val store = artifactEngine ?: return
         val manifest = artifactManifest ?: return
         val outcome = store.deleteLivePage(manifest, pageKey)
         when (outcome) {
-            is ChapterArtifactStore.TransactionOutcome.Committed -> artifactManifest = outcome.manifest
-            is ChapterArtifactStore.TransactionOutcome.Rejected -> logcat(LogPriority.WARN) {
+            is ChapterArtifactEngine.TransactionOutcome.Committed -> artifactManifest = outcome.manifest
+            is ChapterArtifactEngine.TransactionOutcome.Rejected -> logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact page deletion rejected: pageKey=$pageKey reason=${outcome.reason}"
             }
         }
     }
 
     private fun rekeyArtifactPagesLocked(moveByOldKey: Map<String, String>) {
-        val store = artifactStore ?: return
+        val store = artifactEngine ?: return
         val manifest = artifactManifest ?: return
         val updatedPages = manifest.pages.entries.associate { (oldKey, record) ->
             (moveByOldKey[oldKey] ?: oldKey) to record.copy(
@@ -2789,7 +2789,7 @@ class ChapterTranslationStore(
     val contextService: ChapterContextService = ChapterContextService(this)
 
     fun readReusableProfile(): ChapterTranslationProfile? {
-        val artifact = artifactStore ?: return null
+        val artifact = artifactEngine ?: return null
         val manifest = artifact.readManifest() ?: return null
         val pointer = manifest.profile ?: return null
         if (!pointer.isWellFormed()) return null
@@ -2942,7 +2942,7 @@ class ChapterTranslationStore(
             }
             val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
             val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
-            val artifact = ChapterArtifactStore(documents, layout)
+            val artifact = ChapterArtifactEngine(documents, layout)
             val manifest = synchronized(artifactOpenLock(parent, fileName)) { artifact.load().manifest }
             val committedPages = manifest.pages.mapNotNull { (pageKey, record) ->
                 record.committed?.pageSnapshotFileName

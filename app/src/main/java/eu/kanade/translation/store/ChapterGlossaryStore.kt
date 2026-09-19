@@ -132,7 +132,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
             if (eu.kanade.translation.artifact.GroupCommitConfiguration.enabled && store.hasStagedMutations()) {
                 store.flushStagedMutationsLocked(eu.kanade.translation.artifact.CommitPoint.EXPLICIT_FLUSH)
             }
-            val artifact = store.artifactStore
+            val artifact = store.artifactEngine
             val manifest = store.artifactManifest
             if (artifact != null && manifest != null) {
                 val glossaryWriter = eu.kanade.translation.ActiveChapterStoreRegistry.registerWriter(
@@ -173,7 +173,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
         ChapterGlossaryBuilder.streamedRecompute(translatedPairs())
 
     internal fun loadGlossary() {
-        val artifact = store.artifactStore
+        val artifact = store.artifactEngine
         val manifest = store.artifactManifest
         if (artifact != null && manifest != null) {
             manifest.glossary?.let { pointer ->
@@ -185,7 +185,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
     }
 
     internal fun persistGlossaryLocked(): Boolean {
-        val artifact = store.artifactStore
+        val artifact = store.artifactEngine
         val manifest = store.artifactManifest
         if (artifact != null && manifest != null) {
             val pointer = artifact.publishGlossary(glossary) ?: return false

@@ -6,7 +6,7 @@ import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
@@ -74,7 +74,7 @@ class T934ProjectorRebuildTruthTest {
 
     /** Store whose in-memory manifest carries the published active-run pointer. */
     private fun storeWithRunRecord(record: ChapterRunRecord): ChapterTranslationStore {
-        val artifact = ChapterArtifactStore(
+        val artifact = ChapterArtifactEngine(
             AtomicChapterDocuments(FakeChapterDocumentIo()),
             ChapterArtifactLayout("Chapter 9"),
         )
@@ -86,7 +86,7 @@ class T934ProjectorRebuildTruthTest {
         )
         val initial = artifact.readManifest().shouldNotBeNull()
         val committed = artifact.publishActiveRun(initial, record, hex64)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         return ChapterTranslationStore(
             translationFile = null,

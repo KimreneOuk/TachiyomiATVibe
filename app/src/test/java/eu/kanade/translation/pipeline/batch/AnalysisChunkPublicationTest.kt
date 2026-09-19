@@ -9,7 +9,7 @@ import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.EvidenceRef
 import eu.kanade.translation.artifact.ExtractedEntity
 import eu.kanade.translation.artifact.ExtractedRelationship
@@ -47,8 +47,8 @@ class AnalysisChunkPublicationTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -111,7 +111,7 @@ class AnalysisChunkPublicationTest {
         val fingerprint = AnalysisChunkPublication.contentFingerprint(result)
 
         val outcome = AnalysisChunkPublication.publish(artifact, manifest, result, nowEpochMs = 5_000L)
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         committed.manifest.analysisChunks.shouldHaveSize(1)
         val pointer = committed.manifest.analysisChunks.single()
@@ -146,18 +146,18 @@ class AnalysisChunkPublicationTest {
         var manifest = baseManifest()
 
         manifest = AnalysisChunkPublication.publish(artifact, manifest, validResult(0), 1_000L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>().manifest
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest
 
         // Ordinal 2 while the list holds one pointer: REJECTED, prior manifest
         // stays authoritative (the gap is never silently bridged).
         val rejected = AnalysisChunkPublication.publish(artifact, manifest, validResult(2), 2_000L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldStartWith AnalysisChunkPublication.ORDINAL_REJECTION
         artifact.readManifest().shouldNotBeNull().analysisChunks.shouldHaveSize(1)
 
         // The accepted append keeps list order == ordinal order (ST-08 prefix rule).
         manifest = AnalysisChunkPublication.publish(artifact, manifest, validResult(1), 3_000L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>().manifest
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest
         manifest.analysisChunks.shouldHaveSize(2)
         manifest.analysisChunks.map { it.contentFingerprint } shouldBe listOf(
             AnalysisChunkPublication.contentFingerprint(validResult(0)),
@@ -176,13 +176,13 @@ class AnalysisChunkPublicationTest {
             validationFailureReason = "V8 excerpt hash mismatch",
         )
         AnalysisChunkPublication.publish(artifact, manifest, invalidStatus, 1_000L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldStartWith "refusing to persist a non-VALID analysis chunk"
 
         // VALID-marked but semantically broken: the schema gate rejects first.
         val broken = validResult(0).copy(corePageKeys = emptyList())
         AnalysisChunkPublication.publish(artifact, manifest, broken, 1_000L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldStartWith "analysis chunk invalid"
 
         artifact.readManifest().shouldNotBeNull().analysisChunks.shouldHaveSize(0)
@@ -194,13 +194,13 @@ class AnalysisChunkPublicationTest {
         val staleManifest = baseManifest()
 
         val committed = AnalysisChunkPublication.publish(artifact, staleManifest, validResult(0), 1_000L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         // A crash-race caller publishing against the SUPERSEDED manifest is
         // rejected by the precondition, not merged; the durable manifest keeps
         // exactly the committed pointer list.
         AnalysisChunkPublication.publish(artifact, staleManifest, validResult(1), 2_000L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         artifact.readManifest().shouldNotBeNull().analysisChunks shouldBe committed.manifest.analysisChunks
     }
 }

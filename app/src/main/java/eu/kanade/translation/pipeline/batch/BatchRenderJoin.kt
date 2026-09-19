@@ -16,7 +16,7 @@ import eu.kanade.translation.RenderStagePatch
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ColorStylePreparation
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.artifact.SidecarPointer
@@ -349,7 +349,7 @@ internal class BatchRenderJoin(
     // T924 WP9 (T924-FF-02a(1)): LAYOUT_PREPARE publication. FF-02 OFF keeps
     // the legacy color-only render body byte-for-byte; ON adds the per-page
     // persisted draw plan + color preparation publication after the render
-    // commit, through ChapterArtifactStore.publishSidecarPointers with the
+    // commit, through ChapterArtifactEngine.publishSidecarPointers with the
     // full T924-TX-23 CAS precondition set. Plans are late, per-page, and
     // additive: any precondition or publication failure keeps the committed
     // render authoritative and simply leaves "no plan" for the page
@@ -361,7 +361,7 @@ internal class BatchRenderJoin(
         runCatching { Injekt.get<Application>() as Context }.getOrNull()
     }
 
-    private fun publishPersistedLayoutIfEnabled(
+    private suspend fun publishPersistedLayoutIfEnabled(
         pageKey: String,
         page: PageTranslation,
         postSnapshot: ChapterTranslationStore.PageSnapshot,
@@ -378,14 +378,13 @@ internal class BatchRenderJoin(
         }
     }
 
-    private fun publishPersistedLayout(
+    private suspend fun publishPersistedLayout(
         pageKey: String,
         page: PageTranslation,
         postSnapshot: ChapterTranslationStore.PageSnapshot,
     ) {
-        val artifact = store.withArtifactEngine { it } ?: return
-        val manifest = store.artifactManifest ?: return
-        val artifactPage = manifest.pages[pageKey] ?: return
+        val manifestSnapshot = store.artifactManifest ?: return
+        val artifactPage = manifestSnapshot.pages[pageKey] ?: return
 
         // T924-TX-23 precondition set, checked against the post-render-merge
         // snapshot; the whole-manifest CAS in publishSidecarPointers rejects
@@ -489,56 +488,81 @@ internal class BatchRenderJoin(
             return
         }
 
-        val planFileName = artifact.layoutPlanSidecarName(pageKey, prepared.planContentFingerprint)
-        val colorFileName = artifact.colorPreparationSidecarName(pageKey, prepared.colorContentFingerprint)
         val now = System.currentTimeMillis()
-        val outcome = artifact.publishSidecarPointers(
-            manifest = manifest,
-            sidecars = listOf(
-                artifact.jsonSidecarPublication(
-                    fileName = planFileName,
-                    contentFingerprint = prepared.planContentFingerprint,
-                    document = prepared.plan,
-                    serializer = PageLayoutDrawPlan.serializer(),
-                ),
-                artifact.jsonSidecarPublication(
-                    fileName = colorFileName,
-                    contentFingerprint = prepared.colorContentFingerprint,
-                    document = prepared.colorPreparation,
-                    serializer = ColorStylePreparation.serializer(),
-                ),
-            ),
-            updatePointers = { current ->
-                val updatedPage = current.pages.getValue(pageKey).copy(
-                    layout = StageArtifactRecord(
-                        status = ArtifactStageStatus.READY,
-                        fingerprint = prepared.compatibilityFingerprint,
-                        origin = ArtifactOrigin.BATCH,
-                        artifactFileName = planFileName,
-                        updatedAtEpochMs = now,
+        val outcome = store.withArtifactEngineLocked { artifact ->
+            val manifest = store.artifactManifest ?: return@withArtifactEngineLocked null
+            val currentPage = manifest.pages[pageKey] ?: return@withArtifactEngineLocked null
+            if (postSnapshot.artifactPageVersion != null &&
+                currentPage.pageVersion != postSnapshot.artifactPageVersion
+            ) {
+                return@withArtifactEngineLocked null
+            }
+            if (postSnapshot.candidateGenerationId != null &&
+                currentPage.candidate?.generationId != postSnapshot.candidateGenerationId
+            ) {
+                return@withArtifactEngineLocked null
+            }
+            if (postSnapshot.dependencyFingerprint != null &&
+                currentPage.candidate != null &&
+                currentPage.candidate.dependencyFingerprint != postSnapshot.dependencyFingerprint
+            ) {
+                return@withArtifactEngineLocked null
+            }
+            if (postSnapshot.page != null &&
+                page.ocrBlockFingerprints() != postSnapshot.page.ocrBlockFingerprints()
+            ) {
+                return@withArtifactEngineLocked null
+            }
+            val planFileName = artifact.layoutPlanSidecarName(pageKey, prepared.planContentFingerprint)
+            val colorFileName = artifact.colorPreparationSidecarName(pageKey, prepared.colorContentFingerprint)
+            artifact.publishSidecarPointers(
+                manifest = manifest,
+                sidecars = listOf(
+                    artifact.jsonSidecarPublication(
+                        fileName = planFileName,
+                        contentFingerprint = prepared.planContentFingerprint,
+                        document = prepared.plan,
+                        serializer = PageLayoutDrawPlan.serializer(),
                     ),
-                )
-                current.copy(
-                    pages = current.pages + (pageKey to updatedPage),
-                    layoutPlans = current.layoutPlans + (
-                        pageKey to SidecarPointer(
-                            fileName = planFileName,
-                            schemaVersion = PageLayoutDrawPlan.SCHEMA_VERSION,
-                            contentFingerprint = prepared.planContentFingerprint,
-                        )
+                    artifact.jsonSidecarPublication(
+                        fileName = colorFileName,
+                        contentFingerprint = prepared.colorContentFingerprint,
+                        document = prepared.colorPreparation,
+                        serializer = ColorStylePreparation.serializer(),
+                    ),
+                ),
+                updatePointers = { current ->
+                    val updatedPage = current.pages.getValue(pageKey).copy(
+                        layout = StageArtifactRecord(
+                            status = ArtifactStageStatus.READY,
+                            fingerprint = prepared.compatibilityFingerprint,
+                            origin = ArtifactOrigin.BATCH,
+                            artifactFileName = planFileName,
+                            updatedAtEpochMs = now,
                         ),
-                    colorPreparations = current.colorPreparations + (
-                        pageKey to SidecarPointer(
-                            fileName = colorFileName,
-                            schemaVersion = ColorStylePreparation.SCHEMA_VERSION,
-                            contentFingerprint = prepared.colorContentFingerprint,
-                        )
-                        ),
-                )
-            },
-        )
+                    )
+                    current.copy(
+                        pages = current.pages + (pageKey to updatedPage),
+                        layoutPlans = current.layoutPlans + (
+                            pageKey to SidecarPointer(
+                                fileName = planFileName,
+                                schemaVersion = PageLayoutDrawPlan.SCHEMA_VERSION,
+                                contentFingerprint = prepared.planContentFingerprint,
+                            )
+                            ),
+                        colorPreparations = current.colorPreparations + (
+                            pageKey to SidecarPointer(
+                                fileName = colorFileName,
+                                schemaVersion = ColorStylePreparation.SCHEMA_VERSION,
+                                contentFingerprint = prepared.colorContentFingerprint,
+                            )
+                            ),
+                    )
+                },
+            )
+        }
         when (outcome) {
-            is ChapterArtifactStore.TransactionOutcome.Committed -> {
+            is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                 // Keep the store façade's manifest snapshot current (mirrors
                 // the checkpointOcr façade), so later transactions CAS against
                 // the fresh durable state instead of rejecting as stale.
@@ -547,10 +571,15 @@ internal class BatchRenderJoin(
                     "TachiyomiAT persisted layout published: pageKey=$pageKey blocks=${prepared.plan.blocks.size}"
                 }
             }
-            is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+            is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT persisted-layout publication rejected (committed render kept): " +
                         "pageKey=$pageKey reason=${outcome.reason}"
+                }
+            }
+            null -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=store state changed"
                 }
             }
         }

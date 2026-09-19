@@ -10,7 +10,7 @@ import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.EvidenceRef
@@ -99,8 +99,8 @@ class ChapterProfileFreezeCoordinatorTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -240,10 +240,10 @@ class ChapterProfileFreezeCoordinatorTest {
     private fun runRecord(store: ChapterTranslationStore) =
         artifactStore().let { artifact ->
             val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
-            (artifact.readRunRecord(pointer) as ChapterArtifactStore.RunRecordRead.Usable).record
+            (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
         }
 
-    private fun readProfile(): Pair<ChapterArtifactStore, ChapterTranslationProfile> {
+    private fun readProfile(): Pair<ChapterArtifactEngine, ChapterTranslationProfile> {
         val artifact = artifactStore()
         val manifest = artifact.readManifest().shouldNotBeNull()
         val pointer = manifest.profile.shouldNotBeNull()

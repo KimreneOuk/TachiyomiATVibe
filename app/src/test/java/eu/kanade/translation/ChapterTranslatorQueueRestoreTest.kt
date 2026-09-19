@@ -4,7 +4,7 @@ import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.InpaintMaskBox
@@ -81,8 +81,8 @@ class ChapterTranslatorQueueRestoreTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -192,7 +192,7 @@ class ChapterTranslatorQueueRestoreTest {
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         val record = (
             artifactStore().readRunRecord(manifest.activeRun.shouldNotBeNull())
-                as ChapterArtifactStore.RunRecordRead.Usable
+                as ChapterArtifactEngine.RunRecordRead.Usable
             ).record
         return Triple(store, record, manifest.ocrCheckpoints.keys)
     }

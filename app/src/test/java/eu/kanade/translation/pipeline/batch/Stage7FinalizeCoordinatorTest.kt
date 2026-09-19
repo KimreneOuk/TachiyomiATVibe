@@ -11,7 +11,7 @@ import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.artifact.EvidenceRef
@@ -108,8 +108,8 @@ class Stage7FinalizeCoordinatorTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -262,7 +262,7 @@ class Stage7FinalizeCoordinatorTest {
     private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.artifact.ChapterRunRecord {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
-        return (artifact.readRunRecord(pointer) as ChapterArtifactStore.RunRecordRead.Usable).record
+        return (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
     }
 
     /** Summary-glossary seam (Director redesign): an empty sheet freezes fine. */

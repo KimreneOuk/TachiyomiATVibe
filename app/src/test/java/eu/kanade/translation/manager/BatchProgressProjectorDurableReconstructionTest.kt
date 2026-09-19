@@ -6,7 +6,7 @@ import eu.kanade.translation.ActiveChapterStoreRegistry
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.model.Translation
@@ -49,7 +49,7 @@ class BatchProgressProjectorDurableReconstructionTest {
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
     private fun seededStore(): ChapterTranslationStore {
-        ChapterArtifactStore(
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 5"),
         )

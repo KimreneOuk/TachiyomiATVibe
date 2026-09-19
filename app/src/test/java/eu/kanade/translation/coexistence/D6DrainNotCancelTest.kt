@@ -5,7 +5,7 @@ import eu.kanade.translation.artifact.loadArtifact
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.model.PageTranslation
@@ -90,7 +90,7 @@ class D6DrainNotCancelTest {
 
     /** Production fresh-chapter recipe over the shared IO (D9 test precedent). */
     private fun freshStore(pageKeys: List<String>): ChapterTranslationStore {
-        val artifactStore = ChapterArtifactStore(
+        val artifactStore = ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             ChapterArtifactLayout("D6 Drain Chapter"),
         )

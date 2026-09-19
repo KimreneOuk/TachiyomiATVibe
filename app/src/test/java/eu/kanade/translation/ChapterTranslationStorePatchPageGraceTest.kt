@@ -5,7 +5,7 @@ import eu.kanade.translation.artifact.loadArtifact
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.model.PageStage
@@ -53,7 +53,7 @@ class ChapterTranslationStorePatchPageGraceTest {
     // ------------------------------------------------------------------
 
     private fun artifactBackedStore(pageKey: String): ChapterTranslationStore {
-        val artifactStore = ChapterArtifactStore(
+        val artifactStore = ChapterArtifactEngine(
             AtomicChapterDocuments(FakeChapterDocumentIo()),
             ChapterArtifactLayout("Grace Chapter"),
         )

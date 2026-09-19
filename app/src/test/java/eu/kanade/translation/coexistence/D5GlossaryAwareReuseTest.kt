@@ -6,7 +6,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.inpainting.InpaintingMode
@@ -102,7 +102,7 @@ class D5GlossaryAwareReuseTest {
     private fun artifactBackedStore(pageKeys: List<String>): ChapterTranslationStore {
         d5Documents = AtomicChapterDocuments(FakeChapterDocumentIo())
         d5Layout = ChapterArtifactLayout("D5 Chapter")
-        val artifactStore = ChapterArtifactStore(d5Documents, d5Layout)
+        val artifactStore = ChapterArtifactEngine(d5Documents, d5Layout)
         // Production fresh-chapter recipe (ChapterTranslationStore.ensureArtifactStoreLocked):
         // migrate the empty legacy snapshot, then flip the authority.
         val manifest = artifactStore
@@ -317,7 +317,7 @@ class D5GlossaryAwareReuseTest {
         // manifest as current-version bytes (T924-SC-04), and a restart
         // reloads them through a fresh artifact store. Republish the loaded
         // manifest (a real publication primitive) and reload it.
-        val reloadedArtifactStore = ChapterArtifactStore(d5Documents, d5Layout)
+        val reloadedArtifactStore = ChapterArtifactEngine(d5Documents, d5Layout)
         val manifestBeforeRewrite = reloadedArtifactStore.readManifest().shouldNotBeNull()
         check(
             reloadedArtifactStore.publishManifest(

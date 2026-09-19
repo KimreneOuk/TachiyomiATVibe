@@ -23,7 +23,7 @@ import eu.kanade.translation.TranslationQueueStore
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.model.BatchExpectedFingerprints
@@ -885,7 +885,7 @@ internal class TranslationCoexistenceHarness private constructor(
         ): ChapterTranslationStore {
             val documentIo = FakeChapterDocumentIo()
             val layout = ChapterArtifactLayout("Chapter 1")
-            val artifact = ChapterArtifactStore(
+            val artifact = ChapterArtifactEngine(
                 AtomicChapterDocuments(documentIo),
                 layout,
                 displayBaseProbe = { eu.kanade.translation.artifact.ProbedImage(100, 100) },

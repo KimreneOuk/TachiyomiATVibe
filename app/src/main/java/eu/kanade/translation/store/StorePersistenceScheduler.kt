@@ -41,7 +41,7 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
 
     private val defunct get() = store.isDefunct
 
-    private val artifactStore get() = store.artifactStore
+    private val artifactStore get() = store.artifactEngine
 
     private val artifactManifest get() = store.artifactManifest
 

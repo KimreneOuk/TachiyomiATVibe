@@ -13,7 +13,7 @@ import eu.kanade.translation.artifact.AnalysisChunkStatus
 import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.EvidenceRef
@@ -103,8 +103,8 @@ class ChapterAnalysisPhaseCoordinatorTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -278,7 +278,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
     private fun runRecord(store: ChapterTranslationStore): ChapterRunRecord {
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         val pointer = manifest.activeRun.shouldNotBeNull()
-        return (artifactStore().readRunRecord(pointer) as ChapterArtifactStore.RunRecordRead.Usable).record
+        return (artifactStore().readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
     }
 
     private fun readChunk(pointer: SidecarPointer): AnalysisChunkResult =

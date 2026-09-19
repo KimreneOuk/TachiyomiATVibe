@@ -84,7 +84,7 @@ class GroupCommitSliceBTest {
     fun `flag OFF preserves exact synchronous candidate and promotion writes`() {
         GroupCommitConfiguration.withFlag(false) {
             val io = FakeChapterDocumentIo().apply { fileBacked = true }
-            val store = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+            val store = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
@@ -99,7 +99,7 @@ class GroupCommitSliceBTest {
                 expectedPageVersion = 0L,
                 dependencyFingerprint = "dep-1",
             )
-            val openedManifest = (openRes as ChapterArtifactStore.TransactionOutcome.Committed).manifest
+            val openedManifest = (openRes as ChapterArtifactEngine.TransactionOutcome.Committed).manifest
 
             // When flag is OFF, promoteLiveCandidate requires candidate snapshot file
             val page = displayReadyPage()
@@ -112,7 +112,7 @@ class GroupCommitSliceBTest {
                 expectedDependencyFingerprint = "dep-1",
                 pageSnapshot = page,
                 origin = ArtifactOrigin.READER_ADHOC,
-            ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
             // When flag is OFF, candidate file was written
             val candidateFile = layout.candidatePageSnapshotFile(
@@ -127,7 +127,7 @@ class GroupCommitSliceBTest {
     fun `Slice B2 candidate-promotion merge skips candidate file write when flag is ON`() {
         GroupCommitConfiguration.withFlag(true) {
             val io = FakeChapterDocumentIo().apply { fileBacked = true }
-            val store = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+            val store = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
@@ -141,7 +141,7 @@ class GroupCommitSliceBTest {
                 expectedPageVersion = 0L,
                 dependencyFingerprint = "dep-1",
             )
-            val openedManifest = (openRes as ChapterArtifactStore.TransactionOutcome.Committed).manifest
+            val openedManifest = (openRes as ChapterArtifactEngine.TransactionOutcome.Committed).manifest
 
             val page = displayReadyPage()
 
@@ -153,7 +153,7 @@ class GroupCommitSliceBTest {
                 expectedDependencyFingerprint = "dep-1",
                 pageSnapshot = page,
                 origin = ArtifactOrigin.READER_ADHOC,
-            ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
             // When flag is ON, candidate file write is skipped!
             val candidateFile = layout.candidatePageSnapshotFile(
@@ -195,7 +195,7 @@ class GroupCommitSliceBTest {
     fun `Slice B1 staging and Amendment B second writer force-flush`() = runBlocking {
         GroupCommitConfiguration.withFlag(true) {
             val io = FakeChapterDocumentIo().apply { fileBacked = true }
-            val artifactStore = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+            val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
@@ -235,7 +235,7 @@ class GroupCommitSliceBTest {
     fun `Amendment F glossary force-flush flushes staged buffer before glossary pointer publish`() = runBlocking {
         GroupCommitConfiguration.withFlag(true) {
             val io = FakeChapterDocumentIo().apply { fileBacked = true }
-            val artifactStore = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+            val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),

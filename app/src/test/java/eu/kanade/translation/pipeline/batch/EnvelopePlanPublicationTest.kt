@@ -3,7 +3,7 @@ package eu.kanade.translation.pipeline.batch
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.LegacyMigrationHealth
@@ -30,7 +30,7 @@ class EnvelopePlanPublicationTest {
 
     private val io = FakeChapterDocumentIo()
     private val layout = ChapterArtifactLayout("Chapter 1")
-    private val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+    private val artifact = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     private fun bootstrapManifest() {
         artifact.publishManifest(ChapterArtifactManifest(chapterKey = "Chapter 1"))
@@ -64,7 +64,7 @@ class EnvelopePlanPublicationTest {
         val plan = plan()
         val outcome = EnvelopePlanPublication.publish(artifact, manifest(), plan, nowEpochMs = 7L)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val pointer = outcome.manifest.envelopePlan.shouldNotBeNull()
         pointer.contentFingerprint shouldBe plan.planFingerprint
         pointer.schemaVersion shouldBe EnvelopePlan.SCHEMA_VERSION
@@ -84,12 +84,12 @@ class EnvelopePlanPublicationTest {
         // authoritative (not merely that no pointer appeared).
         val published = plan()
         EnvelopePlanPublication.publish(artifact, manifest(), published, nowEpochMs = 7L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val priorPointer = manifest().envelopePlan.shouldNotBeNull()
 
         val tampered = published.copy(planFingerprint = "a".repeat(64))
         val outcome = EnvelopePlanPublication.publish(artifact, manifest(), tampered, 99L)
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldContain "envelope plan fingerprint mismatch"
 
         // Prior manifest stays authoritative.
@@ -101,14 +101,14 @@ class EnvelopePlanPublicationTest {
         bootstrapManifest()
         val plan = plan()
         EnvelopePlanPublication.publish(artifact, manifest(), plan, nowEpochMs = 7L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val firstPointer = manifest().envelopePlan.shouldNotBeNull()
 
         // Superseding attempt with the SAME content: same name, same pointer.
         val again = plan()
         again.planFingerprint shouldBe plan.planFingerprint
         val outcome = EnvelopePlanPublication.publish(artifact, manifest(), again, nowEpochMs = 99L)
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         manifest().envelopePlan shouldBe firstPointer
     }
 
@@ -117,7 +117,7 @@ class EnvelopePlanPublicationTest {
         bootstrapManifest()
         val plan = plan()
         EnvelopePlanPublication.publish(artifact, manifest(), plan, nowEpochMs = 7L)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         // Corrupt the sidecar bytes (crash / torn write simulation).
         val pointer = manifest().envelopePlan.shouldNotBeNull()
@@ -166,7 +166,7 @@ class EnvelopePlanPublicationTest {
         val plan = plan()
         val outcome = EnvelopePlanPublication.publish(artifact, callerSnapshot, plan, nowEpochMs = 3L)
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val durable = manifest()
         // The plan pointer landed on the FRESH manifest…
         durable.envelopePlan.shouldNotBeNull().contentFingerprint shouldBe plan.planFingerprint
@@ -190,7 +190,7 @@ class EnvelopePlanPublicationTest {
 
         val outcome = EnvelopePlanPublication.publish(artifact, manifest(), plan, nowEpochMs = 7L)
 
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldContain "sidecar publication failed"
         // Exactly ONE sidecar write attempt — no rebase-retry on a non-stale
         // rejection — and the manifest stays authoritative and untouched.
@@ -213,7 +213,7 @@ class EnvelopePlanPublicationTest {
 
         val outcome = EnvelopePlanPublication.publish(artifact, callerSnapshot, plan, nowEpochMs = 3L)
 
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldContain "stale manifest snapshot"
         // Exactly ONE sidecar write attempt (the retry; the stale first
         // attempt never reaches the sidecar), and NOTHING was published —

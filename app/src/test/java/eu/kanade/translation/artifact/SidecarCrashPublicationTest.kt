@@ -18,7 +18,7 @@ class SidecarCrashPublicationTest {
     private val hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
     private fun artifactStore(io: FakeChapterDocumentIo) =
-        ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+        ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     private fun runRecord(state: ChapterRunState = ChapterRunState.RUN_SNAPSHOT) = ChapterRunRecord(
         runId = "run-1757050000000-a1b2c3d4",
@@ -79,7 +79,7 @@ class SidecarCrashPublicationTest {
 
         val outcome = store.publishActiveRun(initial, runRecord(), hex64)
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.manifest.activeRun.shouldNotBeNull().contentFingerprint shouldBe hex64
         io.files.containsKey(layout.runRecordFile(hex64)) shouldBe true
         // Sidecar bytes were durable before the single manifest publication.
@@ -97,7 +97,7 @@ class SidecarCrashPublicationTest {
 
         val outcome = store.publishActiveRun(initial, runRecord(), hex64)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
         io.files.keys.none { it.startsWith("${layout.runRecordsRootDirectory}/") } shouldBe true
     }
@@ -111,7 +111,7 @@ class SidecarCrashPublicationTest {
 
         val outcome = store.publishActiveRun(initial, runRecord(), hex64)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
         // Only the in-progress temp remains; the pointer was never installed.
         io.files.containsKey(layout.runRecordFile(hex64)) shouldBe false
@@ -127,7 +127,7 @@ class SidecarCrashPublicationTest {
 
         val outcome = store.publishActiveRun(initial, runRecord(), hex64)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         // The prior manifest stays authoritative: the pointer never dangles.
         val durable = store.readManifest().shouldNotBeNull()
         durable shouldBe initial
@@ -147,7 +147,7 @@ class SidecarCrashPublicationTest {
 
         val outcome = store.publishActiveRun(initial, runRecord(), hex64)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
         // Orphan sidecar only.
         io.files.containsKey(layout.runRecordFile(hex64)) shouldBe true
@@ -164,10 +164,10 @@ class SidecarCrashPublicationTest {
         val profileName = layout.profileFile(hex64)
 
         fun publication() = listOf(
-            ChapterArtifactStore.SidecarPublication(runName, hex64) {
+            ChapterArtifactEngine.SidecarPublication(runName, hex64) {
                 docs.publishJson(runName, record)
             },
-            ChapterArtifactStore.SidecarPublication(profileName, hex64) {
+            ChapterArtifactEngine.SidecarPublication(profileName, hex64) {
                 docs.publishJson(profileName, profile())
             },
         )
@@ -186,7 +186,7 @@ class SidecarCrashPublicationTest {
         // sidecar stays an orphan only.
         io.writeNamesToFail += "/profiles/"
         val failed = store.publishSidecarPointers(initial, publication(), ::installPointers)
-        failed.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        failed.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
         io.files.containsKey(runName) shouldBe true
         io.files.containsKey(profileName) shouldBe false
@@ -195,7 +195,7 @@ class SidecarCrashPublicationTest {
         // Retry publishes both sidecars and exactly ONE manifest publication.
         io.writtenNames.clear()
         val committed = store.publishSidecarPointers(initial, publication(), ::installPointers)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         io.writtenNames.count { it == manifestTmpName() } shouldBe 1
         committed.manifest.activeRun?.fileName shouldBe runName
         committed.manifest.profile?.fileName shouldBe profileName
@@ -215,12 +215,12 @@ class SidecarCrashPublicationTest {
 
         // Publish a usable run record first.
         val committed = store.publishActiveRun(initial, runRecord(), hex64)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val pointer = committed.manifest.activeRun.shouldNotBeNull()
 
         // Corrupt the pointed bytes: treated as absent, quarantined (T924-SC-17).
         io.files[pointer.fileName] = "{ corrupted".toByteArray()
-        store.readRunRecord(pointer) shouldBe ChapterArtifactStore.RunRecordRead.Absent
+        store.readRunRecord(pointer) shouldBe ChapterArtifactEngine.RunRecordRead.Absent
         io.files.keys.count { it.startsWith("${pointer.fileName}.corrupt") } shouldBe 1
         store.reconcileRetention(committed.manifest)
         io.files.keys.any { it.startsWith("${pointer.fileName}.corrupt") } shouldBe true
@@ -239,7 +239,7 @@ class SidecarCrashPublicationTest {
         // pre-verify manifest while the background health verify republished)
         // is retried ONCE against the freshly re-read durable manifest instead
         // of surfacing a spurious rejection on a healthy chapter.
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.manifest.activeRun.shouldNotBeNull().contentFingerprint shouldBe hex64
         io.files.containsKey(layout.runRecordFile(hex64)) shouldBe true
         store.readManifest() shouldBe committed.manifest

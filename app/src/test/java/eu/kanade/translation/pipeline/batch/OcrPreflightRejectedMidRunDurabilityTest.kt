@@ -11,7 +11,7 @@ import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.RunConfigSnapshot
@@ -97,8 +97,8 @@ class OcrPreflightRejectedMidRunDurabilityTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -275,7 +275,7 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         manifest.ocrCheckpoints.keys shouldBe setOf("p1", "p2", "p3")
         val record = (
             artifactStore().readRunRecord(manifest.activeRun.shouldNotBeNull())
-                as ChapterArtifactStore.RunRecordRead.Usable
+                as ChapterArtifactEngine.RunRecordRead.Usable
             ).record
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] shouldBe 3

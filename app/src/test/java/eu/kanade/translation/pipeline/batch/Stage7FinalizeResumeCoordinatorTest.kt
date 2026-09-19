@@ -9,7 +9,7 @@ import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.EnvelopePolicySnapshot
@@ -107,8 +107,8 @@ class Stage7FinalizeResumeCoordinatorTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -307,7 +307,7 @@ class Stage7FinalizeResumeCoordinatorTest {
     private fun durableRunRecord(store: ChapterTranslationStore): ChapterRunRecord? {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun ?: return null
-        return (artifact.readRunRecord(pointer) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
+        return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
     }
 
     private fun activeRunPointer(store: ChapterTranslationStore): SidecarPointer =
@@ -541,7 +541,7 @@ class Stage7FinalizeResumeCoordinatorTest {
             }
             (
                 artifactStore().readRunRecord(manifestAfterReset.activeRun.shouldNotBeNull())
-                    as ChapterArtifactStore.RunRecordRead.Usable
+                    as ChapterArtifactEngine.RunRecordRead.Usable
                 ).record.state shouldBe ChapterRunState.COMPLETE
 
             // ---- Pass 2: the flag-ON re-dispatch must NOT return the ----

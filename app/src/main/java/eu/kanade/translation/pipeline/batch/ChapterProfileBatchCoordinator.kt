@@ -21,7 +21,7 @@ import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
@@ -371,7 +371,9 @@ internal class ChapterProfileBatchCoordinator(
             return BatchPass1Outcome(needsTranslation = emptyList())
         }
         currentCoroutineContext().ensureActive()
-        val artifact = store.withArtifactEngine { it }
+        // The coordinator retains this compatibility token while each actual
+        // engine operation is routed through the facade's locked seams below.
+        val artifact = store.withArtifactEngineLocked { it }
         if (artifact == null || store.artifactManifest == null) {
             // The preflight writes origin-neutral checkpoints; without artifact
             // authority the flagged path cannot do its one job. Fail fast
@@ -389,7 +391,7 @@ internal class ChapterProfileBatchCoordinator(
 
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
         val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
-        val priorRecord = (existingActiveRecord(artifact) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
+        val priorRecord = (existingActiveRecord(artifact) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
         // ST-15: settings apply next run — a resume continues the recorded run
         // only while the frozen configuration fingerprint still matches; a
         // mismatch starts a NEW run id under the current configuration.
@@ -880,7 +882,7 @@ internal class ChapterProfileBatchCoordinator(
                         profile = adopted,
                         nowEpochMs = nowEpochMs(),
                     )
-                    if (publication is ChapterArtifactStore.TransactionOutcome.Committed) {
+                    if (publication is ChapterArtifactEngine.TransactionOutcome.Committed) {
                         store.artifactManifest = publication.manifest
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT M5 series profile carry-over adopted: version=${adopted.version} " +
@@ -946,7 +948,7 @@ internal class ChapterProfileBatchCoordinator(
      * here publishes `COMPLETE` (wave-2 F1).
      */
     private suspend fun runAnalysisPhase(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         runId: String,
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
@@ -1160,7 +1162,7 @@ internal class ChapterProfileBatchCoordinator(
                         nowEpochMs = nowEpochMs(),
                     )
                     when (publication) {
-                        is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                        is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                             store.artifactManifest = publication.manifest
                             done++
                             if (outcome.coverage.kind == AnalysisCoverageKind.MISSING_ONLY) {
@@ -1187,7 +1189,7 @@ internal class ChapterProfileBatchCoordinator(
                                 ),
                             )
                         }
-                        is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                        is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                             // Prior manifest stays authoritative; the chunk
                             // stays unpersisted; resume re-executes it.
                             logcat(LogPriority.WARN) {
@@ -1309,7 +1311,7 @@ internal class ChapterProfileBatchCoordinator(
      * COMPLETE-publishing stage) and no page display state is touched.
      */
     private suspend fun runProfileReconcileAndFreeze(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         runId: String,
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
@@ -1331,15 +1333,17 @@ internal class ChapterProfileBatchCoordinator(
         }
         val chunks = mutableListOf<AnalysisChunkResult>()
         for (index in manifestAtEntry.analysisChunks.indices) {
-            val read = artifact.readSidecarDocument(
-                pointer = manifestAtEntry.analysisChunks[index],
-                serializer = AnalysisChunkResult.serializer(),
-                currentSchemaVersion = AnalysisChunkResult.SCHEMA_VERSION,
-                expectedKind = AnalysisChunkResult.KIND,
-                schemaVersionOf = { it.schemaVersion },
-                kindOf = { it.kind },
-                isValid = { it.isSemanticallyValid },
-            )
+            val read = store.withArtifactEngineLocked { artifact ->
+                artifact.readSidecarDocument(
+                    pointer = manifestAtEntry.analysisChunks[index],
+                    serializer = AnalysisChunkResult.serializer(),
+                    currentSchemaVersion = AnalysisChunkResult.SCHEMA_VERSION,
+                    expectedKind = AnalysisChunkResult.KIND,
+                    schemaVersionOf = { it.schemaVersion },
+                    kindOf = { it.kind },
+                    isValid = { it.isSemanticallyValid },
+                )
+            } ?: SidecarRead.Absent
             if (read !is SidecarRead.Usable) {
                 // ST-30: unreadable/invalid target = absent, never partially
                 // trusted. Resume re-validates the prefix (typed pause there).
@@ -1459,7 +1463,7 @@ internal class ChapterProfileBatchCoordinator(
                 nowEpochMs = nowEpochMs(),
             )
         ) {
-            is ChapterArtifactStore.TransactionOutcome.Committed -> {
+            is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                 store.artifactManifest = publication.manifest
                 seriesKey?.let { key ->
                     SeriesProfileRegistry.register(
@@ -1514,7 +1518,7 @@ internal class ChapterProfileBatchCoordinator(
                     ),
                 )
             }
-            is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+            is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                 // Prior manifest authoritative (TX-22); the run pauses; the
                 // next attempt re-reconciles deterministically (ST-09 resume).
                 logcat(LogPriority.WARN) {
@@ -1650,7 +1654,7 @@ internal class ChapterProfileBatchCoordinator(
      *     NEVER publishes COMPLETE).
      */
     private suspend fun runEnvelopePlanAndTranslate(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         runId: String,
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
@@ -1809,9 +1813,9 @@ internal class ChapterProfileBatchCoordinator(
                             nowEpochMs = nowEpochMs(),
                         )
                     ) {
-                        is ChapterArtifactStore.TransactionOutcome.Committed ->
+                        is ChapterArtifactEngine.TransactionOutcome.Committed ->
                             store.artifactManifest = publication.manifest
-                        is ChapterArtifactStore.TransactionOutcome.Rejected ->
+                        is ChapterArtifactEngine.TransactionOutcome.Rejected ->
                             // Prior manifest stays authoritative (SC-20/22).
                             return BatchPass1Outcome(
                                 needsTranslation = emptyList(),
@@ -2002,7 +2006,7 @@ internal class ChapterProfileBatchCoordinator(
      * [Companion.GATE_7_8_DISPLAY_READY_COMPLETION_ENABLED].
      */
     private suspend fun runFinalizeAndComplete(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         runId: String,
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
@@ -2061,7 +2065,7 @@ internal class ChapterProfileBatchCoordinator(
      *  6. The run's FIRST and ONLY `COMPLETE` publication.
      */
     private suspend fun drainFinalizeAndComplete(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         runId: String,
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
@@ -2169,12 +2173,14 @@ internal class ChapterProfileBatchCoordinator(
             profilePointer = store.artifactManifest?.profile,
         )
         var closure = publishRecord(artifact, completeRecord())
-        if (closure !is ChapterArtifactStore.TransactionOutcome.Committed) {
-            artifact.readManifest()?.let { store.artifactManifest = it }
+        if (closure !is ChapterArtifactEngine.TransactionOutcome.Committed) {
+            store.withArtifactEngineLocked { artifact ->
+                artifact.readManifest()
+            }?.let { store.artifactManifest = it }
             closure = publishRecord(artifact, completeRecord())
         }
         when (closure) {
-            is ChapterArtifactStore.TransactionOutcome.Committed -> {
+            is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT t924 run COMPLETE pages=${allPageKeys.size} stranded=$strandedReconciled " +
                         "layouts=$layoutsPublished displayTailDrained=${displayTail.drained} " +
@@ -2235,7 +2241,7 @@ internal class ChapterProfileBatchCoordinator(
      *     overlay + candidate snapshots; renderStatus stays PENDING).
      */
     private suspend fun runStandardTranslateAndFinalize(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         runId: String,
         orderedPages: List<PageKey>,
         corpusFingerprint: String?,
@@ -2520,7 +2526,7 @@ internal class ChapterProfileBatchCoordinator(
      * COMPLETE lacks per-page display evidence (LI-2 supersession above).
      */
     private suspend fun resumeFinalizeOrComplete(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         priorRecord: ChapterRunRecord?,
         frozenFingerprint: String,
         sourceDigest: String,
@@ -2552,7 +2558,9 @@ internal class ChapterProfileBatchCoordinator(
             // a new RUN_SNAPSHOT and re-derives the missing page state).
             // Evidence is judged against the DURABLE manifest (same read the
             // pointer above came from), never the facade's mutable cache.
-            val durableManifest = artifact.readManifest()
+            val durableManifest = store.withArtifactEngineLocked { artifact ->
+                artifact.readManifest()
+            }
             val allPagesWorkProductEvidenced = orderedPages.all { (pageKey, _) ->
                 pageWorkProductResolvable(artifact, pageKey, durableManifest)
             }
@@ -2599,8 +2607,8 @@ internal class ChapterProfileBatchCoordinator(
      * evidence). Falls back to the live store's durable textless terminal for
      * pages with no readable record sidecar.
      */
-    private fun pageWorkProductResolvable(
-        artifact: ChapterArtifactStore,
+    private suspend fun pageWorkProductResolvable(
+        artifact: ChapterArtifactEngine,
         pageKey: String,
         durableManifest: ChapterArtifactManifest?,
     ): Boolean {
@@ -2620,7 +2628,9 @@ internal class ChapterProfileBatchCoordinator(
         }
         val snapshotFile = record.candidate?.pageSnapshotFileName
         if (snapshotFile != null) {
-            val snapshot = artifact.readPageSnapshot(snapshotFile)
+            val snapshot = store.withArtifactEngineLocked { artifact ->
+                artifact.readPageSnapshot(snapshotFile)
+            }
             if (snapshot != null &&
                 (
                     snapshot.hasRenderedResult ||
@@ -2686,7 +2696,7 @@ internal class ChapterProfileBatchCoordinator(
      * are simply no longer pending.
      */
     private suspend fun rebuildDispatchWork(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
         reason: String,
@@ -2715,14 +2725,14 @@ internal class ChapterProfileBatchCoordinator(
                             nowEpochMs = nowEpochMs(),
                         )
                     ) {
-                        is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                        is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                             store.artifactManifest = publication.manifest
                             // T934 LI-4: the superseding plan committed — the
                             // rebuild window ends.
                             listener.envelopePlanCommitted()
                             ReplanResult.Ready(rebuilt.work)
                         }
-                        is ChapterArtifactStore.TransactionOutcome.Rejected ->
+                        is ChapterArtifactEngine.TransactionOutcome.Rejected ->
                             ReplanResult.Failed("superseding plan publication rejected: ${publication.reason}")
                     }
                 }
@@ -2761,7 +2771,7 @@ internal class ChapterProfileBatchCoordinator(
      * never a coordinator list.
      */
     private suspend fun buildEnvelopeDispatchWork(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
     ): EnvelopeWorkBuild {
@@ -2783,16 +2793,20 @@ internal class ChapterProfileBatchCoordinator(
         // and the façade equals the durable manifest. On any doubt the store
         // flushes (fail-safe); correctness of the plan publish itself no longer
         // depends on the window (T934 LI-x rebase-retry).
-        artifact.beginManifestCoalescing()
+        store.withArtifactEngineLocked { artifact ->
+            artifact.beginManifestCoalescing()
+        }
         try {
             return buildEnvelopeDispatchWorkLocked(artifact, orderedPages, corpusFingerprint)
         } finally {
-            artifact.endManifestCoalescing()
+            store.withArtifactEngineLocked { artifact ->
+                artifact.endManifestCoalescing()
+            }
         }
     }
 
     private suspend fun buildEnvelopeDispatchWorkLocked(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
     ): EnvelopeWorkBuild {
@@ -3070,7 +3084,7 @@ internal class ChapterProfileBatchCoordinator(
      * page (fail closed), never plans against fabricated content.
      */
     private suspend fun adoptCheckpointSnapshot(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         pageKey: String,
         before: ChapterTranslationStore.PageSnapshot,
     ): CheckpointAdoption {
@@ -3078,11 +3092,15 @@ internal class ChapterProfileBatchCoordinator(
             ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.NO_POINTER)
         val pointer = manifest.ocrCheckpoints[pageKey]
             ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.NO_POINTER)
-        val checkpoint = when (val read = artifact.readOcrCheckpoint(pointer)) {
-            is ChapterArtifactStore.OcrCheckpointRead.Usable -> read.checkpoint
+        val checkpoint = when (val read = store.withArtifactEngineLocked { engine ->
+            engine.readOcrCheckpoint(pointer)
+        }) {
+            is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
             else -> return CheckpointAdoption.Failed(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
         }
-        val ocrSnapshot = artifact.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+        val ocrSnapshot = store.withArtifactEngineLocked { engine ->
+            engine.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+        }
             ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.BUNDLE_MISSING)
         val lease = when (
             val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
@@ -3431,19 +3449,21 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /** Frozen-profile scene starts (page-preference input for the pure planner). */
-    private fun frozenProfileSceneStartIndexes(artifact: ChapterArtifactStore): Set<Int> {
+    private suspend fun frozenProfileSceneStartIndexes(artifact: ChapterArtifactEngine): Set<Int> {
         val manifest = store.artifactManifest ?: return emptySet()
         val pointer = manifest.profile ?: return emptySet()
         val profile = when (
-            val read = artifact.readSidecarDocument(
-                pointer = pointer.toSidecarPointer(),
-                serializer = ChapterTranslationProfile.serializer(),
-                currentSchemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
-                expectedKind = ChapterTranslationProfile.KIND,
-                schemaVersionOf = { it.schemaVersion },
-                kindOf = { it.kind },
-                isValid = { it.isSemanticallyValid },
-            )
+            val read = store.withArtifactEngineLocked { engine ->
+                engine.readSidecarDocument(
+                    pointer = pointer.toSidecarPointer(),
+                    serializer = ChapterTranslationProfile.serializer(),
+                    currentSchemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
+                    expectedKind = ChapterTranslationProfile.KIND,
+                    schemaVersionOf = { it.schemaVersion },
+                    kindOf = { it.kind },
+                    isValid = { it.isSemanticallyValid },
+                )
+            } ?: SidecarRead.Absent
         ) {
             is SidecarRead.Usable -> read.document
             else -> return emptySet()
@@ -3550,8 +3570,8 @@ internal class ChapterProfileBatchCoordinator(
      * fully validates (content, version, recomputed FP-05), returns the
      * reusable pointer. Any gap returns null — the normal path runs.
      */
-    private fun frozenProfileReuse(
-        artifact: ChapterArtifactStore,
+    private suspend fun frozenProfileReuse(
+        artifact: ChapterArtifactEngine,
         orderedPages: List<PageKey>,
         expectedPageCount: Int,
     ): FrozenProfileReuse? {
@@ -3626,8 +3646,8 @@ internal class ChapterProfileBatchCoordinator(
      * mismatch. Returns the typed pause reason, or null when the prefix is
      * empty or fully consistent with the current plan.
      */
-    private fun validatePersistedPrefix(
-        artifact: ChapterArtifactStore,
+    private suspend fun validatePersistedPrefix(
+        artifact: ChapterArtifactEngine,
         plannedChunks: List<PlannedAnalysisChunk>,
     ): String? {
         val pointers = store.artifactManifest?.analysisChunks ?: return null
@@ -3637,15 +3657,17 @@ internal class ChapterProfileBatchCoordinator(
                 ?: return "T924 analysis prefix stale: persisted ${pointers.size} chunks " +
                     "but the re-planned corpus yields ${plannedChunks.size}"
             val persisted = when (
-                val read = artifact.readSidecarDocument(
-                    pointer = pointers[index],
-                    serializer = AnalysisChunkResult.serializer(),
-                    currentSchemaVersion = AnalysisChunkResult.SCHEMA_VERSION,
-                    expectedKind = AnalysisChunkResult.KIND,
-                    schemaVersionOf = { it.schemaVersion },
-                    kindOf = { it.kind },
-                    isValid = { it.isSemanticallyValid },
-                )
+                val read = store.withArtifactEngineLocked { engine ->
+                    engine.readSidecarDocument(
+                        pointer = pointers[index],
+                        serializer = AnalysisChunkResult.serializer(),
+                        currentSchemaVersion = AnalysisChunkResult.SCHEMA_VERSION,
+                        expectedKind = AnalysisChunkResult.KIND,
+                        schemaVersionOf = { it.schemaVersion },
+                        kindOf = { it.kind },
+                        isValid = { it.isSemanticallyValid },
+                    )
+                } ?: SidecarRead.Absent
             ) {
                 is SidecarRead.Usable -> read.document
                 else -> null
@@ -3668,8 +3690,8 @@ internal class ChapterProfileBatchCoordinator(
      * carries the wire identities the analysis request/evidence universe uses
      * (`p<N>` pages, `p<N>_b<M>` blocks) alongside the persisted identities.
      */
-    private fun corpusEntriesFromCheckpoints(
-        artifact: ChapterArtifactStore,
+    private suspend fun corpusEntriesFromCheckpoints(
+        artifact: ChapterArtifactEngine,
         orderedPages: List<PageKey>,
         expectedPageCount: Int,
     ): AnalysisCorpus? {
@@ -3677,11 +3699,15 @@ internal class ChapterProfileBatchCoordinator(
         val entries = mutableListOf<AnalysisCorpusEntry>()
         for ((pageKey, pageIndex) in orderedPages) {
             val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
-            val checkpoint = when (val read = artifact.readOcrCheckpoint(pointer)) {
-                is ChapterArtifactStore.OcrCheckpointRead.Usable -> read.checkpoint
+            val checkpoint = when (val read = store.withArtifactEngineLocked { engine ->
+                engine.readOcrCheckpoint(pointer)
+            }) {
+                is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
                 else -> return null
             }
-            val snapshot = artifact.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+            val snapshot = store.withArtifactEngineLocked { engine ->
+                engine.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+            }
                 ?: return null
             val wirePageKey = "p$pageIndex"
             val blocks = snapshot.blocks
@@ -3888,7 +3914,7 @@ internal class ChapterProfileBatchCoordinator(
      * transaction, so the digest is recorded at write time, never at run end.
      */
     private suspend fun checkpointPage(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         pageKey: String,
         ref: OcrReadyPageRef,
     ): CheckpointOcrResult {
@@ -3926,16 +3952,18 @@ internal class ChapterProfileBatchCoordinator(
      * chapter. A checkpoint that cannot prove source equality is typed
      * [CheckpointAdoptionFailure], not silently dropped.
      */
-    private fun checkpointReuse(
-        artifact: ChapterArtifactStore,
+    private suspend fun checkpointReuse(
+        artifact: ChapterArtifactEngine,
         pageKey: String,
     ): CheckpointReuse {
         val manifest = store.artifactManifest
             ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
         val pointer = manifest.ocrCheckpoints[pageKey]
             ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
-        val read = artifact.readOcrCheckpoint(pointer)
-        if (read !is ChapterArtifactStore.OcrCheckpointRead.Usable) {
+        val read = store.withArtifactEngineLocked { engine ->
+            engine.readOcrCheckpoint(pointer)
+        }
+        if (read !is ChapterArtifactEngine.OcrCheckpointRead.Usable) {
             return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
         }
         val admissionSha = admissionSourceSha(pageKey)
@@ -3945,26 +3973,30 @@ internal class ChapterProfileBatchCoordinator(
         return CheckpointReuse.Reusable(read.checkpoint.ocrContentFingerprint)
     }
 
-    private fun readCheckpointFingerprint(
-        artifact: ChapterArtifactStore,
+    private suspend fun readCheckpointFingerprint(
+        artifact: ChapterArtifactEngine,
         pageKey: String,
     ): String? {
         val manifest = store.artifactManifest ?: return null
         val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
-        val read = artifact.readOcrCheckpoint(pointer)
-        return (read as? ChapterArtifactStore.OcrCheckpointRead.Usable)?.checkpoint?.ocrContentFingerprint
+        val read = store.withArtifactEngineLocked { engine ->
+            engine.readOcrCheckpoint(pointer)
+        }
+        return (read as? ChapterArtifactEngine.OcrCheckpointRead.Usable)?.checkpoint?.ocrContentFingerprint
     }
 
-    private fun existingActiveRecord(
-        artifact: ChapterArtifactStore,
-    ): ChapterArtifactStore.RunRecordRead? {
+    private suspend fun existingActiveRecord(
+        artifact: ChapterArtifactEngine,
+    ): ChapterArtifactEngine.RunRecordRead? {
         // ST-14 dispatch reads the DURABLE manifest, not the facade's cached
         // snapshot: the cache is a CAS optimization with many writers, while
         // this decision must never re-run paid work (or drain a stale
         // FINALIZE) behind what the artifact tree actually records. One
         // sidecar read per dispatch — negligible next to the preflight.
-        val pointer = artifact.readManifest()?.activeRun ?: return null
-        return artifact.readRunRecord(pointer)
+        return store.withArtifactEngineLocked { engine ->
+            val pointer = engine.readManifest()?.activeRun ?: return@withArtifactEngineLocked null
+            engine.readRunRecord(pointer)
+        }
     }
 
     /**
@@ -3988,11 +4020,10 @@ internal class ChapterProfileBatchCoordinator(
      * counter keys trimmed (insertion order) — the phase transition always
      * lands.
      */
-    private fun publishRecord(
-        artifact: ChapterArtifactStore,
+    private suspend fun publishRecord(
+        artifact: ChapterArtifactEngine,
         record: ChapterRunRecord,
-    ): ChapterArtifactStore.TransactionOutcome? {
-        val manifest = store.artifactManifest ?: return null
+    ): ChapterArtifactEngine.TransactionOutcome? {
         val bounded = if (record.phaseCounters.size > ChapterRunRecord.MAX_PHASE_COUNTER_KEYS) {
             record.copy(
                 phaseCounters = record.phaseCounters.entries
@@ -4004,23 +4035,27 @@ internal class ChapterProfileBatchCoordinator(
             record
         }
         val json = ArtifactDocumentJson.encodeToString(bounded)
-        val outcome = artifact.publishActiveRun(
-            manifest = manifest,
-            record = bounded,
-            contentFingerprint = sha256Hex(json.encodeToByteArray()),
-            nowEpochMs = nowEpochMs(),
-        )
+        val outcome = store.withArtifactEngineLocked { engine ->
+            val manifest = engine.readManifest() ?: return@withArtifactEngineLocked null
+            engine.publishActiveRun(
+                manifest = manifest,
+                record = bounded,
+                contentFingerprint = sha256Hex(json.encodeToByteArray()),
+                nowEpochMs = nowEpochMs(),
+            )
+        }
         when (outcome) {
-            is ChapterArtifactStore.TransactionOutcome.Committed -> {
+            is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                 // Keep the facade's manifest snapshot current — a stale
                 // snapshot would fail the next checkpoint's whole-manifest CAS.
                 store.artifactManifest = outcome.manifest
             }
-            is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+            is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT t924 preflight run record publication rejected: ${outcome.reason}"
                 }
             }
+            null -> Unit
         }
         return outcome
     }

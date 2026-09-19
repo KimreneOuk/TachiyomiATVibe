@@ -1,11 +1,12 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.ChapterTranslationStore
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.ProfilePointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
+import kotlinx.coroutines.runBlocking
 
 /**
  * T924 Stage 5 slice B — profile freeze publication (T924-TX-22, ST-10).
@@ -38,20 +39,22 @@ internal object ProfileFreezePublication {
     /** Compatibility overload retained while callers migrate to the facade seam. */
     @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
     fun publish(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         profile: ChapterTranslationProfile,
         nowEpochMs: Long,
-    ): ChapterArtifactStore.TransactionOutcome = publish(
-        store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
-            artifactStore = artifact,
-        ),
-        manifest = manifest,
-        profile = profile,
-        nowEpochMs = nowEpochMs,
-    )
+    ): ChapterArtifactEngine.TransactionOutcome = runBlocking {
+        publish(
+            store = ChapterTranslationStore(
+                translationFile = null,
+                fileCreator = null,
+                artifactStore = artifact,
+            ),
+            manifest = manifest,
+            profile = profile,
+            nowEpochMs = nowEpochMs,
+        )
+    }
 
     /**
      * Publishes the frozen profile + pointer in ONE transaction.
@@ -61,31 +64,31 @@ internal object ProfileFreezePublication {
      * current pointer: the profile must carry exactly
      * `(manifest.profile?.version ?: 0) + 1`.
      */
-    fun publish(
+    suspend fun publish(
         store: ChapterTranslationStore,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         profile: ChapterTranslationProfile,
         nowEpochMs: Long,
-    ): ChapterArtifactStore.TransactionOutcome {
+    ): ChapterArtifactEngine.TransactionOutcome {
         profile.validationError()?.let { reason ->
-            return ChapterArtifactStore.TransactionOutcome.Rejected(
+            return ChapterArtifactEngine.TransactionOutcome.Rejected(
                 "profile invalid: $reason",
             )
         }
         val recomputed = StageFingerprints.profileContentFingerprint(profile)
         if (recomputed != profile.contentFingerprint) {
-            return ChapterArtifactStore.TransactionOutcome.Rejected(
+            return ChapterArtifactEngine.TransactionOutcome.Rejected(
                 "profile content fingerprint mismatch: field=${profile.contentFingerprint} " +
                     "recomputed=$recomputed",
             )
         }
         val expectedVersion = (manifest.profile?.version ?: 0) + 1
         if (profile.version != expectedVersion) {
-            return ChapterArtifactStore.TransactionOutcome.Rejected(
+            return ChapterArtifactEngine.TransactionOutcome.Rejected(
                 "profile version not monotonic: expected $expectedVersion, got ${profile.version}",
             )
         }
-        return store.withArtifactEngine { artifact ->
+        return store.withArtifactEngineLocked { artifact ->
             val fileName = artifact.profileSidecarName(profile.contentFingerprint)
             artifact.publishSidecarPointers(
                 manifest = manifest,
@@ -110,7 +113,7 @@ internal object ProfileFreezePublication {
                 },
                 nowEpochMs = nowEpochMs,
             )
-        } ?: ChapterArtifactStore.TransactionOutcome.Rejected("artifact engine unavailable")
+        } ?: ChapterArtifactEngine.TransactionOutcome.Rejected("artifact engine unavailable")
     }
 
     /** Why a manifest's frozen profile is (not) reusable at a resume point. */
@@ -149,27 +152,29 @@ internal object ProfileFreezePublication {
      * normal analysis path.
      */
     fun readReusableFrozenProfile(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         expectedInputFingerprint: String,
-    ): FrozenProfileRead = readReusableFrozenProfile(
-        store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
-            artifactStore = artifact,
-        ),
-        manifest = manifest,
-        expectedInputFingerprint = expectedInputFingerprint,
-    )
+    ): FrozenProfileRead = runBlocking {
+        readReusableFrozenProfile(
+            store = ChapterTranslationStore(
+                translationFile = null,
+                fileCreator = null,
+                artifactStore = artifact,
+            ),
+            manifest = manifest,
+            expectedInputFingerprint = expectedInputFingerprint,
+        )
+    }
 
-    fun readReusableFrozenProfile(
+    suspend fun readReusableFrozenProfile(
         store: ChapterTranslationStore,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         expectedInputFingerprint: String,
     ): FrozenProfileRead {
-        return store.withArtifactEngine { artifact ->
-            val pointer = manifest.profile ?: return@withArtifactEngine FrozenProfileRead.NotReusable
-            if (!pointer.isWellFormed()) return@withArtifactEngine FrozenProfileRead.NotReusable
+        return store.withArtifactEngineLocked { artifact ->
+            val pointer = manifest.profile ?: return@withArtifactEngineLocked FrozenProfileRead.NotReusable
+            if (!pointer.isWellFormed()) return@withArtifactEngineLocked FrozenProfileRead.NotReusable
             val profile = when (
                 val read = artifact.readSidecarDocument(
                     pointer = pointer.toSidecarPointer(),
@@ -182,16 +187,16 @@ internal object ProfileFreezePublication {
                 )
             ) {
                 is SidecarRead.Usable -> read.document
-                else -> return@withArtifactEngine FrozenProfileRead.NotReusable
+                else -> return@withArtifactEngineLocked FrozenProfileRead.NotReusable
             }
             if (pointer.contentFingerprint != profile.contentFingerprint ||
                 pointer.version != profile.version ||
                 pointer.profileInputFingerprint != expectedInputFingerprint
             ) {
-                return@withArtifactEngine FrozenProfileRead.NotReusable
+                return@withArtifactEngineLocked FrozenProfileRead.NotReusable
             }
             if (StageFingerprints.profileContentFingerprint(profile) != profile.contentFingerprint) {
-                return@withArtifactEngine FrozenProfileRead.NotReusable
+                return@withArtifactEngineLocked FrozenProfileRead.NotReusable
             }
             FrozenProfileRead.Reusable(profile)
         } ?: FrozenProfileRead.NotReusable

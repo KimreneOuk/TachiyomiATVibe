@@ -2,12 +2,13 @@ package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
+import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -41,20 +42,22 @@ internal object EnvelopePlanPublication {
     /** Compatibility overload retained while callers migrate to the facade seam. */
     @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
     fun publish(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         manifest: ChapterArtifactManifest,
         plan: EnvelopePlan,
         nowEpochMs: Long,
-    ): ChapterArtifactStore.TransactionOutcome = publish(
-        store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
-            artifactStore = artifact,
-        ),
-        manifest = manifest,
-        plan = plan,
-        nowEpochMs = nowEpochMs,
-    )
+    ): ChapterArtifactEngine.TransactionOutcome = runBlocking {
+        publish(
+            store = ChapterTranslationStore(
+                translationFile = null,
+                fileCreator = null,
+                artifactStore = artifact,
+            ),
+            manifest = manifest,
+            plan = plan,
+            nowEpochMs = nowEpochMs,
+        )
+    }
 
     /**
      * Publishes the envelope plan + its manifest pointer in ONE transaction.
@@ -67,7 +70,7 @@ internal object EnvelopePlanPublication {
      * be invalidated by the >8-page open path's background health verify — a
      * guaranteed `stale manifest snapshot` CAS rejection that aborted the
      * whole batch with PERSISTENCE_REJECTED. On a stale-manifest rejection
-     * ONLY ([ChapterArtifactStore.isStaleManifestRejection]), the publication
+     * ONLY ([ChapterArtifactEngine.isStaleManifestRejection]), the publication
      * re-reads the durable manifest ONCE and re-runs the SAME pointer move
      * against THAT fresh manifest (the pointer move is a pure
      * `envelopePlan`-pointer set, so every fresh durable field is carried
@@ -79,24 +82,24 @@ internal object EnvelopePlanPublication {
      * unchanged, and every non-stale rejection keeps failing exactly as
      * before (T924-SC-20/22).
      */
-    fun publish(
+    suspend fun publish(
         store: ChapterTranslationStore,
         manifest: ChapterArtifactManifest,
         plan: EnvelopePlan,
         nowEpochMs: Long,
-    ): ChapterArtifactStore.TransactionOutcome {
+    ): ChapterArtifactEngine.TransactionOutcome {
         plan.validationError()?.let { reason ->
-            return ChapterArtifactStore.TransactionOutcome.Rejected("envelope plan invalid: $reason")
+            return ChapterArtifactEngine.TransactionOutcome.Rejected("envelope plan invalid: $reason")
         }
         val recomputed = recomputedContentFingerprint(plan)
         if (recomputed != plan.planFingerprint) {
-            return ChapterArtifactStore.TransactionOutcome.Rejected(
+            return ChapterArtifactEngine.TransactionOutcome.Rejected(
                 "envelope plan fingerprint mismatch: field=${plan.planFingerprint} recomputed=$recomputed",
             )
         }
-        return store.withArtifactEngine { artifact ->
+        return store.withArtifactEngineLocked { artifact ->
             val fileName = artifact.envelopePlanSidecarName(plan.planFingerprint)
-            fun publishPointers(on: ChapterArtifactManifest): ChapterArtifactStore.TransactionOutcome =
+            fun publishPointers(on: ChapterArtifactManifest): ChapterArtifactEngine.TransactionOutcome =
                 artifact.publishSidecarPointers(
                     manifest = on,
                     sidecars = listOf(
@@ -119,8 +122,8 @@ internal object EnvelopePlanPublication {
                     nowEpochMs = nowEpochMs,
                 )
             val firstAttempt = publishPointers(manifest)
-            if (!artifact.isStaleManifestRejection(firstAttempt)) return@withArtifactEngine firstAttempt
-            val fresh = artifact.readManifest() ?: return@withArtifactEngine firstAttempt
+            if (!artifact.isStaleManifestRejection(firstAttempt)) return@withArtifactEngineLocked firstAttempt
+            val fresh = artifact.readManifest() ?: return@withArtifactEngineLocked firstAttempt
             logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact stale manifest retried once: seam=envelope-plan " +
                     "chapter=${fresh.chapterKey} " +
@@ -128,8 +131,8 @@ internal object EnvelopePlanPublication {
                     "freshUpdatedAt=${fresh.updatedAtEpochMs}"
             }
             val retry = publishPointers(fresh)
-            if (retry is ChapterArtifactStore.TransactionOutcome.Committed) retry else firstAttempt
-        } ?: ChapterArtifactStore.TransactionOutcome.Rejected("artifact engine unavailable")
+            if (retry is ChapterArtifactEngine.TransactionOutcome.Committed) retry else firstAttempt
+        } ?: ChapterArtifactEngine.TransactionOutcome.Rejected("artifact engine unavailable")
     }
 
     /** Why a manifest's envelope-plan pointer is (not) usable at a resume point. */
@@ -149,24 +152,26 @@ internal object EnvelopePlanPublication {
      * re-plans (a pure recomputation) and heals.
      */
     fun readValidatedPlan(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         manifest: ChapterArtifactManifest,
-    ): EnvelopePlanRead = readValidatedPlan(
-        store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
-            artifactStore = artifact,
-        ),
-        manifest = manifest,
-    )
+    ): EnvelopePlanRead = runBlocking {
+        readValidatedPlan(
+            store = ChapterTranslationStore(
+                translationFile = null,
+                fileCreator = null,
+                artifactStore = artifact,
+            ),
+            manifest = manifest,
+        )
+    }
 
-    fun readValidatedPlan(
+    suspend fun readValidatedPlan(
         store: ChapterTranslationStore,
         manifest: ChapterArtifactManifest,
     ): EnvelopePlanRead {
-        return store.withArtifactEngine { artifact ->
-            val pointer = manifest.envelopePlan ?: return@withArtifactEngine EnvelopePlanRead.NotUsable
-            if (!pointer.isWellFormed()) return@withArtifactEngine EnvelopePlanRead.NotUsable
+        return store.withArtifactEngineLocked { artifact ->
+            val pointer = manifest.envelopePlan ?: return@withArtifactEngineLocked EnvelopePlanRead.NotUsable
+            if (!pointer.isWellFormed()) return@withArtifactEngineLocked EnvelopePlanRead.NotUsable
             val plan = when (
                 val read = artifact.readSidecarDocument(
                     pointer = pointer,
@@ -179,13 +184,13 @@ internal object EnvelopePlanPublication {
                 )
             ) {
                 is SidecarRead.Usable -> read.document
-                else -> return@withArtifactEngine EnvelopePlanRead.NotUsable
+                else -> return@withArtifactEngineLocked EnvelopePlanRead.NotUsable
             }
             if (pointer.contentFingerprint != plan.planFingerprint) {
-                return@withArtifactEngine EnvelopePlanRead.NotUsable
+                return@withArtifactEngineLocked EnvelopePlanRead.NotUsable
             }
             if (recomputedContentFingerprint(plan) != plan.planFingerprint) {
-                return@withArtifactEngine EnvelopePlanRead.NotUsable
+                return@withArtifactEngineLocked EnvelopePlanRead.NotUsable
             }
             EnvelopePlanRead.Usable(plan)
         } ?: EnvelopePlanRead.NotUsable

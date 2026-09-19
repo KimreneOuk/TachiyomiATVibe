@@ -2,9 +2,9 @@ package eu.kanade.translation.artifact
 
 /**
  * TachiyomiAT: bounded retention sweep moved verbatim from
- * `ChapterArtifactStore` (T909 Phase 2b). Stateless over the chapter's
+ * `ChapterArtifactEngine` (T909 Phase 2b). Stateless over the chapter's
  * document IO and artifact layout; locking stays at the
- * [ChapterArtifactStore.reconcileRetention] entry point.
+ * [ChapterArtifactEngine.reconcileRetention] entry point.
  */
 internal class ArtifactRetention(
     private val io: ChapterDocumentIo,

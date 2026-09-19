@@ -4,7 +4,7 @@ import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.CommittedBundleMetadata
 import eu.kanade.translation.artifact.ProbedImage
@@ -106,8 +106,8 @@ class ChapterTranslationStorePersistenceTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -120,7 +120,7 @@ class ChapterTranslationStorePersistenceTest {
 
     /** The committed bundle must still carry the user's edited block, intact. */
     private fun assertUserEditIntact(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         committed: CommittedBundleMetadata,
     ) {
         val snapshot = artifact

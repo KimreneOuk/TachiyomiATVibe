@@ -54,9 +54,9 @@ class ChapterRunRecordSchemaTest {
     )
 
     private fun artifactStore(io: FakeChapterDocumentIo) =
-        ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+        ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
-    private fun initialManifest(store: ChapterArtifactStore): ChapterArtifactManifest {
+    private fun initialManifest(store: ChapterArtifactEngine): ChapterArtifactManifest {
         store.publishManifest(
             ChapterArtifactManifest(
                 chapterKey = "Chapter 1",
@@ -84,13 +84,13 @@ class ChapterRunRecordSchemaTest {
         val record = contractExampleRecord()
 
         val published = store.publishActiveRun(initial, record, hex64)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         val pointer = published.manifest.activeRun.shouldNotBeNull()
         pointer.contentFingerprint shouldBe hex64
         val sidecarBytes = io.read(layout.runRecordFile(hex64)).shouldNotBeNull()
         String(sidecarBytes) shouldBe ArtifactDocumentJson.encodeToString(record)
-        store.readRunRecord(pointer) shouldBe ChapterArtifactStore.RunRecordRead.Usable(record)
+        store.readRunRecord(pointer) shouldBe ChapterArtifactEngine.RunRecordRead.Usable(record)
     }
 
     @Test
@@ -135,7 +135,7 @@ class ChapterRunRecordSchemaTest {
         )
         store.publishManifest(manifestWithPointer) shouldBe true
 
-        store.readRunRecord(manifestWithPointer.activeRun!!) shouldBe ChapterArtifactStore.RunRecordRead.Absent
+        store.readRunRecord(manifestWithPointer.activeRun!!) shouldBe ChapterArtifactEngine.RunRecordRead.Absent
         // The unparseable payload was quarantined, not silently consumed (T924-SC-17).
         io.files.containsKey("$fileName.corrupt") shouldBe true
     }
@@ -148,7 +148,7 @@ class ChapterRunRecordSchemaTest {
         val initial = initialManifest(store)
 
         val rejected = store.publishActiveRun(initial, wrongKind, hex64)
-        rejected.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        rejected.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
 
         // A wrong-kind document already on disk is corrupt (T924-SC-17), never consumed.
@@ -156,7 +156,7 @@ class ChapterRunRecordSchemaTest {
         io.write(fileName, ArtifactDocumentJson.encodeToString(wrongKind).toByteArray())
         store.readRunRecord(
             SidecarPointer(fileName = fileName, schemaVersion = 1, contentFingerprint = hex64),
-        ) shouldBe ChapterArtifactStore.RunRecordRead.Absent
+        ) shouldBe ChapterArtifactEngine.RunRecordRead.Absent
         io.files.containsKey("$fileName.corrupt") shouldBe true
     }
 
@@ -176,7 +176,7 @@ class ChapterRunRecordSchemaTest {
         store.publishManifest(withPointer) shouldBe true
 
         val read = store.readRunRecord(withPointer.activeRun!!)
-        read shouldBe ChapterArtifactStore.RunRecordRead.UnsupportedVersion(2)
+        read shouldBe ChapterArtifactEngine.RunRecordRead.UnsupportedVersion(2)
         // Bytes preserved untouched: never deleted, overwritten, or quarantined (T924-SC-13).
         String(io.read(fileName)!!) shouldBe futureJson
         io.files.containsKey("$fileName.corrupt") shouldBe false

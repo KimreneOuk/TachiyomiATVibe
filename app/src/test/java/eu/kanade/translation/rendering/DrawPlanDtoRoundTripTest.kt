@@ -3,7 +3,7 @@ package eu.kanade.translation.rendering
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ColorStylePreparation
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test
  * 7.3/7.4 JVM-testable substance): the FULL persisted-layout round trip
  * THROUGH THE STORE — plan + color preparation assembly
  * ([LayoutPlanPublication.prepare]), sidecar-then-pointer publication
- * ([ChapterArtifactStore.publishSidecarPointers], exactly the transaction
+ * ([ChapterArtifactEngine.publishSidecarPointers], exactly the transaction
  * BatchRenderJoin performs behind FF-02), store-backed hydration through the
  * `readOcrCheckpoint`-idiom generic reader, and
  * [LayoutDrawPlanProjection.rehydrate] — reproduces the planner geometry
@@ -93,7 +93,7 @@ class DrawPlanDtoRoundTripTest {
     )
 
     private fun artifactStore(io: FakeChapterDocumentIo) =
-        ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+        ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     /** Minimal durable artifact-authoritative manifest with one page record. */
     private fun publishedManifest(io: FakeChapterDocumentIo): ChapterArtifactManifest {
@@ -168,12 +168,12 @@ class DrawPlanDtoRoundTripTest {
                 )
             },
         )
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         return outcome.manifest
     }
 
     /** Store-backed hydrator wired exactly like the production reader source. */
-    private fun pointerRef(store: ChapterArtifactStore, pageKey: String): PersistedLayoutHydrator.PersistedPlanRef? {
+    private fun pointerRef(store: ChapterArtifactEngine, pageKey: String): PersistedLayoutHydrator.PersistedPlanRef? {
         val manifest = store.readManifest() ?: return null
         val pointer = manifest.layoutPlans[pageKey] ?: return null
         return PersistedLayoutHydrator.PersistedPlanRef(

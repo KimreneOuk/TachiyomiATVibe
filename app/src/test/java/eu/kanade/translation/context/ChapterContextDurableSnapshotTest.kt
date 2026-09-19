@@ -5,7 +5,7 @@ import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterContextSnapshot
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
@@ -62,7 +62,7 @@ class ChapterContextDurableSnapshotTest {
     ): ChapterTranslationStore {
         val docs = AtomicChapterDocuments(io)
         docs.publishJson(layout.manifestFileName, manifest)
-        val artifactStore = ChapterArtifactStore(docs, layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+        val artifactStore = ChapterArtifactEngine(docs, layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
         return ChapterTranslationStore(
             translationFile = null,
             fileCreator = null,
@@ -132,7 +132,7 @@ class ChapterContextDurableSnapshotTest {
             pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
         )
         val store = createStoreWithManifest(io, initialManifest)
-        val artifactStore = store.artifactStore.shouldNotBeNull()
+        val artifactStore = store.artifactEngine.shouldNotBeNull()
 
         // Pointer unpublished initially = feature inert
         initialManifest.context.shouldBeNull()
@@ -144,8 +144,8 @@ class ChapterContextDurableSnapshotTest {
             revision = 1L,
         )
         val pubResult = artifactStore.publishContextSnapshot(initialManifest, snapshot)
-        (pubResult is ChapterArtifactStore.TransactionOutcome.Committed) shouldBe true
-        val committedManifest = (pubResult as ChapterArtifactStore.TransactionOutcome.Committed).manifest
+        (pubResult is ChapterArtifactEngine.TransactionOutcome.Committed) shouldBe true
+        val committedManifest = (pubResult as ChapterArtifactEngine.TransactionOutcome.Committed).manifest
 
         // Context pointer installed on schema 4 manifest
         committedManifest.schemaVersion shouldBe 4
@@ -155,8 +155,8 @@ class ChapterContextDurableSnapshotTest {
 
         // Read-back verification
         val readOutcome = artifactStore.readContextSnapshot(contextPointer)
-        (readOutcome is ChapterArtifactStore.ContextSnapshotRead.Usable) shouldBe true
-        val loadedSnapshot = (readOutcome as ChapterArtifactStore.ContextSnapshotRead.Usable).snapshot
+        (readOutcome is ChapterArtifactEngine.ContextSnapshotRead.Usable) shouldBe true
+        val loadedSnapshot = (readOutcome as ChapterArtifactEngine.ContextSnapshotRead.Usable).snapshot
         loadedSnapshot.chapterKey shouldBe snapshot.chapterKey
         loadedSnapshot.targetLang shouldBe "en"
         loadedSnapshot.contentFingerprint shouldBe snapshot.contentFingerprint
@@ -195,7 +195,7 @@ class ChapterContextDurableSnapshotTest {
 
         // Crash-after-ledger: simulate process death mid-call (resolveAttempt not called)
         // Check disk ledger contains the entry with requestContextFingerprint
-        val ledgerDoc = store.artifactStore?.readAttemptLedger()
+        val ledgerDoc = store.artifactEngine?.readAttemptLedger()
         ledgerDoc.shouldNotBeNull()
         ledgerDoc.entries.size shouldBe 1
         val entry = ledgerDoc.entries.first()

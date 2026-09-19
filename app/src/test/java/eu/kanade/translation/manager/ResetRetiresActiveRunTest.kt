@@ -9,7 +9,7 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.ChapterTranslator
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
@@ -77,8 +77,8 @@ class ResetRetiresActiveRunTest {
     )
 
     /** Real artifact store with authority flipped and a durably COMPLETE run record. */
-    private fun artifactStoreWithCompleteRun(): ChapterArtifactStore {
-        val artifact = ChapterArtifactStore(
+    private fun artifactStoreWithCompleteRun(): ChapterArtifactEngine {
+        val artifact = ChapterArtifactEngine(
             AtomicChapterDocuments(FakeChapterDocumentIo()),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -114,7 +114,7 @@ class ResetRetiresActiveRunTest {
             manifest = artifact.readManifest().shouldNotBeNull(),
             record = completeRecord,
             contentFingerprint = hex64("complete-run-record"),
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         return artifact
     }
 

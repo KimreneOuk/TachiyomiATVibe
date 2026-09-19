@@ -1,7 +1,7 @@
 package eu.kanade.translation.store
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 
 /**
  * Explicit storage configuration for a chapter store.
@@ -23,5 +23,5 @@ internal sealed interface ChapterStoreEngineMode {
     ) : ChapterStoreEngineMode
 
     /** Eagerly opened artifact engine owned by the facade. */
-    data class Durable(val artifact: ChapterArtifactStore) : ChapterStoreEngineMode
+    data class Durable(val artifact: ChapterArtifactEngine) : ChapterStoreEngineMode
 }

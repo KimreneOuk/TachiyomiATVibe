@@ -5,7 +5,7 @@ import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.EvidenceRef
 import eu.kanade.translation.artifact.EvidenceStrength
@@ -34,7 +34,7 @@ class ChapterContextCrossFeedProbeTest {
 
     private val io = FakeChapterDocumentIo()
     private val layout = ChapterArtifactLayout("Chapter 1")
-    private val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+    private val artifact = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     private fun sha256Hex(tag: String): String =
         MessageDigest.getInstance("SHA-256")

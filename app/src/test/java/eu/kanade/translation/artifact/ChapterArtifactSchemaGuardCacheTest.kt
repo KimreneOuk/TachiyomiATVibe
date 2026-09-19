@@ -74,8 +74,8 @@ class ChapterArtifactSchemaGuardCacheTest {
         migratedAtEpochMs = 42L,
     )
 
-    private fun createStore(io: FakeChapterDocumentIo): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun createStore(io: FakeChapterDocumentIo): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             layout,
             object : CleanedImageProbe {

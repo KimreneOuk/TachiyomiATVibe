@@ -1,6 +1,6 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -83,11 +83,11 @@ class StandardPipelineCoexistenceTest {
             // record with the standard provider identity — a sidecar the
             // legacy coordinator never publishes.
             val store = harness.store
-            val artifact = store.artifactStore.shouldNotBeNull()
+            val artifact = store.artifactEngine.shouldNotBeNull()
             val pointer = store.artifactManifest?.activeRun.shouldNotBeNull()
             val record = (
                 artifact.readRunRecord(pointer)
-                    as ChapterArtifactStore.RunRecordRead.Usable
+                    as ChapterArtifactEngine.RunRecordRead.Usable
                 ).record
             record.state shouldBe ChapterRunState.COMPLETE
             record.frozenConfig.providerKey shouldBe "standard:mlkit"

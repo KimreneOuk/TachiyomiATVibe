@@ -7,7 +7,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.model.BatchExpectedFingerprints
@@ -82,7 +82,7 @@ class D10PartialDownloadAdmissionTest {
         pageKeys: List<String>,
         pageOverrides: Map<String, PageTranslation.() -> Unit> = emptyMap(),
     ): ChapterTranslationStore {
-        val artifactStore = ChapterArtifactStore(
+        val artifactStore = ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             ChapterArtifactLayout("D10 Chapter"),
         )

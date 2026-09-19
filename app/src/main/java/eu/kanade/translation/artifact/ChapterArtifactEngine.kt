@@ -30,7 +30,7 @@ import tachiyomi.core.common.util.system.logcat
  * files from pre-artifact builds are intentionally not read or migrated.
  */
 /**
- * T924-TX-03 close-vs-rebase decision for [ChapterArtifactStore.checkpointOcr].
+ * T924-TX-03 close-vs-rebase decision for [ChapterArtifactEngine.checkpointOcr].
  *
  * - [CLOSE] (default): close the active BATCH candidate (CANCELLED generation
  *   record, candidate pointer cleared, checkpoint pointer installed in ONE
@@ -68,7 +68,7 @@ sealed interface SidecarRead<out T : Any> {
     data object Absent : SidecarRead<Nothing>
 }
 
-class ChapterArtifactStore(
+class ChapterArtifactEngine(
     private val documents: AtomicChapterDocuments,
     internal val layout: ChapterArtifactLayout,
     @Suppress("UNUSED_PARAMETER")
@@ -88,8 +88,6 @@ class ChapterArtifactStore(
         data class Stored(val manifest: ChapterArtifactManifest) : RecordOutcome
         data class NotStored(val reason: String) : RecordOutcome
     }
-
-    @Synchronized
     fun load(): LoadResult {
         val readManifestStage = ReaderEntryTrace.begin("store.readManifest", null)
         val primary = readManifestDocument(layout.manifestFileName)
@@ -124,9 +122,8 @@ class ChapterArtifactStore(
                 return LoadResult(existing)
             }
             // T921: the recursive sweep must not run for large chapters — it
-            // holds this store's monitor and serialized reader entry behind
-            // the lock for its full crawl duration (measured 56.7s of a 57.1s
-            // open). Large-chapter cleanup is owned by the deferred
+            // runs at the serialized reader boundary. Large-chapter cleanup
+            // is owned by the deferred
             // maintenance path (follow-up: event-driven retention per T920
             // Recommendation 1). Small chapters keep the synchronous sweep:
             // their managed tree is a handful of SAF listings, and
@@ -170,11 +167,8 @@ class ChapterArtifactStore(
     }
 
     /** Crash-safe manifest publication: temp, validate, rotate backup, rename. */
-    @Synchronized
     fun publishManifest(manifest: ChapterArtifactManifest): Boolean =
         publishManifestInternal(stampChapterKey(manifest))
-
-    @Synchronized
     fun publishGlossary(entries: Map<String, String>): GlossaryPointer? {
         val existing = readManifest()
         val lastVersion = maxOf(
@@ -211,7 +205,6 @@ class ChapterArtifactStore(
         }
 
     /** Crash-safe attempt-ledger publication: temp, validate, rename. */
-    @Synchronized
     fun publishAttemptLedger(document: ChapterAttemptLedgerDocument): Boolean =
         documents.publishJson(layout.attemptLedgerFileName, document)
 
@@ -284,7 +277,6 @@ class ChapterArtifactStore(
      * spurious rejection on a healthy chapter. Every other rejection reason is
      * returned as-is.
      */
-    @Synchronized
     fun publishActiveRun(
         manifest: ChapterArtifactManifest,
         record: ChapterRunRecord,
@@ -354,7 +346,6 @@ class ChapterArtifactStore(
      * the batch resume teardown must not surface a spurious rejection on a
      * healthy chapter. Every other rejection reason is returned as-is.
      */
-    @Synchronized
     fun retireActiveRun(
         manifest: ChapterArtifactManifest,
         reason: String,
@@ -429,7 +420,6 @@ class ChapterArtifactStore(
      * manifest, so genuine drift still rejects — with a non-stale reason, on
      * the retry attempt. Every other rejection reason is returned as-is.
      */
-    @Synchronized
     fun checkpointOcr(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -778,7 +768,6 @@ class ChapterArtifactStore(
      * write failed and the prior manifest stays authoritative — the caller
      * must not treat the failure metadata as durable.
      */
-    @Synchronized
     fun recordDurableFailure(
         manifest: ChapterArtifactManifest,
         failure: DurableFailureMetadata,
@@ -845,7 +834,6 @@ class ChapterArtifactStore(
      * On any precondition or publication failure the prior manifest stays
      * authoritative (T924-SC-22) and pointers never dangle.
      */
-    @Synchronized
     fun publishSidecarPointers(
         manifest: ChapterArtifactManifest,
         sidecars: List<SidecarPublication>,
@@ -889,7 +877,6 @@ class ChapterArtifactStore(
      * as-is (T924-SC-20/22); a retry that also fails surfaces the retry's own
      * rejection, exactly like the store's other wrapped seams.
      */
-    @Synchronized
     internal fun publishSidecarPointersWithStaleRetry(
         manifest: ChapterArtifactManifest,
         sidecars: List<SidecarPublication>,
@@ -1122,7 +1109,6 @@ class ChapterArtifactStore(
      * Every other rejection reason is returned as-is.
      * [persistLiveCandidateAndFailure] delegates here and inherits the retry.
      */
-    @Synchronized
     fun persistLiveCandidate(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1241,7 +1227,6 @@ class ChapterArtifactStore(
      * publication. The immutable candidate sidecar is written first, then a
      * single manifest pointer update makes both pieces visible together.
      */
-    @Synchronized
     fun persistLiveCandidateAndFailure(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1280,7 +1265,6 @@ class ChapterArtifactStore(
      * against the FRESH manifest, so genuine drift still rejects with its real
      * reason. Every other rejection reason is returned as-is.
      */
-    @Synchronized
     fun promoteLiveCandidate(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1448,7 +1432,6 @@ class ChapterArtifactStore(
     }
 
     /** Cancels a live candidate while retaining the committed pointer. */
-    @Synchronized
     fun cancelLiveCandidate(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1457,7 +1440,6 @@ class ChapterArtifactStore(
     ): TransactionOutcome = cancelCandidate(manifest, pageKey, generationId, nowEpochMs)
 
     /** Explicit user reset: remove committed/candidate pointers durably. */
-    @Synchronized
     fun demoteLivePage(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1502,7 +1484,6 @@ class ChapterArtifactStore(
     }
 
     /** Removes one page from the artifact-authoritative live manifest. */
-    @Synchronized
     fun deleteLivePage(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1539,7 +1520,6 @@ class ChapterArtifactStore(
      * manifest, so genuine drift still rejects — with a non-stale reason, on
      * the retry attempt. Every other rejection reason is returned as-is.
      */
-    @Synchronized
     fun openCandidate(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1653,7 +1633,6 @@ class ChapterArtifactStore(
      * (lifecycle contract §13). Files are reclaimed exclusively through store
      * reachability after the manifest update — never by name pattern alone.
      */
-    @Synchronized
     fun cancelCandidate(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1907,7 +1886,6 @@ class ChapterArtifactStore(
      * the artifact tree (flat JSON, legacy glossary, summary, companion
      * images) are never touched.
      */
-    @Synchronized
     fun reconcileRetention(
         manifest: ChapterArtifactManifest,
         stagedReachable: Set<String> = emptySet(),
@@ -1915,22 +1893,21 @@ class ChapterArtifactStore(
         retentionSweep.reconcileRetention(manifest, stagedReachable)
 
     /**
-     * Retention phase 1 (candidate crawl) WITHOUT the store monitor — and
-     * deliberately NOT @Synchronized. It is pure over its inputs (the passed
+     * Retention phase 1 (candidate crawl) WITHOUT the facade Mutex — and
+     * deliberately lock-free. It is pure over its inputs (the passed
      * manifest + the immutable layout/IO) and takes minutes of SAF round-trips
-     * on real storage; taking either the store monitor or the scheduler mutex
+     * on real storage; taking either the facade Mutex or the scheduler mutex
      * during it froze every page lease in the pipeline (jdb thread dump,
      * 2026-09-15: 20+ minute batch stall on a 70-page chapter). Pair with
      * [deleteVerifiedRetentionCandidates], which re-verifies each candidate
-     * against the live manifest under the monitor.
+     * against the live manifest under the facade Mutex.
      */
     fun collectRetentionCandidates(
         manifest: ChapterArtifactManifest,
         stagedReachable: Set<String> = emptySet(),
     ): Set<String> = retentionSweep.collectOrphanCandidates(manifest, stagedReachable)
 
-    /** Retention phase 2: re-verify and delete under the store monitor. */
-    @Synchronized
+    /** Retention phase 2: re-verify and delete under the facade Mutex. */
     fun deleteVerifiedRetentionCandidates(
         candidateOrphans: Collection<String>,
         manifest: ChapterArtifactManifest,
@@ -1940,7 +1917,7 @@ class ChapterArtifactStore(
 
     /**
      * Retention phase 2 for the split (off-lock crawl) sweep: resolves the
-     * verification manifest ITSELF, under the store monitor, from the durable
+     * verification manifest ITSELF, under the facade Mutex, from the durable
      * artifact tree. A caller-supplied manifest captured outside this monitor
      * (e.g. the facade's cached snapshot) can lag an in-flight publication by
      * its whole body — the crawl may have listed a sidecar whose file was
@@ -1952,7 +1929,6 @@ class ChapterArtifactStore(
      * rotation, so a manifest read here is never older than any installed
      * pointer. A chapter with no durable manifest verifies nothing.
      */
-    @Synchronized
     fun deleteVerifiedRetentionCandidates(
         candidateOrphans: Collection<String>,
     ): RetentionResult {
@@ -1966,7 +1942,6 @@ class ChapterArtifactStore(
      * Race register #6: files referenced in stagedReachable are spared; when
      * [durableManifest] is supplied, files still reachable from it are spared too.
      */
-    @Synchronized
     fun deleteKnownOrphans(
         candidateOrphans: Collection<String>,
         stagedReachable: Set<String> = emptySet(),
@@ -2067,7 +2042,6 @@ class ChapterArtifactStore(
      * [endManifestCoalescing] (a try/finally bracket), which performs the
      * mandatory final flush. Nesting is counted; the outermost end flushes.
      */
-    @Synchronized
     fun beginManifestCoalescing() {
         manifestCoalescingDepth += 1
     }
@@ -2080,7 +2054,6 @@ class ChapterArtifactStore(
      * logged and dropped: the transactions already reported Committed, and the
      * durable state heals on the next resume via the checkpoint sidecars.
      */
-    @Synchronized
     fun endManifestCoalescing() {
         if (manifestCoalescingDepth > 0) manifestCoalescingDepth -= 1
         if (manifestCoalescingDepth > 0) return
@@ -2099,18 +2072,16 @@ class ChapterArtifactStore(
 
     /**
      * T934 LI-x: the manifest CAS baseline — the coalesced (intended) manifest
-     * while a window is open, else the durable file. Must only be called under
-     * the store monitor (every caller is a [Synchronized] transaction).
+     * while a window is open, else the durable file. Must only be called while
+     * the facade Mutex is held by the owning ChapterTranslationStore.
      */
     private fun casBaselineManifest(): ChapterArtifactManifest? =
         coalescedManifest ?: readManifest()
 
-    // T934 LI-x: @Synchronized because this is also reached WITHOUT the store
-    // monitor (the background legacy-health verifier's raw publications), and
-    // the coalescing stash below must not race with the transaction chain.
-    // Reentrant for the [Synchronized] transaction callers; lock order
-    // (store monitor → per-name document lock) is the pre-existing order.
-    @Synchronized
+    // T934 LI-x: callers hold the owning ChapterTranslationStore facade Mutex.
+    // The coalescing stash therefore shares the one mutable-state lock with
+    // every transaction. Lock order is facade Mutex → per-name document lock;
+    // document/open locks never acquire the facade Mutex.
     internal fun publishManifestInternal(manifest: ChapterArtifactManifest, syncToDisk: Boolean = false): Boolean {
         if (readManifestDocument(layout.manifestFileName)?.schemaVersion
                 ?.let { it > ChapterArtifactManifest.SCHEMA_VERSION } == true

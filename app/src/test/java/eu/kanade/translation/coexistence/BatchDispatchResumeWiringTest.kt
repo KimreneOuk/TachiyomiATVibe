@@ -1,6 +1,6 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
@@ -80,7 +80,7 @@ class BatchDispatchResumeWiringTest {
             // on timeout, fail naming the record's state and phase counters so
             // a load-induced typed pause is reported precisely here instead of
             // surfacing later as a downstream assertion mismatch.
-            val artifact = harness.store.artifactStore.shouldNotBeNull()
+            val artifact = harness.store.artifactEngine.shouldNotBeNull()
             try {
                 runBlocking {
                     withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
@@ -93,7 +93,7 @@ class BatchDispatchResumeWiringTest {
                 val manifest = artifact.readManifest().shouldNotBeNull()
                 val record = (
                     artifact.readRunRecord(manifest.activeRun.shouldNotBeNull())
-                        as ChapterArtifactStore.RunRecordRead.Usable
+                        as ChapterArtifactEngine.RunRecordRead.Usable
                     ).record
                 error(
                     "run 1 never reached ChapterRunState.COMPLETE within " +
@@ -111,12 +111,12 @@ class BatchDispatchResumeWiringTest {
     }
 
     private fun durableRecord(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
     ): Pair<String, ChapterRunState> {
         val manifest = artifact.readManifest().shouldNotBeNull()
         val record = (
             artifact.readRunRecord(manifest.activeRun.shouldNotBeNull())
-                as ChapterArtifactStore.RunRecordRead.Usable
+                as ChapterArtifactEngine.RunRecordRead.Usable
             ).record
         return record.runId to record.state
     }
@@ -127,12 +127,12 @@ class BatchDispatchResumeWiringTest {
         val first = firstRun(pageKeys)
         try {
             // Run 1 closed as a real COMPLETE publication.
-            val artifact = first.store.artifactStore.shouldNotBeNull()
+            val artifact = first.store.artifactEngine.shouldNotBeNull()
             val manifestBefore = artifact.readManifest().shouldNotBeNull()
             val pointerBefore = manifestBefore.activeRun.shouldNotBeNull()
             val recordBefore = (
                 artifact.readRunRecord(pointerBefore)
-                    as ChapterArtifactStore.RunRecordRead.Usable
+                    as ChapterArtifactEngine.RunRecordRead.Usable
                 ).record
             recordBefore.state shouldBe ChapterRunState.COMPLETE
             recordBefore.frozenConfig.providerKey shouldBe "standard:mlkit"
@@ -171,7 +171,7 @@ class BatchDispatchResumeWiringTest {
                 artifact.readManifest().shouldNotBeNull().activeRun shouldBe pointerBefore
                 (
                     artifact.readRunRecord(pointerBefore)
-                        as ChapterArtifactStore.RunRecordRead.Usable
+                        as ChapterArtifactEngine.RunRecordRead.Usable
                     ).record shouldBe recordBefore
             } finally {
                 second.close()
@@ -186,11 +186,11 @@ class BatchDispatchResumeWiringTest {
         val pageKeys = listOf("p0", "p1")
         val first = firstRun(pageKeys)
         try {
-            val artifact = first.store.artifactStore.shouldNotBeNull()
+            val artifact = first.store.artifactEngine.shouldNotBeNull()
             val manifestBefore = artifact.readManifest().shouldNotBeNull()
             val recordBefore = (
                 artifact.readRunRecord(manifestBefore.activeRun.shouldNotBeNull())
-                    as ChapterArtifactStore.RunRecordRead.Usable
+                    as ChapterArtifactEngine.RunRecordRead.Usable
                 ).record
             recordBefore.state shouldBe ChapterRunState.COMPLETE
 

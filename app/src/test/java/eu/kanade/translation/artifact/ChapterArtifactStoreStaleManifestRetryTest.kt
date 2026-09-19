@@ -14,7 +14,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * T924 LI-4: a one-shot stale-manifest retry inside [ChapterArtifactStore] for
+ * T924 LI-4: a one-shot stale-manifest retry inside [ChapterArtifactEngine] for
  * the first-publication seams the flagged Batch lane hits. When a chapter
  * with more than 8 pages opens, the ARTIFACTS path launches the background
  * background artifact-health republisher, which republishes a VERIFIED manifest AFTER the
@@ -40,7 +40,7 @@ import java.security.MessageDigest
  * changes are preserved, never reverted. The caller-visible outcome stays
  * "Committed or Rejected"; a retry that also fails returns Rejected as today.
  */
-class ChapterArtifactStoreStaleManifestRetryTest {
+class ChapterArtifactEngineStaleManifestRetryTest {
 
     private val layout = ChapterArtifactLayout("Chapter 1")
 
@@ -69,7 +69,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
 
     /** Publishes [updated] as the durable manifest, simulating the concurrent writer. */
     private fun bumpBehindCallersBack(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         current: ChapterArtifactManifest,
         nowEpochMs: Long,
     ) {
@@ -86,7 +86,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
     @Test
     fun `publishActiveRun with a stale snapshot retries once and preserves the concurrent verify marker`() {
         val documents = AtomicChapterDocuments(FakeChapterDocumentIo())
-        val artifact = ChapterArtifactStore(documents, layout)
+        val artifact = ChapterArtifactEngine(documents, layout)
         var manifest = artifact
             .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
@@ -127,7 +127,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             nowEpochMs = 3L,
         )
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val durable = artifact.readManifest().shouldNotBeNull()
         // The run-record pointer landed on the BUMPED manifest…
         durable.activeRun.shouldNotBeNull().contentFingerprint shouldBe hex64("li4-run-record")
@@ -187,7 +187,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
     )
 
     private class CheckpointFixture(
-        val store: ChapterArtifactStore,
+        val store: ChapterArtifactEngine,
         val callerCopy: ChapterArtifactManifest,
         val generationId: String,
         val ocrSnapshot: PageTranslation,
@@ -196,7 +196,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
 
     private fun checkpointFixtureWithConcurrentVerify(): CheckpointFixture {
         val io = FakeChapterDocumentIo()
-        val store = ChapterArtifactStore(
+        val store = ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             layout,
             object : CleanedImageProbe {
@@ -213,7 +213,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps-v1",
             nowEpochMs = 500L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
         val persisted = store.persistLiveCandidate(
             manifest = opened.manifest,
@@ -231,7 +231,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
                 orientation = "PORTRAIT",
             ),
             nowEpochMs = 501L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         // The façade cached the pre-verification manifest; the background
         // verify then republished the VERIFIED marker behind its back.
@@ -287,7 +287,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             nowEpochMs = 502L,
         )
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val durable = fx.store.readManifest().shouldNotBeNull()
         // The checkpoint landed: candidate closed, pointer installed…
         durable.ocrCheckpoints.getValue("page.jpg").contentFingerprint shouldBe hex64("ocr-content")
@@ -316,7 +316,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             checkpoint = concurrentCheckpoint,
             mode = OcrCheckpointMode.CLOSE,
             nowEpochMs = 5_001L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         // The stale caller now presents its pre-verify snapshot with its own
         // (older) OCR content for the closed candidate generation.
@@ -336,7 +336,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
         // The retry re-validated the WHOLE transaction against the fresh
         // manifest and rejected on the real drift (page version), not the
         // stale CAS — exactly one retry, no second one.
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldContain "stale page version"
         // The concurrent writer's checkpoint pointer is untouched, and the
         // stale caller's checkpoint sidecar never reached disk.
@@ -350,8 +350,8 @@ class ChapterArtifactStoreStaleManifestRetryTest {
     // ------------------------------------------------------------------
 
     /** Authority-flip fixture: ARTIFACTS manifest, no candidate yet. */
-    private fun authorityFlipFixture(): ChapterArtifactStore {
-        val artifact = ChapterArtifactStore(AtomicChapterDocuments(FakeChapterDocumentIo()), layout)
+    private fun authorityFlipFixture(): ChapterArtifactEngine {
+        val artifact = ChapterArtifactEngine(AtomicChapterDocuments(FakeChapterDocumentIo()), layout)
         var manifest = artifact
             .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
@@ -397,7 +397,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             nowEpochMs = 3L,
         )
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.generationId.shouldNotBeNull()
         val durable = artifact.readManifest().shouldNotBeNull()
         // The candidate landed on the BUMPED manifest…
@@ -422,7 +422,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps-v1",
             nowEpochMs = 2L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val concurrentGenerationId = artifact.readManifest().shouldNotBeNull()
             .pages.getValue("page.jpg").candidate.shouldNotBeNull().generationId
 
@@ -438,7 +438,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
         // The retry re-validated the WHOLE transaction against the fresh
         // manifest and rejected on the real drift (page version) — exactly
         // one retry, no second one, and the concurrent candidate stands.
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldContain "stale page version"
         artifact.readManifest().shouldNotBeNull().pages.getValue("page.jpg")
             .candidate.shouldNotBeNull().generationId shouldBe concurrentGenerationId
@@ -460,7 +460,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
 
         // The manifest is NOT stale, so the rejection is the caller's real
         // identity drift, returned exactly as before the retry existed.
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldContain "stale page version"
         artifact.readManifest() shouldBe current
     }
@@ -481,7 +481,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             nowEpochMs = 5_001L,
         )
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val durable = fx.store.readManifest().shouldNotBeNull()
         // The snapshot pointer advanced on the BUMPED manifest…
         durable.pages.getValue("page.jpg").pageVersion shouldBe callerPageVersion + 1
@@ -508,7 +508,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
 
         // Non-stale rejection reason: returned as-is, no retry, manifest
         // unchanged.
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldContain "candidate mismatch"
     }
 
@@ -528,7 +528,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             nowEpochMs = 5_001L,
         )
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val durable = fx.store.readManifest().shouldNotBeNull()
         // The candidate closed and the committed pointer landed on the BUMPED
         // manifest…
@@ -556,7 +556,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             nowEpochMs = 5_001L,
         )
 
-        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldContain "dependency fingerprint changed"
     }
 
@@ -570,14 +570,14 @@ class ChapterArtifactStoreStaleManifestRetryTest {
                 record = record,
                 contentFingerprint = hex64("li4-retire-run"),
                 nowEpochMs = 2L,
-            ) is ChapterArtifactStore.TransactionOutcome.Committed,
+            ) is ChapterArtifactEngine.TransactionOutcome.Committed,
         ) { "fixture: run record publication failed" }
         val callerCopy = artifact.readManifest().shouldNotBeNull()
         bumpBehindCallersBack(artifact, callerCopy, nowEpochMs = 3L)
 
         val outcome = artifact.retireActiveRun(callerCopy, "batch resume teardown", nowEpochMs = 4L)
 
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val durable = artifact.readManifest().shouldNotBeNull()
         // The pointer retired on the BUMPED manifest…
         durable.activeRun shouldBe null

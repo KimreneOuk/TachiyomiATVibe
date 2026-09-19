@@ -20,7 +20,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class ChapterArtifactStoreTest {
+class ChapterArtifactEngineTest {
 
     private val layout = ChapterArtifactLayout("Chapter 1")
 
@@ -71,10 +71,10 @@ class ChapterArtifactStoreTest {
     )
 
     private fun artifactStore(io: FakeChapterDocumentIo) =
-        ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+        ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     private fun transactionStore(io: FakeChapterDocumentIo) =
-        ChapterArtifactStore(
+        ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             layout,
             object : CleanedImageProbe {
@@ -222,7 +222,7 @@ class ChapterArtifactStoreTest {
 
         io.failWrites = true
         val outcome = store.recordDurableFailure(first.manifest, failure)
-        val notStored = outcome.shouldBeInstanceOf<ChapterArtifactStore.RecordOutcome.NotStored>()
+        val notStored = outcome.shouldBeInstanceOf<ChapterArtifactEngine.RecordOutcome.NotStored>()
         notStored.reason shouldNotBe ""
         io.failWrites = false
         store.readManifest() shouldBe first.manifest
@@ -245,7 +245,7 @@ class ChapterArtifactStoreTest {
         // Make the final temp->primary rename fail.
         io.ownedRenamesToFail += AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
         val outcome = store.recordDurableFailure(first.manifest, failure)
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.RecordOutcome.NotStored>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.RecordOutcome.NotStored>()
         // Prior manifest still parses as the authoritative document.
         store.readManifest() shouldBe first.manifest
     }
@@ -266,7 +266,7 @@ class ChapterArtifactStoreTest {
             failureFingerprint = "fp",
         )
         val outcome = store.recordDurableFailure(manifest, failure)
-        val stored = outcome.shouldBeInstanceOf<ChapterArtifactStore.RecordOutcome.Stored>()
+        val stored = outcome.shouldBeInstanceOf<ChapterArtifactEngine.RecordOutcome.Stored>()
         stored.manifest.durableFailures.getValue("page.jpg:TRANSLATION") shouldBe failure
         store.readManifest().shouldNotBeNull().durableFailures.getValue("page.jpg:TRANSLATION") shouldBe failure
     }
@@ -356,7 +356,7 @@ class ChapterArtifactStoreTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps",
             nowEpochMs = 500L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
         val candidateImage = layout.imageFile("page.jpg", generationId, "candidate", "jpg")
         io.write(candidateImage, byteArrayOf(1, 2, 3))
@@ -367,7 +367,7 @@ class ChapterArtifactStoreTest {
         io.write(orphanGeneration, byteArrayOf(5))
         io.write(AtomicChapterDocuments.tempNameFor(layout.manifestFileName), byteArrayOf(6))
 
-        val reloaded = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+        val reloaded = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
             .loadArtifact(legacySnapshot())
 
         io.files.containsKey(candidateImage) shouldBe true
@@ -516,7 +516,7 @@ class ChapterArtifactStoreTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps",
             nowEpochMs = 100L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
         val openedPage = opened.manifest.pages.getValue("page.jpg")
         val page = displayablePage()
@@ -529,7 +529,7 @@ class ChapterArtifactStoreTest {
             pageSnapshot = page,
             origin = ArtifactOrigin.BATCH,
             nowEpochMs = 101L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val candidateFile = persisted.manifest.pages.getValue("page.jpg").candidate
             .shouldNotBeNull().pageSnapshotFileName.shouldNotBeNull()
         val committedTemp = AtomicChapterDocuments.tempNameFor(
@@ -547,7 +547,7 @@ class ChapterArtifactStoreTest {
             pageSnapshot = page,
             origin = ArtifactOrigin.BATCH,
             nowEpochMs = 102L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         promoted.manifest.pages.getValue("page.jpg").candidate.shouldBeNull()
         io.files.containsKey(candidateFile) shouldBe true
@@ -574,7 +574,7 @@ class ChapterArtifactStoreTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps",
             nowEpochMs = 100L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
         val openedPage = opened.manifest.pages.getValue("page.jpg")
         val partial = displayablePage().apply {
@@ -604,7 +604,7 @@ class ChapterArtifactStoreTest {
             origin = ArtifactOrigin.BATCH,
             failure = failure,
             nowEpochMs = 101L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         persisted.manifest.pages.getValue("page.jpg").committed
             .shouldNotBeNull().generationId shouldBe committedGeneration
@@ -621,7 +621,7 @@ class ChapterArtifactStoreTest {
             pageSnapshot = partial.copy(translationStatus = StageStatus.READY),
             origin = ArtifactOrigin.BATCH,
             nowEpochMs = 102L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         promoted.manifest.durableFailures.containsKey("page.jpg:TRANSLATION") shouldBe false
         promoted.manifest.pages.getValue("page.jpg").candidate.shouldBeNull()
@@ -664,7 +664,7 @@ class ChapterArtifactStoreTest {
         val executor = Executors.newFixedThreadPool(2)
         try {
             val futures = (0 until 2).map {
-                executor.submit<ChapterArtifactStore.TransactionOutcome> {
+                executor.submit<ChapterArtifactEngine.TransactionOutcome> {
                     check(start.await(5, TimeUnit.SECONDS))
                     store.openCandidate(
                         manifest = migrated,
@@ -684,13 +684,13 @@ class ChapterArtifactStoreTest {
             // GENUINE drift, so the retry rejects with the real drift reason,
             // never the spurious stale-snapshot one: exactly one Committed,
             // one Rejected.
-            outcomes.count { it is ChapterArtifactStore.TransactionOutcome.Committed } shouldBe 1
+            outcomes.count { it is ChapterArtifactEngine.TransactionOutcome.Committed } shouldBe 1
             val rejected = outcomes
-                .filterIsInstance<ChapterArtifactStore.TransactionOutcome.Rejected>()
+                .filterIsInstance<ChapterArtifactEngine.TransactionOutcome.Rejected>()
                 .single()
             rejected.reason shouldBe "stale page version: pageKey=page.jpg expected=0 actual=1"
             val committed = outcomes
-                .filterIsInstance<ChapterArtifactStore.TransactionOutcome.Committed>()
+                .filterIsInstance<ChapterArtifactEngine.TransactionOutcome.Committed>()
                 .single()
             val durable = store.readManifest().shouldNotBeNull()
             durable.pages.getValue("page.jpg").candidate.shouldNotBeNull().generationId shouldBe committed.generationId
@@ -719,13 +719,13 @@ class ChapterArtifactStoreTest {
             ArtifactOrigin.BATCH,
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps",
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         val cancelled = store.cancelCandidate(
             opened.manifest,
             "page.jpg",
             opened.generationId.shouldNotBeNull(),
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         cancelled.manifest.pages.getValue("page.jpg").displayState shouldBe PageDisplayState.TEXTLESS_COMPLETE
     }

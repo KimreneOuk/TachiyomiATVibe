@@ -61,7 +61,7 @@ class CheckpointOcrTransactionTest {
         inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 10, 10, 1)),
     )
 
-    private fun store(io: FakeChapterDocumentIo) = ChapterArtifactStore(
+    private fun store(io: FakeChapterDocumentIo) = ChapterArtifactEngine(
         AtomicChapterDocuments(io),
         layout,
         object : CleanedImageProbe {
@@ -94,7 +94,7 @@ class CheckpointOcrTransactionTest {
      * candidate generation id.
      */
     private class Fixture(
-        val store: ChapterArtifactStore,
+        val store: ChapterArtifactEngine,
         val manifest: ChapterArtifactManifest,
         val generationId: String,
         val ocrSnapshot: PageTranslation,
@@ -110,7 +110,7 @@ class CheckpointOcrTransactionTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps-v1",
             nowEpochMs = 500L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
         val persisted = store.persistLiveCandidate(
             manifest = opened.manifest,
@@ -128,14 +128,14 @@ class CheckpointOcrTransactionTest {
                 orientation = "PORTRAIT",
             ),
             nowEpochMs = 501L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         return Fixture(store, persisted.manifest, generationId, ocrSnapshot)
     }
 
     /** Builds a well-formed checkpoint DTO for [ocrSnapshot]. */
     private fun checkpointFor(
         ocrSnapshot: PageTranslation,
-        store: ChapterArtifactStore,
+        store: ChapterArtifactEngine,
         producerGenerationId: String?,
         contentFingerprint: String = hex64("ocr-content"),
     ): PageOcrCheckpoint {
@@ -167,7 +167,7 @@ class CheckpointOcrTransactionTest {
     }
 
     private fun checkpointTransaction(
-        store: ChapterArtifactStore,
+        store: ChapterArtifactEngine,
         manifest: ChapterArtifactManifest,
         ocrSnapshot: PageTranslation,
         checkpoint: PageOcrCheckpoint,
@@ -196,7 +196,7 @@ class CheckpointOcrTransactionTest {
         val committedBefore = fx.manifest.pages.getValue("page.jpg").committed.shouldNotBeNull()
 
         val outcome = checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, checkpoint)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         val record = outcome.manifest.pages.getValue("page.jpg")
         val pointer = outcome.manifest.ocrCheckpoints.getValue("page.jpg")
@@ -220,7 +220,7 @@ class CheckpointOcrTransactionTest {
         outcome.deletedFiles.shouldContain(layout.generationFile(fx.generationId))
 
         // The pointer resolves to a usable checkpoint whose snapshot is readable.
-        val read = fx.store.readOcrCheckpoint(pointer).shouldBeInstanceOf<ChapterArtifactStore.OcrCheckpointRead.Usable>()
+        val read = fx.store.readOcrCheckpoint(pointer).shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>()
         read.checkpoint.producedByOrigin shouldBe ArtifactOrigin.BATCH
         fx.store.readPageSnapshot(read.checkpoint.ocrPageSnapshotPointer.fileName).shouldNotBeNull()
 
@@ -242,7 +242,7 @@ class CheckpointOcrTransactionTest {
             fx.ocrSnapshot,
             checkpoint,
             mode = OcrCheckpointMode.REBASE,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         val record = outcome.manifest.pages.getValue("page.jpg")
         val successorId = outcome.generationId.shouldNotBeNull()
@@ -270,7 +270,7 @@ class CheckpointOcrTransactionTest {
             pageSnapshot = fx.ocrSnapshot,
             origin = ArtifactOrigin.BATCH,
             nowEpochMs = 503L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         written.manifest.pages.getValue("page.jpg").candidate.shouldNotBeNull()
             .generationId shouldBe successorId
 
@@ -285,7 +285,7 @@ class CheckpointOcrTransactionTest {
             origin = ArtifactOrigin.BATCH,
             nowEpochMs = 504L,
         )
-        stale.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        stale.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
     }
 
     // ------------------------------------------------------------------
@@ -296,7 +296,7 @@ class CheckpointOcrTransactionTest {
     private fun fixtureWithCommittedOnly(
         io: FakeChapterDocumentIo,
         ocrSnapshot: PageTranslation = ocrPage(),
-    ): Triple<ChapterArtifactStore, ChapterArtifactManifest, PageTranslation> {
+    ): Triple<ChapterArtifactEngine, ChapterArtifactManifest, PageTranslation> {
         val fx = fixtureWithActiveCandidate(io, ocrSnapshot)
         val promoted = fx.store.promoteLiveCandidate(
             manifest = fx.manifest,
@@ -307,7 +307,7 @@ class CheckpointOcrTransactionTest {
             pageSnapshot = fx.ocrSnapshot,
             origin = ArtifactOrigin.BATCH,
             nowEpochMs = 502L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         return Triple(fx.store, promoted.manifest, fx.ocrSnapshot)
     }
 
@@ -336,7 +336,7 @@ class CheckpointOcrTransactionTest {
         val committedBefore = manifest.pages.getValue("page.jpg").committed
 
         val outcome = checkpointTransaction(store, manifest, ocrSnapshot, checkpoint)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         val record = outcome.manifest.pages.getValue("page.jpg")
         outcome.manifest.ocrCheckpoints.keys shouldBe setOf("page.jpg")
@@ -360,7 +360,7 @@ class CheckpointOcrTransactionTest {
         )
 
         val outcome = checkpointTransaction(store, manifest, ocrSnapshot, checkpoint)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
 
         outcome.reason shouldContain "drift"
         store.readManifest() shouldBe manifest
@@ -378,7 +378,7 @@ class CheckpointOcrTransactionTest {
 
         val outcome = checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, checkpoint)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldContain "standard checkpoint branch"
         fx.store.readManifest() shouldBe fx.manifest
         fx.manifest.ocrCheckpoints shouldBe emptyMap()
@@ -391,12 +391,12 @@ class CheckpointOcrTransactionTest {
         val migrated = store.loadArtifact(legacySnapshot()).manifest
         // Demote the committed bundle so neither candidate nor committed exists.
         val demoted = store.demoteLivePage(migrated, "page.jpg")
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>().manifest
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest
         val checkpoint = checkpointFor(ocrPage(), store, producerGenerationId = null)
 
         val outcome = checkpointTransaction(store, demoted, ocrPage(), checkpoint)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldContain "committed bundle missing"
     }
 
@@ -413,7 +413,7 @@ class CheckpointOcrTransactionTest {
 
         val outcome = checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, checkpoint)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         fx.store.readManifest() shouldBe fx.manifest
         // B1: no pointer, candidate still ACTIVE (close never published).
         fx.manifest.ocrCheckpoints shouldBe emptyMap()
@@ -430,7 +430,7 @@ class CheckpointOcrTransactionTest {
 
         val outcome = checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, checkpoint)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         fx.store.readManifest() shouldBe fx.manifest
         fx.manifest.ocrCheckpoints shouldBe emptyMap()
         io.files.containsKey(checkpoint.ocrPageSnapshotPointer.fileName) shouldBe false
@@ -448,7 +448,7 @@ class CheckpointOcrTransactionTest {
 
         val outcome = checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, checkpoint)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         // The prior manifest stays authoritative: the pointer never dangles.
         val durable = fx.store.readManifest().shouldNotBeNull()
         durable shouldBe fx.manifest
@@ -471,7 +471,7 @@ class CheckpointOcrTransactionTest {
 
         val outcome = checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, checkpoint)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         fx.store.readManifest() shouldBe fx.manifest
         fx.manifest.ocrCheckpoints shouldBe emptyMap()
         // Orphan sidecar only.
@@ -493,7 +493,7 @@ class CheckpointOcrTransactionTest {
         // CLOSE rebuilds from the FRESH manifest, so nothing the concurrent
         // writer published is reverted, and the healthy chapter no longer
         // sees a spurious CHECKPOINT_REJECTED.
-        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val durable = fx.store.readManifest().shouldNotBeNull()
         durable shouldBe committed.manifest
         durable.ocrCheckpoints.getValue("page.jpg").contentFingerprint shouldBe checkpoint.ocrContentFingerprint
@@ -514,7 +514,7 @@ class CheckpointOcrTransactionTest {
 
         // Wrong candidate generation.
         checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, staleGeneration)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         // Changed dependency fingerprint (no grace clause, T924-TX-02.1/C2).
         val staleDependencyOutcome = fx.store.checkpointOcr(
             manifest = fx.manifest,
@@ -525,7 +525,7 @@ class CheckpointOcrTransactionTest {
             checkpoint = staleDependency,
             nowEpochMs = 502L,
         )
-        staleDependencyOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        staleDependencyOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         // Stale artifact page version.
         val staleVersionOutcome = checkpointTransaction(
             fx.store,
@@ -534,7 +534,7 @@ class CheckpointOcrTransactionTest {
             staleDependency,
             expectedPageVersion = 999L,
         )
-        staleVersionOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        staleVersionOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
 
         // Every rejection leaves the manifest and candidate untouched.
         fx.store.readManifest() shouldBe fx.manifest
@@ -571,7 +571,7 @@ class CheckpointOcrTransactionTest {
                 origin = ArtifactOrigin.BATCH,
                 durableFailure = ledgerFailure(stage),
                 nowEpochMs = 501L,
-            ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>().manifest
+            ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest
         }
         manifest.durableFailures.keys shouldBe setOf("page.jpg:OCR", "page.jpg:TRANSLATION")
 
@@ -582,7 +582,7 @@ class CheckpointOcrTransactionTest {
             fx.ocrSnapshot,
             checkpointFor(fx.ocrSnapshot, fx.store, fx.generationId),
             mode = OcrCheckpointMode.CLOSE,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         // F-W3-1: the stale OCR entry is cleared on success (the page's OCR is
         // now durably checkpointed), while every other ledger key survives for
@@ -614,6 +614,6 @@ class CheckpointOcrTransactionTest {
                 schemaVersion = 1,
                 contentFingerprint = stale.ocrContentFingerprint,
             ),
-        ) shouldBe ChapterArtifactStore.OcrCheckpointRead.Absent
+        ) shouldBe ChapterArtifactEngine.OcrCheckpointRead.Absent
     }
 }

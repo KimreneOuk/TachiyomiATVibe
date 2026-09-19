@@ -2985,7 +2985,7 @@ class ReaderViewModel @JvmOverloads constructor(
             PersistedLayoutReaderBridge.installChapterSource(null)
             return
         }
-        val artifact = store.artifactStore
+        val artifact = store.artifactEngine
         if (artifact == null) {
             PersistedLayoutReaderBridge.installChapterSource(null)
             return

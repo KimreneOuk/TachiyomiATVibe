@@ -21,7 +21,7 @@ import java.security.MessageDigest
  * ~1.3s apart — a main-thread ANR contributor). While a coalescing window is
  * open, each transaction's manifest publication only stages the intended
  * manifest; the durable rewrite happens at most once per 32 staged
- * publications and ALWAYS on [ChapterArtifactStore.endManifestCoalescing].
+ * publications and ALWAYS on [ChapterArtifactEngine.endManifestCoalescing].
  * The pins below:
  *
  *  - N chained adoptions inside the window produce a BOUNDED number of
@@ -36,7 +36,7 @@ import java.security.MessageDigest
  *  - a mid-window flush failure fails the owning transaction exactly like a
  *    direct publication failure (Rejected), never silently.
  */
-class ChapterArtifactStoreManifestCoalescingTest {
+class ChapterArtifactEngineManifestCoalescingTest {
 
     private val layout = ChapterArtifactLayout("Chapter 1")
 
@@ -93,7 +93,7 @@ class ChapterArtifactStoreManifestCoalescingTest {
 
     /** One adoption-equivalent publication: opens a BATCH candidate for [pageKey]. */
     private fun openCandidate(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         manifest: ChapterArtifactManifest,
         pageKey: String,
         nowEpochMs: Long,
@@ -105,12 +105,12 @@ class ChapterArtifactStoreManifestCoalescingTest {
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps-$pageKey",
             nowEpochMs = nowEpochMs,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>().manifest
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest
 
     @Test
     fun `coalesced adoptions bound durable rewrites and flush every adopted pointer on end`() {
         val io = FakeChapterDocumentIo()
-        val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+        val artifact = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
         val pageKeys = (1..100).map { index -> "p%03d.jpg".format(index) }
         artifact.loadArtifact(legacySnapshot(pageKeys))
         val writesBeforeWindow = durableManifestWrites(io)
@@ -146,7 +146,7 @@ class ChapterArtifactStoreManifestCoalescingTest {
     @Test
     fun `coalesced adoptions rebase onto a stale façade and carry the VERIFIED marker forward`() {
         val io = FakeChapterDocumentIo()
-        val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+        val artifact = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
         val pageKeys = (1..3).map { index -> "p%03d.jpg".format(index) }
         artifact.loadArtifact(legacySnapshot(pageKeys))
 
@@ -192,7 +192,7 @@ class ChapterArtifactStoreManifestCoalescingTest {
     @Test
     fun `a failed mid-window flush fails the owning transaction like a direct publication failure`() {
         val io = FakeChapterDocumentIo()
-        val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+        val artifact = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
         val pageKeys = (1..40).map { index -> "p%03d.jpg".format(index) }
         artifact.loadArtifact(legacySnapshot(pageKeys))
         val writesBeforeWindow = durableManifestWrites(io)
@@ -215,8 +215,8 @@ class ChapterArtifactStoreManifestCoalescingTest {
                     nowEpochMs = 2_000L + index,
                 )
                 when (outcome) {
-                    is ChapterArtifactStore.TransactionOutcome.Committed -> facade = outcome.manifest
-                    is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                    is ChapterArtifactEngine.TransactionOutcome.Committed -> facade = outcome.manifest
+                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                         firstRejection = outcome.reason
                         break
                     }

@@ -6,7 +6,7 @@ import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.PageOcrCheckpoint
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SourceIdentity
@@ -74,8 +74,8 @@ class OcrCheckpointRestartReuseTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -184,7 +184,7 @@ class OcrCheckpointRestartReuseTest {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().ocrCheckpoints.getValue("p1")
         val read = artifact.readOcrCheckpoint(pointer)
-            .shouldBeInstanceOf<ChapterArtifactStore.OcrCheckpointRead.Usable>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>()
         read.checkpoint.inpaintMaskRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
         // The published OCR snapshot sidecar carries the same canonical revision.
         artifact.readPageSnapshot(read.checkpoint.ocrPageSnapshotPointer.fileName)
@@ -205,7 +205,7 @@ class OcrCheckpointRestartReuseTest {
         val manifest = artifact.readManifest().shouldNotBeNull()
         val pointer = manifest.ocrCheckpoints["p1"].shouldNotBeNull()
         val read = artifact.readOcrCheckpoint(pointer)
-            .shouldBeInstanceOf<ChapterArtifactStore.OcrCheckpointRead.Usable>()
+            .shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>()
         // Origin-neutral checkpoint: provenance recorded, ownership none.
         read.checkpoint.producedByOrigin shouldBe ArtifactOrigin.BATCH
         read.checkpoint.producerGenerationId shouldBe candidateGenerationId
@@ -228,7 +228,7 @@ class OcrCheckpointRestartReuseTest {
             expectedPageVersion = pageVersion,
             dependencyFingerprint = read.checkpoint.ocrContentFingerprint,
             nowEpochMs = 600L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val readerGenerationId = readerOpen.generationId.shouldNotBeNull()
         val readerPersist = artifact.persistLiveCandidate(
             manifest = readerOpen.manifest,
@@ -239,7 +239,7 @@ class OcrCheckpointRestartReuseTest {
             pageSnapshot = checkpointSnapshot,
             origin = ArtifactOrigin.READER_ADHOC,
             nowEpochMs = 601L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val readerPromoted = artifact.promoteLiveCandidate(
             manifest = readerPersist.manifest,
             pageKey = "p1",
@@ -249,7 +249,7 @@ class OcrCheckpointRestartReuseTest {
             pageSnapshot = checkpointSnapshot,
             origin = ArtifactOrigin.READER_ADHOC,
             nowEpochMs = 602L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         readerPromoted.manifest.pageRecord("p1").candidate shouldBe null
 
         // ---- T924-TX-03.1 adopt-committed after restart: Batch checkpoints the
@@ -313,7 +313,7 @@ class OcrCheckpointRestartReuseTest {
             checkpoint = driftCheckpoint,
             nowEpochMs = 701L,
         )
-        driftOutcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        driftOutcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
             .reason shouldContain "drift"
         // The prior manifest stays authoritative: the reader-committed display
         // pointer and the installed checkpoint are unchanged.
@@ -328,7 +328,7 @@ class OcrCheckpointRestartReuseTest {
             expectedPageVersion = adopt.manifest.pageRecord("p1").pageVersion,
             dependencyFingerprint = read.checkpoint.ocrContentFingerprint,
             nowEpochMs = 702L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
     }
 
     @Test

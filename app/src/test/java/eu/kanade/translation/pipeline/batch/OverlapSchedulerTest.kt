@@ -10,7 +10,7 @@ import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.InpaintMaskBox
@@ -83,8 +83,8 @@ class OverlapSchedulerTest {
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
+    private fun artifactStore(): ChapterArtifactEngine =
+        ChapterArtifactEngine(
             AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -570,7 +570,7 @@ class OverlapSchedulerTest {
     @Test
     fun `display promotion still requires translation terminal and cleaned image even when inpaint commits first`() = runTest {
         // T934 round 2 fixture fix: the committed-display promotion
-        // (ChapterArtifactStore.promoteLiveCandidate → displayBaseIsValid)
+        // (ChapterArtifactEngine.promoteLiveCandidate → displayBaseIsValid)
         // validates the cleaned image FOR REAL — the companion file must exist
         // on disk and probe as a decodable image matching the page's source
         // dimensions. Production is correct; the fixture was missing both. The

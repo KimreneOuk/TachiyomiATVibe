@@ -7,7 +7,7 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
@@ -77,8 +77,8 @@ class StoreStatusProjectorRunRecordTest {
     private fun artifactsAuthority(
         pages: Map<String, PageArtifactRecord>,
         expectedPageCount: Int? = null,
-    ): ChapterArtifactStore {
-        val artifact = ChapterArtifactStore(
+    ): ChapterArtifactEngine {
+        val artifact = ChapterArtifactEngine(
             AtomicChapterDocuments(FakeChapterDocumentIo()),
             ChapterArtifactLayout("Chapter 1"),
         )
@@ -125,7 +125,7 @@ class StoreStatusProjectorRunRecordTest {
             manifest = artifact.readManifest().shouldNotBeNull(),
             record = completeRecord,
             contentFingerprint = hex64("complete-run-record"),
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         return ChapterTranslationStore(
             translationFile = null as UniFile?,
             fileCreator = null,
@@ -136,7 +136,7 @@ class StoreStatusProjectorRunRecordTest {
     }
 
     private fun storeWithManifest(
-        artifact: ChapterArtifactStore,
+        artifact: ChapterArtifactEngine,
         manifest: ChapterArtifactManifest,
     ): ChapterTranslationStore = ChapterTranslationStore(
         translationFile = null as UniFile?,

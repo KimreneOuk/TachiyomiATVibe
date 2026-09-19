@@ -42,7 +42,7 @@ internal class ChapterAttemptLedger(private val store: ChapterTranslationStore) 
     /** True when the artifact authority owns this chapter's sidecars. */
     private val artifactAuthorityLive: Boolean
         get() {
-            return store.artifactStore != null && store.artifactManifest != null
+            return store.artifactEngine != null && store.artifactManifest != null
         }
 
     /** Caller holds the store mutex. */
@@ -50,7 +50,7 @@ internal class ChapterAttemptLedger(private val store: ChapterTranslationStore) 
         if (!loaded) {
             loaded = true
             if (artifactAuthorityLive) {
-                document = store.artifactStore?.readAttemptLedger() ?: ChapterAttemptLedgerDocument()
+                document = store.artifactEngine?.readAttemptLedger() ?: ChapterAttemptLedgerDocument()
             }
         }
         return document
@@ -150,7 +150,7 @@ internal class ChapterAttemptLedger(private val store: ChapterTranslationStore) 
     private fun persistLocked(next: ChapterAttemptLedgerDocument): Boolean {
         document = next
         if (!artifactAuthorityLive) return true
-        val published = store.artifactStore?.publishAttemptLedger(next) ?: true
+        val published = store.artifactEngine?.publishAttemptLedger(next) ?: true
         if (!published) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT D9: attempt ledger publish failed (fail-open): " +

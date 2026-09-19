@@ -8,7 +8,7 @@ import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.GroupCommitConfiguration
@@ -216,7 +216,7 @@ class GroupCommitSliceCTest {
     fun `R2 restricted UI-before-persist publishes transient updates before staging`() = runBlocking {
         GroupCommitConfiguration.withFlag(true) {
             val io = FakeChapterDocumentIo().apply { fileBacked = true }
-            val artifactStore = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+            val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
