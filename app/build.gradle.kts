@@ -138,7 +138,6 @@ android {
                 "META-INF/README.md",
                 "META-INF/NOTICE",
                 "META-INF/*.version",
-                "assets/models/segmentation/best_int8.onnx",
                 "assets/models/ocr/paddle-v6-small/README.md",
                 "assets/models/ocr/paddle-v6-small/inference.json",
                 "assets/models/ocr/paddle-v6-small/inference.yml",
