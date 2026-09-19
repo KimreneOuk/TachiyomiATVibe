@@ -45,3 +45,14 @@ overlay_lab/debug_*.png
 
 # local agent-tool config containing credentials - never commit
 kilo.json
+
+/experimental/
+/tools/aot_corpus/qa_output/
+/research/ppocrv6/qnn_compatibility_raw.json
+# local agent working files (untracked clutter in git status)
+/AGENT_HANDOFF_*.md
+/ARCHITECTURE_LAYERS.md
+/BRAINSTORM_HANDOFF.md
+/EXECUTION_HANDOFF.md
+/_gui_probe/
+/_merge_backup_*/
