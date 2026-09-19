@@ -1,5 +1,6 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.loadArtifact
 
 import eu.kanade.translation.model.PageDisplayState
@@ -11,6 +12,7 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
@@ -658,21 +660,32 @@ class ChapterArtifactEngineTest {
     @Test
     fun `concurrent candidate opens serialize against the same manifest snapshot`() {
         val io = FakeChapterDocumentIo()
-        val store = transactionStore(io)
-        val migrated = store.loadArtifact(legacySnapshot()).manifest
+        val artifact = transactionStore(io)
+        val migrated = artifact.loadArtifact(legacySnapshot()).manifest
+        val store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            artifactStore = artifact,
+            initialArtifactManifest = migrated,
+        )
         val start = CountDownLatch(1)
         val executor = Executors.newFixedThreadPool(2)
         try {
             val futures = (0 until 2).map {
                 executor.submit<ChapterArtifactEngine.TransactionOutcome> {
                     check(start.await(5, TimeUnit.SECONDS))
-                    store.openCandidate(
-                        manifest = migrated,
-                        pageKey = "page.jpg",
-                        origin = ArtifactOrigin.BATCH,
-                        expectedPageVersion = 0L,
-                        dependencyFingerprint = "concurrent-deps",
-                    )
+                    val outcome = runBlocking {
+                        store.withArtifactEngineLocked<ChapterArtifactEngine.TransactionOutcome> { lockedArtifact ->
+                            lockedArtifact.openCandidate(
+                                manifest = migrated,
+                                pageKey = "page.jpg",
+                                origin = ArtifactOrigin.BATCH,
+                                expectedPageVersion = 0L,
+                                dependencyFingerprint = "concurrent-deps",
+                            )
+                        }
+                    }
+                    outcome.shouldNotBeNull()
                 }
             }
             start.countDown()
@@ -692,7 +705,7 @@ class ChapterArtifactEngineTest {
             val committed = outcomes
                 .filterIsInstance<ChapterArtifactEngine.TransactionOutcome.Committed>()
                 .single()
-            val durable = store.readManifest().shouldNotBeNull()
+            val durable = artifact.readManifest().shouldNotBeNull()
             durable.pages.getValue("page.jpg").candidate.shouldNotBeNull().generationId shouldBe committed.generationId
             durable.activeCandidateGenerationIds shouldBe setOf(committed.generationId)
         } finally {
