@@ -1,0 +1,482 @@
+{
+  "schemaVersion": 1,
+  "benchmarkName": "paddle_ocr_v6_small_current_main_b1",
+  "commit": "b2d5c8e",
+  "startedAtEpochMs": 1789736256448,
+  "durationMs": 3797.191614,
+  "config": {
+    "corpusRoot": "\/storage\/emulated\/0\/Android\/data\/app.kanade.tachiyomi.at.debug\/files\/paddle-corpus",
+    "pageLimit": 0,
+    "sampleLimit": 0,
+    "includeFixtures": true,
+    "includeDownloadedCorpus": false,
+    "includeExternalCorpus": false,
+    "outputDirectory": "\/sdcard\/Android\/data\/app.kanade.tachiyomi.at.debug\/files\/paddle-benchmark\/reference-sm8650-fixtures"
+  },
+  "device": {
+    "manufacturer": "OnePlus",
+    "model": "PKG110",
+    "device": "OP5D2BL1",
+    "socManufacturer": "QTI",
+    "socModel": "SM8650",
+    "androidApi": 36,
+    "release": "16",
+    "primaryAbi": "arm64-v8a",
+    "supportedAbis": [
+      "arm64-v8a"
+    ],
+    "totalRamBytes": 11758776320,
+    "memoryClassMb": 256,
+    "largeMemoryClassMb": 512,
+    "packageName": "app.kanade.tachiyomi.at.debug",
+    "packageVersionName": "0.17.1-benchmark",
+    "packageVersionCode": 20,
+    "thermalStatusAtStart": "none",
+    "thermalStatusAtEnd": "none",
+    "thermalStatusMax": "none"
+  },
+  "models": {
+    "files": {
+      "paddle_v6_det_onnx": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+      "paddle_v6_dictionary": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+      "paddle_v6_recognition_onnx": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+    }
+  },
+  "provider": {
+    "actualRegisteredProvider": "cpu",
+    "requestedRoute": "QUALCOMM_QNN_HTP",
+    "runtimeVersion": "1.28.0",
+    "availableProviders": [
+      "CPUExecutionProvider",
+      "QNNExecutionProvider"
+    ],
+    "providerLibraryDigests": {
+      "libQnnDsp.so": "448b5af965625a2197e121de5aaa5cedb7ad5c6b6c54c16ae8119d799a39e3eb",
+      "libQnnDspV66Skel.so": "334b333341643ac8edc8c76c85ca43e34d78e1520670a1b38825a5eefc6518de",
+      "libQnnDspV66Stub.so": "4a9cdab125d0e206d4520854dd37ac94e2f7c716803aeeae946eb79a11035ff3",
+      "libQnnGpu.so": "b6f5526f9d110c17342dd20be495cdd887e1761aa3ea0bf2e5479f76744d76f2",
+      "libQnnHtp.so": "429b74453f3dc95c6b94ca20894b4e5f08fbf8604bf339e37ef30fc17819e542",
+      "libQnnHtpPrepare.so": "6db1ae82a43610030e3be326f36cf5f5323ed0f2adf4bb9222e5445e98b86e03",
+      "libQnnHtpV68Skel.so": "160a5a95d3553a6a3e0f12927cf2db4b17e286318c90153c239209c5fe44a4f6",
+      "libQnnHtpV68Stub.so": "e1bb5a7c27be7900996172130320ea03ec0263b2ef3fbf323a95e884fb385f67",
+      "libQnnHtpV69Skel.so": "f9e6fc5a8bcb4dce64e30d63782591bfdc101e469d5e84696515b6e143bfc921",
+      "libQnnHtpV69Stub.so": "8d57cc81e9be654cd71d25d02fab457ad2c8182145c37cb499015cd6e1b96df7",
+      "libQnnHtpV73Skel.so": "5799de9978ccaefd6e560b0aab94cae3e6a93450694df8b21f4ec711e99755cc",
+      "libQnnHtpV73Stub.so": "e91d29f2d6d8077652ba2902c5670dc9045d3caee413662e2d41529dfa93317b",
+      "libQnnHtpV75Skel.so": "443c090f7324b1199c172d0800d080c8c92d9541109a380b8cd34b1941db4e50",
+      "libQnnHtpV75Stub.so": "bec31085d942b9f56bb417ccb81e11b61403fcc452f7011694cf9df1ba1ea5f8",
+      "libQnnHtpV79Skel.so": "b378e9dc83ab255058ff962b4ed334eaa791869c031e9db1c6ec2c780029ddd0",
+      "libQnnHtpV79Stub.so": "9954e242900de0b40cc7a13c1d28696a3e867aa7584a00afaff8191a12f002eb",
+      "libQnnHtpV81Skel.so": "62b289888051553ae9d8d9eb3e37c3db0dc020dffe13e447176d72ec24d134e7",
+      "libQnnHtpV81Stub.so": "2428bc53fe0c1108ab2a0aef784c294755d69caaccbf4f15a7ecedd585a3f62e",
+      "libQnnSystem.so": "dcdef54ab054072c5713974feada8af8c56558da184b7d9228e2e116aa3c7016",
+      "libonnxruntime.so": "738f6d77dfeb850e93c9d5f09c0bb37168579395037140df5d9f0eb1f1b38981",
+      "libonnxruntime4j_jni.so": "fe965a72e4fb7a44e8e8a7605505178284639254f78cc22532e005e6dbc19dc3"
+    },
+    "measuredBatchSize": 1,
+    "batched": false
+  },
+  "sessionCreationMs": 1593.039635,
+  "modelPreparationMs": 39.143854,
+  "stages": [
+    {
+      "stage": "model_preparation",
+      "durationMs": 39.143854
+    },
+    {
+      "stage": "session_creation",
+      "durationMs": 1593.039635
+    },
+    {
+      "stage": "cold_inference",
+      "durationMs": 212.588959
+    },
+    {
+      "stage": "warm_inference_1",
+      "durationMs": 173.798645
+    },
+    {
+      "stage": "warm_inference_2",
+      "durationMs": 174.382968
+    },
+    {
+      "stage": "first_inference",
+      "durationMs": 423.135625
+    },
+    {
+      "stage": "warm_inference_1",
+      "durationMs": 361.787344
+    },
+    {
+      "stage": "warm_inference_2",
+      "durationMs": 369.768802
+    }
+  ],
+  "samples": [
+    {
+      "sampleId": "fixture_small_640",
+      "pageId": "fixture_small_640",
+      "widthBucket": 640,
+      "inputShape": [
+        1,
+        3,
+        48,
+        640
+      ],
+      "measuredBatchSize": 1,
+      "batched": false,
+      "coldSession": true,
+      "coldInferenceMs": 212.588959,
+      "warmRun1Ms": 173.798645,
+      "warmRun2Ms": 174.382968,
+      "confidence": 0.9995568,
+      "text": "PADDLE OCR V6 SMALL 640"
+    },
+    {
+      "sampleId": "fixture_large_1600",
+      "pageId": "fixture_large_1600",
+      "widthBucket": 1600,
+      "inputShape": [
+        1,
+        3,
+        48,
+        1600
+      ],
+      "measuredBatchSize": 1,
+      "batched": false,
+      "coldSession": false,
+      "coldInferenceMs": 423.135625,
+      "warmRun1Ms": 361.787344,
+      "warmRun2Ms": 369.768802,
+      "confidence": 0.99817514,
+      "text": "PADDLE OCR V6 SMALL 1600"
+    }
+  ],
+  "buckets": [
+    {
+      "widthBucket": 640,
+      "sampleCount": 1,
+      "measuredBatchSizes": [
+        1
+      ],
+      "batchedValues": [
+        false
+      ],
+      "coldInferenceP50Ms": 212.588959,
+      "warmRun1P50Ms": 173.798645,
+      "warmRun1P95Ms": 173.798645,
+      "warmRun2P50Ms": 174.382968,
+      "warmRun2P95Ms": 174.382968,
+      "minMs": 173.798645,
+      "maxMs": 174.382968
+    },
+    {
+      "widthBucket": 1600,
+      "sampleCount": 1,
+      "measuredBatchSizes": [
+        1
+      ],
+      "batchedValues": [
+        false
+      ],
+      "coldInferenceP50Ms": 423.135625,
+      "warmRun1P50Ms": 361.787344,
+      "warmRun1P95Ms": 361.787344,
+      "warmRun2P50Ms": 369.768802,
+      "warmRun2P95Ms": 369.768802,
+      "minMs": 361.787344,
+      "maxMs": 369.768802
+    }
+  ],
+  "pss": {
+    "intervalMs": 75,
+    "sampleCount": 46,
+    "peakPssKb": 214914,
+    "peakJavaHeapBytes": 66268576,
+    "firstPssKb": 43274,
+    "lastPssKb": 136194,
+    "thermalStatusAtPeak": "none",
+    "samples": [
+      {
+        "elapsedMs": 49,
+        "pssKb": 43274,
+        "javaHeapBytes": 18380752,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 102,
+        "pssKb": 48876,
+        "javaHeapBytes": 19196336,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 181,
+        "pssKb": 63943,
+        "javaHeapBytes": 31445424,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 248,
+        "pssKb": 83857,
+        "javaHeapBytes": 36812960,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 323,
+        "pssKb": 104391,
+        "javaHeapBytes": 38386896,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 458,
+        "pssKb": 110318,
+        "javaHeapBytes": 43408704,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 575,
+        "pssKb": 111340,
+        "javaHeapBytes": 43834736,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 702,
+        "pssKb": 112372,
+        "javaHeapBytes": 45571440,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 830,
+        "pssKb": 136495,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 875,
+        "pssKb": 147546,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 927,
+        "pssKb": 158879,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1005,
+        "pssKb": 165177,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1082,
+        "pssKb": 169857,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1160,
+        "pssKb": 146668,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1226,
+        "pssKb": 161808,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1323,
+        "pssKb": 161559,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1389,
+        "pssKb": 183145,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1456,
+        "pssKb": 196467,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1528,
+        "pssKb": 198825,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1606,
+        "pssKb": 201245,
+        "javaHeapBytes": 46554480,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1692,
+        "pssKb": 201073,
+        "javaHeapBytes": 46587248,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1756,
+        "pssKb": 175979,
+        "javaHeapBytes": 47705504,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1837,
+        "pssKb": 177341,
+        "javaHeapBytes": 47705504,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 1940,
+        "pssKb": 177478,
+        "javaHeapBytes": 53693856,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2030,
+        "pssKb": 189344,
+        "javaHeapBytes": 53820832,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2062,
+        "pssKb": 189472,
+        "javaHeapBytes": 53820832,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2132,
+        "pssKb": 190112,
+        "javaHeapBytes": 59809184,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2237,
+        "pssKb": 195520,
+        "javaHeapBytes": 59936160,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2334,
+        "pssKb": 195607,
+        "javaHeapBytes": 66268576,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2420,
+        "pssKb": 205668,
+        "javaHeapBytes": 6561856,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2530,
+        "pssKb": 154952,
+        "javaHeapBytes": 6660160,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2595,
+        "pssKb": 136638,
+        "javaHeapBytes": 6660160,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2665,
+        "pssKb": 139862,
+        "javaHeapBytes": 6660160,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2722,
+        "pssKb": 151874,
+        "javaHeapBytes": 21663808,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2765,
+        "pssKb": 186266,
+        "javaHeapBytes": 21171744,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2809,
+        "pssKb": 185822,
+        "javaHeapBytes": 21204512,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2905,
+        "pssKb": 185822,
+        "javaHeapBytes": 21204512,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 2992,
+        "pssKb": 185822,
+        "javaHeapBytes": 21204512,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 3075,
+        "pssKb": 185826,
+        "javaHeapBytes": 36208160,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 3136,
+        "pssKb": 200510,
+        "javaHeapBytes": 36519456,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 3209,
+        "pssKb": 200818,
+        "javaHeapBytes": 36519456,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 3285,
+        "pssKb": 200822,
+        "javaHeapBytes": 36519456,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 3349,
+        "pssKb": 200822,
+        "javaHeapBytes": 36519456,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 3407,
+        "pssKb": 200822,
+        "javaHeapBytes": 36519456,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 3485,
+        "pssKb": 214914,
+        "javaHeapBytes": 21200416,
+        "thermalStatus": "none"
+      },
+      {
+        "elapsedMs": 3509,
+        "pssKb": 136194,
+        "javaHeapBytes": 21233184,
+        "thermalStatus": "none"
+      }
+    ]
+  },
+  "pagesAvailable": 2,
+  "pagesProcessed": 2,
+  "downloadedCorpusStatus": "disabled",
+  "externalCorpusStatus": "disabled"
+}

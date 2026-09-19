@@ -37,6 +37,11 @@ android {
         buildConfigField("String", "BUILD_TIME", "\"${getBuildTime()}\"")
         buildConfigField("boolean", "INCLUDE_UPDATER", "false")
         buildConfigField("boolean", "PREVIEW", "false")
+        // Paddle batching is production-pinned to B1. Staged/debug builds may
+        // request a larger size, but the device policy must approve the exact
+        // provider/width/batch cell or the explicit CPU B1 emergency path wins.
+        buildConfigField("boolean", "PADDLE_BATCHING_STAGED", "false")
+        buildConfigField("int", "PADDLE_BATCHING_REQUESTED_BATCH", "1")
 
         ndk {
             abiFilters += supportedAbis
@@ -68,6 +73,8 @@ android {
             versionNameSuffix = "-${getCommitCount()}"
             applicationIdSuffix = ".debug"
             isPseudoLocalesEnabled = true
+            buildConfigField("boolean", "PADDLE_BATCHING_STAGED", "true")
+            buildConfigField("int", "PADDLE_BATCHING_REQUESTED_BATCH", "4")
         }
         named("release") {
             isShrinkResources = true
@@ -92,7 +99,9 @@ android {
             isDebuggable = false
             isProfileable = true
             versionNameSuffix = "-benchmark"
-            applicationIdSuffix = ".benchmark"
+            applicationIdSuffix = ".debug"
+            buildConfigField("boolean", "PADDLE_BATCHING_STAGED", "true")
+            buildConfigField("int", "PADDLE_BATCHING_REQUESTED_BATCH", "4")
         }
     }
 

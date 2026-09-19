@@ -272,6 +272,45 @@ object OnnxRuntimeProvider {
     }
 
     /**
+     * Opens a session for one explicit Paddle provider-matrix cell.
+     *
+     * Unlike [createSessionWithFallback], this method never recreates an
+     * accelerator failure on CPU. QNN/NNAPI options already carry
+     * `session.disable_cpu_ep_fallback=1`; registration and session creation
+     * errors propagate to the cell so a failed provider cannot be reported as
+     * a successful accelerator measurement. The CPU cell is intentionally the
+     * only cell that requests XNNPACK/default CPU behavior.
+     */
+    fun createSessionForPaddleProvider(
+        modelPath: String,
+        configuration: PaddleOcrProviderTestConfiguration,
+        providerSink: (String) -> Unit = {},
+    ): OrtSession {
+        val optionsWithRegistration = createSessionOptionsWithRegistration(
+            useAccelerator = configuration.target.isAccelerator,
+            useXnnpack = configuration.target == PaddleOcrProviderTarget.CPU,
+            routeOverride = configuration.route,
+        )
+        val options = optionsWithRegistration.options
+        val registeredLabel = optionsWithRegistration.registered.wireLabel
+        if (configuration.target.isAccelerator && registeredLabel.isCpuLikeProvider()) {
+            options.close()
+            throw IllegalStateException(
+                "Strict Paddle provider cell ${configuration.target} registered CPU provider '$registeredLabel'",
+            )
+        }
+        return try {
+            environment.createSession(modelPath, options).also {
+                // Registration is recorded here for diagnostics. The matrix
+                // runner records execution provenance only after real inference.
+                providerSink(registeredLabel)
+            }
+        } finally {
+            options.close()
+        }
+    }
+
+    /**
      * Dedicated strict QNN HTP session options. CPU fallback is disabled so a
      * broken HTP backend or an unpartitionable graph throws at session
      * creation instead of silently degrading to the CPU EP — with these
@@ -421,6 +460,7 @@ object OnnxRuntimeProvider {
         routeOverride: HardwareDiscoveryEngine.HardwareRoute? = null,
         tripCircuitBreakerOnRegistrationFailure: Boolean = true,
         configure: (OrtSession.SessionOptions) -> Unit = {},
+        routeOverride: HardwareDiscoveryEngine.HardwareRoute? = null,
     ): SessionOptionsWithRegistration {
         val route = routeOverride ?: when {
             useAccelerator -> HardwareDiscoveryEngine.resolveRoute()
@@ -582,4 +622,7 @@ object OnnxRuntimeProvider {
             routeOverride = routeOverride,
             tripCircuitBreakerOnRegistrationFailure = tripCircuitBreakerOnRegistrationFailure,
         ).options
+
+    private fun String.isCpuLikeProvider(): Boolean =
+        equals("cpu", ignoreCase = true) || equals("uninitialized", ignoreCase = true) || isBlank()
 }
