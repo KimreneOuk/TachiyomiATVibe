@@ -60,7 +60,7 @@ Reports: [implementation](team/p1-implementation-report.md) · [review](team/p1-
 Corrections made during execution: flavor-qualified Gradle tasks (dev/standard); P1-03 mechanism.
 Awaiting Director: merge decision, P1-05 Option A/B, Phase 2 go.
 
-### Phase 2 — Storage Unification & Legacy Elimination (IN PROGRESS, branch `t936/phase2-storage-unification`)
+### Phase 2 — Storage Unification & Legacy Elimination (COMPLETE — merged to main @ `d9beb40`, review PASS WITH NOTES)
 
 Director authorized full roadmap execution 2026-09-19 ("Proceed until the last phase");
 P1-05 resolved as **Option A** (defer excision, gather device evidence).
@@ -71,6 +71,13 @@ P1-05 resolved as **Option A** (defer excision, gather device evidence).
 | [P2-01](ticket/p2-01-eliminate-legacy-flat-files.md) | Eliminate legacy flat-file subsystem + `ManifestAuthority` | Pre-artifact chapters stop migrating (flagged, authorized); ~20 files |
 | [P2-02](ticket/p2-02-merge-dual-stores.md) | Merge dual stores into one engine, one lock | Scoping memo to orchestrator REQUIRED before code; ≤3 commits |
 | [P2-03](ticket/p2-03-consolidate-progress-projection.md) | Progress from unified store, drop `BatchProgressProjector` | After P2-02; tracker stays (Phase 3 scope) |
+
+Reports: [implementation](team/p2-implementation-report.md) · [review](team/p2-review-report.md).
+Key outcomes: −2,616 net lines; legacy subsystem + `ManifestAuthority` gone; `ChapterArtifactStore` → `ChapterArtifactEngine` behind single-Mutex facade (`ChapterStoreEngineMode`: Memory/LazyDurable/Durable); progress truth = store projection. −59 executed tests fully reconciled as legacy-scoped removals.
+
+### Phase 3 — Coexistence Simplification & Pipelined Batch (IN PREPARATION — scoping investigation first)
+
+Highest-risk phase. Tickets written after the scoping report lands.
 
 ### Phases 3–5
 
