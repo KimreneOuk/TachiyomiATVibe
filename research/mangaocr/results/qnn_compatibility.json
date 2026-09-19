@@ -1,0 +1,665 @@
+{
+  "generated_by": "research/inspect_qnn_compatibility.py",
+  "host": {
+    "adb": false,
+    "cwd": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration",
+    "platform": "win32",
+    "python": "3.11.0",
+    "qnn_tools": false
+  },
+  "limitations": [
+    "No QNN/QAIRT SDK, qnn-onnx-converter, qnn-net-run, or adb was found on this host.",
+    "ONNX checker and optional ORT CPU smoke results are laptop evidence only.",
+    "Only a strict Android QNN HTP session with CPU fallback disabled and real inference proves full HTP execution."
+  ],
+  "models": [
+    {
+      "bytes": 17070003,
+      "cache_gather_index_inputs": [],
+      "cache_gather_paths": [],
+      "cache_inputs": [],
+      "cache_outputs": [],
+      "classification": {
+        "device_verdict": "REQUIRES_DEVICE_TEST",
+        "flags": {
+          "has_dynamic_io_shape": false,
+          "has_int64_io": false,
+          "has_qdq": false,
+          "high_risk_ops_present": [
+            "Erf"
+          ],
+          "node_count": 474
+        },
+        "offline_classification": "PARTIAL",
+        "rationale": "Static B=1 vision graph with conventional Conv/Reshape/Transpose/elementwise operations is a plausible HTP partition candidate, but it is FP32, has 21 Erf nodes and reduction/normalization work, and has no QDQ. Expect a partition or an FP16/QDQ export before claiming full HTP."
+      },
+      "float_initializer_count": 337,
+      "host_evidence": {
+        "adb": false,
+        "onnx_checker": "PASS",
+        "onnxruntime_cpu": true,
+        "qnn_sdk_tools": false,
+        "runtime": {
+          "output_shapes": [
+            [
+              1,
+              196,
+              256
+            ]
+          ],
+          "providers": [
+            "CPUExecutionProvider"
+          ],
+          "session_ms": 378.14,
+          "status": "PASS"
+        }
+      },
+      "initializer_count": 350,
+      "initializer_types": {
+        "FLOAT": 337,
+        "INT64": 13
+      },
+      "inputs": [
+        {
+          "dtype": "FLOAT",
+          "name": "serving_default_args_0:0",
+          "shape": [
+            1,
+            3,
+            224,
+            224
+          ]
+        }
+      ],
+      "model": "encoder",
+      "node_count": 474,
+      "onnx": {
+        "checker": "PASS",
+        "ir_version": 8,
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          },
+          {
+            "domain": "ai.onnx.ml",
+            "version": 2
+          }
+        ]
+      },
+      "op_counts": {
+        "Add": 98,
+        "Conv": 98,
+        "Div": 21,
+        "Erf": 21,
+        "Mul": 97,
+        "Pad": 4,
+        "Reciprocal": 1,
+        "ReduceMean": 2,
+        "ReduceSum": 8,
+        "Relu": 8,
+        "Reshape": 28,
+        "Sigmoid": 8,
+        "Sqrt": 1,
+        "Sub": 20,
+        "Transpose": 59
+      },
+      "outputs": [
+        {
+          "dtype": "FLOAT",
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            196,
+            256
+          ]
+        }
+      ],
+      "path": "research/models/manga-ocr-mobile/encoder.onnx",
+      "qdq_nodes": [],
+      "sha256": "d1fb455a07c1508cc56a4f4e15e2ed74aca9a4d78fd220ecc0ff39625d67e1b3",
+      "static_io_shapes": true
+    },
+    {
+      "bytes": 24875052,
+      "cache_gather_index_inputs": [],
+      "cache_gather_paths": [],
+      "cache_inputs": [],
+      "cache_outputs": [],
+      "classification": {
+        "device_verdict": "REQUIRES_DEVICE_TEST",
+        "flags": {
+          "has_dynamic_io_shape": false,
+          "has_int64_io": true,
+          "has_qdq": false,
+          "high_risk_ops_present": [
+            "Erf",
+            "LayerNormalization",
+            "Softmax",
+            "Gather"
+          ],
+          "node_count": 253
+        },
+        "offline_classification": "PARTIAL",
+        "rationale": "Static B=1 graph and fixed cache outputs are favorable, but token Gather, LayerNormalization and Softmax repeat throughout the transformer and the graph is FP32 with INT64 token input. HTP coverage and tolerance are runtime dependent."
+      },
+      "float_initializer_count": 118,
+      "host_evidence": {
+        "adb": false,
+        "onnx_checker": "PASS",
+        "onnxruntime_cpu": true,
+        "qnn_sdk_tools": false,
+        "runtime": {
+          "output_shapes": [
+            [
+              1,
+              9415
+            ],
+            [
+              4,
+              1,
+              4,
+              1,
+              64
+            ],
+            [
+              4,
+              1,
+              4,
+              1,
+              64
+            ],
+            [
+              4,
+              1,
+              4,
+              196,
+              64
+            ],
+            [
+              4,
+              1,
+              4,
+              196,
+              64
+            ]
+          ],
+          "providers": [
+            "CPUExecutionProvider"
+          ],
+          "session_ms": 157.63,
+          "status": "PASS"
+        }
+      },
+      "initializer_count": 125,
+      "initializer_types": {
+        "FLOAT": 118,
+        "INT64": 7
+      },
+      "inputs": [
+        {
+          "dtype": "FLOAT",
+          "name": "encoder_hidden_states",
+          "shape": [
+            1,
+            196,
+            256
+          ]
+        },
+        {
+          "dtype": "INT64",
+          "name": "input_ids",
+          "shape": [
+            1,
+            1
+          ]
+        }
+      ],
+      "model": "decoder_init",
+      "node_count": 253,
+      "onnx": {
+        "checker": "PASS",
+        "ir_version": 10,
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ]
+      },
+      "op_counts": {
+        "Add": 61,
+        "Concat": 4,
+        "Div": 13,
+        "Erf": 5,
+        "Gather": 3,
+        "LayerNormalization": 14,
+        "MatMul": 58,
+        "Mul": 10,
+        "Reshape": 36,
+        "Softmax": 8,
+        "Transpose": 41
+      },
+      "outputs": [
+        {
+          "dtype": "FLOAT",
+          "name": "logits",
+          "shape": [
+            1,
+            9415
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "self_k",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "self_v",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "cross_k",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "cross_v",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ]
+        }
+      ],
+      "path": "research/models/manga-ocr-mobile/decoder_init.onnx",
+      "qdq_nodes": [],
+      "sha256": "612f97e22848620fb36fcac611467689cb4213d91f2d84f6a19042ad57d475f1",
+      "static_io_shapes": true
+    },
+    {
+      "bytes": 22776797,
+      "cache_gather_index_inputs": [
+        "val_194",
+        "val_268",
+        "val_5",
+        "val_6"
+      ],
+      "cache_gather_paths": [
+        {
+          "index": "val_6",
+          "node": "node_select_2",
+          "source": "self_k_cache"
+        },
+        {
+          "index": "val_6",
+          "node": "node_select_3",
+          "source": "self_v_cache"
+        },
+        {
+          "index": "val_6",
+          "node": "node_select_4",
+          "source": "cross_k_cache"
+        },
+        {
+          "index": "val_6",
+          "node": "node_select_5",
+          "source": "cross_v_cache"
+        },
+        {
+          "index": "val_5",
+          "node": "node_select_6",
+          "source": "self_k_cache"
+        },
+        {
+          "index": "val_5",
+          "node": "node_select_7",
+          "source": "self_v_cache"
+        },
+        {
+          "index": "val_5",
+          "node": "node_select_8",
+          "source": "cross_k_cache"
+        },
+        {
+          "index": "val_5",
+          "node": "node_select_9",
+          "source": "cross_v_cache"
+        },
+        {
+          "index": "val_194",
+          "node": "node_select_10",
+          "source": "self_k_cache"
+        },
+        {
+          "index": "val_194",
+          "node": "node_select_11",
+          "source": "self_v_cache"
+        },
+        {
+          "index": "val_194",
+          "node": "node_select_12",
+          "source": "cross_k_cache"
+        },
+        {
+          "index": "val_194",
+          "node": "node_select_13",
+          "source": "cross_v_cache"
+        },
+        {
+          "index": "val_268",
+          "node": "node_select_14",
+          "source": "self_k_cache"
+        },
+        {
+          "index": "val_268",
+          "node": "node_select_15",
+          "source": "self_v_cache"
+        },
+        {
+          "index": "val_268",
+          "node": "node_select_16",
+          "source": "cross_k_cache"
+        },
+        {
+          "index": "val_268",
+          "node": "node_select_17",
+          "source": "cross_v_cache"
+        }
+      ],
+      "cache_inputs": [
+        {
+          "dtype": "FLOAT",
+          "name": "self_k_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            256,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "self_v_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            256,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "cross_k_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "cross_v_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ]
+        }
+      ],
+      "cache_outputs": [
+        {
+          "dtype": "FLOAT",
+          "name": "self_k_slice",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "self_v_slice",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ]
+        }
+      ],
+      "classification": {
+        "device_verdict": "REQUIRES_DEVICE_TEST",
+        "flags": {
+          "has_dynamic_io_shape": false,
+          "has_int64_io": true,
+          "has_qdq": false,
+          "high_risk_ops_present": [
+            "Erf",
+            "LayerNormalization",
+            "Softmax",
+            "Gather",
+            "Where",
+            "Equal",
+            "LessOrEqual",
+            "Clip",
+            "Cast"
+          ],
+          "node_count": 276
+        },
+        "offline_classification": "UNLIKELY",
+        "rationale": "Static tensor extents do not make this a static computation: every token step selects cache rows using runtime position/index values and applies Where/Equal/LessOrEqual/Cast/Clip logic. These cache paths are likely to partition to CPU or fail strict HTP creation. Keep decoder_step on CPU unless a device test proves otherwise."
+      },
+      "float_initializer_count": 104,
+      "host_evidence": {
+        "adb": false,
+        "onnx_checker": "PASS",
+        "onnxruntime_cpu": true,
+        "qnn_sdk_tools": false,
+        "runtime": {
+          "output_shapes": [
+            [
+              1,
+              9415
+            ],
+            [
+              4,
+              1,
+              4,
+              1,
+              64
+            ],
+            [
+              4,
+              1,
+              4,
+              1,
+              64
+            ]
+          ],
+          "providers": [
+            "CPUExecutionProvider"
+          ],
+          "session_ms": 220.42,
+          "status": "PASS"
+        }
+      },
+      "initializer_count": 114,
+      "initializer_types": {
+        "FLOAT": 104,
+        "INT64": 10
+      },
+      "inputs": [
+        {
+          "dtype": "FLOAT",
+          "name": "encoder_hidden_states",
+          "shape": [
+            1,
+            196,
+            256
+          ]
+        },
+        {
+          "dtype": "INT64",
+          "name": "input_ids",
+          "shape": [
+            1,
+            1
+          ]
+        },
+        {
+          "dtype": "INT64",
+          "name": "position_ids",
+          "shape": [
+            1,
+            1
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "self_k_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            256,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "self_v_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            256,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "cross_k_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "cross_v_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ]
+        }
+      ],
+      "model": "decoder_step",
+      "node_count": 276,
+      "onnx": {
+        "checker": "PASS",
+        "ir_version": 10,
+        "opsets": [
+          {
+            "domain": "",
+            "version": 17
+          }
+        ]
+      },
+      "op_counts": {
+        "Add": 61,
+        "Cast": 2,
+        "Clip": 1,
+        "Concat": 2,
+        "Div": 13,
+        "Equal": 1,
+        "Erf": 5,
+        "Gather": 21,
+        "LayerNormalization": 14,
+        "LessOrEqual": 1,
+        "MatMul": 50,
+        "Mul": 26,
+        "Reshape": 24,
+        "Softmax": 8,
+        "Sub": 2,
+        "Transpose": 33,
+        "Unsqueeze": 8,
+        "Where": 4
+      },
+      "outputs": [
+        {
+          "dtype": "FLOAT",
+          "name": "logits",
+          "shape": [
+            1,
+            9415
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "self_k_slice",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ]
+        },
+        {
+          "dtype": "FLOAT",
+          "name": "self_v_slice",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ]
+        }
+      ],
+      "path": "research/models/manga-ocr-mobile/decoder_step.onnx",
+      "qdq_nodes": [],
+      "sha256": "a244b814a3a669190f9eae737960997633597cfa055fa186347e872bee834bc9",
+      "static_io_shapes": true
+    }
+  ],
+  "schema": "tachiyomiat.qnn-compatibility.v1"
+}

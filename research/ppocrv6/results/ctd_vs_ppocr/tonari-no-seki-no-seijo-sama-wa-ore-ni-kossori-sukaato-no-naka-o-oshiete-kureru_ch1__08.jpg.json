@@ -1,0 +1,185 @@
+{
+  "page": {
+    "page_id": "tonari-no-seki-no-seijo-sama-wa-ore-ni-kossori-sukaato-no-naka-o-oshiete-kureru_ch1/08.jpg",
+    "image": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out\\tonari-no-seki-no-seijo-sama-wa-ore-ni-kossori-sukaato-no-naka-o-oshiete-kureru_ch1\\08.jpg",
+    "category": "text_bubble+text_free",
+    "protocol": "manifest_ocr_box",
+    "truth_protocol": "manifest_ocr_box",
+    "width": 1284,
+    "height": 1843,
+    "truth_boxes": 4,
+    "ctd_raw_boxes": 6,
+    "ctd_dedup_boxes": 6,
+    "ppocr_boxes": 5,
+    "ctd_metrics": {
+      "tp": 4,
+      "fp": 2,
+      "fn": 0,
+      "precision": 0.6666666666666666,
+      "recall": 1.0,
+      "mean_iou_matched": 0.711686617292345
+    },
+    "ppocr_metrics": {
+      "tp": 0,
+      "fp": 5,
+      "fn": 4,
+      "precision": 0.0,
+      "recall": 0.0,
+      "mean_iou_matched": null
+    },
+    "ctd_timing": {
+      "preprocess_ms": 79.2141999991145,
+      "inference_ms": 7976.25780000817,
+      "postprocess_ms": 0.2917999809142202,
+      "total_ms": 8055.763799988199
+    },
+    "ppocr_timing": {
+      "preprocess_ms": 409.7628000017721,
+      "inference_postprocess_ms": 3632.61919998331,
+      "total_ms": 4042.381999985082
+    },
+    "rss_before": 263569408,
+    "rss_after": 263569408
+  },
+  "ctd_boxes": [
+    {
+      "x1": 445.8895263671875,
+      "y1": 500.6720275878906,
+      "x2": 564.8087768554688,
+      "y2": 763.2266845703125,
+      "score": 0.9414384365081787,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 128.463623046875,
+      "y1": 144.7322235107422,
+      "x2": 247.67962646484375,
+      "y2": 415.8439636230469,
+      "score": 0.9357568025588989,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 655.6491088867188,
+      "y1": 463.8028259277344,
+      "x2": 789.7515258789062,
+      "y2": 786.6903686523438,
+      "score": 0.8997550010681152,
+      "label": "2",
+      "source": "ctd"
+    },
+    {
+      "x1": 466.70806884765625,
+      "y1": 550.8299560546875,
+      "x2": 544.5491943359375,
+      "y2": 735.2100219726562,
+      "score": 0.8729659914970398,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 148.97747802734375,
+      "y1": 197.62152099609375,
+      "x2": 226.97946166992188,
+      "y2": 386.83526611328125,
+      "score": 0.8581287264823914,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 1066.350341796875,
+      "y1": 157.33010864257812,
+      "x2": 1153.827880859375,
+      "y2": 462.21612548828125,
+      "score": 0.8138197660446167,
+      "label": "2",
+      "source": "ctd"
+    }
+  ],
+  "ppocr_boxes": [
+    {
+      "x1": 1089.273097826087,
+      "y1": 180.29347826086956,
+      "x2": 1129.3383152173913,
+      "y2": 428.19701086956525,
+      "score": 0.9379644989967346,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 170.2771739130435,
+      "y1": 227.8709239130435,
+      "x2": 212.84646739130434,
+      "y2": 328.0339673913044,
+      "score": 0.8869028091430664,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 733.6942934782609,
+      "y1": 483.28668478260875,
+      "x2": 766.2472826086957,
+      "y2": 758.7350543478261,
+      "score": 0.940964937210083,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 678.6046195652174,
+      "y1": 488.29483695652175,
+      "x2": 713.6616847826087,
+      "y2": 756.2309782608696,
+      "score": 0.9173445105552673,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 488.29483695652175,
+      "y1": 580.9456521739131,
+      "x2": 533.3682065217391,
+      "y2": 676.1005434782609,
+      "score": 0.9282801151275635,
+      "label": "ppocr",
+      "source": "ppocr"
+    }
+  ],
+  "truth_boxes": [
+    {
+      "x1": 137.0,
+      "y1": 186.0,
+      "x2": 239.0,
+      "y2": 398.0,
+      "score": 0.867,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 1053.0,
+      "y1": 144.0,
+      "x2": 1168.0,
+      "y2": 474.0,
+      "score": 0.826,
+      "label": "text_free",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 644.0,
+      "y1": 452.0,
+      "x2": 802.0,
+      "y2": 798.0,
+      "score": 0.903,
+      "label": "text_free",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 454.0,
+      "y1": 539.0,
+      "x2": 557.0,
+      "y2": 746.0,
+      "score": 0.868,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    }
+  ]
+}

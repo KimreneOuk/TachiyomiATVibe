@@ -1,0 +1,3 @@
+component,cpu_mem_arena,det_boxes,det_crop_count,det_finite_values,duration_ms,execution_mode,graph_optimization,input,inter_op,io_binding,iteration,load_ms,mem_pattern,parity,phase,reuse_session,rss_delta_mb,rss_mb,signature,threads
+pipeline,True,4,2,1083392,43522.704,sequential,all,tools\aot_corpus\real_corpus_faithful\real_001\bubble\page.jpg,1,False,0,16337.938,True,True,cold,True,513.324,654.145,356656141b46ea5f,8
+pipeline,True,4,2,1083392,35690.182,sequential,all,tools\aot_corpus\real_corpus_faithful\real_001\bubble\page.jpg,1,False,0,0.0,True,True,warm,True,394.543,604.363,356656141b46ea5f,8

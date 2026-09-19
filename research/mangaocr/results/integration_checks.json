@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "checked_utc": "2026-09-18T10:46:00+07:00",
+  "scope": "safe integration checks; no app sources, packaged model binaries, or Gradle files changed",
+  "repository": {
+    "head": "9c19ad05bd62cc3c222dfa8527fd4407b037ecc6",
+    "worktree": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration",
+    "repo_health": "GREEN"
+  },
+  "py_compile": {
+    "status": "PASS",
+    "count": 30,
+    "scope": ["research/*.py", "tools/mangaocr_lab/**/*.py"]
+  },
+  "model_inventory_hash": {
+    "status": "PASS",
+    "files": {
+      "encoder.onnx": {"bytes": 17070003, "sha256": "d1fb455a07c1508cc56a4f4e15e2ed74aca9a4d78fd220ecc0ff39625d67e1b3"},
+      "decoder_init.onnx": {"bytes": 24875052, "sha256": "612f97e22848620fb36fcac611467689cb4213d91f2d84f6a19042ad57d475f1"},
+      "decoder_step.onnx": {"bytes": 22776797, "sha256": "a244b814a3a669190f9eae737960997633597cfa055fa186347e872bee834bc9"},
+      "vocab.txt": {"bytes": 37193, "sha256": "879d9a69df070dbdf143f64bb3daf73d367741980f18a2f6d08a12e68a598a11"}
+    }
+  },
+  "pristine_cpu_smoke": {
+    "status": "PASS",
+    "onnx_checker": "PASS",
+    "provider": "CPUExecutionProvider",
+    "chain": "encoder -> decoder_init([CLS]) -> decoder_step",
+    "step_positions_tested": [1, 127],
+    "observed_shapes": {
+      "encoder": [1, 196, 256],
+      "decoder_init": [[1, 9415], [4, 1, 4, 1, 64], [4, 1, 4, 1, 64], [4, 1, 4, 196, 64], [4, 1, 4, 196, 64]],
+      "decoder_step": [[1, 9415], [4, 1, 4, 1, 64], [4, 1, 4, 1, 64]]
+    },
+    "position_128": "EXPECTED_FAIL Gather index out of bounds; confirms learned position table limit"
+  },
+  "derived_batch_gate": {
+    "status": "PASS_DESKTOP_WITH_LIMITATIONS",
+    "pristine_batch_gt_1": "REJECTED_AS_EXPECTED",
+    "derived_batch_sizes": [1, 2, 4, 8],
+    "derived_b1_gate": {"status": "PASS", "encoder_max_abs": 0.000012055039405822754, "decoder_max_abs": 0.00004482269287109375, "tokens_equal": true, "protocols": ["corrected_through_position_127", "current_kotlin_through_position_127"]},
+    "derived_stage_row_equivalence": {"B2": 0.0, "B4": 0.0, "B8": 0.0, "metric": "max abs diff against derived independent rows"},
+    "lockstep_schedule": {"status": "PASS_ON_8_SYNTHETIC_CROPS", "shared_step_calls": 11, "distinct_eos_positions": [4, 5, 6, 12], "tokens_match_independent_b1": true},
+    "shape_contract": {"decoder_input_ids": ["N", "1"], "decoder_position_ids": ["N", "1"], "asserted": true},
+    "negative_token_position_shape_tests": {"batch": 2, "all_rejected": true},
+    "limitations": [
+      "The protocol gates compare pristine versus derived graphs under each protocol; they do not decide whether the current Kotlin off-by-one behavior should migrate to the corrected protocol.",
+      "Fixtures are synthetic; no .studio/ocr.json crop comparison, full-chapter, Android provider, RSS, thermal, or OCR-quality gate was run."
+    ],
+    "follow_up": "Run the protocol comparison on the available .studio/ocr.json corpus, then repeat batching on Android with real crops and device memory/thermal gates."
+  },
+  "openvino": {
+    "status": "HOST_CHAINED_SMOKE_ONLY",
+    "observed": "Intel CPU/GPU OpenVINO compilation and isolated inference succeeded; Intel NPU compile failed with unrecognized device ID; AUTO selected CPU.",
+    "not_a_pipeline_result": "The recorded hybrid function uses independent random inputs for encoder, decoder_init, and decoder_step; it does not chain hidden states or update KV caches.",
+    "chained_followup": "CPU chain matched ORT tokens/logits on 2/2 synthetic fixtures; GPU chain matched tokens but failed the strict logit gate (max abs about 0.13–0.15) and was slower; AUTO was explicit CPU fallback.",
+    "android_status": "UNTESTED"
+  },
+  "precision": {
+    "fp16": "PROMISING_BUT_UNTESTED_ANDROID",
+    "int8": "FAILED_QUALITY_GATE",
+    "qdq": "UNTESTED_NO_RESULT_ARTIFACT",
+    "evidence": "FP16 matched greedy tokens on 8/8 bounded fixtures (2 real) but was not faster on CPU; both tested INT8 variants had 0/8 exact sequences and large drift."
+  },
+  "remaining_blockers": [
+    "Current Kotlin versus corrected lab decoder protocol golden comparison on real .studio crops",
+    "Full 231-region real chapter and 100-200-page soak",
+    "Snapdragon strict QNN/HTP session creation and real inference with CPU fallback disabled",
+    "Android memory, thermal, reader-latency, and provider-partition measurements"
+  ]
+}

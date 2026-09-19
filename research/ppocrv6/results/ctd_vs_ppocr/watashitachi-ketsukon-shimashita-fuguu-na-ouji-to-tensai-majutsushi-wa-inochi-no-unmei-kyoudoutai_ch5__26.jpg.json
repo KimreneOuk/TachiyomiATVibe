@@ -1,0 +1,176 @@
+{
+  "page": {
+    "page_id": "watashitachi-ketsukon-shimashita-fuguu-na-ouji-to-tensai-majutsushi-wa-inochi-no-unmei-kyoudoutai_ch5/26.jpg",
+    "image": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out\\watashitachi-ketsukon-shimashita-fuguu-na-ouji-to-tensai-majutsushi-wa-inochi-no-unmei-kyoudoutai_ch5\\26.jpg",
+    "category": "text_bubble+text_free",
+    "protocol": "manifest_ocr_box",
+    "truth_protocol": "manifest_ocr_box",
+    "width": 1008,
+    "height": 1433,
+    "truth_boxes": 3,
+    "ctd_raw_boxes": 5,
+    "ctd_dedup_boxes": 5,
+    "ppocr_boxes": 6,
+    "ctd_metrics": {
+      "tp": 2,
+      "fp": 3,
+      "fn": 1,
+      "precision": 0.4,
+      "recall": 0.6666666666666666,
+      "mean_iou_matched": 0.7300050800621738
+    },
+    "ppocr_metrics": {
+      "tp": 0,
+      "fp": 6,
+      "fn": 3,
+      "precision": 0.0,
+      "recall": 0.0,
+      "mean_iou_matched": null
+    },
+    "ctd_timing": {
+      "preprocess_ms": 110.22219998994842,
+      "inference_ms": 9608.20029999013,
+      "postprocess_ms": 27.197200019145384,
+      "total_ms": 9745.619699999224
+    },
+    "ppocr_timing": {
+      "preprocess_ms": 480.7456000125967,
+      "inference_postprocess_ms": 4030.977799993707,
+      "total_ms": 4511.723400006304
+    },
+    "rss_before": 243548160,
+    "rss_after": 243548160
+  },
+  "ctd_boxes": [
+    {
+      "x1": 729.8933715820312,
+      "y1": 281.2832946777344,
+      "x2": 906.5882568359375,
+      "y2": 571.3594970703125,
+      "score": 0.9672837257385254,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 145.13427734375,
+      "y1": 883.331298828125,
+      "x2": 350.7417907714844,
+      "y2": 1265.655517578125,
+      "score": 0.9654120206832886,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 177.74171447753906,
+      "y1": 908.1353149414062,
+      "x2": 318.3807067871094,
+      "y2": 1241.3851318359375,
+      "score": 0.9082150459289551,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 759.9239501953125,
+      "y1": 310.6463928222656,
+      "x2": 876.578857421875,
+      "y2": 542.3001708984375,
+      "score": 0.9064748287200928,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 242.86891174316406,
+      "y1": 1372.614013671875,
+      "x2": 408.7626647949219,
+      "y2": 1417.6068115234375,
+      "score": 0.6829038858413696,
+      "label": "2",
+      "source": "ctd"
+    }
+  ],
+  "ppocr_boxes": [
+    {
+      "x1": 889.7839673913043,
+      "y1": 42.83423913043478,
+      "x2": 932.6182065217391,
+      "y2": 171.33695652173913,
+      "score": 0.8882346153259277,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 825.5326086956521,
+      "y1": 327.0978260869565,
+      "x2": 846.9497282608695,
+      "y2": 434.18342391304344,
+      "score": 0.9235761165618896,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 790.4864130434783,
+      "y1": 330.99184782608694,
+      "x2": 811.9035326086956,
+      "y2": 515.9578804347826,
+      "score": 0.9232969284057617,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 255.05842391304347,
+      "y1": 926.7771739130434,
+      "x2": 282.3165760869565,
+      "y2": 1024.1277173913043,
+      "score": 0.9119570851325989,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 214.1711956521739,
+      "y1": 930.6711956521739,
+      "x2": 235.58831521739128,
+      "y2": 1220.7758152173913,
+      "score": 0.9473909735679626,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 258.9524456521739,
+      "y1": 1388.21875,
+      "x2": 385.508152173913,
+      "y2": 1403.7948369565217,
+      "score": 0.9138259887695312,
+      "label": "ppocr",
+      "source": "ppocr"
+    }
+  ],
+  "truth_boxes": [
+    {
+      "x1": 748.0,
+      "y1": 299.0,
+      "x2": 890.0,
+      "y2": 554.0,
+      "score": 0.905,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 165.0,
+      "y1": 896.0,
+      "x2": 330.0,
+      "y2": 1255.0,
+      "score": 0.899,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 218.0,
+      "y1": 1359.0,
+      "x2": 423.0,
+      "y2": 1433.0,
+      "score": 0.66,
+      "label": "text_free",
+      "source": "manifest_ocr_box"
+    }
+  ]
+}

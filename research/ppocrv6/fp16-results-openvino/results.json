@@ -1,0 +1,787 @@
+{
+  "status": "CONFIRMED",
+  "timestamp_utc": "2026-09-18T05:00:20Z",
+  "python": "3.11.0 (main, Oct 24 2022, 18:26:48) [MSC v.1933 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "libraries": {
+    "onnx": "<module 'onnx' from 'C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\Lib\\\\site-packages\\\\onnx\\\\__init__.py'>",
+    "ort": "<module 'onnxruntime' from 'C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\Lib\\\\site-packages\\\\onnxruntime\\\\__init__.py'>",
+    "convert_fp16": "<function convert_float_to_float16 at 0x000001736373E2A0>",
+    "openvino": "<module 'openvino' from 'C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\Lib\\\\site-packages\\\\openvino\\\\__init__.py'>",
+    "cv2": "<module 'cv2' from 'C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\Lib\\\\site-packages\\\\cv2\\\\__init__.py'>",
+    "psutil": "<module 'psutil' from 'C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\Lib\\\\site-packages\\\\psutil\\\\__init__.py'>"
+  },
+  "library_errors": {},
+  "inputs": {
+    "det": {
+      "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+      "bytes": 9880512,
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+    },
+    "rec": {
+      "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+      "bytes": 21159378,
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+    }
+  },
+  "image_files": [],
+  "manifest": null,
+  "real_page_count": 0,
+  "real_crop_count": 0,
+  "real_image_status": "UNTESTED",
+  "conversion": [
+    {
+      "source": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+      "target": "research\\fp16-results-openvino\\models\\det_fp16_io.onnx",
+      "keep_io_types": false,
+      "source_bytes": 9880512,
+      "status": "CONFIRMED",
+      "target_bytes": 4973761,
+      "sha256": "2f0463ba51af55a9f49cae1f18cf905c578d4752236c30456325c817d8e47a1b",
+      "kind": "det",
+      "variant": "fp16_io"
+    },
+    {
+      "source": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+      "target": "research\\fp16-results-openvino\\models\\det_fp16_keep_io.onnx",
+      "keep_io_types": true,
+      "source_bytes": 9880512,
+      "status": "CONFIRMED",
+      "target_bytes": 4974139,
+      "sha256": "c7f5cf18ab6e64ee2e9835f1605b3c5a48d01ec41bf632637e2355ff89053d54",
+      "kind": "det",
+      "variant": "fp16_keep_io"
+    },
+    {
+      "source": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+      "target": "research\\fp16-results-openvino\\models\\rec_fp16_io.onnx",
+      "keep_io_types": false,
+      "source_bytes": 21159378,
+      "status": "CONFIRMED",
+      "target_bytes": 10624002,
+      "sha256": "f6ee9c86013fdd02cf9dfdf311813e1f2fe56e83d2b5f12994617dfa05d3b9cb",
+      "kind": "rec",
+      "variant": "fp16_io"
+    },
+    {
+      "source": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+      "target": "research\\fp16-results-openvino\\models\\rec_fp16_keep_io.onnx",
+      "keep_io_types": true,
+      "source_bytes": 21159378,
+      "status": "CONFIRMED",
+      "target_bytes": 10624324,
+      "sha256": "b19f8eb2d4cf78c4eeacbad27c03d658ffaff196e0c91591d894ec6482e0db64",
+      "kind": "rec",
+      "variant": "fp16_keep_io"
+    }
+  ],
+  "load_and_runtime": [
+    {
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp32",
+      "model": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+      "status": "CONFIRMED",
+      "runs": 1,
+      "warmup": 0,
+      "latency_ms_mean": 3039.8996000003535,
+      "latency_ms_p50": 3039.8996000003535,
+      "latency_ms_p95": 3039.8996000003535,
+      "throughput_per_s": 0.32895823269948904,
+      "rss_before_bytes": 449794048,
+      "rss_after_bytes": 453611520,
+      "rss_peak_bytes": 460091392,
+      "output_shape": [
+        1,
+        1,
+        960,
+        960
+      ],
+      "output_dtype": "float32",
+      "decoded_sequences": null,
+      "det_box_count": 40
+    },
+    {
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "model": "research\\fp16-results-openvino\\models\\det_fp16_io.onnx",
+      "status": "CONFIRMED",
+      "runs": 1,
+      "warmup": 0,
+      "latency_ms_mean": 2194.569599989336,
+      "latency_ms_p50": 2194.569599989336,
+      "latency_ms_p95": 2194.569599989336,
+      "throughput_per_s": 0.4556702143349016,
+      "rss_before_bytes": 458194944,
+      "rss_after_bytes": 460042240,
+      "rss_peak_bytes": 469110784,
+      "output_shape": [
+        1,
+        1,
+        960,
+        960
+      ],
+      "output_dtype": "float16",
+      "decoded_sequences": null,
+      "det_box_count": 44
+    },
+    {
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "model": "research\\fp16-results-openvino\\models\\det_fp16_keep_io.onnx",
+      "status": "CONFIRMED",
+      "runs": 1,
+      "warmup": 0,
+      "latency_ms_mean": 3055.7993999973405,
+      "latency_ms_p50": 3055.7993999973405,
+      "latency_ms_p95": 3055.7993999973405,
+      "throughput_per_s": 0.32724661180340253,
+      "rss_before_bytes": 455073792,
+      "rss_after_bytes": 458764288,
+      "rss_peak_bytes": 463925248,
+      "output_shape": [
+        1,
+        1,
+        960,
+        960
+      ],
+      "output_dtype": "float32",
+      "decoded_sequences": null,
+      "det_box_count": 44
+    },
+    {
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp32",
+      "model": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+      "status": "CONFIRMED",
+      "runs": 1,
+      "warmup": 0,
+      "latency_ms_mean": 396.80449999286793,
+      "latency_ms_p50": 396.80449999286793,
+      "latency_ms_p95": 396.80449999286793,
+      "throughput_per_s": 2.5201327102338147,
+      "rss_before_bytes": 797995008,
+      "rss_after_bytes": 801030144,
+      "rss_peak_bytes": 798056448,
+      "output_shape": [
+        1,
+        40,
+        18710
+      ],
+      "output_dtype": "float32",
+      "decoded_sequences": [
+        "じヽはじ々"
+      ],
+      "det_box_count": null
+    },
+    {
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "model": "research\\fp16-results-openvino\\models\\rec_fp16_io.onnx",
+      "status": "CONFIRMED",
+      "runs": 1,
+      "warmup": 0,
+      "latency_ms_mean": 465.31850000610575,
+      "latency_ms_p50": 465.31850000610575,
+      "latency_ms_p95": 465.31850000610575,
+      "throughput_per_s": 2.1490656399581756,
+      "rss_before_bytes": 802787328,
+      "rss_after_bytes": 804286464,
+      "rss_peak_bytes": 802807808,
+      "output_shape": [
+        1,
+        40,
+        18710
+      ],
+      "output_dtype": "float16",
+      "decoded_sequences": [
+        "じヽはじ々"
+      ],
+      "det_box_count": null
+    },
+    {
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "model": "research\\fp16-results-openvino\\models\\rec_fp16_keep_io.onnx",
+      "status": "CONFIRMED",
+      "runs": 1,
+      "warmup": 0,
+      "latency_ms_mean": 319.79860001592897,
+      "latency_ms_p50": 319.79860001592897,
+      "latency_ms_p95": 319.79860001592897,
+      "throughput_per_s": 3.126968035351595,
+      "rss_before_bytes": 800964608,
+      "rss_after_bytes": 804024320,
+      "rss_peak_bytes": 801030144,
+      "output_shape": [
+        1,
+        40,
+        18710
+      ],
+      "output_dtype": "float32",
+      "decoded_sequences": [
+        "じヽはじ々"
+      ],
+      "det_box_count": null
+    }
+  ],
+  "parity": [
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float16",
+      "max_abs": 0.03164634108543396,
+      "mean_abs": 0.000635884003713727,
+      "max_rel": 1.0,
+      "rmse": 0.002070358721539378,
+      "cosine": 0.9999781250953674,
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "sample": 0,
+      "baseline_box_count": 40,
+      "variant_box_count": 44,
+      "matched_iou_mean": 0.9375735530346744,
+      "matched_iou_min": 0.0001643655489809336,
+      "box_count_equal": false
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float16",
+      "max_abs": 0.0010301675647497177,
+      "mean_abs": 2.1525833290070295e-05,
+      "max_rel": 0.32464006543159485,
+      "rmse": 3.636732799350284e-05,
+      "cosine": 0.9999373555183411,
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "sample": 1,
+      "baseline_box_count": 0,
+      "variant_box_count": 0,
+      "matched_iou_mean": 1.0,
+      "matched_iou_min": 1.0,
+      "box_count_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float16",
+      "max_abs": 0.001416776329278946,
+      "mean_abs": 2.0514406060101464e-05,
+      "max_rel": 0.3296976089477539,
+      "rmse": 3.5421853681327775e-05,
+      "cosine": 0.999958336353302,
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "sample": 2,
+      "baseline_box_count": 0,
+      "variant_box_count": 0,
+      "matched_iou_mean": 1.0,
+      "matched_iou_min": 1.0,
+      "box_count_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float16",
+      "max_abs": 0.0013300515711307526,
+      "mean_abs": 2.607104033813812e-05,
+      "max_rel": 0.3339477777481079,
+      "rmse": 5.165127004147507e-05,
+      "cosine": 0.9999585151672363,
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "sample": 3,
+      "baseline_box_count": 0,
+      "variant_box_count": 0,
+      "matched_iou_mean": 1.0,
+      "matched_iou_min": 1.0,
+      "box_count_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float32",
+      "max_abs": 0.0325106680393219,
+      "mean_abs": 0.0006391178467310965,
+      "max_rel": 0.10529912263154984,
+      "rmse": 0.0020852622110396624,
+      "cosine": 0.9999797344207764,
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "sample": 0,
+      "baseline_box_count": 40,
+      "variant_box_count": 44,
+      "matched_iou_mean": 0.9375735530346744,
+      "matched_iou_min": 0.0001643655489809336,
+      "box_count_equal": false
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float32",
+      "max_abs": 0.001073969528079033,
+      "mean_abs": 2.1651640054187737e-05,
+      "max_rel": 0.06695197522640228,
+      "rmse": 3.662570452434011e-05,
+      "cosine": 0.9999401569366455,
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "sample": 1,
+      "baseline_box_count": 0,
+      "variant_box_count": 0,
+      "matched_iou_mean": 1.0,
+      "matched_iou_min": 1.0,
+      "box_count_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float32",
+      "max_abs": 0.0013812333345413208,
+      "mean_abs": 2.0388632037793286e-05,
+      "max_rel": 0.06519778817892075,
+      "rmse": 3.50789850926958e-05,
+      "cosine": 0.999961793422699,
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "sample": 2,
+      "baseline_box_count": 0,
+      "variant_box_count": 0,
+      "matched_iou_mean": 1.0,
+      "matched_iou_min": 1.0,
+      "box_count_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float32",
+      "max_abs": 0.0013304129242897034,
+      "mean_abs": 2.5996501790359616e-05,
+      "max_rel": 0.06412358582019806,
+      "rmse": 5.0931961595779285e-05,
+      "cosine": 0.9999616146087646,
+      "kind": "det",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "sample": 3,
+      "baseline_box_count": 0,
+      "variant_box_count": 0,
+      "matched_iou_mean": 1.0,
+      "matched_iou_min": 1.0,
+      "box_count_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float16",
+      "max_abs": 0.0057495832443237305,
+      "mean_abs": 8.440485430583067e-07,
+      "max_rel": 1.2107188701629639,
+      "rmse": 2.392222813796252e-05,
+      "cosine": 0.9999752640724182,
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "sample": 0,
+      "baseline_text": [
+        "じヽはじ々"
+      ],
+      "variant_text": [
+        "じヽはじ々"
+      ],
+      "exact_sequence_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float16",
+      "max_abs": 0.006611645221710205,
+      "mean_abs": 6.67173935653409e-07,
+      "max_rel": 1.1096174716949463,
+      "rmse": 2.3320759282796644e-05,
+      "cosine": 0.9999821186065674,
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "sample": 1,
+      "baseline_text": [
+        ""
+      ],
+      "variant_text": [
+        ""
+      ],
+      "exact_sequence_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float16",
+      "max_abs": 0.005103051662445068,
+      "mean_abs": 5.124566655467788e-07,
+      "max_rel": 1.0960780382156372,
+      "rmse": 2.3392834918922745e-05,
+      "cosine": 0.9999933838844299,
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "sample": 2,
+      "baseline_text": [
+        ""
+      ],
+      "variant_text": [
+        ""
+      ],
+      "exact_sequence_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float16",
+      "max_abs": 0.00633588433265686,
+      "mean_abs": 6.855521519355534e-07,
+      "max_rel": 1.1298481225967407,
+      "rmse": 2.674752067832742e-05,
+      "cosine": 0.9999877214431763,
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_io",
+      "sample": 3,
+      "baseline_text": [
+        "ヽ"
+      ],
+      "variant_text": [
+        "ヽ"
+      ],
+      "exact_sequence_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float32",
+      "max_abs": 0.005883246660232544,
+      "mean_abs": 8.383059366678935e-07,
+      "max_rel": 0.12127900868654251,
+      "rmse": 2.4146616851794533e-05,
+      "cosine": 0.99997478723526,
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "sample": 0,
+      "baseline_text": [
+        "じヽはじ々"
+      ],
+      "variant_text": [
+        "じヽはじ々"
+      ],
+      "exact_sequence_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float32",
+      "max_abs": 0.006209194660186768,
+      "mean_abs": 6.414911126739753e-07,
+      "max_rel": 0.08239557594060898,
+      "rmse": 2.2800910301157273e-05,
+      "cosine": 0.9999828934669495,
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "sample": 1,
+      "baseline_text": [
+        ""
+      ],
+      "variant_text": [
+        ""
+      ],
+      "exact_sequence_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float32",
+      "max_abs": 0.005109906196594238,
+      "mean_abs": 5.033963361711358e-07,
+      "max_rel": 0.06870218366384506,
+      "rmse": 2.3583776055602357e-05,
+      "cosine": 0.9999931454658508,
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "sample": 2,
+      "baseline_text": [
+        ""
+      ],
+      "variant_text": [
+        ""
+      ],
+      "exact_sequence_equal": true
+    },
+    {
+      "shape_equal": true,
+      "dtype_baseline": "float32",
+      "dtype_variant": "float32",
+      "max_abs": 0.00630226731300354,
+      "mean_abs": 6.701814641019155e-07,
+      "max_rel": 0.08877158164978027,
+      "rmse": 2.6404235541122034e-05,
+      "cosine": 0.999987781047821,
+      "kind": "rec",
+      "backend": "openvino",
+      "variant": "fp16_keep_io",
+      "sample": 3,
+      "baseline_text": [
+        "ヽ"
+      ],
+      "variant_text": [
+        "ヽ"
+      ],
+      "exact_sequence_equal": true
+    }
+  ],
+  "mixed_combinations": [
+    {
+      "backend": "openvino",
+      "combination": "fp32/fp32",
+      "status": "CONFIRMED",
+      "det": {
+        "kind": "det",
+        "backend": "openvino",
+        "variant": "fp32/fp32",
+        "model": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+        "status": "CONFIRMED",
+        "runs": 1,
+        "warmup": 0,
+        "latency_ms_mean": 2545.377100002952,
+        "latency_ms_p50": 2545.377100002952,
+        "latency_ms_p95": 2545.377100002952,
+        "throughput_per_s": 0.39286909589893,
+        "rss_before_bytes": 587440128,
+        "rss_after_bytes": 591134720,
+        "rss_peak_bytes": 596504576,
+        "output_shape": [
+          1,
+          1,
+          960,
+          960
+        ],
+        "output_dtype": "float32",
+        "decoded_sequences": null,
+        "det_box_count": 40
+      },
+      "rec": {
+        "kind": "rec",
+        "backend": "openvino",
+        "variant": "fp32/fp32",
+        "model": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+        "status": "CONFIRMED",
+        "runs": 1,
+        "warmup": 0,
+        "latency_ms_mean": 600.4979999852367,
+        "latency_ms_p50": 600.4979999852367,
+        "latency_ms_p95": 600.4979999852367,
+        "throughput_per_s": 1.6652844805887532,
+        "rss_before_bytes": 368779264,
+        "rss_after_bytes": 371789824,
+        "rss_peak_bytes": 370180096,
+        "output_shape": [
+          1,
+          40,
+          18710
+        ],
+        "output_dtype": "float32",
+        "decoded_sequences": [
+          "じヽはじ々"
+        ],
+        "det_box_count": null
+      }
+    },
+    {
+      "backend": "openvino",
+      "combination": "fp16-det/fp32-rec",
+      "status": "CONFIRMED",
+      "det": {
+        "kind": "det",
+        "backend": "openvino",
+        "variant": "fp16-det/fp32-rec",
+        "model": "research\\fp16-results-openvino\\models\\det_fp16_keep_io.onnx",
+        "status": "CONFIRMED",
+        "runs": 1,
+        "warmup": 0,
+        "latency_ms_mean": 2933.7659000011627,
+        "latency_ms_p50": 2933.7659000011627,
+        "latency_ms_p95": 2933.7659000011627,
+        "throughput_per_s": 0.34085882585232985,
+        "rss_before_bytes": 589807616,
+        "rss_after_bytes": 593514496,
+        "rss_peak_bytes": 599076864,
+        "output_shape": [
+          1,
+          1,
+          960,
+          960
+        ],
+        "output_dtype": "float32",
+        "decoded_sequences": null,
+        "det_box_count": 44
+      },
+      "rec": {
+        "kind": "rec",
+        "backend": "openvino",
+        "variant": "fp16-det/fp32-rec",
+        "model": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+        "status": "CONFIRMED",
+        "runs": 1,
+        "warmup": 0,
+        "latency_ms_mean": 443.2212999963667,
+        "latency_ms_p50": 443.2212999963667,
+        "latency_ms_p95": 443.2212999963667,
+        "throughput_per_s": 2.2562092571097043,
+        "rss_before_bytes": 368312320,
+        "rss_after_bytes": 371306496,
+        "rss_peak_bytes": 368332800,
+        "output_shape": [
+          1,
+          40,
+          18710
+        ],
+        "output_dtype": "float32",
+        "decoded_sequences": [
+          "じヽはじ々"
+        ],
+        "det_box_count": null
+      }
+    },
+    {
+      "backend": "openvino",
+      "combination": "fp32-det/fp16-rec",
+      "status": "CONFIRMED",
+      "det": {
+        "kind": "det",
+        "backend": "openvino",
+        "variant": "fp32-det/fp16-rec",
+        "model": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+        "status": "CONFIRMED",
+        "runs": 1,
+        "warmup": 0,
+        "latency_ms_mean": 2901.709199999459,
+        "latency_ms_p50": 2901.709199999459,
+        "latency_ms_p95": 2901.709199999459,
+        "throughput_per_s": 0.34462447167351795,
+        "rss_before_bytes": 588148736,
+        "rss_after_bytes": 591843328,
+        "rss_peak_bytes": 595820544,
+        "output_shape": [
+          1,
+          1,
+          960,
+          960
+        ],
+        "output_dtype": "float32",
+        "decoded_sequences": null,
+        "det_box_count": 40
+      },
+      "rec": {
+        "kind": "rec",
+        "backend": "openvino",
+        "variant": "fp32-det/fp16-rec",
+        "model": "research\\fp16-results-openvino\\models\\rec_fp16_keep_io.onnx",
+        "status": "CONFIRMED",
+        "runs": 1,
+        "warmup": 0,
+        "latency_ms_mean": 403.7184999906458,
+        "latency_ms_p50": 403.7184999906458,
+        "latency_ms_p95": 403.7184999906458,
+        "throughput_per_s": 2.4769734357557804,
+        "rss_before_bytes": 370913280,
+        "rss_after_bytes": 373923840,
+        "rss_peak_bytes": 371941376,
+        "output_shape": [
+          1,
+          40,
+          18710
+        ],
+        "output_dtype": "float32",
+        "decoded_sequences": [
+          "じヽはじ々"
+        ],
+        "det_box_count": null
+      }
+    },
+    {
+      "backend": "openvino",
+      "combination": "fp16-det/fp16-rec",
+      "status": "CONFIRMED",
+      "det": {
+        "kind": "det",
+        "backend": "openvino",
+        "variant": "fp16-det/fp16-rec",
+        "model": "research\\fp16-results-openvino\\models\\det_fp16_keep_io.onnx",
+        "status": "CONFIRMED",
+        "runs": 1,
+        "warmup": 0,
+        "latency_ms_mean": 3149.7970999917015,
+        "latency_ms_p50": 3149.7970999917015,
+        "latency_ms_p95": 3149.7970999917015,
+        "throughput_per_s": 0.3174807672540668,
+        "rss_before_bytes": 589611008,
+        "rss_after_bytes": 593301504,
+        "rss_peak_bytes": 597778432,
+        "output_shape": [
+          1,
+          1,
+          960,
+          960
+        ],
+        "output_dtype": "float32",
+        "decoded_sequences": null,
+        "det_box_count": 44
+      },
+      "rec": {
+        "kind": "rec",
+        "backend": "openvino",
+        "variant": "fp16-det/fp16-rec",
+        "model": "research\\fp16-results-openvino\\models\\rec_fp16_keep_io.onnx",
+        "status": "CONFIRMED",
+        "runs": 1,
+        "warmup": 0,
+        "latency_ms_mean": 542.0253000047524,
+        "latency_ms_p50": 542.0253000047524,
+        "latency_ms_p95": 542.0253000047524,
+        "throughput_per_s": 1.8449323306333343,
+        "rss_before_bytes": 353075200,
+        "rss_after_bytes": 356085760,
+        "rss_peak_bytes": 356073472,
+        "output_shape": [
+          1,
+          40,
+          18710
+        ],
+        "output_dtype": "float32",
+        "decoded_sequences": [
+          "じヽはじ々"
+        ],
+        "det_box_count": null
+      }
+    }
+  ],
+  "real_image_parity": [
+    {
+      "status": "UNTESTED",
+      "reason": "--image-dir/--manifest was not supplied or contained no supported images"
+    }
+  ]
+}

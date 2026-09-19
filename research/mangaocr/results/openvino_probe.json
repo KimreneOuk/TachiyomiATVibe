@@ -1,0 +1,1739 @@
+{
+  "generated_at": "2026-09-18T03:33:19Z",
+  "script": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\test_openvino.py",
+  "models": {
+    "encoder": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\encoder.onnx",
+    "decoder_init": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\decoder_init.onnx",
+    "decoder_step": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\decoder_step.onnx"
+  },
+  "inventory": {
+    "evidence": "OBSERVED",
+    "openvino_version": "2026.1.0-21367-63e31528c62-releases/2026/1",
+    "available_devices": [
+      "CPU",
+      "GPU"
+    ],
+    "devices": {
+      "CPU": {
+        "FULL_DEVICE_NAME": "13th Gen Intel(R) Core(TM) i5-1334U",
+        "DEVICE_ID": "",
+        "SUPPORTED_PROPERTIES": {
+          "SUPPORTED_PROPERTIES": "RO",
+          "AVAILABLE_DEVICES": "RO",
+          "RANGE_FOR_ASYNC_INFER_REQUESTS": "RO",
+          "RANGE_FOR_STREAMS": "RO",
+          "EXECUTION_DEVICES": "RO",
+          "FULL_DEVICE_NAME": "RO",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "DEVICE_TYPE": "RO",
+          "DEVICE_ARCHITECTURE": "RO",
+          "NUM_STREAMS": "RW",
+          "INFERENCE_NUM_THREADS": "RW",
+          "PERF_COUNT": "RW",
+          "INFERENCE_PRECISION_HINT": "RW",
+          "PERFORMANCE_HINT": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "ENABLE_CPU_PINNING": "RW",
+          "ENABLE_CPU_RESERVATION": "RW",
+          "SCHEDULING_CORE_TYPE": "RW",
+          "MODEL_DISTRIBUTION_POLICY": "RW",
+          "ENABLE_HYPER_THREADING": "RW",
+          "DEVICE_ID": "RW",
+          "CPU_DENORMALS_OPTIMIZATION": "RW",
+          "LOG_LEVEL": "RW",
+          "CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE": "RW",
+          "ENABLE_TENSOR_PARALLEL": "RW",
+          "TBB_PARTITIONER": "RW",
+          "DYNAMIC_QUANTIZATION_GROUP_SIZE": "RW",
+          "KV_CACHE_PRECISION": "RW",
+          "KEY_CACHE_PRECISION": "RW",
+          "VALUE_CACHE_PRECISION": "RW",
+          "KEY_CACHE_GROUP_SIZE": "RW",
+          "VALUE_CACHE_GROUP_SIZE": "RW",
+          "ENABLE_WEIGHTLESS": "RW",
+          "WEIGHTS_PATH": "WO"
+        }
+      },
+      "GPU": {
+        "FULL_DEVICE_NAME": "Intel(R) Iris(R) Xe Graphics (iGPU)",
+        "DEVICE_ID": "0",
+        "SUPPORTED_PROPERTIES": {
+          "SUPPORTED_PROPERTIES": "RO",
+          "AVAILABLE_DEVICES": "RO",
+          "RANGE_FOR_ASYNC_INFER_REQUESTS": "RO",
+          "RANGE_FOR_STREAMS": "RO",
+          "OPTIMAL_BATCH_SIZE": "RO",
+          "MAX_BATCH_SIZE": "RO",
+          "DEVICE_ARCHITECTURE": "RO",
+          "FULL_DEVICE_NAME": "RO",
+          "DEVICE_UUID": "RO",
+          "DEVICE_LUID": "RO",
+          "DEVICE_TYPE": "RO",
+          "DEVICE_GOPS": "RO",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "DEVICE_PCI_INFO": "RO",
+          "GPU_DEVICE_ID": "RO",
+          "GPU_DEVICE_TOTAL_MEM_SIZE": "RO",
+          "GPU_DEVICE_MAX_ALLOC_MEM_SIZE": "RO",
+          "GPU_UARCH_VERSION": "RO",
+          "GPU_EXECUTION_UNITS_COUNT": "RO",
+          "GPU_MEMORY_STATISTICS": "RO",
+          "PERF_COUNT": "RW",
+          "MODEL_PRIORITY": "RW",
+          "GPU_HOST_TASK_PRIORITY": "RW",
+          "GPU_QUEUE_PRIORITY": "RW",
+          "GPU_QUEUE_THROTTLE": "RW",
+          "GPU_ENABLE_SDPA_OPTIMIZATION": "RW",
+          "GPU_ENABLE_LORA_OPERATION": "RW",
+          "GPU_ENABLE_LARGE_ALLOCATIONS": "RW",
+          "GPU_ENABLE_LOOP_UNROLLING": "RW",
+          "GPU_DISABLE_WINOGRAD_CONVOLUTION": "RW",
+          "CACHE_DIR": "RW",
+          "CACHE_MODE": "RW",
+          "PERFORMANCE_HINT": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "COMPILATION_NUM_THREADS": "RW",
+          "NUM_STREAMS": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "INFERENCE_PRECISION_HINT": "RW",
+          "ENABLE_CPU_PINNING": "RW",
+          "ENABLE_CPU_RESERVATION": "RW",
+          "DEVICE_ID": "RW",
+          "DYNAMIC_QUANTIZATION_GROUP_SIZE": "RW",
+          "ACTIVATIONS_SCALE_FACTOR": "RW",
+          "WEIGHTS_PATH": "RW",
+          "CACHE_ENCRYPTION_CALLBACKS": "WO",
+          "KV_CACHE_PRECISION": "RW",
+          "MODEL_PTR": "WO",
+          "CONFIG_FILE": "RW"
+        }
+      }
+    },
+    "onnxruntime_version": "1.24.1",
+    "onnxruntime_providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "onnxruntime_openvino_ep": false
+  },
+  "probes": [
+    {
+      "model": "encoder",
+      "device": "CPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "13th Gen Intel(R) Core(TM) i5-1334U",
+        "DEVICE_ID": "",
+        "SUPPORTED_PROPERTIES": {
+          "SUPPORTED_PROPERTIES": "RO",
+          "AVAILABLE_DEVICES": "RO",
+          "RANGE_FOR_ASYNC_INFER_REQUESTS": "RO",
+          "RANGE_FOR_STREAMS": "RO",
+          "EXECUTION_DEVICES": "RO",
+          "FULL_DEVICE_NAME": "RO",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "DEVICE_TYPE": "RO",
+          "DEVICE_ARCHITECTURE": "RO",
+          "NUM_STREAMS": "RW",
+          "INFERENCE_NUM_THREADS": "RW",
+          "PERF_COUNT": "RW",
+          "INFERENCE_PRECISION_HINT": "RW",
+          "PERFORMANCE_HINT": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "ENABLE_CPU_PINNING": "RW",
+          "ENABLE_CPU_RESERVATION": "RW",
+          "SCHEDULING_CORE_TYPE": "RW",
+          "MODEL_DISTRIBUTION_POLICY": "RW",
+          "ENABLE_HYPER_THREADING": "RW",
+          "DEVICE_ID": "RW",
+          "CPU_DENORMALS_OPTIMIZATION": "RW",
+          "LOG_LEVEL": "RW",
+          "CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE": "RW",
+          "ENABLE_TENSOR_PARALLEL": "RW",
+          "TBB_PARTITIONER": "RW",
+          "DYNAMIC_QUANTIZATION_GROUP_SIZE": "RW",
+          "KV_CACHE_PRECISION": "RW",
+          "KEY_CACHE_PRECISION": "RW",
+          "VALUE_CACHE_PRECISION": "RW",
+          "KEY_CACHE_GROUP_SIZE": "RW",
+          "VALUE_CACHE_GROUP_SIZE": "RW",
+          "ENABLE_WEIGHTLESS": "RW",
+          "WEIGHTS_PATH": "WO"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 2182,
+      "query_model": {
+        "supported_op_count": 2182,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 602.2770999989007,
+      "compiled_execution_devices": [
+        "CPU"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 30.065600003581494,
+        "mean_ms": 39.05903333604025,
+        "median_ms": 38.446899998234585,
+        "p95_ms": 48.66460000630468,
+        "max_ms": 48.66460000630468
+      },
+      "output_shapes": {
+        "<ConstOutput: names[StatefulPartitionedCall:0] shape[1,196,256] type: f32>": [
+          1,
+          196,
+          256
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 1591.0085999930743,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"encoder\", \"device\": \"CPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"13th Gen Intel(R) Core(TM) i5-1334U\", \"DEVICE_ID\": \"\", \"SUPPORTED_PROPERTIES\": {\"SUPPORTED_PROPERTIES\": \"RO\", \"AVAILABLE_DEVICES\": \"RO\", \"RANGE_FOR_ASYNC_INFER_REQUESTS\": \"RO\", \"RANGE_FOR_STREAMS\": \"RO\", \"EXECUTION_DEVICES\": \"RO\", \"FULL_DEVICE_NAME\": \"RO\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"DEVICE_TYPE\": \"RO\", \"DEVICE_ARCHITECTURE\": \"RO\", \"NUM_STREAMS\": \"RW\", \"INFERENCE_NUM_THREADS\": \"RW\", \"PERF_COUNT\": \"RW\", \"INFERENCE_PRECISION_HINT\": \"RW\", \"PERFORMANCE_HINT\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"ENABLE_CPU_PINNING\": \"RW\", \"ENABLE_CPU_RESERVATION\": \"RW\", \"SCHEDULING_CORE_TYPE\": \"RW\", \"MODEL_DISTRIBUTION_POLICY\": \"RW\", \"ENABLE_HYPER_THREADING\": \"RW\", \"DEVICE_ID\": \"RW\", \"CPU_DENORMALS_OPTIMIZATION\": \"RW\", \"LOG_LEVEL\": \"RW\", \"CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE\": \"RW\", \"ENABLE_TENSOR_PARALLEL\": \"RW\", \"TBB_PARTITIONER\": \"RW\", \"DYNAMIC_QUANTIZATION_GROUP_SIZE\": \"RW\", \"KV_CACHE_PRECISION\": \"RW\", \"KEY_CACHE_PRECISION\": \"RW\", \"VALUE_CACHE_PRECISION\": \"RW\", \"KEY_CACHE_GROUP_SIZE\": \"RW\", \"VALUE_CACHE_GROUP_SIZE\": \"RW\", \"ENABLE_WEIGHTLESS\": \"RW\", \"WEIGHTS_PATH\": \"WO\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 2182, \"query_model\": {\"supported_op_count\": 2182, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 602.2770999989007, \"compiled_execution_devices\": [\"CPU\"], \"infer\": {\"count\": 3, \"min_ms\": 30.065600003581494, \"mean_ms\": 39.05903333604025, \"median_ms\": 38.446899998234585, \"p95_ms\": 48.66460000630468, \"max_ms\": 48.66460000630468}, \"output_shapes\": {\"<ConstOutput: names[StatefulPartitionedCall:0] shape[1,196,256] type: f32>\": [1, 196, 256]}, \"output_finite\": true, \"total_ms\": 1591.0085999930743}",
+      "child_stderr": ""
+    },
+    {
+      "model": "encoder",
+      "device": "GPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "Intel(R) Iris(R) Xe Graphics (iGPU)",
+        "DEVICE_ID": "0",
+        "SUPPORTED_PROPERTIES": {
+          "SUPPORTED_PROPERTIES": "RO",
+          "AVAILABLE_DEVICES": "RO",
+          "RANGE_FOR_ASYNC_INFER_REQUESTS": "RO",
+          "RANGE_FOR_STREAMS": "RO",
+          "OPTIMAL_BATCH_SIZE": "RO",
+          "MAX_BATCH_SIZE": "RO",
+          "DEVICE_ARCHITECTURE": "RO",
+          "FULL_DEVICE_NAME": "RO",
+          "DEVICE_UUID": "RO",
+          "DEVICE_LUID": "RO",
+          "DEVICE_TYPE": "RO",
+          "DEVICE_GOPS": "RO",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "DEVICE_PCI_INFO": "RO",
+          "GPU_DEVICE_ID": "RO",
+          "GPU_DEVICE_TOTAL_MEM_SIZE": "RO",
+          "GPU_DEVICE_MAX_ALLOC_MEM_SIZE": "RO",
+          "GPU_UARCH_VERSION": "RO",
+          "GPU_EXECUTION_UNITS_COUNT": "RO",
+          "GPU_MEMORY_STATISTICS": "RO",
+          "PERF_COUNT": "RW",
+          "MODEL_PRIORITY": "RW",
+          "GPU_HOST_TASK_PRIORITY": "RW",
+          "GPU_QUEUE_PRIORITY": "RW",
+          "GPU_QUEUE_THROTTLE": "RW",
+          "GPU_ENABLE_SDPA_OPTIMIZATION": "RW",
+          "GPU_ENABLE_LORA_OPERATION": "RW",
+          "GPU_ENABLE_LARGE_ALLOCATIONS": "RW",
+          "GPU_ENABLE_LOOP_UNROLLING": "RW",
+          "GPU_DISABLE_WINOGRAD_CONVOLUTION": "RW",
+          "CACHE_DIR": "RW",
+          "CACHE_MODE": "RW",
+          "PERFORMANCE_HINT": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "COMPILATION_NUM_THREADS": "RW",
+          "NUM_STREAMS": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "INFERENCE_PRECISION_HINT": "RW",
+          "ENABLE_CPU_PINNING": "RW",
+          "ENABLE_CPU_RESERVATION": "RW",
+          "DEVICE_ID": "RW",
+          "DYNAMIC_QUANTIZATION_GROUP_SIZE": "RW",
+          "ACTIVATIONS_SCALE_FACTOR": "RW",
+          "WEIGHTS_PATH": "RW",
+          "CACHE_ENCRYPTION_CALLBACKS": "WO",
+          "KV_CACHE_PRECISION": "RW",
+          "MODEL_PTR": "WO",
+          "CONFIG_FILE": "RW"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 2182,
+      "query_model": {
+        "supported_op_count": 2182,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 1006.6216999839526,
+      "compiled_execution_devices": [
+        "GPU.0"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 9.734599996590987,
+        "mean_ms": 10.767566670741266,
+        "median_ms": 10.999200021615252,
+        "p95_ms": 11.568899994017556,
+        "max_ms": 11.568899994017556
+      },
+      "output_shapes": {
+        "<ConstOutput: names[StatefulPartitionedCall:0] shape[1,196,256] type: f32>": [
+          1,
+          196,
+          256
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 1911.539199994877,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"encoder\", \"device\": \"GPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"Intel(R) Iris(R) Xe Graphics (iGPU)\", \"DEVICE_ID\": \"0\", \"SUPPORTED_PROPERTIES\": {\"SUPPORTED_PROPERTIES\": \"RO\", \"AVAILABLE_DEVICES\": \"RO\", \"RANGE_FOR_ASYNC_INFER_REQUESTS\": \"RO\", \"RANGE_FOR_STREAMS\": \"RO\", \"OPTIMAL_BATCH_SIZE\": \"RO\", \"MAX_BATCH_SIZE\": \"RO\", \"DEVICE_ARCHITECTURE\": \"RO\", \"FULL_DEVICE_NAME\": \"RO\", \"DEVICE_UUID\": \"RO\", \"DEVICE_LUID\": \"RO\", \"DEVICE_TYPE\": \"RO\", \"DEVICE_GOPS\": \"RO\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"DEVICE_PCI_INFO\": \"RO\", \"GPU_DEVICE_ID\": \"RO\", \"GPU_DEVICE_TOTAL_MEM_SIZE\": \"RO\", \"GPU_DEVICE_MAX_ALLOC_MEM_SIZE\": \"RO\", \"GPU_UARCH_VERSION\": \"RO\", \"GPU_EXECUTION_UNITS_COUNT\": \"RO\", \"GPU_MEMORY_STATISTICS\": \"RO\", \"PERF_COUNT\": \"RW\", \"MODEL_PRIORITY\": \"RW\", \"GPU_HOST_TASK_PRIORITY\": \"RW\", \"GPU_QUEUE_PRIORITY\": \"RW\", \"GPU_QUEUE_THROTTLE\": \"RW\", \"GPU_ENABLE_SDPA_OPTIMIZATION\": \"RW\", \"GPU_ENABLE_LORA_OPERATION\": \"RW\", \"GPU_ENABLE_LARGE_ALLOCATIONS\": \"RW\", \"GPU_ENABLE_LOOP_UNROLLING\": \"RW\", \"GPU_DISABLE_WINOGRAD_CONVOLUTION\": \"RW\", \"CACHE_DIR\": \"RW\", \"CACHE_MODE\": \"RW\", \"PERFORMANCE_HINT\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"COMPILATION_NUM_THREADS\": \"RW\", \"NUM_STREAMS\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"INFERENCE_PRECISION_HINT\": \"RW\", \"ENABLE_CPU_PINNING\": \"RW\", \"ENABLE_CPU_RESERVATION\": \"RW\", \"DEVICE_ID\": \"RW\", \"DYNAMIC_QUANTIZATION_GROUP_SIZE\": \"RW\", \"ACTIVATIONS_SCALE_FACTOR\": \"RW\", \"WEIGHTS_PATH\": \"RW\", \"CACHE_ENCRYPTION_CALLBACKS\": \"WO\", \"KV_CACHE_PRECISION\": \"RW\", \"MODEL_PTR\": \"WO\", \"CONFIG_FILE\": \"RW\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 2182, \"query_model\": {\"supported_op_count\": 2182, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 1006.6216999839526, \"compiled_execution_devices\": [\"GPU.0\"], \"infer\": {\"count\": 3, \"min_ms\": 9.734599996590987, \"mean_ms\": 10.767566670741266, \"median_ms\": 10.999200021615252, \"p95_ms\": 11.568899994017556, \"max_ms\": 11.568899994017556}, \"output_shapes\": {\"<ConstOutput: names[StatefulPartitionedCall:0] shape[1,196,256] type: f32>\": [1, 196, 256]}, \"output_finite\": true, \"total_ms\": 1911.539199994877}",
+      "child_stderr": ""
+    },
+    {
+      "evidence": "OBSERVED",
+      "error_type": "RuntimeError",
+      "error": "Exception from src\\inference\\src\\cpp\\core.cpp:121:\nException from src\\inference\\src\\dev\\plugin.cpp:54:\nException from src\\plugins\\intel_npu\\src\\plugin\\src\\plugin.cpp:642:\nException from src\\plugins\\intel_npu\\src\\compiler_adapter\\src\\compiler_impl.cpp:433:\nCompilation failed. vclAllocatedExecutableCreate2 result: 0x78000004 - [NPU_VCL] Unrecognized device ID! 0x0x0\n[NPU_VCL] Failed to parse and update config! DescOptions: --inputs_precisions=\"0:FP32\" --inputs_layouts=\"0:NCHW\" --outputs_precisions=\"0:FP32\" --outputs_layouts=\"0:CHW\" --config NPU_BATCH_MODE=\"COMPILER\" NPU_MODEL_SERIALIZER_VERSION=\"NO_WEIGHTS_COPY\"\n[NPU_VCL] Failed to prepare io info and config! DescOptions: --inputs_precisions=\"0:FP32\" --inputs_layouts=\"0:NCHW\" --outputs_precisions=\"0:FP32\" --outputs_layouts=\"0:CHW\" --config NPU_BATCH_MODE=\"COMPILER\" NPU_MODEL_SERIALIZER_VERSION=\"NO_WEIGHTS_COPY\"\n\n\n\n",
+      "returncode": 1,
+      "child_stdout": "{\"evidence\": \"OBSERVED\", \"error_type\": \"RuntimeError\", \"error\": \"Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:121:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:54:\\nException from src\\\\plugins\\\\intel_npu\\\\src\\\\plugin\\\\src\\\\plugin.cpp:642:\\nException from src\\\\plugins\\\\intel_npu\\\\src\\\\compiler_adapter\\\\src\\\\compiler_impl.cpp:433:\\nCompilation failed. vclAllocatedExecutableCreate2 result: 0x78000004 - [NPU_VCL] Unrecognized device ID! 0x0x0\\n[NPU_VCL] Failed to parse and update config! DescOptions: --inputs_precisions=\\\"0:FP32\\\" --inputs_layouts=\\\"0:NCHW\\\" --outputs_precisions=\\\"0:FP32\\\" --outputs_layouts=\\\"0:CHW\\\" --config NPU_BATCH_MODE=\\\"COMPILER\\\" NPU_MODEL_SERIALIZER_VERSION=\\\"NO_WEIGHTS_COPY\\\"\\n[NPU_VCL] Failed to prepare io info and config! DescOptions: --inputs_precisions=\\\"0:FP32\\\" --inputs_layouts=\\\"0:NCHW\\\" --outputs_precisions=\\\"0:FP32\\\" --outputs_layouts=\\\"0:CHW\\\" --config NPU_BATCH_MODE=\\\"COMPILER\\\" NPU_MODEL_SERIALIZER_VERSION=\\\"NO_WEIGHTS_COPY\\\"\\n\\n\\n\\n\"}",
+      "child_stderr": "",
+      "model": "encoder",
+      "device": "NPU"
+    },
+    {
+      "model": "encoder",
+      "device": "AUTO",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "AUTO",
+        "DEVICE_ID": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nException from src\\inference\\src\\dev\\plugin.cpp:112:\nCheck 'internal_properties.find(name) != internal_properties.end()' failed at src\\plugins\\auto\\src\\plugin_config.cpp:68:\n[AUTO] not supported property DEVICE_ID\n\n\n"
+        },
+        "SUPPORTED_PROPERTIES": {
+          "DEVICE_BIND_BUFFER": "RW",
+          "ENABLE_RUNTIME_FALLBACK": "RW",
+          "ENABLE_STARTUP_FALLBACK": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "FULL_DEVICE_NAME": "RO",
+          "LOG_LEVEL": "RW",
+          "MODEL_PRIORITY": "RW",
+          "MULTI_DEVICE_PRIORITIES": "RW",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "PERFORMANCE_HINT": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "PERF_COUNT": "RW",
+          "SCHEDULE_POLICY": "RW",
+          "SUPPORTED_PROPERTIES": "RO"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 2182,
+      "query_model_error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:257:\nException from src\\inference\\src\\dev\\plugin.cpp:70:\nException from src\\plugins\\auto\\src\\plugin.cpp:552:\nAUTO: cannot parse valid device from \n\n\n",
+      "compile_ms": 954.3690999853425,
+      "compiled_execution_devices": [
+        "(CPU)"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 100.2104000071995,
+        "mean_ms": 113.70046666706912,
+        "median_ms": 109.36950001632795,
+        "p95_ms": 131.52149997767992,
+        "max_ms": 131.52149997767992
+      },
+      "output_shapes": {
+        "<ConstOutput: names[StatefulPartitionedCall:0] shape[1,196,256] type: f32>": [
+          1,
+          196,
+          256
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 1712.0422000007238,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"encoder\", \"device\": \"AUTO\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"AUTO\", \"DEVICE_ID\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:112:\\nCheck 'internal_properties.find(name) != internal_properties.end()' failed at src\\\\plugins\\\\auto\\\\src\\\\plugin_config.cpp:68:\\n[AUTO] not supported property DEVICE_ID\\n\\n\\n\"}, \"SUPPORTED_PROPERTIES\": {\"DEVICE_BIND_BUFFER\": \"RW\", \"ENABLE_RUNTIME_FALLBACK\": \"RW\", \"ENABLE_STARTUP_FALLBACK\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"FULL_DEVICE_NAME\": \"RO\", \"LOG_LEVEL\": \"RW\", \"MODEL_PRIORITY\": \"RW\", \"MULTI_DEVICE_PRIORITIES\": \"RW\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"PERFORMANCE_HINT\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"PERF_COUNT\": \"RW\", \"SCHEDULE_POLICY\": \"RW\", \"SUPPORTED_PROPERTIES\": \"RO\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 2182, \"query_model_error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:257:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:70:\\nException from src\\\\plugins\\\\auto\\\\src\\\\plugin.cpp:552:\\nAUTO: cannot parse valid device from \\n\\n\\n\", \"compile_ms\": 954.3690999853425, \"compiled_execution_devices\": [\"(CPU)\"], \"infer\": {\"count\": 3, \"min_ms\": 100.2104000071995, \"mean_ms\": 113.70046666706912, \"median_ms\": 109.36950001632795, \"p95_ms\": 131.52149997767992, \"max_ms\": 131.52149997767992}, \"output_shapes\": {\"<ConstOutput: names[StatefulPartitionedCall:0] shape[1,196,256] type: f32>\": [1, 196, 256]}, \"output_finite\": true, \"total_ms\": 1712.0422000007238}",
+      "child_stderr": ""
+    },
+    {
+      "model": "encoder",
+      "device": "HETERO:GPU,CPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        },
+        "DEVICE_ID": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        },
+        "SUPPORTED_PROPERTIES": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 2182,
+      "query_model": {
+        "supported_op_count": 2182,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 5136.949700012337,
+      "compiled_execution_devices": [
+        "GPU.0"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 13.209000026108697,
+        "mean_ms": 15.926366681621099,
+        "median_ms": 17.172899999422953,
+        "p95_ms": 17.39720001933165,
+        "max_ms": 17.39720001933165
+      },
+      "output_shapes": {
+        "<ConstOutput: names[StatefulPartitionedCall:0] shape[1,196,256] type: f32>": [
+          1,
+          196,
+          256
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 6576.2418000085745,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"encoder\", \"device\": \"HETERO:GPU,CPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}, \"DEVICE_ID\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}, \"SUPPORTED_PROPERTIES\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 2182, \"query_model\": {\"supported_op_count\": 2182, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 5136.949700012337, \"compiled_execution_devices\": [\"GPU.0\"], \"infer\": {\"count\": 3, \"min_ms\": 13.209000026108697, \"mean_ms\": 15.926366681621099, \"median_ms\": 17.172899999422953, \"p95_ms\": 17.39720001933165, \"max_ms\": 17.39720001933165}, \"output_shapes\": {\"<ConstOutput: names[StatefulPartitionedCall:0] shape[1,196,256] type: f32>\": [1, 196, 256]}, \"output_finite\": true, \"total_ms\": 6576.2418000085745}",
+      "child_stderr": ""
+    },
+    {
+      "model": "decoder_init",
+      "device": "CPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "13th Gen Intel(R) Core(TM) i5-1334U",
+        "DEVICE_ID": "",
+        "SUPPORTED_PROPERTIES": {
+          "SUPPORTED_PROPERTIES": "RO",
+          "AVAILABLE_DEVICES": "RO",
+          "RANGE_FOR_ASYNC_INFER_REQUESTS": "RO",
+          "RANGE_FOR_STREAMS": "RO",
+          "EXECUTION_DEVICES": "RO",
+          "FULL_DEVICE_NAME": "RO",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "DEVICE_TYPE": "RO",
+          "DEVICE_ARCHITECTURE": "RO",
+          "NUM_STREAMS": "RW",
+          "INFERENCE_NUM_THREADS": "RW",
+          "PERF_COUNT": "RW",
+          "INFERENCE_PRECISION_HINT": "RW",
+          "PERFORMANCE_HINT": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "ENABLE_CPU_PINNING": "RW",
+          "ENABLE_CPU_RESERVATION": "RW",
+          "SCHEDULING_CORE_TYPE": "RW",
+          "MODEL_DISTRIBUTION_POLICY": "RW",
+          "ENABLE_HYPER_THREADING": "RW",
+          "DEVICE_ID": "RW",
+          "CPU_DENORMALS_OPTIMIZATION": "RW",
+          "LOG_LEVEL": "RW",
+          "CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE": "RW",
+          "ENABLE_TENSOR_PARALLEL": "RW",
+          "TBB_PARTITIONER": "RW",
+          "DYNAMIC_QUANTIZATION_GROUP_SIZE": "RW",
+          "KV_CACHE_PRECISION": "RW",
+          "KEY_CACHE_PRECISION": "RW",
+          "VALUE_CACHE_PRECISION": "RW",
+          "KEY_CACHE_GROUP_SIZE": "RW",
+          "VALUE_CACHE_GROUP_SIZE": "RW",
+          "ENABLE_WEIGHTLESS": "RW",
+          "WEIGHTS_PATH": "WO"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 513,
+      "query_model": {
+        "supported_op_count": 513,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 298.58649999368936,
+      "compiled_execution_devices": [
+        "CPU"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 4.351599985966459,
+        "mean_ms": 5.565133333827059,
+        "median_ms": 5.465299997013062,
+        "p95_ms": 6.878500018501654,
+        "max_ms": 6.878500018501654
+      },
+      "output_shapes": {
+        "<ConstOutput: names[logits] shape[1,9415] type: f32>": [
+          1,
+          9415
+        ],
+        "<ConstOutput: names[self_k] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[self_v] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[cross_k] shape[4,1,4,196,64] type: f32>": [
+          4,
+          1,
+          4,
+          196,
+          64
+        ],
+        "<ConstOutput: names[cross_v] shape[4,1,4,196,64] type: f32>": [
+          4,
+          1,
+          4,
+          196,
+          64
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 738.7364000023808,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"decoder_init\", \"device\": \"CPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"13th Gen Intel(R) Core(TM) i5-1334U\", \"DEVICE_ID\": \"\", \"SUPPORTED_PROPERTIES\": {\"SUPPORTED_PROPERTIES\": \"RO\", \"AVAILABLE_DEVICES\": \"RO\", \"RANGE_FOR_ASYNC_INFER_REQUESTS\": \"RO\", \"RANGE_FOR_STREAMS\": \"RO\", \"EXECUTION_DEVICES\": \"RO\", \"FULL_DEVICE_NAME\": \"RO\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"DEVICE_TYPE\": \"RO\", \"DEVICE_ARCHITECTURE\": \"RO\", \"NUM_STREAMS\": \"RW\", \"INFERENCE_NUM_THREADS\": \"RW\", \"PERF_COUNT\": \"RW\", \"INFERENCE_PRECISION_HINT\": \"RW\", \"PERFORMANCE_HINT\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"ENABLE_CPU_PINNING\": \"RW\", \"ENABLE_CPU_RESERVATION\": \"RW\", \"SCHEDULING_CORE_TYPE\": \"RW\", \"MODEL_DISTRIBUTION_POLICY\": \"RW\", \"ENABLE_HYPER_THREADING\": \"RW\", \"DEVICE_ID\": \"RW\", \"CPU_DENORMALS_OPTIMIZATION\": \"RW\", \"LOG_LEVEL\": \"RW\", \"CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE\": \"RW\", \"ENABLE_TENSOR_PARALLEL\": \"RW\", \"TBB_PARTITIONER\": \"RW\", \"DYNAMIC_QUANTIZATION_GROUP_SIZE\": \"RW\", \"KV_CACHE_PRECISION\": \"RW\", \"KEY_CACHE_PRECISION\": \"RW\", \"VALUE_CACHE_PRECISION\": \"RW\", \"KEY_CACHE_GROUP_SIZE\": \"RW\", \"VALUE_CACHE_GROUP_SIZE\": \"RW\", \"ENABLE_WEIGHTLESS\": \"RW\", \"WEIGHTS_PATH\": \"WO\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 513, \"query_model\": {\"supported_op_count\": 513, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 298.58649999368936, \"compiled_execution_devices\": [\"CPU\"], \"infer\": {\"count\": 3, \"min_ms\": 4.351599985966459, \"mean_ms\": 5.565133333827059, \"median_ms\": 5.465299997013062, \"p95_ms\": 6.878500018501654, \"max_ms\": 6.878500018501654}, \"output_shapes\": {\"<ConstOutput: names[logits] shape[1,9415] type: f32>\": [1, 9415], \"<ConstOutput: names[self_k] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[self_v] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[cross_k] shape[4,1,4,196,64] type: f32>\": [4, 1, 4, 196, 64], \"<ConstOutput: names[cross_v] shape[4,1,4,196,64] type: f32>\": [4, 1, 4, 196, 64]}, \"output_finite\": true, \"total_ms\": 738.7364000023808}",
+      "child_stderr": ""
+    },
+    {
+      "model": "decoder_init",
+      "device": "GPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "Intel(R) Iris(R) Xe Graphics (iGPU)",
+        "DEVICE_ID": "0",
+        "SUPPORTED_PROPERTIES": {
+          "SUPPORTED_PROPERTIES": "RO",
+          "AVAILABLE_DEVICES": "RO",
+          "RANGE_FOR_ASYNC_INFER_REQUESTS": "RO",
+          "RANGE_FOR_STREAMS": "RO",
+          "OPTIMAL_BATCH_SIZE": "RO",
+          "MAX_BATCH_SIZE": "RO",
+          "DEVICE_ARCHITECTURE": "RO",
+          "FULL_DEVICE_NAME": "RO",
+          "DEVICE_UUID": "RO",
+          "DEVICE_LUID": "RO",
+          "DEVICE_TYPE": "RO",
+          "DEVICE_GOPS": "RO",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "DEVICE_PCI_INFO": "RO",
+          "GPU_DEVICE_ID": "RO",
+          "GPU_DEVICE_TOTAL_MEM_SIZE": "RO",
+          "GPU_DEVICE_MAX_ALLOC_MEM_SIZE": "RO",
+          "GPU_UARCH_VERSION": "RO",
+          "GPU_EXECUTION_UNITS_COUNT": "RO",
+          "GPU_MEMORY_STATISTICS": "RO",
+          "PERF_COUNT": "RW",
+          "MODEL_PRIORITY": "RW",
+          "GPU_HOST_TASK_PRIORITY": "RW",
+          "GPU_QUEUE_PRIORITY": "RW",
+          "GPU_QUEUE_THROTTLE": "RW",
+          "GPU_ENABLE_SDPA_OPTIMIZATION": "RW",
+          "GPU_ENABLE_LORA_OPERATION": "RW",
+          "GPU_ENABLE_LARGE_ALLOCATIONS": "RW",
+          "GPU_ENABLE_LOOP_UNROLLING": "RW",
+          "GPU_DISABLE_WINOGRAD_CONVOLUTION": "RW",
+          "CACHE_DIR": "RW",
+          "CACHE_MODE": "RW",
+          "PERFORMANCE_HINT": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "COMPILATION_NUM_THREADS": "RW",
+          "NUM_STREAMS": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "INFERENCE_PRECISION_HINT": "RW",
+          "ENABLE_CPU_PINNING": "RW",
+          "ENABLE_CPU_RESERVATION": "RW",
+          "DEVICE_ID": "RW",
+          "DYNAMIC_QUANTIZATION_GROUP_SIZE": "RW",
+          "ACTIVATIONS_SCALE_FACTOR": "RW",
+          "WEIGHTS_PATH": "RW",
+          "CACHE_ENCRYPTION_CALLBACKS": "WO",
+          "KV_CACHE_PRECISION": "RW",
+          "MODEL_PTR": "WO",
+          "CONFIG_FILE": "RW"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 513,
+      "query_model": {
+        "supported_op_count": 513,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 745.9739000187255,
+      "compiled_execution_devices": [
+        "GPU.0"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 3.7962999776937068,
+        "mean_ms": 4.208666660512487,
+        "median_ms": 4.248400015057996,
+        "p95_ms": 4.581299988785759,
+        "max_ms": 4.581299988785759
+      },
+      "output_shapes": {
+        "<ConstOutput: names[logits] shape[1,9415] type: f32>": [
+          1,
+          9415
+        ],
+        "<ConstOutput: names[self_k] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[self_v] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[cross_k] shape[4,1,4,196,64] type: f32>": [
+          4,
+          1,
+          4,
+          196,
+          64
+        ],
+        "<ConstOutput: names[cross_v] shape[4,1,4,196,64] type: f32>": [
+          4,
+          1,
+          4,
+          196,
+          64
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 1165.4467999760527,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"decoder_init\", \"device\": \"GPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"Intel(R) Iris(R) Xe Graphics (iGPU)\", \"DEVICE_ID\": \"0\", \"SUPPORTED_PROPERTIES\": {\"SUPPORTED_PROPERTIES\": \"RO\", \"AVAILABLE_DEVICES\": \"RO\", \"RANGE_FOR_ASYNC_INFER_REQUESTS\": \"RO\", \"RANGE_FOR_STREAMS\": \"RO\", \"OPTIMAL_BATCH_SIZE\": \"RO\", \"MAX_BATCH_SIZE\": \"RO\", \"DEVICE_ARCHITECTURE\": \"RO\", \"FULL_DEVICE_NAME\": \"RO\", \"DEVICE_UUID\": \"RO\", \"DEVICE_LUID\": \"RO\", \"DEVICE_TYPE\": \"RO\", \"DEVICE_GOPS\": \"RO\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"DEVICE_PCI_INFO\": \"RO\", \"GPU_DEVICE_ID\": \"RO\", \"GPU_DEVICE_TOTAL_MEM_SIZE\": \"RO\", \"GPU_DEVICE_MAX_ALLOC_MEM_SIZE\": \"RO\", \"GPU_UARCH_VERSION\": \"RO\", \"GPU_EXECUTION_UNITS_COUNT\": \"RO\", \"GPU_MEMORY_STATISTICS\": \"RO\", \"PERF_COUNT\": \"RW\", \"MODEL_PRIORITY\": \"RW\", \"GPU_HOST_TASK_PRIORITY\": \"RW\", \"GPU_QUEUE_PRIORITY\": \"RW\", \"GPU_QUEUE_THROTTLE\": \"RW\", \"GPU_ENABLE_SDPA_OPTIMIZATION\": \"RW\", \"GPU_ENABLE_LORA_OPERATION\": \"RW\", \"GPU_ENABLE_LARGE_ALLOCATIONS\": \"RW\", \"GPU_ENABLE_LOOP_UNROLLING\": \"RW\", \"GPU_DISABLE_WINOGRAD_CONVOLUTION\": \"RW\", \"CACHE_DIR\": \"RW\", \"CACHE_MODE\": \"RW\", \"PERFORMANCE_HINT\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"COMPILATION_NUM_THREADS\": \"RW\", \"NUM_STREAMS\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"INFERENCE_PRECISION_HINT\": \"RW\", \"ENABLE_CPU_PINNING\": \"RW\", \"ENABLE_CPU_RESERVATION\": \"RW\", \"DEVICE_ID\": \"RW\", \"DYNAMIC_QUANTIZATION_GROUP_SIZE\": \"RW\", \"ACTIVATIONS_SCALE_FACTOR\": \"RW\", \"WEIGHTS_PATH\": \"RW\", \"CACHE_ENCRYPTION_CALLBACKS\": \"WO\", \"KV_CACHE_PRECISION\": \"RW\", \"MODEL_PTR\": \"WO\", \"CONFIG_FILE\": \"RW\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 513, \"query_model\": {\"supported_op_count\": 513, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 745.9739000187255, \"compiled_execution_devices\": [\"GPU.0\"], \"infer\": {\"count\": 3, \"min_ms\": 3.7962999776937068, \"mean_ms\": 4.208666660512487, \"median_ms\": 4.248400015057996, \"p95_ms\": 4.581299988785759, \"max_ms\": 4.581299988785759}, \"output_shapes\": {\"<ConstOutput: names[logits] shape[1,9415] type: f32>\": [1, 9415], \"<ConstOutput: names[self_k] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[self_v] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[cross_k] shape[4,1,4,196,64] type: f32>\": [4, 1, 4, 196, 64], \"<ConstOutput: names[cross_v] shape[4,1,4,196,64] type: f32>\": [4, 1, 4, 196, 64]}, \"output_finite\": true, \"total_ms\": 1165.4467999760527}",
+      "child_stderr": ""
+    },
+    {
+      "evidence": "OBSERVED",
+      "error_type": "RuntimeError",
+      "error": "Exception from src\\inference\\src\\cpp\\core.cpp:121:\nException from src\\inference\\src\\dev\\plugin.cpp:54:\nException from src\\plugins\\intel_npu\\src\\plugin\\src\\plugin.cpp:642:\nException from src\\plugins\\intel_npu\\src\\compiler_adapter\\src\\compiler_impl.cpp:433:\nCompilation failed. vclAllocatedExecutableCreate2 result: 0x78000004 - [NPU_VCL] Unrecognized device ID! 0x0x0\n[NPU_VCL] Failed to parse and update config! DescOptions: --inputs_precisions=\"0:FP32 1:I64\" --inputs_layouts=\"0:CHW 1:NC\" --outputs_precisions=\"0:FP32 1:FP32 2:FP32 3:FP32 4:FP32\" --outputs_layouts=\"0:NC 1:NCDHW 2:NCDHW 3:NCDHW 4:NCDHW\" --config NPU_BATCH_MODE=\"COMPILER\" NPU_MODEL_SERIALIZER_VERSION=\"NO_WEIGHTS_COPY\"\n[NPU_VCL] Failed to prepare io info and config! DescOptions: --inputs_precisions=\"0:FP32 1:I64\" --inputs_layouts=\"0:CHW 1:NC\" --outputs_precisions=\"0:FP32 1:FP32 2:FP32 3:FP32 4:FP32\" --outputs_layouts=\"0:NC 1:NCDHW 2:NCDHW 3:NCDHW 4:NCDHW\" --config NPU_BATCH_MODE=\"COMPILER\" NPU_MODEL_SERIALIZER_VERSION=\"NO_WEIGHTS_COPY\"\n\n\n\n",
+      "returncode": 1,
+      "child_stdout": "{\"evidence\": \"OBSERVED\", \"error_type\": \"RuntimeError\", \"error\": \"Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:121:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:54:\\nException from src\\\\plugins\\\\intel_npu\\\\src\\\\plugin\\\\src\\\\plugin.cpp:642:\\nException from src\\\\plugins\\\\intel_npu\\\\src\\\\compiler_adapter\\\\src\\\\compiler_impl.cpp:433:\\nCompilation failed. vclAllocatedExecutableCreate2 result: 0x78000004 - [NPU_VCL] Unrecognized device ID! 0x0x0\\n[NPU_VCL] Failed to parse and update config! DescOptions: --inputs_precisions=\\\"0:FP32 1:I64\\\" --inputs_layouts=\\\"0:CHW 1:NC\\\" --outputs_precisions=\\\"0:FP32 1:FP32 2:FP32 3:FP32 4:FP32\\\" --outputs_layouts=\\\"0:NC 1:NCDHW 2:NCDHW 3:NCDHW 4:NCDHW\\\" --config NPU_BATCH_MODE=\\\"COMPILER\\\" NPU_MODEL_SERIALIZER_VERSION=\\\"NO_WEIGHTS_COPY\\\"\\n[NPU_VCL] Failed to prepare io info and config! DescOptions: --inputs_precisions=\\\"0:FP32 1:I64\\\" --inputs_layouts=\\\"0:CHW 1:NC\\\" --outputs_precisions=\\\"0:FP32 1:FP32 2:FP32 3:FP32 4:FP32\\\" --outputs_layouts=\\\"0:NC 1:NCDHW 2:NCDHW 3:NCDHW 4:NCDHW\\\" --config NPU_BATCH_MODE=\\\"COMPILER\\\" NPU_MODEL_SERIALIZER_VERSION=\\\"NO_WEIGHTS_COPY\\\"\\n\\n\\n\\n\"}",
+      "child_stderr": "",
+      "model": "decoder_init",
+      "device": "NPU"
+    },
+    {
+      "model": "decoder_init",
+      "device": "AUTO",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "AUTO",
+        "DEVICE_ID": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nException from src\\inference\\src\\dev\\plugin.cpp:112:\nCheck 'internal_properties.find(name) != internal_properties.end()' failed at src\\plugins\\auto\\src\\plugin_config.cpp:68:\n[AUTO] not supported property DEVICE_ID\n\n\n"
+        },
+        "SUPPORTED_PROPERTIES": {
+          "DEVICE_BIND_BUFFER": "RW",
+          "ENABLE_RUNTIME_FALLBACK": "RW",
+          "ENABLE_STARTUP_FALLBACK": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "FULL_DEVICE_NAME": "RO",
+          "LOG_LEVEL": "RW",
+          "MODEL_PRIORITY": "RW",
+          "MULTI_DEVICE_PRIORITIES": "RW",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "PERFORMANCE_HINT": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "PERF_COUNT": "RW",
+          "SCHEDULE_POLICY": "RW",
+          "SUPPORTED_PROPERTIES": "RO"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 513,
+      "query_model_error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:257:\nException from src\\inference\\src\\dev\\plugin.cpp:70:\nException from src\\plugins\\auto\\src\\plugin.cpp:552:\nAUTO: cannot parse valid device from \n\n\n",
+      "compile_ms": 253.6614999989979,
+      "compiled_execution_devices": [
+        "(CPU)"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 4.278100008377805,
+        "mean_ms": 5.289433339688306,
+        "median_ms": 5.263200000626966,
+        "p95_ms": 6.3270000100601465,
+        "max_ms": 6.3270000100601465
+      },
+      "output_shapes": {
+        "<ConstOutput: names[logits] shape[1,9415] type: f32>": [
+          1,
+          9415
+        ],
+        "<ConstOutput: names[self_k] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[self_v] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[cross_k] shape[4,1,4,196,64] type: f32>": [
+          4,
+          1,
+          4,
+          196,
+          64
+        ],
+        "<ConstOutput: names[cross_v] shape[4,1,4,196,64] type: f32>": [
+          4,
+          1,
+          4,
+          196,
+          64
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 511.96050000726245,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"decoder_init\", \"device\": \"AUTO\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"AUTO\", \"DEVICE_ID\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:112:\\nCheck 'internal_properties.find(name) != internal_properties.end()' failed at src\\\\plugins\\\\auto\\\\src\\\\plugin_config.cpp:68:\\n[AUTO] not supported property DEVICE_ID\\n\\n\\n\"}, \"SUPPORTED_PROPERTIES\": {\"DEVICE_BIND_BUFFER\": \"RW\", \"ENABLE_RUNTIME_FALLBACK\": \"RW\", \"ENABLE_STARTUP_FALLBACK\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"FULL_DEVICE_NAME\": \"RO\", \"LOG_LEVEL\": \"RW\", \"MODEL_PRIORITY\": \"RW\", \"MULTI_DEVICE_PRIORITIES\": \"RW\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"PERFORMANCE_HINT\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"PERF_COUNT\": \"RW\", \"SCHEDULE_POLICY\": \"RW\", \"SUPPORTED_PROPERTIES\": \"RO\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 513, \"query_model_error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:257:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:70:\\nException from src\\\\plugins\\\\auto\\\\src\\\\plugin.cpp:552:\\nAUTO: cannot parse valid device from \\n\\n\\n\", \"compile_ms\": 253.6614999989979, \"compiled_execution_devices\": [\"(CPU)\"], \"infer\": {\"count\": 3, \"min_ms\": 4.278100008377805, \"mean_ms\": 5.289433339688306, \"median_ms\": 5.263200000626966, \"p95_ms\": 6.3270000100601465, \"max_ms\": 6.3270000100601465}, \"output_shapes\": {\"<ConstOutput: names[logits] shape[1,9415] type: f32>\": [1, 9415], \"<ConstOutput: names[self_k] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[self_v] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[cross_k] shape[4,1,4,196,64] type: f32>\": [4, 1, 4, 196, 64], \"<ConstOutput: names[cross_v] shape[4,1,4,196,64] type: f32>\": [4, 1, 4, 196, 64]}, \"output_finite\": true, \"total_ms\": 511.96050000726245}",
+      "child_stderr": ""
+    },
+    {
+      "model": "decoder_init",
+      "device": "HETERO:GPU,CPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        },
+        "DEVICE_ID": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        },
+        "SUPPORTED_PROPERTIES": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 513,
+      "query_model": {
+        "supported_op_count": 513,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 1699.0194999962114,
+      "compiled_execution_devices": [
+        "GPU.0"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 4.6064000052865595,
+        "mean_ms": 5.35406667040661,
+        "median_ms": 4.80640001478605,
+        "p95_ms": 6.64939999114722,
+        "max_ms": 6.64939999114722
+      },
+      "output_shapes": {
+        "<ConstOutput: names[logits] shape[1,9415] type: f32>": [
+          1,
+          9415
+        ],
+        "<ConstOutput: names[self_k] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[self_v] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[cross_k] shape[4,1,4,196,64] type: f32>": [
+          4,
+          1,
+          4,
+          196,
+          64
+        ],
+        "<ConstOutput: names[cross_v] shape[4,1,4,196,64] type: f32>": [
+          4,
+          1,
+          4,
+          196,
+          64
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 2270.116900006542,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"decoder_init\", \"device\": \"HETERO:GPU,CPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}, \"DEVICE_ID\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}, \"SUPPORTED_PROPERTIES\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 513, \"query_model\": {\"supported_op_count\": 513, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 1699.0194999962114, \"compiled_execution_devices\": [\"GPU.0\"], \"infer\": {\"count\": 3, \"min_ms\": 4.6064000052865595, \"mean_ms\": 5.35406667040661, \"median_ms\": 4.80640001478605, \"p95_ms\": 6.64939999114722, \"max_ms\": 6.64939999114722}, \"output_shapes\": {\"<ConstOutput: names[logits] shape[1,9415] type: f32>\": [1, 9415], \"<ConstOutput: names[self_k] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[self_v] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[cross_k] shape[4,1,4,196,64] type: f32>\": [4, 1, 4, 196, 64], \"<ConstOutput: names[cross_v] shape[4,1,4,196,64] type: f32>\": [4, 1, 4, 196, 64]}, \"output_finite\": true, \"total_ms\": 2270.116900006542}",
+      "child_stderr": ""
+    },
+    {
+      "model": "decoder_step",
+      "device": "CPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "13th Gen Intel(R) Core(TM) i5-1334U",
+        "DEVICE_ID": "",
+        "SUPPORTED_PROPERTIES": {
+          "SUPPORTED_PROPERTIES": "RO",
+          "AVAILABLE_DEVICES": "RO",
+          "RANGE_FOR_ASYNC_INFER_REQUESTS": "RO",
+          "RANGE_FOR_STREAMS": "RO",
+          "EXECUTION_DEVICES": "RO",
+          "FULL_DEVICE_NAME": "RO",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "DEVICE_TYPE": "RO",
+          "DEVICE_ARCHITECTURE": "RO",
+          "NUM_STREAMS": "RW",
+          "INFERENCE_NUM_THREADS": "RW",
+          "PERF_COUNT": "RW",
+          "INFERENCE_PRECISION_HINT": "RW",
+          "PERFORMANCE_HINT": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "ENABLE_CPU_PINNING": "RW",
+          "ENABLE_CPU_RESERVATION": "RW",
+          "SCHEDULING_CORE_TYPE": "RW",
+          "MODEL_DISTRIBUTION_POLICY": "RW",
+          "ENABLE_HYPER_THREADING": "RW",
+          "DEVICE_ID": "RW",
+          "CPU_DENORMALS_OPTIMIZATION": "RW",
+          "LOG_LEVEL": "RW",
+          "CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE": "RW",
+          "ENABLE_TENSOR_PARALLEL": "RW",
+          "TBB_PARTITIONER": "RW",
+          "DYNAMIC_QUANTIZATION_GROUP_SIZE": "RW",
+          "KV_CACHE_PRECISION": "RW",
+          "KEY_CACHE_PRECISION": "RW",
+          "VALUE_CACHE_PRECISION": "RW",
+          "KEY_CACHE_GROUP_SIZE": "RW",
+          "VALUE_CACHE_GROUP_SIZE": "RW",
+          "ENABLE_WEIGHTLESS": "RW",
+          "WEIGHTS_PATH": "WO"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 539,
+      "query_model": {
+        "supported_op_count": 539,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 302.83369999960996,
+      "compiled_execution_devices": [
+        "CPU"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 3.676599997561425,
+        "mean_ms": 3.9150666658921787,
+        "median_ms": 3.763500018976629,
+        "p95_ms": 4.305099981138483,
+        "max_ms": 4.305099981138483
+      },
+      "output_shapes": {
+        "<ConstOutput: names[logits] shape[1,9415] type: f32>": [
+          1,
+          9415
+        ],
+        "<ConstOutput: names[self_k_slice] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[self_v_slice] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 875.5844999977853,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"decoder_step\", \"device\": \"CPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"13th Gen Intel(R) Core(TM) i5-1334U\", \"DEVICE_ID\": \"\", \"SUPPORTED_PROPERTIES\": {\"SUPPORTED_PROPERTIES\": \"RO\", \"AVAILABLE_DEVICES\": \"RO\", \"RANGE_FOR_ASYNC_INFER_REQUESTS\": \"RO\", \"RANGE_FOR_STREAMS\": \"RO\", \"EXECUTION_DEVICES\": \"RO\", \"FULL_DEVICE_NAME\": \"RO\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"DEVICE_TYPE\": \"RO\", \"DEVICE_ARCHITECTURE\": \"RO\", \"NUM_STREAMS\": \"RW\", \"INFERENCE_NUM_THREADS\": \"RW\", \"PERF_COUNT\": \"RW\", \"INFERENCE_PRECISION_HINT\": \"RW\", \"PERFORMANCE_HINT\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"ENABLE_CPU_PINNING\": \"RW\", \"ENABLE_CPU_RESERVATION\": \"RW\", \"SCHEDULING_CORE_TYPE\": \"RW\", \"MODEL_DISTRIBUTION_POLICY\": \"RW\", \"ENABLE_HYPER_THREADING\": \"RW\", \"DEVICE_ID\": \"RW\", \"CPU_DENORMALS_OPTIMIZATION\": \"RW\", \"LOG_LEVEL\": \"RW\", \"CPU_SPARSE_WEIGHTS_DECOMPRESSION_RATE\": \"RW\", \"ENABLE_TENSOR_PARALLEL\": \"RW\", \"TBB_PARTITIONER\": \"RW\", \"DYNAMIC_QUANTIZATION_GROUP_SIZE\": \"RW\", \"KV_CACHE_PRECISION\": \"RW\", \"KEY_CACHE_PRECISION\": \"RW\", \"VALUE_CACHE_PRECISION\": \"RW\", \"KEY_CACHE_GROUP_SIZE\": \"RW\", \"VALUE_CACHE_GROUP_SIZE\": \"RW\", \"ENABLE_WEIGHTLESS\": \"RW\", \"WEIGHTS_PATH\": \"WO\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 539, \"query_model\": {\"supported_op_count\": 539, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 302.83369999960996, \"compiled_execution_devices\": [\"CPU\"], \"infer\": {\"count\": 3, \"min_ms\": 3.676599997561425, \"mean_ms\": 3.9150666658921787, \"median_ms\": 3.763500018976629, \"p95_ms\": 4.305099981138483, \"max_ms\": 4.305099981138483}, \"output_shapes\": {\"<ConstOutput: names[logits] shape[1,9415] type: f32>\": [1, 9415], \"<ConstOutput: names[self_k_slice] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[self_v_slice] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64]}, \"output_finite\": true, \"total_ms\": 875.5844999977853}",
+      "child_stderr": ""
+    },
+    {
+      "model": "decoder_step",
+      "device": "GPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "Intel(R) Iris(R) Xe Graphics (iGPU)",
+        "DEVICE_ID": "0",
+        "SUPPORTED_PROPERTIES": {
+          "SUPPORTED_PROPERTIES": "RO",
+          "AVAILABLE_DEVICES": "RO",
+          "RANGE_FOR_ASYNC_INFER_REQUESTS": "RO",
+          "RANGE_FOR_STREAMS": "RO",
+          "OPTIMAL_BATCH_SIZE": "RO",
+          "MAX_BATCH_SIZE": "RO",
+          "DEVICE_ARCHITECTURE": "RO",
+          "FULL_DEVICE_NAME": "RO",
+          "DEVICE_UUID": "RO",
+          "DEVICE_LUID": "RO",
+          "DEVICE_TYPE": "RO",
+          "DEVICE_GOPS": "RO",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "DEVICE_PCI_INFO": "RO",
+          "GPU_DEVICE_ID": "RO",
+          "GPU_DEVICE_TOTAL_MEM_SIZE": "RO",
+          "GPU_DEVICE_MAX_ALLOC_MEM_SIZE": "RO",
+          "GPU_UARCH_VERSION": "RO",
+          "GPU_EXECUTION_UNITS_COUNT": "RO",
+          "GPU_MEMORY_STATISTICS": "RO",
+          "PERF_COUNT": "RW",
+          "MODEL_PRIORITY": "RW",
+          "GPU_HOST_TASK_PRIORITY": "RW",
+          "GPU_QUEUE_PRIORITY": "RW",
+          "GPU_QUEUE_THROTTLE": "RW",
+          "GPU_ENABLE_SDPA_OPTIMIZATION": "RW",
+          "GPU_ENABLE_LORA_OPERATION": "RW",
+          "GPU_ENABLE_LARGE_ALLOCATIONS": "RW",
+          "GPU_ENABLE_LOOP_UNROLLING": "RW",
+          "GPU_DISABLE_WINOGRAD_CONVOLUTION": "RW",
+          "CACHE_DIR": "RW",
+          "CACHE_MODE": "RW",
+          "PERFORMANCE_HINT": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "COMPILATION_NUM_THREADS": "RW",
+          "NUM_STREAMS": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "INFERENCE_PRECISION_HINT": "RW",
+          "ENABLE_CPU_PINNING": "RW",
+          "ENABLE_CPU_RESERVATION": "RW",
+          "DEVICE_ID": "RW",
+          "DYNAMIC_QUANTIZATION_GROUP_SIZE": "RW",
+          "ACTIVATIONS_SCALE_FACTOR": "RW",
+          "WEIGHTS_PATH": "RW",
+          "CACHE_ENCRYPTION_CALLBACKS": "WO",
+          "KV_CACHE_PRECISION": "RW",
+          "MODEL_PTR": "WO",
+          "CONFIG_FILE": "RW"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 539,
+      "query_model": {
+        "supported_op_count": 539,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 848.5820000059903,
+      "compiled_execution_devices": [
+        "GPU.0"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 4.310199990868568,
+        "mean_ms": 4.4636666716542095,
+        "median_ms": 4.4519000221043825,
+        "p95_ms": 4.6289000019896775,
+        "max_ms": 4.6289000019896775
+      },
+      "output_shapes": {
+        "<ConstOutput: names[logits] shape[1,9415] type: f32>": [
+          1,
+          9415
+        ],
+        "<ConstOutput: names[self_k_slice] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[self_v_slice] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 1268.9976999827195,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"decoder_step\", \"device\": \"GPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"Intel(R) Iris(R) Xe Graphics (iGPU)\", \"DEVICE_ID\": \"0\", \"SUPPORTED_PROPERTIES\": {\"SUPPORTED_PROPERTIES\": \"RO\", \"AVAILABLE_DEVICES\": \"RO\", \"RANGE_FOR_ASYNC_INFER_REQUESTS\": \"RO\", \"RANGE_FOR_STREAMS\": \"RO\", \"OPTIMAL_BATCH_SIZE\": \"RO\", \"MAX_BATCH_SIZE\": \"RO\", \"DEVICE_ARCHITECTURE\": \"RO\", \"FULL_DEVICE_NAME\": \"RO\", \"DEVICE_UUID\": \"RO\", \"DEVICE_LUID\": \"RO\", \"DEVICE_TYPE\": \"RO\", \"DEVICE_GOPS\": \"RO\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"DEVICE_PCI_INFO\": \"RO\", \"GPU_DEVICE_ID\": \"RO\", \"GPU_DEVICE_TOTAL_MEM_SIZE\": \"RO\", \"GPU_DEVICE_MAX_ALLOC_MEM_SIZE\": \"RO\", \"GPU_UARCH_VERSION\": \"RO\", \"GPU_EXECUTION_UNITS_COUNT\": \"RO\", \"GPU_MEMORY_STATISTICS\": \"RO\", \"PERF_COUNT\": \"RW\", \"MODEL_PRIORITY\": \"RW\", \"GPU_HOST_TASK_PRIORITY\": \"RW\", \"GPU_QUEUE_PRIORITY\": \"RW\", \"GPU_QUEUE_THROTTLE\": \"RW\", \"GPU_ENABLE_SDPA_OPTIMIZATION\": \"RW\", \"GPU_ENABLE_LORA_OPERATION\": \"RW\", \"GPU_ENABLE_LARGE_ALLOCATIONS\": \"RW\", \"GPU_ENABLE_LOOP_UNROLLING\": \"RW\", \"GPU_DISABLE_WINOGRAD_CONVOLUTION\": \"RW\", \"CACHE_DIR\": \"RW\", \"CACHE_MODE\": \"RW\", \"PERFORMANCE_HINT\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"COMPILATION_NUM_THREADS\": \"RW\", \"NUM_STREAMS\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"INFERENCE_PRECISION_HINT\": \"RW\", \"ENABLE_CPU_PINNING\": \"RW\", \"ENABLE_CPU_RESERVATION\": \"RW\", \"DEVICE_ID\": \"RW\", \"DYNAMIC_QUANTIZATION_GROUP_SIZE\": \"RW\", \"ACTIVATIONS_SCALE_FACTOR\": \"RW\", \"WEIGHTS_PATH\": \"RW\", \"CACHE_ENCRYPTION_CALLBACKS\": \"WO\", \"KV_CACHE_PRECISION\": \"RW\", \"MODEL_PTR\": \"WO\", \"CONFIG_FILE\": \"RW\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 539, \"query_model\": {\"supported_op_count\": 539, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 848.5820000059903, \"compiled_execution_devices\": [\"GPU.0\"], \"infer\": {\"count\": 3, \"min_ms\": 4.310199990868568, \"mean_ms\": 4.4636666716542095, \"median_ms\": 4.4519000221043825, \"p95_ms\": 4.6289000019896775, \"max_ms\": 4.6289000019896775}, \"output_shapes\": {\"<ConstOutput: names[logits] shape[1,9415] type: f32>\": [1, 9415], \"<ConstOutput: names[self_k_slice] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[self_v_slice] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64]}, \"output_finite\": true, \"total_ms\": 1268.9976999827195}",
+      "child_stderr": ""
+    },
+    {
+      "evidence": "OBSERVED",
+      "error_type": "RuntimeError",
+      "error": "Exception from src\\inference\\src\\cpp\\core.cpp:121:\nException from src\\inference\\src\\dev\\plugin.cpp:54:\nException from src\\plugins\\intel_npu\\src\\plugin\\src\\plugin.cpp:642:\nException from src\\plugins\\intel_npu\\src\\compiler_adapter\\src\\compiler_impl.cpp:433:\nCompilation failed. vclAllocatedExecutableCreate2 result: 0x78000004 - [NPU_VCL] Unrecognized device ID! 0x0x0\n[NPU_VCL] Failed to parse and update config! DescOptions: --inputs_precisions=\"0:FP32 1:I64 2:I64 3:FP32 4:FP32 5:FP32 6:FP32\" --inputs_layouts=\"0:CHW 1:NC 2:NC 3:NCDHW 4:NCDHW 5:NCDHW 6:NCDHW\" --outputs_precisions=\"0:FP32 1:FP32 2:FP32\" --outputs_layouts=\"0:NC 1:NCDHW 2:NCDHW\" --config NPU_BATCH_MODE=\"COMPILER\" NPU_MODEL_SERIALIZER_VERSION=\"NO_WEIGHTS_COPY\"\n[NPU_VCL] Failed to prepare io info and config! DescOptions: --inputs_precisions=\"0:FP32 1:I64 2:I64 3:FP32 4:FP32 5:FP32 6:FP32\" --inputs_layouts=\"0:CHW 1:NC 2:NC 3:NCDHW 4:NCDHW 5:NCDHW 6:NCDHW\" --outputs_precisions=\"0:FP32 1:FP32 2:FP32\" --outputs_layouts=\"0:NC 1:NCDHW 2:NCDHW\" --config NPU_BATCH_MODE=\"COMPILER\" NPU_MODEL_SERIALIZER_VERSION=\"NO_WEIGHTS_COPY\"\n\n\n\n",
+      "returncode": 1,
+      "child_stdout": "{\"evidence\": \"OBSERVED\", \"error_type\": \"RuntimeError\", \"error\": \"Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:121:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:54:\\nException from src\\\\plugins\\\\intel_npu\\\\src\\\\plugin\\\\src\\\\plugin.cpp:642:\\nException from src\\\\plugins\\\\intel_npu\\\\src\\\\compiler_adapter\\\\src\\\\compiler_impl.cpp:433:\\nCompilation failed. vclAllocatedExecutableCreate2 result: 0x78000004 - [NPU_VCL] Unrecognized device ID! 0x0x0\\n[NPU_VCL] Failed to parse and update config! DescOptions: --inputs_precisions=\\\"0:FP32 1:I64 2:I64 3:FP32 4:FP32 5:FP32 6:FP32\\\" --inputs_layouts=\\\"0:CHW 1:NC 2:NC 3:NCDHW 4:NCDHW 5:NCDHW 6:NCDHW\\\" --outputs_precisions=\\\"0:FP32 1:FP32 2:FP32\\\" --outputs_layouts=\\\"0:NC 1:NCDHW 2:NCDHW\\\" --config NPU_BATCH_MODE=\\\"COMPILER\\\" NPU_MODEL_SERIALIZER_VERSION=\\\"NO_WEIGHTS_COPY\\\"\\n[NPU_VCL] Failed to prepare io info and config! DescOptions: --inputs_precisions=\\\"0:FP32 1:I64 2:I64 3:FP32 4:FP32 5:FP32 6:FP32\\\" --inputs_layouts=\\\"0:CHW 1:NC 2:NC 3:NCDHW 4:NCDHW 5:NCDHW 6:NCDHW\\\" --outputs_precisions=\\\"0:FP32 1:FP32 2:FP32\\\" --outputs_layouts=\\\"0:NC 1:NCDHW 2:NCDHW\\\" --config NPU_BATCH_MODE=\\\"COMPILER\\\" NPU_MODEL_SERIALIZER_VERSION=\\\"NO_WEIGHTS_COPY\\\"\\n\\n\\n\\n\"}",
+      "child_stderr": "",
+      "model": "decoder_step",
+      "device": "NPU"
+    },
+    {
+      "model": "decoder_step",
+      "device": "AUTO",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": "AUTO",
+        "DEVICE_ID": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nException from src\\inference\\src\\dev\\plugin.cpp:112:\nCheck 'internal_properties.find(name) != internal_properties.end()' failed at src\\plugins\\auto\\src\\plugin_config.cpp:68:\n[AUTO] not supported property DEVICE_ID\n\n\n"
+        },
+        "SUPPORTED_PROPERTIES": {
+          "DEVICE_BIND_BUFFER": "RW",
+          "ENABLE_RUNTIME_FALLBACK": "RW",
+          "ENABLE_STARTUP_FALLBACK": "RW",
+          "EXECUTION_MODE_HINT": "RW",
+          "FULL_DEVICE_NAME": "RO",
+          "LOG_LEVEL": "RW",
+          "MODEL_PRIORITY": "RW",
+          "MULTI_DEVICE_PRIORITIES": "RW",
+          "OPTIMIZATION_CAPABILITIES": "RO",
+          "PERFORMANCE_HINT": "RW",
+          "PERFORMANCE_HINT_NUM_REQUESTS": "RW",
+          "PERF_COUNT": "RW",
+          "SCHEDULE_POLICY": "RW",
+          "SUPPORTED_PROPERTIES": "RO"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 539,
+      "query_model_error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:257:\nException from src\\inference\\src\\dev\\plugin.cpp:70:\nException from src\\plugins\\auto\\src\\plugin.cpp:552:\nAUTO: cannot parse valid device from \n\n\n",
+      "compile_ms": 327.5232999876607,
+      "compiled_execution_devices": [
+        "(CPU)"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 4.244400013703853,
+        "mean_ms": 4.55393332716388,
+        "median_ms": 4.432099987752736,
+        "p95_ms": 4.985299980035052,
+        "max_ms": 4.985299980035052
+      },
+      "output_shapes": {
+        "<ConstOutput: names[logits] shape[1,9415] type: f32>": [
+          1,
+          9415
+        ],
+        "<ConstOutput: names[self_k_slice] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[self_v_slice] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 571.4932999981102,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"decoder_step\", \"device\": \"AUTO\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": \"AUTO\", \"DEVICE_ID\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:112:\\nCheck 'internal_properties.find(name) != internal_properties.end()' failed at src\\\\plugins\\\\auto\\\\src\\\\plugin_config.cpp:68:\\n[AUTO] not supported property DEVICE_ID\\n\\n\\n\"}, \"SUPPORTED_PROPERTIES\": {\"DEVICE_BIND_BUFFER\": \"RW\", \"ENABLE_RUNTIME_FALLBACK\": \"RW\", \"ENABLE_STARTUP_FALLBACK\": \"RW\", \"EXECUTION_MODE_HINT\": \"RW\", \"FULL_DEVICE_NAME\": \"RO\", \"LOG_LEVEL\": \"RW\", \"MODEL_PRIORITY\": \"RW\", \"MULTI_DEVICE_PRIORITIES\": \"RW\", \"OPTIMIZATION_CAPABILITIES\": \"RO\", \"PERFORMANCE_HINT\": \"RW\", \"PERFORMANCE_HINT_NUM_REQUESTS\": \"RW\", \"PERF_COUNT\": \"RW\", \"SCHEDULE_POLICY\": \"RW\", \"SUPPORTED_PROPERTIES\": \"RO\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 539, \"query_model_error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:257:\\nException from src\\\\inference\\\\src\\\\dev\\\\plugin.cpp:70:\\nException from src\\\\plugins\\\\auto\\\\src\\\\plugin.cpp:552:\\nAUTO: cannot parse valid device from \\n\\n\\n\", \"compile_ms\": 327.5232999876607, \"compiled_execution_devices\": [\"(CPU)\"], \"infer\": {\"count\": 3, \"min_ms\": 4.244400013703853, \"mean_ms\": 4.55393332716388, \"median_ms\": 4.432099987752736, \"p95_ms\": 4.985299980035052, \"max_ms\": 4.985299980035052}, \"output_shapes\": {\"<ConstOutput: names[logits] shape[1,9415] type: f32>\": [1, 9415], \"<ConstOutput: names[self_k_slice] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[self_v_slice] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64]}, \"output_finite\": true, \"total_ms\": 571.4932999981102}",
+      "child_stderr": ""
+    },
+    {
+      "model": "decoder_step",
+      "device": "HETERO:GPU,CPU",
+      "available_devices": [
+        "CPU",
+        "GPU"
+      ],
+      "device_properties": {
+        "FULL_DEVICE_NAME": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        },
+        "DEVICE_ID": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        },
+        "SUPPORTED_PROPERTIES": {
+          "error": "RuntimeError: Exception from src\\inference\\src\\cpp\\core.cpp:269:\nCheck 'device_name.find(\"HETERO:\") != 0' failed at src\\inference\\src\\dev\\core_impl.cpp:1305:\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\n\n"
+        }
+      },
+      "evidence": "OBSERVED",
+      "op_count": 539,
+      "query_model": {
+        "supported_op_count": 540,
+        "unsupported_op_count": 0,
+        "unsupported_ops": []
+      },
+      "compile_ms": 1180.5143000092357,
+      "compiled_execution_devices": [
+        "GPU.0"
+      ],
+      "infer": {
+        "count": 3,
+        "min_ms": 6.903300003614277,
+        "mean_ms": 8.488400004959354,
+        "median_ms": 8.77250000485219,
+        "p95_ms": 9.789400006411597,
+        "max_ms": 9.789400006411597
+      },
+      "output_shapes": {
+        "<ConstOutput: names[encoder_hidden_states] shape[1,196,256] type: f32>": [
+          1,
+          196,
+          256
+        ],
+        "<ConstOutput: names[logits] shape[1,9415] type: f32>": [
+          1,
+          9415
+        ],
+        "<ConstOutput: names[self_k_slice] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ],
+        "<ConstOutput: names[self_v_slice] shape[4,1,4,1,64] type: f32>": [
+          4,
+          1,
+          4,
+          1,
+          64
+        ]
+      },
+      "output_finite": true,
+      "total_ms": 1767.8706999868155,
+      "returncode": 0,
+      "child_stdout": "{\"model\": \"decoder_step\", \"device\": \"HETERO:GPU,CPU\", \"available_devices\": [\"CPU\", \"GPU\"], \"device_properties\": {\"FULL_DEVICE_NAME\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}, \"DEVICE_ID\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}, \"SUPPORTED_PROPERTIES\": {\"error\": \"RuntimeError: Exception from src\\\\inference\\\\src\\\\cpp\\\\core.cpp:269:\\nCheck 'device_name.find(\\\"HETERO:\\\") != 0' failed at src\\\\inference\\\\src\\\\dev\\\\core_impl.cpp:1305:\\nYou can only get_property of the HETERO itself (without devices). get_property is also possible for the individual devices before creating the HETERO on top.\\n\\n\"}}, \"evidence\": \"OBSERVED\", \"op_count\": 539, \"query_model\": {\"supported_op_count\": 540, \"unsupported_op_count\": 0, \"unsupported_ops\": []}, \"compile_ms\": 1180.5143000092357, \"compiled_execution_devices\": [\"GPU.0\"], \"infer\": {\"count\": 3, \"min_ms\": 6.903300003614277, \"mean_ms\": 8.488400004959354, \"median_ms\": 8.77250000485219, \"p95_ms\": 9.789400006411597, \"max_ms\": 9.789400006411597}, \"output_shapes\": {\"<ConstOutput: names[encoder_hidden_states] shape[1,196,256] type: f32>\": [1, 196, 256], \"<ConstOutput: names[logits] shape[1,9415] type: f32>\": [1, 9415], \"<ConstOutput: names[self_k_slice] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64], \"<ConstOutput: names[self_v_slice] shape[4,1,4,1,64] type: f32>\": [4, 1, 4, 1, 64]}, \"output_finite\": true, \"total_ms\": 1767.8706999868155}",
+      "child_stderr": ""
+    }
+  ],
+  "dispatch": [
+    {
+      "device": "CPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 1,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 2.66840000404045,
+        "mean_ms": 2.9944666700127223,
+        "median_ms": 2.7661000203806907,
+        "p95_ms": 3.5488999856170267,
+        "max_ms": 3.5488999856170267,
+        "steps": 1,
+        "per_step_mean_ms": 2.9944666700127223
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"CPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 1, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 2.66840000404045, \"mean_ms\": 2.9944666700127223, \"median_ms\": 2.7661000203806907, \"p95_ms\": 3.5488999856170267, \"max_ms\": 3.5488999856170267, \"steps\": 1, \"per_step_mean_ms\": 2.9944666700127223}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "CPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 4,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 11.909499997273088,
+        "mean_ms": 13.94826666607211,
+        "median_ms": 13.388399995164946,
+        "p95_ms": 16.546900005778298,
+        "max_ms": 16.546900005778298,
+        "steps": 4,
+        "per_step_mean_ms": 3.4870666665180274
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"CPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 4, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 11.909499997273088, \"mean_ms\": 13.94826666607211, \"median_ms\": 13.388399995164946, \"p95_ms\": 16.546900005778298, \"max_ms\": 16.546900005778298, \"steps\": 4, \"per_step_mean_ms\": 3.4870666665180274}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "CPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 16,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 49.04240000178106,
+        "mean_ms": 54.224699997575954,
+        "median_ms": 51.985700003569946,
+        "p95_ms": 61.645999987376854,
+        "max_ms": 61.645999987376854,
+        "steps": 16,
+        "per_step_mean_ms": 3.389043749848497
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"CPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 16, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 49.04240000178106, \"mean_ms\": 54.224699997575954, \"median_ms\": 51.985700003569946, \"p95_ms\": 61.645999987376854, \"max_ms\": 61.645999987376854, \"steps\": 16, \"per_step_mean_ms\": 3.389043749848497}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "GPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 1,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 4.96930000372231,
+        "mean_ms": 5.314966663718224,
+        "median_ms": 5.342399992514402,
+        "p95_ms": 5.633199994917959,
+        "max_ms": 5.633199994917959,
+        "steps": 1,
+        "per_step_mean_ms": 5.314966663718224
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"GPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 1, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 4.96930000372231, \"mean_ms\": 5.314966663718224, \"median_ms\": 5.342399992514402, \"p95_ms\": 5.633199994917959, \"max_ms\": 5.633199994917959, \"steps\": 1, \"per_step_mean_ms\": 5.314966663718224}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "GPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 4,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 21.608899987768382,
+        "mean_ms": 23.284166663264234,
+        "median_ms": 21.836300002178177,
+        "p95_ms": 26.407299999846146,
+        "max_ms": 26.407299999846146,
+        "steps": 4,
+        "per_step_mean_ms": 5.821041665816058
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"GPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 4, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 21.608899987768382, \"mean_ms\": 23.284166663264234, \"median_ms\": 21.836300002178177, \"p95_ms\": 26.407299999846146, \"max_ms\": 26.407299999846146, \"steps\": 4, \"per_step_mean_ms\": 5.821041665816058}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "GPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 16,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 1012.2848000028171,
+        "mean_ms": 1264.4976666682244,
+        "median_ms": 1129.7992000181694,
+        "p95_ms": 1651.408999983687,
+        "max_ms": 1651.408999983687,
+        "steps": 16,
+        "per_step_mean_ms": 79.03110416676402
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"GPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 16, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 1012.2848000028171, \"mean_ms\": 1264.4976666682244, \"median_ms\": 1129.7992000181694, \"p95_ms\": 1651.408999983687, \"max_ms\": 1651.408999983687, \"steps\": 16, \"per_step_mean_ms\": 79.03110416676402}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "AUTO",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 1,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 4.226799996104091,
+        "mean_ms": 14.764799998374656,
+        "median_ms": 4.670099995564669,
+        "p95_ms": 35.39750000345521,
+        "max_ms": 35.39750000345521,
+        "steps": 1,
+        "per_step_mean_ms": 14.764799998374656
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"AUTO\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 1, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 4.226799996104091, \"mean_ms\": 14.764799998374656, \"median_ms\": 4.670099995564669, \"p95_ms\": 35.39750000345521, \"max_ms\": 35.39750000345521, \"steps\": 1, \"per_step_mean_ms\": 14.764799998374656}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "AUTO",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 4,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 22.16769999358803,
+        "mean_ms": 25.42646666794705,
+        "median_ms": 23.89219999895431,
+        "p95_ms": 30.219500011298805,
+        "max_ms": 30.219500011298805,
+        "steps": 4,
+        "per_step_mean_ms": 6.3566166669867625
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"AUTO\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 4, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 22.16769999358803, \"mean_ms\": 25.42646666794705, \"median_ms\": 23.89219999895431, \"p95_ms\": 30.219500011298805, \"max_ms\": 30.219500011298805, \"steps\": 4, \"per_step_mean_ms\": 6.3566166669867625}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "AUTO",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 16,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 71.12330000381917,
+        "mean_ms": 73.44369999676321,
+        "median_ms": 72.5621999881696,
+        "p95_ms": 76.6455999983009,
+        "max_ms": 76.6455999983009,
+        "steps": 16,
+        "per_step_mean_ms": 4.590231249797701
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"AUTO\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 16, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 71.12330000381917, \"mean_ms\": 73.44369999676321, \"median_ms\": 72.5621999881696, \"p95_ms\": 76.6455999983009, \"max_ms\": 76.6455999983009, \"steps\": 16, \"per_step_mean_ms\": 4.590231249797701}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "HETERO:GPU,CPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 1,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 5.390300008002669,
+        "mean_ms": 6.171533333448072,
+        "median_ms": 5.40629998431541,
+        "p95_ms": 7.718000008026138,
+        "max_ms": 7.718000008026138,
+        "steps": 1,
+        "per_step_mean_ms": 6.171533333448072
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"HETERO:GPU,CPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 1, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 5.390300008002669, \"mean_ms\": 6.171533333448072, \"median_ms\": 5.40629998431541, \"p95_ms\": 7.718000008026138, \"max_ms\": 7.718000008026138, \"steps\": 1, \"per_step_mean_ms\": 6.171533333448072}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "HETERO:GPU,CPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 4,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 22.032100008800626,
+        "mean_ms": 23.02056667394936,
+        "median_ms": 22.29400002397597,
+        "p95_ms": 24.73559998907149,
+        "max_ms": 24.73559998907149,
+        "steps": 4,
+        "per_step_mean_ms": 5.75514166848734
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"HETERO:GPU,CPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 4, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 22.032100008800626, \"mean_ms\": 23.02056667394936, \"median_ms\": 22.29400002397597, \"p95_ms\": 24.73559998907149, \"max_ms\": 24.73559998907149, \"steps\": 4, \"per_step_mean_ms\": 5.75514166848734}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "device": "HETERO:GPU,CPU",
+      "model": "decoder_step",
+      "kind": "dispatch_loop",
+      "steps": 16,
+      "iterations": 3,
+      "loop": {
+        "count": 3,
+        "min_ms": 82.57319999393076,
+        "mean_ms": 84.9656666687224,
+        "median_ms": 85.797800013097,
+        "p95_ms": 86.52599999913946,
+        "max_ms": 86.52599999913946,
+        "steps": 16,
+        "per_step_mean_ms": 5.31035416679515
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"device\": \"HETERO:GPU,CPU\", \"model\": \"decoder_step\", \"kind\": \"dispatch_loop\", \"steps\": 16, \"iterations\": 3, \"loop\": {\"count\": 3, \"min_ms\": 82.57319999393076, \"mean_ms\": 84.9656666687224, \"median_ms\": 85.797800013097, \"p95_ms\": 86.52599999913946, \"max_ms\": 86.52599999913946, \"steps\": 16, \"per_step_mean_ms\": 5.31035416679515}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    }
+  ],
+  "hybrids": [
+    {
+      "encoder_device": "CPU",
+      "decoder_device": "CPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 92.29070000583306,
+        "mean_ms": 104.00133334527102,
+        "median_ms": 99.49210000922903,
+        "p95_ms": 120.22120002075098,
+        "max_ms": 120.22120002075098,
+        "steps": 8,
+        "per_step_pipeline_ms": 13.000166668158878
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"CPU\", \"decoder_device\": \"CPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 92.29070000583306, \"mean_ms\": 104.00133334527102, \"median_ms\": 99.49210000922903, \"p95_ms\": 120.22120002075098, \"max_ms\": 120.22120002075098, \"steps\": 8, \"per_step_pipeline_ms\": 13.000166668158878}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "CPU",
+      "decoder_device": "GPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 951.0360000131186,
+        "mean_ms": 1012.4974666590182,
+        "median_ms": 981.7935999890324,
+        "p95_ms": 1104.6627999749035,
+        "max_ms": 1104.6627999749035,
+        "steps": 8,
+        "per_step_pipeline_ms": 126.56218333237727
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"CPU\", \"decoder_device\": \"GPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 951.0360000131186, \"mean_ms\": 1012.4974666590182, \"median_ms\": 981.7935999890324, \"p95_ms\": 1104.6627999749035, \"max_ms\": 1104.6627999749035, \"steps\": 8, \"per_step_pipeline_ms\": 126.56218333237727}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "CPU",
+      "decoder_device": "AUTO",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 101.32580000208691,
+        "mean_ms": 106.49496666155756,
+        "median_ms": 104.4664999935776,
+        "p95_ms": 113.69259998900816,
+        "max_ms": 113.69259998900816,
+        "steps": 8,
+        "per_step_pipeline_ms": 13.311870832694694
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"CPU\", \"decoder_device\": \"AUTO\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 101.32580000208691, \"mean_ms\": 106.49496666155756, \"median_ms\": 104.4664999935776, \"p95_ms\": 113.69259998900816, \"max_ms\": 113.69259998900816, \"steps\": 8, \"per_step_pipeline_ms\": 13.311870832694694}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "CPU",
+      "decoder_device": "HETERO:GPU,CPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 148.02409999538213,
+        "mean_ms": 150.4718666546978,
+        "median_ms": 148.1762999901548,
+        "p95_ms": 155.21519997855648,
+        "max_ms": 155.21519997855648,
+        "steps": 8,
+        "per_step_pipeline_ms": 18.808983331837226
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"CPU\", \"decoder_device\": \"HETERO:GPU,CPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 148.02409999538213, \"mean_ms\": 150.4718666546978, \"median_ms\": 148.1762999901548, \"p95_ms\": 155.21519997855648, \"max_ms\": 155.21519997855648, \"steps\": 8, \"per_step_pipeline_ms\": 18.808983331837226}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "HETERO:GPU,CPU",
+      "decoder_device": "CPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 75.16980002401397,
+        "mean_ms": 76.72126667845684,
+        "median_ms": 76.9239000219386,
+        "p95_ms": 78.07009998941794,
+        "max_ms": 78.07009998941794,
+        "steps": 8,
+        "per_step_pipeline_ms": 9.590158334807105
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"HETERO:GPU,CPU\", \"decoder_device\": \"CPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 75.16980002401397, \"mean_ms\": 76.72126667845684, \"median_ms\": 76.9239000219386, \"p95_ms\": 78.07009998941794, \"max_ms\": 78.07009998941794, \"steps\": 8, \"per_step_pipeline_ms\": 9.590158334807105}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "HETERO:GPU,CPU",
+      "decoder_device": "GPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 100.57409998262301,
+        "mean_ms": 103.09859999688342,
+        "median_ms": 102.2182000160683,
+        "p95_ms": 106.50349999195896,
+        "max_ms": 106.50349999195896,
+        "steps": 8,
+        "per_step_pipeline_ms": 12.887324999610428
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"HETERO:GPU,CPU\", \"decoder_device\": \"GPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 100.57409998262301, \"mean_ms\": 103.09859999688342, \"median_ms\": 102.2182000160683, \"p95_ms\": 106.50349999195896, \"max_ms\": 106.50349999195896, \"steps\": 8, \"per_step_pipeline_ms\": 12.887324999610428}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "HETERO:GPU,CPU",
+      "decoder_device": "AUTO",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 97.98930000397377,
+        "mean_ms": 110.72323333549623,
+        "median_ms": 107.25299999467097,
+        "p95_ms": 126.92740000784397,
+        "max_ms": 126.92740000784397,
+        "steps": 8,
+        "per_step_pipeline_ms": 13.840404166937029
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"HETERO:GPU,CPU\", \"decoder_device\": \"AUTO\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 97.98930000397377, \"mean_ms\": 110.72323333549623, \"median_ms\": 107.25299999467097, \"p95_ms\": 126.92740000784397, \"max_ms\": 126.92740000784397, \"steps\": 8, \"per_step_pipeline_ms\": 13.840404166937029}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "HETERO:GPU,CPU",
+      "decoder_device": "HETERO:GPU,CPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 109.49479998089373,
+        "mean_ms": 114.93633332429454,
+        "median_ms": 111.44579999381676,
+        "p95_ms": 123.86839999817312,
+        "max_ms": 123.86839999817312,
+        "steps": 8,
+        "per_step_pipeline_ms": 14.367041665536817
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"HETERO:GPU,CPU\", \"decoder_device\": \"HETERO:GPU,CPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 109.49479998089373, \"mean_ms\": 114.93633332429454, \"median_ms\": 111.44579999381676, \"p95_ms\": 123.86839999817312, \"max_ms\": 123.86839999817312, \"steps\": 8, \"per_step_pipeline_ms\": 14.367041665536817}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "GPU",
+      "decoder_device": "CPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 44.87340000923723,
+        "mean_ms": 46.85536667238921,
+        "median_ms": 45.1562000089325,
+        "p95_ms": 50.5364999989979,
+        "max_ms": 50.5364999989979,
+        "steps": 8,
+        "per_step_pipeline_ms": 5.856920834048651
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"GPU\", \"decoder_device\": \"CPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 44.87340000923723, \"mean_ms\": 46.85536667238921, \"median_ms\": 45.1562000089325, \"p95_ms\": 50.5364999989979, \"max_ms\": 50.5364999989979, \"steps\": 8, \"per_step_pipeline_ms\": 5.856920834048651}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "GPU",
+      "decoder_device": "GPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 100.7361999945715,
+        "mean_ms": 106.87820000263552,
+        "median_ms": 106.75959999207407,
+        "p95_ms": 113.13880002126098,
+        "max_ms": 113.13880002126098,
+        "steps": 8,
+        "per_step_pipeline_ms": 13.35977500032944
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"GPU\", \"decoder_device\": \"GPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 100.7361999945715, \"mean_ms\": 106.87820000263552, \"median_ms\": 106.75959999207407, \"p95_ms\": 113.13880002126098, \"max_ms\": 113.13880002126098, \"steps\": 8, \"per_step_pipeline_ms\": 13.35977500032944}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "GPU",
+      "decoder_device": "AUTO",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 91.84690000256523,
+        "mean_ms": 114.96093333698809,
+        "median_ms": 116.52730000787415,
+        "p95_ms": 136.5086000005249,
+        "max_ms": 136.5086000005249,
+        "steps": 8,
+        "per_step_pipeline_ms": 14.370116667123511
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"GPU\", \"decoder_device\": \"AUTO\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 91.84690000256523, \"mean_ms\": 114.96093333698809, \"median_ms\": 116.52730000787415, \"p95_ms\": 136.5086000005249, \"max_ms\": 136.5086000005249, \"steps\": 8, \"per_step_pipeline_ms\": 14.370116667123511}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "GPU",
+      "decoder_device": "HETERO:GPU,CPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 140.91479999478906,
+        "mean_ms": 206.18843333795667,
+        "median_ms": 220.6863000174053,
+        "p95_ms": 256.96420000167564,
+        "max_ms": 256.96420000167564,
+        "steps": 8,
+        "per_step_pipeline_ms": 25.773554167244583
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"GPU\", \"decoder_device\": \"HETERO:GPU,CPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 140.91479999478906, \"mean_ms\": 206.18843333795667, \"median_ms\": 220.6863000174053, \"p95_ms\": 256.96420000167564, \"max_ms\": 256.96420000167564, \"steps\": 8, \"per_step_pipeline_ms\": 25.773554167244583}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "AUTO",
+      "decoder_device": "CPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 41.67410000809468,
+        "mean_ms": 46.764700004132465,
+        "median_ms": 46.16329999407753,
+        "p95_ms": 52.45670001022518,
+        "max_ms": 52.45670001022518,
+        "steps": 8,
+        "per_step_pipeline_ms": 5.845587500516558
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"AUTO\", \"decoder_device\": \"CPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 41.67410000809468, \"mean_ms\": 46.764700004132465, \"median_ms\": 46.16329999407753, \"p95_ms\": 52.45670001022518, \"max_ms\": 52.45670001022518, \"steps\": 8, \"per_step_pipeline_ms\": 5.845587500516558}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "AUTO",
+      "decoder_device": "GPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 126.32920002215542,
+        "mean_ms": 163.05563334026374,
+        "median_ms": 157.1109999786131,
+        "p95_ms": 205.7267000200227,
+        "max_ms": 205.7267000200227,
+        "steps": 8,
+        "per_step_pipeline_ms": 20.381954167532967
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"AUTO\", \"decoder_device\": \"GPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 126.32920002215542, \"mean_ms\": 163.05563334026374, \"median_ms\": 157.1109999786131, \"p95_ms\": 205.7267000200227, \"max_ms\": 205.7267000200227, \"steps\": 8, \"per_step_pipeline_ms\": 20.381954167532967}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "AUTO",
+      "decoder_device": "AUTO",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 196.97129999985918,
+        "mean_ms": 205.94646667207903,
+        "median_ms": 207.88960001664236,
+        "p95_ms": 212.9784999997355,
+        "max_ms": 212.9784999997355,
+        "steps": 8,
+        "per_step_pipeline_ms": 25.74330833400988
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"AUTO\", \"decoder_device\": \"AUTO\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 196.97129999985918, \"mean_ms\": 205.94646667207903, \"median_ms\": 207.88960001664236, \"p95_ms\": 212.9784999997355, \"max_ms\": 212.9784999997355, \"steps\": 8, \"per_step_pipeline_ms\": 25.74330833400988}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    },
+    {
+      "encoder_device": "AUTO",
+      "decoder_device": "HETERO:GPU,CPU",
+      "steps": 8,
+      "iterations": 3,
+      "pipeline": {
+        "count": 3,
+        "min_ms": 172.84129999461584,
+        "mean_ms": 180.19289999695806,
+        "median_ms": 174.04149999492802,
+        "p95_ms": 193.6959000013303,
+        "max_ms": 193.6959000013303,
+        "steps": 8,
+        "per_step_pipeline_ms": 22.524112499619758
+      },
+      "evidence": "OBSERVED",
+      "returncode": 0,
+      "child_stdout": "{\"encoder_device\": \"AUTO\", \"decoder_device\": \"HETERO:GPU,CPU\", \"steps\": 8, \"iterations\": 3, \"pipeline\": {\"count\": 3, \"min_ms\": 172.84129999461584, \"mean_ms\": 180.19289999695806, \"median_ms\": 174.04149999492802, \"p95_ms\": 193.6959000013303, \"max_ms\": 193.6959000013303, \"steps\": 8, \"per_step_pipeline_ms\": 22.524112499619758}, \"evidence\": \"OBSERVED\"}",
+      "child_stderr": ""
+    }
+  ],
+  "parameters": {
+    "warmup": 1,
+    "iterations": 3,
+    "hybrid_steps": 8,
+    "timeout_s": 30
+  }
+}

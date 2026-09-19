@@ -1,0 +1,149 @@
+{
+  "page": {
+    "page_id": "watashitachi-ketsukon-shimashita-fuguu-na-ouji-to-tensai-majutsushi-wa-inochi-no-unmei-kyoudoutai_ch5/05.jpg",
+    "image": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out\\watashitachi-ketsukon-shimashita-fuguu-na-ouji-to-tensai-majutsushi-wa-inochi-no-unmei-kyoudoutai_ch5\\05.jpg",
+    "category": "text_bubble",
+    "protocol": "manifest_ocr_box",
+    "truth_protocol": "manifest_ocr_box",
+    "width": 1008,
+    "height": 1433,
+    "truth_boxes": 2,
+    "ctd_raw_boxes": 4,
+    "ctd_dedup_boxes": 4,
+    "ppocr_boxes": 5,
+    "ctd_metrics": {
+      "tp": 2,
+      "fp": 2,
+      "fn": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "mean_iou_matched": 0.7458275729843652
+    },
+    "ppocr_metrics": {
+      "tp": 0,
+      "fp": 5,
+      "fn": 2,
+      "precision": 0.0,
+      "recall": 0.0,
+      "mean_iou_matched": null
+    },
+    "ctd_timing": {
+      "preprocess_ms": 124.26179999602027,
+      "inference_ms": 7109.069500002079,
+      "postprocess_ms": 0.5639999872073531,
+      "total_ms": 7233.895299985306
+    },
+    "ppocr_timing": {
+      "preprocess_ms": 430.9157999814488,
+      "inference_postprocess_ms": 3276.084000011906,
+      "total_ms": 3706.999799993355
+    },
+    "rss_before": 242294784,
+    "rss_after": 242294784
+  },
+  "ctd_boxes": [
+    {
+      "x1": 182.34950256347656,
+      "y1": 1009.6654663085938,
+      "x2": 383.01373291015625,
+      "y2": 1350.666015625,
+      "score": 0.9754579663276672,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 216.60499572753906,
+      "y1": 1061.4041748046875,
+      "x2": 349.9517517089844,
+      "y2": 1314.784423828125,
+      "score": 0.835587203502655,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 697.854736328125,
+      "y1": 86.83285522460938,
+      "x2": 746.1331176757812,
+      "y2": 185.34959411621094,
+      "score": 0.6265795826911926,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 707.3460083007812,
+      "y1": 101.0685043334961,
+      "x2": 736.7786254882812,
+      "y2": 173.4636688232422,
+      "score": 0.48610642552375793,
+      "label": "1",
+      "source": "ctd"
+    }
+  ],
+  "ppocr_boxes": [
+    {
+      "x1": 714.5529891304348,
+      "y1": 109.03260869565217,
+      "x2": 726.235054347826,
+      "y2": 124.6086956521739,
+      "score": 0.647942066192627,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 868.3668478260869,
+      "y1": 880.0489130434783,
+      "x2": 895.625,
+      "y2": 930.6711956521739,
+      "score": 0.8364154696464539,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 264.79347826086956,
+      "y1": 1098.1141304347825,
+      "x2": 293.9986413043478,
+      "y2": 1271.398097826087,
+      "score": 0.9289039969444275,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 303.7336956521739,
+      "y1": 1113.6902173913043,
+      "x2": 313.46875,
+      "y2": 1181.835597826087,
+      "score": 0.8383322954177856,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 601.6263586956521,
+      "y1": 1131.2133152173913,
+      "x2": 615.2554347826086,
+      "y2": 1162.3654891304348,
+      "score": 0.4937838613986969,
+      "label": "ppocr",
+      "source": "ppocr"
+    }
+  ],
+  "truth_boxes": [
+    {
+      "x1": 696.0,
+      "y1": 89.0,
+      "x2": 749.0,
+      "y2": 185.0,
+      "score": 0.494,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 209.0,
+      "y1": 1053.0,
+      "x2": 361.0,
+      "y2": 1324.0,
+      "score": 0.725,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    }
+  ]
+}

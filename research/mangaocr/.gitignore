@@ -1,0 +1,4 @@
+# Local model repositories and caches are reproducible downloads, not source artifacts.
+/models/
+/cache/
+

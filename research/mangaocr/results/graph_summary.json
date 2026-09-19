@@ -1,0 +1,477 @@
+{
+  "tool": "research/inspect_onnx.py",
+  "tool_version": 1,
+  "model_dir": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile",
+  "total_onnx_file_bytes": 64721852,
+  "graphs": {
+    "encoder.onnx": {
+      "file_bytes": 17070003,
+      "sha256": "d1fb455a07c1508cc56a4f4e15e2ed74aca9a4d78fd220ecc0ff39625d67e1b3",
+      "opsets": [
+        {
+          "domain": "ai.onnx",
+          "version": 17
+        },
+        {
+          "domain": "ai.onnx.ml",
+          "version": 2
+        }
+      ],
+      "node_count": 474,
+      "initializer_count": 350,
+      "parameter_element_count": 4111596,
+      "parameter_embedded_bytes": 16446608,
+      "initializer_dtype_counts": {
+        "FLOAT": 337,
+        "INT64": 13
+      },
+      "initializer_dtype_bytes": {
+        "FLOAT": 16446160,
+        "INT64": 448
+      },
+      "decoder_layer_count_inferred": null,
+      "inputs": [
+        {
+          "name": "serving_default_args_0:0",
+          "shape": [
+            1,
+            3,
+            224,
+            224
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "StatefulPartitionedCall:0",
+          "shape": [
+            1,
+            196,
+            256
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        }
+      ],
+      "dynamic_boundary_axes": [],
+      "op_counts": {
+        "Add": 98,
+        "Conv": 98,
+        "Mul": 97,
+        "Transpose": 59,
+        "Reshape": 28,
+        "Div": 21,
+        "Erf": 21,
+        "Sub": 20,
+        "ReduceSum": 8,
+        "Relu": 8,
+        "Sigmoid": 8,
+        "Pad": 4,
+        "ReduceMean": 2,
+        "Reciprocal": 1,
+        "Sqrt": 1
+      },
+      "kv_attention_evidence": {
+        "boundary_names": [
+          "serving_default_args_0:0",
+          "StatefulPartitionedCall:0"
+        ],
+        "cache_like_boundary_names": [],
+        "key_value_boundary_names": [],
+        "attention_operator_counts": {},
+        "cache_boundary_detected": false,
+        "attention_operator_detected": false
+      }
+    },
+    "decoder_init.onnx": {
+      "file_bytes": 24875052,
+      "sha256": "612f97e22848620fb36fcac611467689cb4213d91f2d84f6a19042ad57d475f1",
+      "opsets": [
+        {
+          "domain": "ai.onnx",
+          "version": 17
+        }
+      ],
+      "node_count": 253,
+      "initializer_count": 125,
+      "parameter_element_count": 6207970,
+      "parameter_embedded_bytes": 24831972,
+      "initializer_dtype_counts": {
+        "FLOAT": 118,
+        "INT64": 7
+      },
+      "initializer_dtype_bytes": {
+        "FLOAT": 24831788,
+        "INT64": 184
+      },
+      "decoder_layer_count_inferred": 4,
+      "inputs": [
+        {
+          "name": "encoder_hidden_states",
+          "shape": [
+            1,
+            196,
+            256
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "input_ids",
+          "shape": [
+            1,
+            1
+          ],
+          "onnx_type": "INT64",
+          "onnx_type_id": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "logits",
+          "shape": [
+            1,
+            9415
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "self_k",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "self_v",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "cross_k",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "cross_v",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        }
+      ],
+      "dynamic_boundary_axes": [],
+      "op_counts": {
+        "Add": 61,
+        "MatMul": 58,
+        "Transpose": 41,
+        "Reshape": 36,
+        "LayerNormalization": 14,
+        "Div": 13,
+        "Mul": 10,
+        "Softmax": 8,
+        "Erf": 5,
+        "Concat": 4,
+        "Gather": 3
+      },
+      "kv_attention_evidence": {
+        "boundary_names": [
+          "encoder_hidden_states",
+          "input_ids",
+          "logits",
+          "self_k",
+          "self_v",
+          "cross_k",
+          "cross_v"
+        ],
+        "cache_like_boundary_names": [
+          "self_k",
+          "self_v",
+          "cross_k",
+          "cross_v"
+        ],
+        "key_value_boundary_names": [
+          "self_k",
+          "self_v",
+          "cross_k",
+          "cross_v"
+        ],
+        "attention_operator_counts": {},
+        "cache_boundary_detected": true,
+        "attention_operator_detected": false
+      }
+    },
+    "decoder_step.onnx": {
+      "file_bytes": 22776797,
+      "sha256": "a244b814a3a669190f9eae737960997633597cfa055fa186347e872bee834bc9",
+      "opsets": [
+        {
+          "domain": "ai.onnx",
+          "version": 17
+        }
+      ],
+      "node_count": 276,
+      "initializer_count": 114,
+      "parameter_element_count": 5683161,
+      "parameter_embedded_bytes": 22733724,
+      "initializer_dtype_counts": {
+        "FLOAT": 104,
+        "INT64": 10
+      },
+      "initializer_dtype_bytes": {
+        "FLOAT": 22731564,
+        "INT64": 2160
+      },
+      "decoder_layer_count_inferred": 4,
+      "inputs": [
+        {
+          "name": "encoder_hidden_states",
+          "shape": [
+            1,
+            196,
+            256
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "input_ids",
+          "shape": [
+            1,
+            1
+          ],
+          "onnx_type": "INT64",
+          "onnx_type_id": 7
+        },
+        {
+          "name": "position_ids",
+          "shape": [
+            1,
+            1
+          ],
+          "onnx_type": "INT64",
+          "onnx_type_id": 7
+        },
+        {
+          "name": "self_k_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            256,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "self_v_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            256,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "cross_k_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "cross_v_cache",
+          "shape": [
+            4,
+            1,
+            4,
+            196,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "logits",
+          "shape": [
+            1,
+            9415
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "self_k_slice",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        },
+        {
+          "name": "self_v_slice",
+          "shape": [
+            4,
+            1,
+            4,
+            1,
+            64
+          ],
+          "onnx_type": "FLOAT",
+          "onnx_type_id": 1
+        }
+      ],
+      "dynamic_boundary_axes": [],
+      "op_counts": {
+        "Add": 61,
+        "MatMul": 50,
+        "Transpose": 33,
+        "Mul": 26,
+        "Reshape": 24,
+        "Gather": 21,
+        "LayerNormalization": 14,
+        "Div": 13,
+        "Softmax": 8,
+        "Unsqueeze": 8,
+        "Erf": 5,
+        "Where": 4,
+        "Cast": 2,
+        "Concat": 2,
+        "Sub": 2,
+        "Clip": 1,
+        "Equal": 1,
+        "LessOrEqual": 1
+      },
+      "kv_attention_evidence": {
+        "boundary_names": [
+          "encoder_hidden_states",
+          "input_ids",
+          "position_ids",
+          "self_k_cache",
+          "self_v_cache",
+          "cross_k_cache",
+          "cross_v_cache",
+          "logits",
+          "self_k_slice",
+          "self_v_slice"
+        ],
+        "cache_like_boundary_names": [
+          "self_k_cache",
+          "self_v_cache",
+          "cross_k_cache",
+          "cross_v_cache",
+          "self_k_slice",
+          "self_v_slice"
+        ],
+        "key_value_boundary_names": [
+          "self_k_cache",
+          "self_v_cache",
+          "cross_k_cache",
+          "cross_v_cache",
+          "self_k_slice",
+          "self_v_slice"
+        ],
+        "attention_operator_counts": {},
+        "cache_boundary_detected": true,
+        "attention_operator_detected": false
+      }
+    }
+  },
+  "vocab": {
+    "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\vocab.txt",
+    "file_bytes": 37193,
+    "sha256": "879d9a69df070dbdf143f64bb3daf73d367741980f18a2f6d08a12e68a598a11",
+    "line_count": 9415,
+    "empty_token_count": 0,
+    "special_token_indices": {
+      "[PAD]": 0,
+      "[UNK]": 1,
+      "[CLS]": 2,
+      "[SEP]": 3,
+      "[MASK]": 4
+    },
+    "first_tokens": [
+      "[PAD]",
+      "[UNK]",
+      "[CLS]",
+      "[SEP]",
+      "[MASK]",
+      "<unused0>",
+      "<unused1>",
+      "<unused2>",
+      "<unused3>",
+      "<unused4>",
+      "<unused5>",
+      "<unused6>",
+      "<unused7>",
+      "<unused8>",
+      "<unused9>",
+      "!"
+    ],
+    "last_tokens": [
+      "𧘕",
+      "𧜎",
+      "𧦅",
+      "𧮾",
+      "𧲸",
+      "𨋳",
+      "𨏍",
+      "𨗉",
+      "𨫤",
+      "𨸶",
+      "𨿸",
+      "𩛰",
+      "𩜙",
+      "𩺊",
+      "𩻩",
+      "𪘂"
+    ],
+    "max_token_codepoints": 9,
+    "max_token_utf8_bytes": 9,
+    "unique_token_count": 9415
+  },
+  "config_files_present": [],
+  "errors": []
+}

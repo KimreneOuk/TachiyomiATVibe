@@ -1,0 +1,94 @@
+{
+  "page": {
+    "page_id": "tonari-no-seki-no-seijo-sama-wa-ore-ni-kossori-sukaato-no-naka-o-oshiete-kureru_ch1/16.jpg",
+    "image": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out\\tonari-no-seki-no-seijo-sama-wa-ore-ni-kossori-sukaato-no-naka-o-oshiete-kureru_ch1\\16.jpg",
+    "category": "unlabeled",
+    "protocol": "manifest_ocr_box",
+    "truth_protocol": "manifest_ocr_box",
+    "width": 1284,
+    "height": 1843,
+    "truth_boxes": 0,
+    "ctd_raw_boxes": 2,
+    "ctd_dedup_boxes": 2,
+    "ppocr_boxes": 3,
+    "ctd_metrics": {
+      "tp": 0,
+      "fp": 2,
+      "fn": 0,
+      "precision": 0.0,
+      "recall": null,
+      "mean_iou_matched": null
+    },
+    "ppocr_metrics": {
+      "tp": 0,
+      "fp": 3,
+      "fn": 0,
+      "precision": 0.0,
+      "recall": null,
+      "mean_iou_matched": null
+    },
+    "ctd_timing": {
+      "preprocess_ms": 149.64630000758916,
+      "inference_ms": 9185.458199994173,
+      "postprocess_ms": 0.21410000044852495,
+      "total_ms": 9335.31860000221
+    },
+    "ppocr_timing": {
+      "preprocess_ms": 228.3842999895569,
+      "inference_postprocess_ms": 2729.966200015042,
+      "total_ms": 2958.350500004599
+    },
+    "rss_before": 264159232,
+    "rss_after": 244736000
+  },
+  "ctd_boxes": [
+    {
+      "x1": 955.5232543945312,
+      "y1": 61.12657165527344,
+      "x2": 1174.218505859375,
+      "y2": 584.9061279296875,
+      "score": 0.9695872664451599,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 1001.2886962890625,
+      "y1": 124.24898529052734,
+      "x2": 1138.92138671875,
+      "y2": 536.5665283203125,
+      "score": 0.8533827066421509,
+      "label": "1",
+      "source": "ctd"
+    }
+  ],
+  "ppocr_boxes": [
+    {
+      "x1": 1051.7119565217392,
+      "y1": 157.75679347826087,
+      "x2": 1084.264945652174,
+      "y2": 495.8070652173913,
+      "score": 0.9235032200813293,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 1096.7853260869565,
+      "y1": 160.2608695652174,
+      "x2": 1116.8179347826087,
+      "y2": 297.9850543478261,
+      "score": 0.8092849254608154,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 175.28532608695653,
+      "y1": 220.35869565217394,
+      "x2": 275.4483695652174,
+      "y2": 395.64402173913044,
+      "score": 0.9280175566673279,
+      "label": "ppocr",
+      "source": "ppocr"
+    }
+  ],
+  "truth_boxes": []
+}

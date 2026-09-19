@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-09-18",
+  "parameters": {
+    "warmup": 2,
+    "iterations": 10,
+    "decoder_steps": 8,
+    "dispatch_steps": 16
+  },
+  "hybrids": [
+    {
+      "encoder_device": "CPU",
+      "decoder_device": "CPU",
+      "steps": 8,
+      "iterations": 10,
+      "pipeline": {
+        "count": 10,
+        "min_ms": 85.84230000269599,
+        "mean_ms": 151.22398999228608,
+        "median_ms": 120.6730999838328,
+        "p95_ms": 306.2971000035759,
+        "max_ms": 306.2971000035759,
+        "per_step_pipeline_ms": 18.90299874903576
+      },
+      "evidence": "OBSERVED"
+    },
+    {
+      "encoder_device": "GPU",
+      "decoder_device": "CPU",
+      "steps": 8,
+      "iterations": 10,
+      "pipeline": {
+        "count": 10,
+        "min_ms": 44.27459998987615,
+        "mean_ms": 49.89574999490287,
+        "median_ms": 48.7227499979781,
+        "p95_ms": 61.2834999919869,
+        "max_ms": 61.2834999919869,
+        "per_step_pipeline_ms": 6.236968749362859
+      },
+      "evidence": "OBSERVED"
+    },
+    {
+      "encoder_device": "CPU",
+      "decoder_device": "GPU",
+      "steps": 8,
+      "iterations": 10,
+      "pipeline": {
+        "count": 10,
+        "min_ms": 64.13929999689572,
+        "mean_ms": 68.65263999789022,
+        "median_ms": 67.52219999907538,
+        "p95_ms": 78.20580000407062,
+        "max_ms": 78.20580000407062,
+        "per_step_pipeline_ms": 8.581579999736277
+      },
+      "evidence": "OBSERVED"
+    }
+  ],
+  "dispatch": [
+    {
+      "device": "CPU",
+      "steps": 16,
+      "iterations": 10,
+      "mean_ms": 50.227480006287806,
+      "median_ms": 49.042500017094426,
+      "p95_ms": 62.06470000324771,
+      "per_step_mean_ms": 3.139217500392988,
+      "evidence": "OBSERVED"
+    },
+    {
+      "device": "GPU",
+      "steps": 16,
+      "iterations": 10,
+      "mean_ms": 70.41686000302434,
+      "median_ms": 69.83525000396185,
+      "p95_ms": 74.00600000983104,
+      "per_step_mean_ms": 4.401053750189021,
+      "evidence": "OBSERVED"
+    }
+  ]
+}

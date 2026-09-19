@@ -1,0 +1,633 @@
+{
+  "schema_version": 1,
+  "inventory_kind": "ppocrv6-bootstrap",
+  "worktree": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization",
+  "branch": "research/ppocrv6-optimization",
+  "sources": {
+    "supplied_chapter": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16",
+    "downloads_root": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out",
+    "requested_downloads_root": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev_gui_probe\\dl_out"
+  },
+  "chapters": [
+    {
+      "source_id": "supplied",
+      "chapter": "ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16",
+      "source_path": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16",
+      "page_count": 32,
+      "page_files": [
+        {
+          "name": "01.jpg",
+          "relative_path": "01.jpg",
+          "bytes": 231433,
+          "sha256": "2fda0b4135afae324272928d4a9eb7633d3f42d77f30f26ef04a7faff1769a45"
+        },
+        {
+          "name": "02.jpg",
+          "relative_path": "02.jpg",
+          "bytes": 249693,
+          "sha256": "f5976d07942be40ccc456d666c3b70fcd64b4ef009d1eb39ec96f85abbc2694e"
+        },
+        {
+          "name": "03.jpg",
+          "relative_path": "03.jpg",
+          "bytes": 255180,
+          "sha256": "f5ec5b6944fa5ed5225061475fe73a74c6270dc0aa4b9b3e242139321faf2753"
+        },
+        {
+          "name": "04.jpg",
+          "relative_path": "04.jpg",
+          "bytes": 350473,
+          "sha256": "638e6e5b2f81fb9dcccbbcf3272498d3f6cb07f137575c3825c21693a5daf58e"
+        },
+        {
+          "name": "05.jpg",
+          "relative_path": "05.jpg",
+          "bytes": 244943,
+          "sha256": "5d4d5d410c1ad1f73ff39137e86e54ddc65826f5ff7d876a15d988abb9b6aec0"
+        },
+        {
+          "name": "06.jpg",
+          "relative_path": "06.jpg",
+          "bytes": 390927,
+          "sha256": "c242b4408bf7005aeaeabea0c6006240938a7e0efe647daf8a6f680469bfe3ff"
+        },
+        {
+          "name": "07.jpg",
+          "relative_path": "07.jpg",
+          "bytes": 293885,
+          "sha256": "d137231501bb7bff46ad019727d801f3156e1d6047b3058442952b93a9b21582"
+        },
+        {
+          "name": "08.jpg",
+          "relative_path": "08.jpg",
+          "bytes": 281847,
+          "sha256": "f19760a2f6e1fb26afc1375d938f73bef3bd034d7b5806dc0e6ab70eb2d14b5d"
+        },
+        {
+          "name": "09.jpg",
+          "relative_path": "09.jpg",
+          "bytes": 286322,
+          "sha256": "9cebac1a142dbbfef959421b95b960a6db69e304022df2a1f91cc27a3fbde686"
+        },
+        {
+          "name": "10.jpg",
+          "relative_path": "10.jpg",
+          "bytes": 290206,
+          "sha256": "74722cf500a5fecc281c621a6fa6f0dee305c239e7393252b5e564ba768fc717"
+        },
+        {
+          "name": "11.jpg",
+          "relative_path": "11.jpg",
+          "bytes": 258653,
+          "sha256": "e3198e97347470ba6d6540d68297ef1f38c9e0b9654d99baf589fc19d8d141b2"
+        },
+        {
+          "name": "12.jpg",
+          "relative_path": "12.jpg",
+          "bytes": 300002,
+          "sha256": "f567755dfce5a06e6126a4d68577ff500221aa2852d16c7cdf1333a113b48fc6"
+        },
+        {
+          "name": "13.jpg",
+          "relative_path": "13.jpg",
+          "bytes": 281115,
+          "sha256": "0b1e5fe0578458c271556dff81394925df1c0cf53b85ced9d895e5c3ec1da0d0"
+        },
+        {
+          "name": "14.jpg",
+          "relative_path": "14.jpg",
+          "bytes": 261658,
+          "sha256": "b2087dda219999f492f50b5e9c0b2bda399ff051aba587669177bdde10b608c7"
+        },
+        {
+          "name": "15.jpg",
+          "relative_path": "15.jpg",
+          "bytes": 259816,
+          "sha256": "8d02b7ae54d7b4c7e3463cd263b5d90e1cb17fbb1532c340f47e8e954828f303"
+        },
+        {
+          "name": "16.jpg",
+          "relative_path": "16.jpg",
+          "bytes": 282338,
+          "sha256": "dc0cf5c2bc731fd9064530f568b695b0b366c83cf16ed1325bc5ad927aeecbd9"
+        },
+        {
+          "name": "17.jpg",
+          "relative_path": "17.jpg",
+          "bytes": 269562,
+          "sha256": "5549cb587ee6080145b9bb8faa77a333b45d66bc4b5aa508dc4d90fa5ec800fa"
+        },
+        {
+          "name": "18.jpg",
+          "relative_path": "18.jpg",
+          "bytes": 296339,
+          "sha256": "eedbc5118540c93fc91b9dd6b4239c2a64e8372d26563780d6682f30942e9a31"
+        },
+        {
+          "name": "19.jpg",
+          "relative_path": "19.jpg",
+          "bytes": 252814,
+          "sha256": "c623b0bfa7da6e30c564da7358807db82d32955473a5439ba22034c29f2e1d7e"
+        },
+        {
+          "name": "20.jpg",
+          "relative_path": "20.jpg",
+          "bytes": 342214,
+          "sha256": "119232fc98211fd342bd2f239e2fb19bde256445aba01d91478736c368db1c7b"
+        },
+        {
+          "name": "21.jpg",
+          "relative_path": "21.jpg",
+          "bytes": 274815,
+          "sha256": "b265d6411591645e8ffbbce2ca8cf1540b1c62abee582618f8af620e016d50c9"
+        },
+        {
+          "name": "22.jpg",
+          "relative_path": "22.jpg",
+          "bytes": 284198,
+          "sha256": "b0e640c88864bc9575cefdba3c7d8c1c69159d2256d4d26b0952c1b68b7398cb"
+        },
+        {
+          "name": "23.jpg",
+          "relative_path": "23.jpg",
+          "bytes": 193895,
+          "sha256": "1a3c9e3aa1fa539d75e0bc265b8bd445533b64d545817fa14d8d6af8bd863c08"
+        },
+        {
+          "name": "24.jpg",
+          "relative_path": "24.jpg",
+          "bytes": 279956,
+          "sha256": "4b3a0333bf8295416cccddf8eebb2607da4cc715777e1b5a45908dea73f2b09d"
+        },
+        {
+          "name": "25.jpg",
+          "relative_path": "25.jpg",
+          "bytes": 302084,
+          "sha256": "450aefa1a763db75b5930eb93bccfc8b4f23e20c0b9fb24bced4b5bef0bb547c"
+        },
+        {
+          "name": "26.jpg",
+          "relative_path": "26.jpg",
+          "bytes": 253495,
+          "sha256": "66d1cfdbb2108839a27853929dcd4cb836fda699a27ee5509ec8b1d0f46f3520"
+        },
+        {
+          "name": "27.jpg",
+          "relative_path": "27.jpg",
+          "bytes": 254869,
+          "sha256": "600f9b57c2989774d41211954ce41c2ed9186c243173a845150b17ded13762b8"
+        },
+        {
+          "name": "28.jpg",
+          "relative_path": "28.jpg",
+          "bytes": 269288,
+          "sha256": "f4b96f8c44a8fee4cd903bc26a04abb4c731095fc666e2181ee746a1f7d342bd"
+        },
+        {
+          "name": "29.jpg",
+          "relative_path": "29.jpg",
+          "bytes": 289488,
+          "sha256": "88547654a7e9f1d2f6ca351c8fc639348223f7e3efc1750a097a6671b00aca3d"
+        },
+        {
+          "name": "30.jpg",
+          "relative_path": "30.jpg",
+          "bytes": 264320,
+          "sha256": "1fd8d3dfae156779fb963211e043aa508cc6eb903a0cbe8b9056ca0c7b9c0dc9"
+        },
+        {
+          "name": "31.jpg",
+          "relative_path": "31.jpg",
+          "bytes": 317190,
+          "sha256": "f9ce99229436d7a314c5f1b44df6bcd3622dc601650e6c2f17c696f6520e365e"
+        },
+        {
+          "name": "32.jpg",
+          "relative_path": "32.jpg",
+          "bytes": 383157,
+          "sha256": "93789126a13a1f5990939161830436a85f78dad95dc9405eab071f6062e5e089"
+        }
+      ],
+      "annotations": {
+        "studio_exists": true,
+        "ocr_json": {
+          "name": "ocr.json",
+          "relative_path": ".studio/ocr.json",
+          "bytes": 149259,
+          "sha256": "efa425c37e3c2e0d6dc52e347e32643d6957f95e3ea97c9f8ff5b70fc22877d1"
+        },
+        "detections_json": {
+          "name": "detections.json",
+          "relative_path": ".studio/detections.json",
+          "bytes": 95088,
+          "sha256": "74bcc388571a0d0ed1091d3604ce3dd8c7bff42b4cc402d39bbefe5120b07fce"
+        },
+        "settings_json": {
+          "name": "settings.json",
+          "relative_path": ".studio/settings.json",
+          "bytes": 340,
+          "sha256": "67a5270cae07231542924e6edee4356f620e684a99194fe8952a88515e9d3fb9"
+        },
+        "studio_file_count": 129
+      }
+    },
+    {
+      "source_id": "downloaded",
+      "chapter": "tonari-no-seki-no-seijo-sama-wa-ore-ni-kossori-sukaato-no-naka-o-oshiete-kureru_ch1",
+      "source_path": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out\\tonari-no-seki-no-seijo-sama-wa-ore-ni-kossori-sukaato-no-naka-o-oshiete-kureru_ch1",
+      "page_count": 18,
+      "page_files": [
+        {
+          "name": "01.jpg",
+          "relative_path": "01.jpg",
+          "bytes": 422820,
+          "sha256": "b657d4a7967b5b93be3afd3716177cf5d6ce743b53a326dab240f1661deea59e"
+        },
+        {
+          "name": "02.jpg",
+          "relative_path": "02.jpg",
+          "bytes": 628906,
+          "sha256": "193066920340b69671b62da0514033cce3282eb1b1e814fd92631aeaf9f6806e"
+        },
+        {
+          "name": "03.jpg",
+          "relative_path": "03.jpg",
+          "bytes": 596101,
+          "sha256": "03e3c786cdfd33671eb9b7a30e6f0d20335d4337a42a5a222897e5c1394c3e96"
+        },
+        {
+          "name": "04.jpg",
+          "relative_path": "04.jpg",
+          "bytes": 515377,
+          "sha256": "60fa6f76da13c045166096a2c906151395464027211d40e18fcf681cf050fc6f"
+        },
+        {
+          "name": "05.jpg",
+          "relative_path": "05.jpg",
+          "bytes": 600569,
+          "sha256": "1e375b12d4c24cc576e25222b62dad5d43b5f6f74c5ec6d749c2d9a9d455f970"
+        },
+        {
+          "name": "06.jpg",
+          "relative_path": "06.jpg",
+          "bytes": 620487,
+          "sha256": "b89af6dc668b2762075e96e3a2216ae7b501a538f0efea226854280429f8d206"
+        },
+        {
+          "name": "07.jpg",
+          "relative_path": "07.jpg",
+          "bytes": 608667,
+          "sha256": "d47a3e43dcc09f3a71b84ac494e8c473919018ba2b3c882abfa744b9e5688d8b"
+        },
+        {
+          "name": "08.jpg",
+          "relative_path": "08.jpg",
+          "bytes": 464198,
+          "sha256": "b0927cbed075270af2d879d0abd3ea4413318aa5191482ce189a9c4018c37c6f"
+        },
+        {
+          "name": "09.jpg",
+          "relative_path": "09.jpg",
+          "bytes": 600029,
+          "sha256": "3f307f576af83d2e6b9129a3f9839a4b69501f3d5785f856524d79e01d15d1b6"
+        },
+        {
+          "name": "10.jpg",
+          "relative_path": "10.jpg",
+          "bytes": 433023,
+          "sha256": "145644024da3f1647ff8e43a50b691f001c0b9dfa5411246b96607c23729b0ab"
+        },
+        {
+          "name": "11.jpg",
+          "relative_path": "11.jpg",
+          "bytes": 465823,
+          "sha256": "afda68245387ab185d0aa9d43e3d7d552a28ab93f9abac707f13e6b2b2cb43de"
+        },
+        {
+          "name": "12.jpg",
+          "relative_path": "12.jpg",
+          "bytes": 454897,
+          "sha256": "a8c59be4226519077ae1af19677f75ec7670a4a9ea44681e54f04d2888eddc2f"
+        },
+        {
+          "name": "13.jpg",
+          "relative_path": "13.jpg",
+          "bytes": 480750,
+          "sha256": "ff2506a5dc04fe776f1b8e8feea30707e40e76875059a7caa08edcab0fe5a280"
+        },
+        {
+          "name": "14.jpg",
+          "relative_path": "14.jpg",
+          "bytes": 529245,
+          "sha256": "348d47462ae435103ec4364ed21b38cc741c1b0ab6bcade1eba7d1a7ac182114"
+        },
+        {
+          "name": "15.jpg",
+          "relative_path": "15.jpg",
+          "bytes": 619641,
+          "sha256": "c61c9dff5e6948f0ee2be598f39aebac44b866d2e5b98a347beb4cff9ef2a21a"
+        },
+        {
+          "name": "16.jpg",
+          "relative_path": "16.jpg",
+          "bytes": 553319,
+          "sha256": "a03cb340e8b1ca33f33c71830a15dfb8a8cc70df80e1992fc50675ee503f6b94"
+        },
+        {
+          "name": "17.jpg",
+          "relative_path": "17.jpg",
+          "bytes": 463276,
+          "sha256": "14aeb3b8493283c43e4dbf436bff0a6a9f61734ceed7344d4e62f0b2ce1a9ba4"
+        },
+        {
+          "name": "18.jpg",
+          "relative_path": "18.jpg",
+          "bytes": 516109,
+          "sha256": "d5aef5c9c8b9e330c2c48505c8c2cb0b40281ee1caa380024d72737445112edd"
+        }
+      ],
+      "annotations": {
+        "studio_exists": true,
+        "ocr_json": {
+          "name": "ocr.json",
+          "relative_path": ".studio/ocr.json",
+          "bytes": 61807,
+          "sha256": "cbeed2b1104f6b5ec30f3d02f66c8c27c2c92225c12edfd74015d49c8780824c"
+        },
+        "detections_json": {
+          "name": "detections.json",
+          "relative_path": ".studio/detections.json",
+          "bytes": 37967,
+          "sha256": "7ecbe7874f879b5159dbfe4fe655f86577f13ce3964c90483f29d2d3697d8135"
+        },
+        "settings_json": null,
+        "studio_file_count": 63
+      }
+    },
+    {
+      "source_id": "downloaded",
+      "chapter": "watashitachi-ketsukon-shimashita-fuguu-na-ouji-to-tensai-majutsushi-wa-inochi-no-unmei-kyoudoutai_ch5",
+      "source_path": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out\\watashitachi-ketsukon-shimashita-fuguu-na-ouji-to-tensai-majutsushi-wa-inochi-no-unmei-kyoudoutai_ch5",
+      "page_count": 26,
+      "page_files": [
+        {
+          "name": "01.jpg",
+          "relative_path": "01.jpg",
+          "bytes": 501858,
+          "sha256": "523186579cfbf499e61c32e5e9ab67f5b2d9f6ada3bbac90f237ad8e72d3d292"
+        },
+        {
+          "name": "02.jpg",
+          "relative_path": "02.jpg",
+          "bytes": 445790,
+          "sha256": "5ed00600df1acad1fb622c25830c4341409791283e9162f2b68d123d01e56dcf"
+        },
+        {
+          "name": "03.jpg",
+          "relative_path": "03.jpg",
+          "bytes": 431208,
+          "sha256": "a43b402ddf0c2451ca4375307fb1c1f436b502cb69e0a249b358eb2ac61adb0e"
+        },
+        {
+          "name": "04.jpg",
+          "relative_path": "04.jpg",
+          "bytes": 442384,
+          "sha256": "9b0fd6ad973f9722a1638ceb2fc8be455eee6c408e90ad31d02c5aac72ad6cdf"
+        },
+        {
+          "name": "05.jpg",
+          "relative_path": "05.jpg",
+          "bytes": 579845,
+          "sha256": "fcf15cfb6ba3dd04ec4de32130ee844791e018e9e5abc1e9e03567526939f274"
+        },
+        {
+          "name": "06.jpg",
+          "relative_path": "06.jpg",
+          "bytes": 549839,
+          "sha256": "0c678b38bb7b85bbebc6cae6efc1ca7c32ddbbb79c250450ffa3c871a964a32e"
+        },
+        {
+          "name": "07.jpg",
+          "relative_path": "07.jpg",
+          "bytes": 505544,
+          "sha256": "3dcfd49cd611173ffe72324dc631c3591620ffd253158c18f7ee40bc6ef45121"
+        },
+        {
+          "name": "08.jpg",
+          "relative_path": "08.jpg",
+          "bytes": 524395,
+          "sha256": "3f216bb8a91922dfb6780b0c0685fba3024edb3e6dec79db12992d7d5db55e0a"
+        },
+        {
+          "name": "09.jpg",
+          "relative_path": "09.jpg",
+          "bytes": 487535,
+          "sha256": "69b389bfee92588ab92e18de74936d0d9f09a19f441b9f993fa8f34d7c717cfb"
+        },
+        {
+          "name": "10.jpg",
+          "relative_path": "10.jpg",
+          "bytes": 386422,
+          "sha256": "036672fa95011fb148c8f7e6ad6a1c74ee5b75d4df39d25603cc28560fe1c51f"
+        },
+        {
+          "name": "11.jpg",
+          "relative_path": "11.jpg",
+          "bytes": 402171,
+          "sha256": "77cea77ac6accb3c0c2e27c477b3a91176b9ffa018d3ac5d49361adda78417b9"
+        },
+        {
+          "name": "12.jpg",
+          "relative_path": "12.jpg",
+          "bytes": 415048,
+          "sha256": "47fac0f5a6b94dd57dfbd5ff6b65d16606018124bf4becdd547546609f0a480b"
+        },
+        {
+          "name": "13.jpg",
+          "relative_path": "13.jpg",
+          "bytes": 481519,
+          "sha256": "b030908067e9c759c9f5f18aad48683fd19b2c78661e3c3794cca6b561d7d07f"
+        },
+        {
+          "name": "14.jpg",
+          "relative_path": "14.jpg",
+          "bytes": 470256,
+          "sha256": "a9b8c04d8c1cc7140ad5ddf934ac932d19367df81399c499e9607b6167bdd231"
+        },
+        {
+          "name": "15.jpg",
+          "relative_path": "15.jpg",
+          "bytes": 490512,
+          "sha256": "1e98790946cf86dc5d43306729f92171fb3ad8ba4068d5fb8d7610a795a30665"
+        },
+        {
+          "name": "16.jpg",
+          "relative_path": "16.jpg",
+          "bytes": 454721,
+          "sha256": "3c5509da78df2e8a7673a8fe72d23b23fe116f340d64dd1363492bc7ae09cda2"
+        },
+        {
+          "name": "17.jpg",
+          "relative_path": "17.jpg",
+          "bytes": 452576,
+          "sha256": "449664ae554b4048bd64ebd594aa007398ef8db56dc26ca0227ed63972466436"
+        },
+        {
+          "name": "18.jpg",
+          "relative_path": "18.jpg",
+          "bytes": 357139,
+          "sha256": "213439fa41159c63847dfbdfdf7e98a6a321735e4c0db23b9ad662b5535ea5b4"
+        },
+        {
+          "name": "19.jpg",
+          "relative_path": "19.jpg",
+          "bytes": 515284,
+          "sha256": "10ceba796251751a7e61dcef2f722e9c48b6e1c0be1836cceed6f3832e29f320"
+        },
+        {
+          "name": "20.jpg",
+          "relative_path": "20.jpg",
+          "bytes": 375443,
+          "sha256": "7ee85665af7395b35253b0a6bd3ea3b083e9a2606cfaea9203240c055917d712"
+        },
+        {
+          "name": "21.jpg",
+          "relative_path": "21.jpg",
+          "bytes": 414341,
+          "sha256": "e1036c643a2f8727b3c72f2dbfd1ae797a5d99c3516f8ef957ea7c2ab930ab0e"
+        },
+        {
+          "name": "22.jpg",
+          "relative_path": "22.jpg",
+          "bytes": 454546,
+          "sha256": "65a0c4354c77199f7fd819a2d7993e3b297b15ce091f1188c6adc0b1208dd2a6"
+        },
+        {
+          "name": "23.jpg",
+          "relative_path": "23.jpg",
+          "bytes": 449585,
+          "sha256": "1b3f3259ea6f5fbb909f4d849bdba136662bf76754a122ca93e6fcc365ce6ae7"
+        },
+        {
+          "name": "24.jpg",
+          "relative_path": "24.jpg",
+          "bytes": 428412,
+          "sha256": "bc9dadfb9ac54068b273380816a1519d533e9168752d183063cf45b08bfbfb06"
+        },
+        {
+          "name": "25.jpg",
+          "relative_path": "25.jpg",
+          "bytes": 460965,
+          "sha256": "273c4d1b9e4d57d7875674ac0fc21bd5af3eee47957a80730389aa4bf53a04e8"
+        },
+        {
+          "name": "26.jpg",
+          "relative_path": "26.jpg",
+          "bytes": 523885,
+          "sha256": "f845f2986d8143b5edb630962267830649cb05b06c9888de91102eadc3701b18"
+        }
+      ],
+      "annotations": {
+        "studio_exists": true,
+        "ocr_json": {
+          "name": "ocr.json",
+          "relative_path": ".studio/ocr.json",
+          "bytes": 112969,
+          "sha256": "ecc15e42b23dfa63114712f783148e30d176b885bd016a27328969288ac0a127"
+        },
+        "detections_json": {
+          "name": "detections.json",
+          "relative_path": ".studio/detections.json",
+          "bytes": 57205,
+          "sha256": "4b6d2066c88cea91ed0f784052530140b427c95c6ab0506497f5625ce8fb621b"
+        },
+        "settings_json": null,
+        "studio_file_count": 107
+      }
+    }
+  ],
+  "totals": {
+    "chapter_count": 3,
+    "page_count": 76
+  },
+  "model_repository": {
+    "source": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx",
+    "revision": "28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "relative_path": ".gitattributes",
+        "bytes": 1554,
+        "sha256": "88023d0a029a0c409b30c03b689c68605b559f5cefe06376e4a26b38ed795269"
+      },
+      {
+        "name": "README.md",
+        "relative_path": "README.md",
+        "bytes": 16257,
+        "sha256": "b45d26efcfb1833321a03b59bc979fc1fe87f956c4631802ce67358d2e2c592d"
+      },
+      {
+        "name": "inference.json",
+        "relative_path": "inference.json",
+        "bytes": 229307,
+        "sha256": "89240f689a4a77aad75ef55a8df0a15c8e1d4980a327d17e58f24bbadde5aeab"
+      },
+      {
+        "name": "inference.onnx",
+        "relative_path": "inference.onnx",
+        "bytes": 9880512,
+        "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+      },
+      {
+        "name": "inference.yml",
+        "relative_path": "inference.yml",
+        "bytes": 937,
+        "sha256": "e75f7f36ade9b9e0545c18aac4eaff2546c61d0809662735b3efa88e86eb0e58"
+      }
+    ]
+  },
+  "in_app_models": {
+    "ctd_detector": {
+      "name": "detector-v4-s_int8.onnx",
+      "relative_path": "app/src/main/assets/models/detection/detector-v4-s_int8.onnx",
+      "bytes": 11120765,
+      "sha256": "5fe9e4f576e49d4e7e8b0e029d6d3cdc252abd4694113e1cae120e62c931ea79"
+    },
+    "panel_detector": {
+      "name": "manga_panel_detector_int8.onnx",
+      "relative_path": "app/src/main/assets/models/detection/manga_panel_detector_int8.onnx",
+      "bytes": 2872318,
+      "sha256": "6b1728706197d54bf8023ebae890ef1a8d42ddc0de27e3edec22f32dc674075b"
+    },
+    "detector": {
+      "name": "inference.onnx",
+      "relative_path": "app/src/main/assets/models/ocr/paddle-v6-small/det/inference.onnx",
+      "bytes": 9880512,
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+    },
+    "detector_metadata": {
+      "name": "inference.yml",
+      "relative_path": "app/src/main/assets/models/ocr/paddle-v6-small/det/inference.yml",
+      "bytes": 885,
+      "sha256": "193f435274bf9f0b5f71a929bbfbcf148282df7e633b34e7c373e8f44741b516"
+    },
+    "recognizer": {
+      "name": "inference.onnx",
+      "relative_path": "app/src/main/assets/models/ocr/paddle-v6-small/inference.onnx",
+      "bytes": 21159378,
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+    },
+    "recognizer_metadata": {
+      "name": "inference.yml",
+      "relative_path": "app/src/main/assets/models/ocr/paddle-v6-small/inference.yml",
+      "bytes": 150579,
+      "sha256": "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1"
+    },
+    "recognizer_dictionary": {
+      "name": "PP-OCRv6_small_rec.txt",
+      "relative_path": "app/src/main/assets/models/ocr/paddle-v6-small/PP-OCRv6_small_rec.txt",
+      "bytes": 74947,
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "status": "FAILED_RESOURCE_LIMIT",
+  "benchmark": "PP-OCRv6 Small integrated DET-crops-batched-REC",
+  "scope": "76-page audited run was intentionally interrupted before completion",
+  "command": "python research/benchmark_pipeline.py --source-ids all --batch-sizes 1,4,8,16 --width-modes bucketed,tight --threads 4 --parity-sample 76 --det-replay-pages 8 --output-dir research/results",
+  "failure": {
+    "reason": "host memory guard: process reached approximately 6.0 GB committed with approximately 1.1 GB free; run stopped before a complete configuration result",
+    "stopped_pid": 13540,
+    "completed_stages": ["76-page DET decode/audit and detection pass began", "entered integrated REC mode=bucketed batch=1"],
+    "completed_configuration_results": 0,
+    "substitution": "none; no random tensors or fallback corpus used"
+  },
+  "follow_up": "bounded independent policy runs use at most 12 real pages per configuration, one policy per process, B<=8 first, and no full tight+B16 sweep"
+}

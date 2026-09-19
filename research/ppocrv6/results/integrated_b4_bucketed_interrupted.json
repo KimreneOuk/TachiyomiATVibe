@@ -1,0 +1,13 @@
+{
+  "status": "INTERRUPTED_RESOURCE_LIMIT",
+  "benchmark": "PP-OCRv6 Small integrated DET-crops-batched-REC",
+  "policy": {"width_mode": "bucketed", "batch_size": 4},
+  "scope": "12-page bounded run",
+  "failure": {
+    "reason": "host memory pressure from concurrent detector resolution sweep; process was stopped before a complete B4 result",
+    "stopped_pid": 25896,
+    "completed_configuration_results": 0,
+    "substitution": "none"
+  },
+  "reference": "integrated_b1_bucketed is the complete bounded baseline evidence"
+}

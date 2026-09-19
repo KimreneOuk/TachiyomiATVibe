@@ -1,0 +1,37 @@
+# Local model repositories and benchmark outputs are intentionally not versioned.
+cache/
+models/
+results/*.json
+results/*.csv
+results/*.onnx
+
+# The bootstrap inventory is a reviewed, path-only research artifact.
+!results/bootstrap.json
+!results/host_onnx_timing.json
+!results/pipeline_simulation.json
+!results/integrated_pipeline.json
+!results/integrated_pipeline_pages.csv
+!results/integrated_pipeline_batches.csv
+!results/integrated_pipeline_parity.csv
+!results/integrated_pipeline_interrupted.json
+!results/integrated_b4_bucketed_interrupted.json
+!results/integrated_b1_bucketed/
+!results/integrated_b1_bucketed/**
+!results/integrated_b8_bucketed/
+!results/integrated_b8_bucketed/**
+results/pipeline_smoke*/
+
+# Other local model formats.
+*.onnx_data
+*.bin
+*.tar
+*.zip
+
+# Benchmark-only model variants are reproducible outputs, not source artifacts.
+fp16-results*/models/
+
+# Superseded exploratory sweeps are retained locally for audit but are not
+# versioned; the canonical CPU outputs are staged explicitly.
+results/cpu_options/
+results/cpu_options2/
+results/cpu_pipeline/

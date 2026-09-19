@@ -1,0 +1,118 @@
+{
+  "date_accessed": "2026-09-18",
+  "evidence_legend": {
+    "published": "Claim or measurement reported by the project/model author; not independently reproduced here.",
+    "local_measured": "Measured from the checked-out/downloaded artifacts in this worktree.",
+    "downstream_measured": "Measurement reported by an independent downstream implementation; useful evidence, but not an upstream benchmark.",
+    "not_reported": "No defensible value found in the checked primary sources reviewed."
+  },
+  "candidates": [
+    {
+      "id": "ogkalu-manga-ocr-mobile",
+      "kind": "specialized mobile export",
+      "architecture": "RepViT-style vision encoder (ONNX) feeding a BERT/Transformer-style autoregressive decoder (ONNX init + step); 9,415-token vocabulary.",
+      "size": {"value": 64.76, "unit": "MB_decimal", "evidence": "local_measured", "detail": "encoder 17,070,003 B; decoder_init 24,875,052 B; decoder_step 22,776,797 B; vocab 37,193 B"},
+      "runtime": "ONNX Runtime-compatible; static 1x3x224x224 encoder and batch-1 decoder graphs; autoregressive KV-cache decode.",
+      "accuracy": "not_reported",
+      "batchability": "Static batch 1 in the inspected graphs; multi-crop batching would require re-export/rewrite. Decoder remains token-step sequential per crop.",
+      "gpu_npu": "Potentially portable through ONNX execution providers/delegates, but no Android GPU/NPU result was published in the reviewed sources.",
+      "license": "Apache-2.0 on the Hugging Face repository.",
+      "activity": "Hugging Face repository: 10 commits, one contributor, 64.8 MB total at review time.",
+      "android": "Best immediate artifact candidate: small, split ONNX graphs and a compact RepViT encoder. Risks are missing model metadata, no published quality/latency benchmark, and autoregressive decoder delegate support.",
+      "sources": [
+        "https://huggingface.co/ogkalu/manga-ocr-mobile/tree/main",
+        "https://github.com/bluolightning/manga-ocr-mobile",
+        "research/results/onnx_inspection.json"
+      ]
+    },
+    {
+      "id": "dhleong-manga-ocr-android",
+      "kind": "Android conversion/quantization",
+      "architecture": "Canonical Manga OCR Vision Encoder-Decoder converted to quantized ONNX and LiteRT/TFLite artifacts; repository also contains a manga text detector.",
+      "size": {"value": 118.9, "unit": "MB_decimal", "evidence": "published", "detail": "quantized encoder 89.3 MB + quantized decoder 29.6 MB; mangaocr.tflite 113 MB"},
+      "runtime": "Quantized ONNX or TFLite/LiteRT; model card exposes preprocessed and quantized variants.",
+      "accuracy": "not_reported",
+      "batchability": "not_reported; artifacts are packaged for Android inference, but no batching contract is documented.",
+      "gpu_npu": "TFLite/LiteRT gives a plausible NNAPI/GPU delegate path; actual delegate coverage and speed were not reported.",
+      "license": "Repository page does not state a separate model license; upstream Manga OCR is Apache-2.0. Verify redistribution terms before shipping.",
+      "activity": "Hugging Face repository: 13 commits, one contributor; crawled two weeks before review.",
+      "android": "Most Android-oriented packaging found: includes an OCR TFLite file plus quantized ONNX, but lacks reproducible accuracy and device latency evidence.",
+      "sources": [
+        "https://huggingface.co/dhleong/manga-ocr-android/tree/main",
+        "https://github.com/kha-white/manga-ocr"
+      ]
+    },
+    {
+      "id": "l0wgear-manga-ocr-2025-onnx",
+      "kind": "quality-oriented ONNX export",
+      "architecture": "Vision Encoder-Decoder Manga OCR export based on kha-white/manga-ocr and the manga-ocr-base-2025 fine-tune.",
+      "size": {"value": 140.4, "unit": "MB_decimal", "evidence": "published", "detail": "encoder 22.4 MB + decoder 118 MB, plus tokenizer/configuration"},
+      "runtime": "ONNX Runtime via Optimum; autoregressive generation.",
+      "accuracy": "not_reported for this export; upstream model describes manga-specific robustness but gives no numeric benchmark in the reviewed card.",
+      "batchability": "Transformers/Optimum generation can accept batches in principle; no Android batching or fixed-shape contract is documented.",
+      "gpu_npu": "ONNX execution-provider path is plausible; no mobile GPU/NPU measurement found.",
+      "license": "Not stated on the l0wgear model card; source Manga OCR and manga-ocr-base-2025 are Apache-2.0, but the export should be reviewed separately.",
+      "activity": "Hugging Face repository: 4 commits, one contributor, 3,361 downloads in the last month at review time.",
+      "android": "A useful accuracy/reference baseline, but roughly 2.2x the inspected mobile export and not packaged as LiteRT/TFLite.",
+      "sources": [
+        "https://huggingface.co/l0wgear/manga-ocr-2025-onnx/tree/main",
+        "https://huggingface.co/l0wgear/manga-ocr-2025-onnx",
+        "https://github.com/kha-white/manga-ocr"
+      ]
+    },
+    {
+      "id": "baberu-ocr",
+      "kind": "specialized multilingual crop OCR",
+      "architecture": "DINOv2 vision encoder (86M) plus a custom 6-layer grouped-query/SwiGLU/RMSNorm decoder; character-level 14,630-symbol vocabulary; Japanese, Chinese, and English.",
+      "size": {"value": 121, "unit": "MB_decimal", "evidence": "published", "detail": "smallest shipped ONNX tier: int4 vision + int8 decoder; lossless tier 242 MB"},
+      "runtime": "ONNX Runtime with a KV-cache decode loop; one speech-bubble crop in, text out.",
+      "accuracy": "Published model-card measurements on held-out data: Manga109-v2026 Japanese lCER 0.0345 / nCER 0.0871; exact-match 0.85 Chinese and 0.82 English on hand-annotated held-out crops. These are author-reported measurements, not independently reproduced here.",
+      "batchability": "Crop-level and detector-dependent; model card documents a decode loop but no batch API/throughput claim for Android.",
+      "gpu_npu": "ONNX is portable, but int4 weight-only vision and custom decoder ops need delegate validation; no Android GPU/NPU result found.",
+      "license": "Apache-2.0 for weights and code per model card.",
+      "activity": "Hugging Face repository: 11 commits, one contributor, 11 likes; public release includes training and quantization notes.",
+      "android": "Strong quality/size candidate for a multilingual crop pipeline, but 121 MB is larger than the mobile export and it requires reliable detector crops; no Android package is published.",
+      "sources": [
+        "https://huggingface.co/genshiai-daichi/baberu-ocr",
+        "https://huggingface.co/genshiai-daichi/baberu-ocr/tree/main/onnx",
+        "https://huggingface.co/genshiai-daichi/baberu-ocr/blob/main/quantization-results.md"
+      ]
+    },
+    {
+      "id": "hayai-ocr-v2-1",
+      "kind": "specialized multilingual crop OCR",
+      "architecture": "Approximately 150M parameters: SigLIP2 NaFlex vision encoder (~86M), projector, and 12-layer custom causal decoder (~60M), with 2D multimodal RoPE and grouped-query attention; Japanese, Chinese, Korean, and English.",
+      "size": {"value": 150, "unit": "M_parameters", "evidence": "published", "detail": "model card reports ~150M parameters and ~300 MB FP16 VRAM; public HF artifact is F32 safetensors"},
+      "runtime": "Transformers with trust_remote_code; crop-level generation, no separate detector. PyPI wrapper exposes runtime int4 quantization, but an Android export was not found.",
+      "accuracy": "Published model-card JMangaBench_Mixed measurement: CER 3.225% and exact match 79.671% for v2.1; L4 throughput 54.22 FPS on the author's private CJK pretraining split. Author-reported, not independently reproduced here.",
+      "batchability": "Author reports batching-related throughput gains; no Android batch contract. NaFlex variable patch counts complicate fixed-shape mobile delegates.",
+      "gpu_npu": "GPU path is demonstrated on CUDA/L4; custom remote-code attention and NaFlex make NNAPI/NPU/LiteRT conversion uncertain.",
+      "license": "Apache-2.0 on the Hugging Face model card.",
+      "activity": "Hugging Face model: 7 likes, 2,371 downloads last month at review time; model card updated recently and has custom code.",
+      "android": "Promising future multilingual quality candidate, not an immediate drop-in: F32/custom-code distribution, no ONNX/TFLite artifact, and only crop-level input.",
+      "sources": [
+        "https://huggingface.co/JustANormalTinkerer/hayai-ocr-v2",
+        "https://pypi.org/project/hayai-ocr/"
+      ]
+    },
+    {
+      "id": "manga-image-translator-48px-ctc",
+      "kind": "reference baseline",
+      "architecture": "48px RGB input; ResNet feature extractor (320 channels) plus three Transformer encoder layers and CTC character head; color prediction head is also present.",
+      "size": {"value": 165, "unit": "MB_decimal", "evidence": "published", "detail": "ONNX export in Skepsun/manga-translator-ui-onnx"},
+      "runtime": "Source implementation chunks text regions in batches of at most 16 and pads widths per chunk; downstream Android implementation uses ONNX Runtime.",
+      "accuracy": "No numeric upstream benchmark found. The upstream issue tracker records a user report that 48px_ctc is much faster but less accurate than 48px. Downstream Yakuyomi reports 96.7% CTC parity versus FP32 after dynamic int8 quantization; this is downstream evidence, not an upstream guarantee.",
+      "batchability": "Good: explicit max_chunk_size=16 and shared padded widths in the source.",
+      "gpu_npu": "PyTorch source supports CUDA/MPS/XPU; Yakuyomi reports CPU MLAS because XNNPACK miscomputed this model and no GPU/NPU path was validated.",
+      "license": "GPL-3.0 for manga-image-translator and the reviewed ONNX model repository.",
+      "activity": "Mature upstream manga-image-translator project; the ONNX packaging repository has 5 commits and explicitly verifies max_diff=0.002 for its CTC export.",
+      "android": "Most credible production reference because Yakuyomi ships an arm64 Android engine and reports ~3.6x ARM speedup and 96.7% parity after int8 quantization. GPL-3.0 and the known speed/accuracy tradeoff are material constraints.",
+      "sources": [
+        "https://raw.githubusercontent.com/zyddnys/manga-image-translator/main/manga_translator/ocr/model_48px_ctc.py",
+        "https://github.com/zyddnys/manga-image-translator/issues/570",
+        "https://huggingface.co/Skepsun/manga-translator-ui-onnx/tree/main",
+        "https://github.com/joyeli/yakuyomi-engine"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1202 @@
+{
+  "metadata": {
+    "experiment": "int8",
+    "evidence": "OBSERVED local ONNX Runtime CPU experiment; synthetic calibration is explicitly not OCR ground truth; real calibration uses .studio/ocr.json boxes",
+    "timestamp_utc": "2026-09-18T03:36:28Z",
+    "python": "3.11.0 (main, Oct 24 2022, 18:26:48) [MSC v.1933 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 186 Stepping 3, GenuineIntel",
+    "onnxruntime": "1.24.1",
+    "providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "seed": 20260918,
+    "max_real": 2,
+    "decode_length": 8,
+    "repeats": 1,
+    "fixture_count": 8
+  },
+  "models": {
+    "fp32": {
+      "encoder.onnx": {
+        "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\encoder.onnx",
+        "bytes": 17070003,
+        "sha256": "d1fb455a07c1508cc56a4f4e15e2ed74aca9a4d78fd220ecc0ff39625d67e1b3"
+      },
+      "decoder_init.onnx": {
+        "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\decoder_init.onnx",
+        "bytes": 24875052,
+        "sha256": "612f97e22848620fb36fcac611467689cb4213d91f2d84f6a19042ad57d475f1"
+      },
+      "decoder_step.onnx": {
+        "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\decoder_step.onnx",
+        "bytes": 22776797,
+        "sha256": "a244b814a3a669190f9eae737960997633597cfa055fa186347e872bee834bc9"
+      }
+    },
+    "dynamic_int8": {
+      "encoder.onnx": {
+        "source": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\encoder.onnx",
+          "bytes": 17070003,
+          "sha256": "d1fb455a07c1508cc56a4f4e15e2ed74aca9a4d78fd220ecc0ff39625d67e1b3"
+        },
+        "converted": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\cache\\quantization\\dynamic_int8_encoder.onnx",
+          "bytes": 6530341,
+          "sha256": "fbba54995702bf44784582e783d2b15dc21ffc0c7f83ca3a4888c32a7b6b7834"
+        }
+      },
+      "decoder_init.onnx": {
+        "source": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\decoder_init.onnx",
+          "bytes": 24875052,
+          "sha256": "612f97e22848620fb36fcac611467689cb4213d91f2d84f6a19042ad57d475f1"
+        },
+        "converted": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\cache\\quantization\\dynamic_int8_decoder_init.onnx",
+          "bytes": 6439083,
+          "sha256": "66344dff25012ca5fb92626fb201e2cfadab5cd42e146a7e98d042404213c176"
+        }
+      },
+      "decoder_step.onnx": {
+        "source": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\decoder_step.onnx",
+          "bytes": 22776797,
+          "sha256": "a244b814a3a669190f9eae737960997633597cfa055fa186347e872bee834bc9"
+        },
+        "converted": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\cache\\quantization\\dynamic_int8_decoder_step.onnx",
+          "bytes": 5898856,
+          "sha256": "544a6935f8f0d99a06519e1f7c3564fd7b2b9609e38570ab1673cb6f83c9e3dc"
+        }
+      }
+    },
+    "static_int8": {
+      "encoder.onnx": {
+        "source": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\encoder.onnx",
+          "bytes": 17070003,
+          "sha256": "d1fb455a07c1508cc56a4f4e15e2ed74aca9a4d78fd220ecc0ff39625d67e1b3"
+        },
+        "converted": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\cache\\quantization\\static_int8_encoder.onnx",
+          "bytes": 6105728,
+          "sha256": "b0936040e50b4f34e51409a613937e64f0d0abaf2ef1d98938af039dad7c8fc0"
+        }
+      },
+      "decoder_init.onnx": {
+        "source": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\decoder_init.onnx",
+          "bytes": 24875052,
+          "sha256": "612f97e22848620fb36fcac611467689cb4213d91f2d84f6a19042ad57d475f1"
+        },
+        "converted": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\cache\\quantization\\static_int8_decoder_init.onnx",
+          "bytes": 6387853,
+          "sha256": "846e970ed5a4936a12359e87f22c43fb99c2aaaabae0169ccb17e76b405da181"
+        }
+      },
+      "decoder_step.onnx": {
+        "source": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\models\\manga-ocr-mobile\\decoder_step.onnx",
+          "bytes": 22776797,
+          "sha256": "a244b814a3a669190f9eae737960997633597cfa055fa186347e872bee834bc9"
+        },
+        "converted": {
+          "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-mangaocr-acceleration\\research\\cache\\quantization\\static_int8_decoder_step.onnx",
+          "bytes": 5859412,
+          "sha256": "c383c4a121acc628b1c258c8950cc66112121d4d8bd2168d6f565b10512104a4"
+        }
+      }
+    }
+  },
+  "conversion_errors": {},
+  "encoder": [
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:0",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 7.861490726470947,
+        "mean_abs": 0.7892694662706552,
+        "rmse": 1.0514782496123958,
+        "max_relative": 22657.183350185373,
+        "cosine": 0.6283747993084401
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:1",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 6.511252999305725,
+        "mean_abs": 0.774100703596578,
+        "rmse": 1.0384676141738163,
+        "max_relative": 26158.556574923547,
+        "cosine": 0.6419051412129967
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:2",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 6.186166524887085,
+        "mean_abs": 0.7438732621095225,
+        "rmse": 0.9908588493621018,
+        "max_relative": 19525.75161987041,
+        "cosine": 0.6742049424195887
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:3",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 7.6835925579071045,
+        "mean_abs": 0.7957788812142187,
+        "rmse": 1.0655010267807954,
+        "max_relative": 25383.31290555155,
+        "cosine": 0.6203004994463661
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:4",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 8.061099290847778,
+        "mean_abs": 0.7953056435637443,
+        "rmse": 1.0469186856581072,
+        "max_relative": 15202.419223509381,
+        "cosine": 0.6376747060406488
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:5",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 7.567079424858093,
+        "mean_abs": 0.7863322583553498,
+        "rmse": 1.050719794314452,
+        "max_relative": 40393.28571428572,
+        "cosine": 0.6352216335359622
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "24.jpg:163,146,327,370",
+      "source": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\24.jpg",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 6.203807711601257,
+        "mean_abs": 0.7265778004038557,
+        "rmse": 0.9576136196434776,
+        "max_relative": 14397.135071090048,
+        "cosine": 0.678044072052356
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "30.jpg:143,541,283,797",
+      "source": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\30.jpg",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 7.859425783157349,
+        "mean_abs": 0.843573289794927,
+        "rmse": 1.1187654411950017,
+        "max_relative": 25166.90348714336,
+        "cosine": 0.5682402920406749
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:0",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 11.249989986419678,
+        "mean_abs": 1.0302996560014195,
+        "rmse": 1.380215847111215,
+        "max_relative": 32779.4602917342,
+        "cosine": 0.3940703338282915
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:1",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 10.553908348083496,
+        "mean_abs": 1.0174031400265309,
+        "rmse": 1.3544988756517917,
+        "max_relative": 56226.49235474006,
+        "cosine": 0.4256011031220324
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:2",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 9.905174255371094,
+        "mean_abs": 1.007920813556689,
+        "rmse": 1.3423703559586821,
+        "max_relative": 35738.012958963285,
+        "cosine": 0.43585433681655655
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:3",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 9.821300506591797,
+        "mean_abs": 1.041491605536941,
+        "rmse": 1.3843465784590734,
+        "max_relative": 26527.978670012548,
+        "cosine": 0.39141228811395457
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:4",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 9.04155707359314,
+        "mean_abs": 1.0178575132421133,
+        "rmse": 1.3608474629919223,
+        "max_relative": 18735.86233895356,
+        "cosine": 0.41724525644336957
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:5",
+      "source": "generated synthetic_crops(seed)",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 10.299933910369873,
+        "mean_abs": 1.0134789132628481,
+        "rmse": 1.3566099795364193,
+        "max_relative": 23803.9625,
+        "cosine": 0.42001959418395424
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "24.jpg:163,146,327,370",
+      "source": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\24.jpg",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 8.49724555015564,
+        "mean_abs": 1.0520615306315626,
+        "rmse": 1.3931316060615953,
+        "max_relative": 57939.24649859944,
+        "cosine": 0.3832989231971732
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "30.jpg:143,541,283,797",
+      "source": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\30.jpg",
+      "metrics": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          196,
+          256
+        ],
+        "candidate_shape": [
+          1,
+          196,
+          256
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 9.000235080718994,
+        "mean_abs": 1.0421994810173916,
+        "rmse": 1.3831801239393535,
+        "max_relative": 8208.91796875,
+        "cosine": 0.38716199551706226
+      }
+    }
+  ],
+  "pipeline": [
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:0",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "キュー",
+      "candidate_text": "コーーコーーコー",
+      "sequence": {
+        "reference_length": 3,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.3333333333333333
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 11.115197002887726,
+        "mean_abs": 2.317947984056125,
+        "rmse": 2.541646060779851,
+        "max_relative": 1291.8663199615112,
+        "cosine": 0.9898203784809002
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:1",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "チュン",
+      "candidate_text": "オオオオオオオオ",
+      "sequence": {
+        "reference_length": 3,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 10.453224658966064,
+        "mean_abs": 1.27540172935462,
+        "rmse": 1.6847944026115538,
+        "max_relative": 76.8570608932418,
+        "cosine": 0.9898090569743021
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:2",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "キュエ",
+      "candidate_text": "オオオオオオオオ",
+      "sequence": {
+        "reference_length": 3,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 10.342305600643158,
+        "mean_abs": 1.54010757310588,
+        "rmse": 1.8270509102226624,
+        "max_relative": 1009.0548991122884,
+        "cosine": 0.9928858901068498
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:3",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "キキュー",
+      "candidate_text": "もーーーーーーー",
+      "sequence": {
+        "reference_length": 4,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.25
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 13.628425598144531,
+        "mean_abs": 2.8838006584815568,
+        "rmse": 3.217704947785255,
+        "max_relative": 7099.954789047416,
+        "cosine": 0.9823621845530959
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:4",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "ニニ",
+      "candidate_text": "セ.......",
+      "sequence": {
+        "reference_length": 2,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 11.455958604812622,
+        "mean_abs": 0.9941565317260541,
+        "rmse": 1.8898460482664285,
+        "max_relative": 339.6437533267432,
+        "cosine": 0.9858832490455569
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "synthetic:5",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "キュー",
+      "candidate_text": "オオオオオオオオ",
+      "sequence": {
+        "reference_length": 3,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 10.435609340667725,
+        "mean_abs": 0.9403740361997629,
+        "rmse": 1.682968358113084,
+        "max_relative": 1088.7263125902286,
+        "cosine": 0.9905705460579955
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "24.jpg:163,146,327,370",
+      "source": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\24.jpg",
+      "expected_text": "あの日ユキと一緒に壊れてしまった",
+      "baseline_text": "あの目ユキと一緒",
+      "candidate_text": "あつ!!!エエエ",
+      "sequence": {
+        "reference_length": 8,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 1,
+        "token_agreement": 0.125
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 9.45641764253378,
+        "mean_abs": 1.4345803239638508,
+        "rmse": 1.9030047734093185,
+        "max_relative": 142.23826156769738,
+        "cosine": 0.991115215065285
+      }
+    },
+    {
+      "variant": "dynamic_int8",
+      "fixture": "30.jpg:143,541,283,797",
+      "source": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\30.jpg",
+      "expected_text": "大切にするモノを間違えるなよ",
+      "baseline_text": "大切にするモノを",
+      "candidate_text": "........",
+      "sequence": {
+        "reference_length": 8,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 21.616368055343628,
+        "mean_abs": 2.409570646258709,
+        "rmse": 2.870562055875066,
+        "max_relative": 542.3797593643587,
+        "cosine": 0.9730076374119209
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:0",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "キュー",
+      "candidate_text": "でもっててて",
+      "sequence": {
+        "reference_length": 3,
+        "candidate_length": 6,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 16.190721035003662,
+        "mean_abs": 2.689843190991405,
+        "rmse": 3.1760628284343753,
+        "max_relative": 528.6749941162872,
+        "cosine": 0.9638054965499477
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:1",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "チュン",
+      "candidate_text": "でさてさてさてさ",
+      "sequence": {
+        "reference_length": 3,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 19.24293625354767,
+        "mean_abs": 3.8869770482726556,
+        "rmse": 4.340418863048323,
+        "max_relative": 216.51941731106882,
+        "cosine": 0.9510861623037162
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:2",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "キュエ",
+      "candidate_text": "できゃあざいてて",
+      "sequence": {
+        "reference_length": 3,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 17.347164154052734,
+        "mean_abs": 3.8096134984122902,
+        "rmse": 4.149072368505582,
+        "max_relative": 239.373936801942,
+        "cosine": 0.9621087451407848
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:3",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "キキュー",
+      "candidate_text": "で.......",
+      "sequence": {
+        "reference_length": 4,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 16.77498197555542,
+        "mean_abs": 2.365420176688655,
+        "rmse": 3.007431015833973,
+        "max_relative": 2702.554894749198,
+        "cosine": 0.966105429324219
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:4",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "ニニ",
+      "candidate_text": "マイマギャマギャ",
+      "sequence": {
+        "reference_length": 2,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 16.817587852478027,
+        "mean_abs": 3.751520542731579,
+        "rmse": 4.11457063914359,
+        "max_relative": 143.55473365718055,
+        "cosine": 0.9594675599722781
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "synthetic:5",
+      "source": "generated synthetic_crops(seed)",
+      "expected_text": "",
+      "baseline_text": "キュー",
+      "candidate_text": "てぎてギャマギャ",
+      "sequence": {
+        "reference_length": 3,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 18.371495842933655,
+        "mean_abs": 5.488219195772091,
+        "rmse": 5.849129951925089,
+        "max_relative": 1530.2989894384925,
+        "cosine": 0.949629401398235
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "24.jpg:163,146,327,370",
+      "source": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\24.jpg",
+      "expected_text": "あの日ユキと一緒に壊れてしまった",
+      "baseline_text": "あの目ユキと一緒",
+      "candidate_text": "て.......",
+      "sequence": {
+        "reference_length": 8,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 13.41298496723175,
+        "mean_abs": 2.5274178948223716,
+        "rmse": 2.880242993355032,
+        "max_relative": 203.82893113508564,
+        "cosine": 0.9806266613120234
+      }
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "30.jpg:143,541,283,797",
+      "source": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\30.jpg",
+      "expected_text": "大切にするモノを間違えるなよ",
+      "baseline_text": "大切にするモノを",
+      "candidate_text": "で...できてて",
+      "sequence": {
+        "reference_length": 8,
+        "candidate_length": 8,
+        "exact": false,
+        "common_prefix": 0,
+        "token_agreement": 0.0
+      },
+      "first_step_logits": {
+        "shape_match": true,
+        "reference_shape": [
+          1,
+          9415
+        ],
+        "candidate_shape": [
+          1,
+          9415
+        ],
+        "reference_dtype": "float32",
+        "candidate_dtype": "float32",
+        "reference_finite": true,
+        "candidate_finite": true,
+        "max_abs": 21.265509724617004,
+        "mean_abs": 3.0647446353912384,
+        "rmse": 3.6396261968259123,
+        "max_relative": 178.6033157265682,
+        "cosine": 0.9404059080849434
+      }
+    }
+  ],
+  "timing": [
+    {
+      "variant": "dynamic_int8",
+      "fixture": "30.jpg:143,541,283,797",
+      "full_pipeline_ms": [
+        1052.6258
+      ]
+    },
+    {
+      "variant": "static_int8",
+      "fixture": "30.jpg:143,541,283,797",
+      "full_pipeline_ms": [
+        185.8073
+      ]
+    }
+  ],
+  "calibration": {
+    "synthetic_count": 6,
+    "real_count": 2,
+    "encoder_count": 8,
+    "decoder_init_count": 8,
+    "decoder_step_count": 32,
+    "decoder_step_max_steps_per_fixture": 4
+  },
+  "summary": {
+    "encoder": {
+      "count": 16,
+      "max_abs": {
+        "min": 6.186166524887085,
+        "median": 8.279172420501709,
+        "max": 11.249989986419678
+      },
+      "mean_abs": {
+        "min": 0.7265778004038557,
+        "median": 0.925747051675808,
+        "max": 1.0520615306315626
+      },
+      "rmse": {
+        "min": 0.9576136196434776,
+        "median": 1.230567898576842,
+        "max": 1.3931316060615953
+      },
+      "max_relative": {
+        "min": 8208.91796875,
+        "median": 25275.108196347457,
+        "max": 57939.24649859944
+      },
+      "cosine": {
+        "min": 0.3832989231971732,
+        "median": 0.5020473144286157,
+        "max": 0.678044072052356
+      }
+    },
+    "sequence": {
+      "count": 16,
+      "token_agreement": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.3333333333333333
+      }
+    },
+    "first_step_logits": {
+      "count": 16,
+      "max_abs": {
+        "min": 9.45641764253378,
+        "median": 14.909573316574097,
+        "max": 21.616368055343628
+      },
+      "mean_abs": {
+        "min": 0.9403740361997629,
+        "median": 2.4684942705405404,
+        "max": 5.488219195772091
+      },
+      "rmse": {
+        "min": 1.682968358113084,
+        "median": 2.943837004594503,
+        "max": 5.849129951925089
+      },
+      "max_relative": {
+        "min": 76.8570608932418,
+        "median": 434.1593737215152,
+        "max": 7099.954789047416
+      },
+      "cosine": {
+        "min": 0.9404059080849434,
+        "median": 0.9768171493619722,
+        "max": 0.9928858901068498
+      }
+    }
+  }
+}

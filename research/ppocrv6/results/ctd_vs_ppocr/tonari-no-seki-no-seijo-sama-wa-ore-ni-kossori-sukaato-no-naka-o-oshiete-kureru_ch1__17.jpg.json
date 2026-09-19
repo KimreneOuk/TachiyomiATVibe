@@ -1,0 +1,148 @@
+{
+  "page": {
+    "page_id": "tonari-no-seki-no-seijo-sama-wa-ore-ni-kossori-sukaato-no-naka-o-oshiete-kureru_ch1/17.jpg",
+    "image": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out\\tonari-no-seki-no-seijo-sama-wa-ore-ni-kossori-sukaato-no-naka-o-oshiete-kureru_ch1\\17.jpg",
+    "category": "unlabeled",
+    "protocol": "manifest_ocr_box",
+    "truth_protocol": "manifest_ocr_box",
+    "width": 1284,
+    "height": 1843,
+    "truth_boxes": 0,
+    "ctd_raw_boxes": 5,
+    "ctd_dedup_boxes": 5,
+    "ppocr_boxes": 6,
+    "ctd_metrics": {
+      "tp": 0,
+      "fp": 5,
+      "fn": 0,
+      "precision": 0.0,
+      "recall": null,
+      "mean_iou_matched": null
+    },
+    "ppocr_metrics": {
+      "tp": 0,
+      "fp": 6,
+      "fn": 0,
+      "precision": 0.0,
+      "recall": null,
+      "mean_iou_matched": null
+    },
+    "ctd_timing": {
+      "preprocess_ms": 110.52750001545064,
+      "inference_ms": 7630.375000007916,
+      "postprocess_ms": 0.5654999986290932,
+      "total_ms": 7741.468000021996
+    },
+    "ppocr_timing": {
+      "preprocess_ms": 184.66349999653175,
+      "inference_postprocess_ms": 2073.1457000074442,
+      "total_ms": 2257.809200003976
+    },
+    "rss_before": 244740096,
+    "rss_after": 244744192
+  },
+  "ctd_boxes": [
+    {
+      "x1": 1069.0704345703125,
+      "y1": 67.35354614257812,
+      "x2": 1194.26904296875,
+      "y2": 378.5200500488281,
+      "score": 0.9559212923049927,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 214.83480834960938,
+      "y1": 837.6691284179688,
+      "x2": 411.29461669921875,
+      "y2": 1349.124755859375,
+      "score": 0.9489365220069885,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 1093.0584716796875,
+      "y1": 102.44564819335938,
+      "x2": 1180.1923828125,
+      "y2": 342.2835693359375,
+      "score": 0.9093429446220398,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 259.2662353515625,
+      "y1": 885.8196411132812,
+      "x2": 374.0975341796875,
+      "y2": 1310.24853515625,
+      "score": 0.8673406839370728,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 680.3396606445312,
+      "y1": 1420.888916015625,
+      "x2": 754.7750244140625,
+      "y2": 1697.9608154296875,
+      "score": 0.6209957003593445,
+      "label": "2",
+      "source": "ctd"
+    }
+  ],
+  "ppocr_boxes": [
+    {
+      "x1": 1121.8260869565217,
+      "y1": 125.2038043478261,
+      "x2": 1171.9076086956522,
+      "y2": 310.5054347826087,
+      "score": 0.8994050621986389,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 1161.8913043478262,
+      "y1": 202.83016304347828,
+      "x2": 1171.9076086956522,
+      "y2": 235.38315217391306,
+      "score": 0.5849060416221619,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 297.9850543478261,
+      "y1": 911.483695652174,
+      "x2": 350.57065217391306,
+      "y2": 1274.5747282608697,
+      "score": 0.9077264666557312,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 1124.3301630434783,
+      "y1": 1384.7540760869565,
+      "x2": 1237.0135869565217,
+      "y2": 1572.5597826086957,
+      "score": 0.8488589525222778,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 701.1413043478261,
+      "y1": 1444.851902173913,
+      "x2": 738.702445652174,
+      "y2": 1672.7228260869565,
+      "score": 0.8771653175354004,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 1036.6875,
+      "y1": 1469.8926630434783,
+      "x2": 1174.4116847826087,
+      "y2": 1685.2432065217392,
+      "score": 0.874870777130127,
+      "label": "ppocr",
+      "source": "ppocr"
+    }
+  ],
+  "truth_boxes": []
+}

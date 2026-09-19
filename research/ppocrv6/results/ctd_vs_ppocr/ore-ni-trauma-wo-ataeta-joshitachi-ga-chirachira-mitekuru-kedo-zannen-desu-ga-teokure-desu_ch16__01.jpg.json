@@ -1,0 +1,122 @@
+{
+  "page": {
+    "page_id": "ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16/01.jpg",
+    "image": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16\\01.jpg",
+    "category": "text_bubble",
+    "protocol": "manifest_ocr_box",
+    "truth_protocol": "manifest_ocr_box",
+    "width": 1125,
+    "height": 1600,
+    "truth_boxes": 2,
+    "ctd_raw_boxes": 4,
+    "ctd_dedup_boxes": 4,
+    "ppocr_boxes": 2,
+    "ctd_metrics": {
+      "tp": 2,
+      "fp": 2,
+      "fn": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "mean_iou_matched": 0.7334642333539164
+    },
+    "ppocr_metrics": {
+      "tp": 0,
+      "fp": 2,
+      "fn": 2,
+      "precision": 0.0,
+      "recall": 0.0,
+      "mean_iou_matched": null
+    },
+    "ctd_timing": {
+      "preprocess_ms": 5.440800014184788,
+      "inference_ms": 5864.313400001265,
+      "postprocess_ms": 29.544299992267042,
+      "total_ms": 5899.298500007717
+    },
+    "ppocr_timing": {
+      "preprocess_ms": 373.008700000355,
+      "inference_postprocess_ms": 4530.927800020436,
+      "total_ms": 4903.936500020791
+    },
+    "rss_before": 110239744,
+    "rss_after": 275734528
+  },
+  "ctd_boxes": [
+    {
+      "x1": 730.0145263671875,
+      "y1": 779.5277709960938,
+      "x2": 915.365234375,
+      "y2": 1076.7535400390625,
+      "score": 0.9620800018310547,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 600.1361083984375,
+      "y1": 279.7712707519531,
+      "x2": 704.3042602539062,
+      "y2": 470.3459777832031,
+      "score": 0.9353740215301514,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 767.260498046875,
+      "y1": 803.5047607421875,
+      "x2": 878.9149780273438,
+      "y2": 1049.2845458984375,
+      "score": 0.8647702932357788,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 621.3009033203125,
+      "y1": 305.6972961425781,
+      "x2": 688.2175903320312,
+      "y2": 446.6006774902344,
+      "score": 0.8067132234573364,
+      "label": "1",
+      "source": "ctd"
+    }
+  ],
+  "ppocr_boxes": [
+    {
+      "x1": 643.4782608695651,
+      "y1": 321.73913043478257,
+      "x2": 673.9130434782609,
+      "y2": 426.0869565217391,
+      "score": 0.9088771939277649,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 806.5217391304348,
+      "y1": 821.7391304347826,
+      "x2": 858.695652173913,
+      "y2": 1023.9130434782609,
+      "score": 0.9093174934387207,
+      "label": "ppocr",
+      "source": "ppocr"
+    }
+  ],
+  "truth_boxes": [
+    {
+      "x1": 607.0,
+      "y1": 292.0,
+      "x2": 701.0,
+      "y2": 460.0,
+      "score": 0.86,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 755.0,
+      "y1": 791.0,
+      "x2": 892.0,
+      "y2": 1061.0,
+      "score": 0.885,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    }
+  ]
+}

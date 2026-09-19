@@ -1,0 +1,131 @@
+{
+  "timestamp_utc": "2026-09-18T05:09:22Z",
+  "platform": {
+    "system": "Windows",
+    "release": "10",
+    "machine": "AMD64",
+    "python": "3.11.0",
+    "onnxruntime": "1.24.1",
+    "providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "cpu_count": 12
+  },
+  "models": {
+    "det": "app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+    "rec": "app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+    "v4": "app\\src\\main\\assets\\models\\detection\\detector-v4-s_int8.onnx",
+    "aot": "app\\src\\main\\assets\\models\\inpainting\\aot.onnx"
+  },
+  "corpus": {
+    "root": "tools\\aot_corpus\\real_corpus_faithful",
+    "pages": [
+      "tools\\aot_corpus\\real_corpus_faithful\\real_001\\bubble\\page.jpg"
+    ],
+    "note": "real_corpus_faithful bubble pages; no batch or precision changes"
+  },
+  "variants": [
+    {
+      "threads": 8,
+      "inter_op": 1,
+      "execution_mode": "sequential",
+      "graph_optimization": "all",
+      "cpu_mem_arena": true,
+      "mem_pattern": true,
+      "io_binding": false,
+      "reuse_session": true
+    }
+  ],
+  "xnnpack": "unavailable (onnxruntime providers: AzureExecutionProvider, CPUExecutionProvider)",
+  "summary": [
+    {
+      "component": "pipeline",
+      "phase": "cold",
+      "threads": 8,
+      "inter_op": 1,
+      "execution_mode": "sequential",
+      "graph_optimization": "all",
+      "cpu_mem_arena": true,
+      "mem_pattern": true,
+      "io_binding": false,
+      "n": 1,
+      "p50_ms": 43522.704,
+      "p90_ms": 43522.704,
+      "p95_ms": 43522.704,
+      "mean_ms": 43522.704,
+      "min_ms": 43522.704,
+      "max_ms": 43522.704,
+      "rss_peak_mb": 654.145,
+      "parity_all": true
+    },
+    {
+      "component": "pipeline",
+      "phase": "warm",
+      "threads": 8,
+      "inter_op": 1,
+      "execution_mode": "sequential",
+      "graph_optimization": "all",
+      "cpu_mem_arena": true,
+      "mem_pattern": true,
+      "io_binding": false,
+      "n": 1,
+      "p50_ms": 35690.182,
+      "p90_ms": 35690.182,
+      "p95_ms": 35690.182,
+      "mean_ms": 35690.182,
+      "min_ms": 35690.182,
+      "max_ms": 35690.182,
+      "rss_peak_mb": 604.363,
+      "parity_all": true
+    }
+  ],
+  "rows": [
+    {
+      "threads": 8,
+      "inter_op": 1,
+      "execution_mode": "sequential",
+      "graph_optimization": "all",
+      "cpu_mem_arena": true,
+      "mem_pattern": true,
+      "io_binding": false,
+      "reuse_session": true,
+      "component": "pipeline",
+      "input": "tools\\aot_corpus\\real_corpus_faithful\\real_001\\bubble\\page.jpg",
+      "phase": "cold",
+      "iteration": 0,
+      "load_ms": 16337.938,
+      "duration_ms": 43522.704,
+      "rss_mb": 654.145,
+      "rss_delta_mb": 513.324,
+      "det_boxes": 4,
+      "det_crop_count": 2,
+      "det_finite_values": 1083392,
+      "signature": "356656141b46ea5f",
+      "parity": true
+    },
+    {
+      "threads": 8,
+      "inter_op": 1,
+      "execution_mode": "sequential",
+      "graph_optimization": "all",
+      "cpu_mem_arena": true,
+      "mem_pattern": true,
+      "io_binding": false,
+      "reuse_session": true,
+      "component": "pipeline",
+      "input": "tools\\aot_corpus\\real_corpus_faithful\\real_001\\bubble\\page.jpg",
+      "phase": "warm",
+      "iteration": 0,
+      "load_ms": 0.0,
+      "duration_ms": 35690.182,
+      "rss_mb": 604.363,
+      "rss_delta_mb": 394.543,
+      "det_boxes": 4,
+      "det_crop_count": 2,
+      "det_finite_values": 1083392,
+      "signature": "356656141b46ea5f",
+      "parity": true
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+{
+  "page": {
+    "page_id": "watashitachi-ketsukon-shimashita-fuguu-na-ouji-to-tensai-majutsushi-wa-inochi-no-unmei-kyoudoutai_ch5/01.jpg",
+    "image": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\_gui_probe\\dl_out\\watashitachi-ketsukon-shimashita-fuguu-na-ouji-to-tensai-majutsushi-wa-inochi-no-unmei-kyoudoutai_ch5\\01.jpg",
+    "category": "text_bubble",
+    "protocol": "manifest_ocr_box",
+    "truth_protocol": "manifest_ocr_box",
+    "width": 1008,
+    "height": 1433,
+    "truth_boxes": 3,
+    "ctd_raw_boxes": 6,
+    "ctd_dedup_boxes": 6,
+    "ppocr_boxes": 6,
+    "ctd_metrics": {
+      "tp": 3,
+      "fp": 3,
+      "fn": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "mean_iou_matched": 0.7429200998649409
+    },
+    "ppocr_metrics": {
+      "tp": 0,
+      "fp": 6,
+      "fn": 3,
+      "precision": 0.0,
+      "recall": 0.0,
+      "mean_iou_matched": null
+    },
+    "ctd_timing": {
+      "preprocess_ms": 119.4023999851197,
+      "inference_ms": 4835.310700000264,
+      "postprocess_ms": 0.6209000130183995,
+      "total_ms": 4955.333999998402
+    },
+    "ppocr_timing": {
+      "preprocess_ms": 233.42559998854995,
+      "inference_postprocess_ms": 2056.7565000092145,
+      "total_ms": 2290.1820999977645
+    },
+    "rss_before": 241979392,
+    "rss_after": 241987584
+  },
+  "ctd_boxes": [
+    {
+      "x1": 678.991943359375,
+      "y1": 80.70687866210938,
+      "x2": 836.5980224609375,
+      "y2": 414.8542785644531,
+      "score": 0.9649834632873535,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 144.34669494628906,
+      "y1": 684.3951416015625,
+      "x2": 310.54254150390625,
+      "y2": 1087.9298095703125,
+      "score": 0.9630845785140991,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 66.76737976074219,
+      "y1": 1003.0341186523438,
+      "x2": 179.43106079101562,
+      "y2": 1246.51708984375,
+      "score": 0.9513670206069946,
+      "label": "0",
+      "source": "ctd"
+    },
+    {
+      "x1": 707.9768676757812,
+      "y1": 95.53550720214844,
+      "x2": 807.9652099609375,
+      "y2": 394.5671691894531,
+      "score": 0.9148162603378296,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 88.05445861816406,
+      "y1": 1026.674072265625,
+      "x2": 155.75784301757812,
+      "y2": 1224.154296875,
+      "score": 0.8905892372131348,
+      "label": "1",
+      "source": "ctd"
+    },
+    {
+      "x1": 179.86512756347656,
+      "y1": 705.133056640625,
+      "x2": 277.0932312011719,
+      "y2": 1064.22216796875,
+      "score": 0.8855493068695068,
+      "label": "1",
+      "source": "ctd"
+    }
+  ],
+  "ppocr_boxes": [
+    {
+      "x1": 767.1222826086956,
+      "y1": 110.97961956521739,
+      "x2": 786.5923913043478,
+      "y2": 381.61413043478257,
+      "score": 0.9377773404121399,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 730.1290760869565,
+      "y1": 112.92663043478261,
+      "x2": 749.5991847826086,
+      "y2": 299.83967391304344,
+      "score": 0.9140072464942932,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 200.54211956521738,
+      "y1": 718.4470108695651,
+      "x2": 220.01222826086956,
+      "y2": 1045.5448369565217,
+      "score": 0.9437225461006165,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 237.5353260869565,
+      "y1": 718.4470108695651,
+      "x2": 257.0054347826087,
+      "y2": 907.3070652173913,
+      "score": 0.9284049272537231,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 110.97961956521739,
+      "y1": 1047.491847826087,
+      "x2": 132.39673913043478,
+      "y2": 1203.2527173913043,
+      "score": 0.8945455551147461,
+      "label": "ppocr",
+      "source": "ppocr"
+    },
+    {
+      "x1": 75.93342391304347,
+      "y1": 1359.0135869565217,
+      "x2": 167.4429347826087,
+      "y2": 1378.4836956521738,
+      "score": 0.9128904938697815,
+      "label": "ppocr",
+      "source": "ppocr"
+    }
+  ],
+  "truth_boxes": [
+    {
+      "x1": 696.0,
+      "y1": 83.0,
+      "x2": 821.0,
+      "y2": 407.0,
+      "score": 0.916,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 167.0,
+      "y1": 693.0,
+      "x2": 290.0,
+      "y2": 1076.0,
+      "score": 0.904,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    },
+    {
+      "x1": 75.0,
+      "y1": 1015.0,
+      "x2": 169.0,
+      "y2": 1236.0,
+      "score": 0.88,
+      "label": "text_bubble",
+      "source": "manifest_ocr_box"
+    }
+  ]
+}

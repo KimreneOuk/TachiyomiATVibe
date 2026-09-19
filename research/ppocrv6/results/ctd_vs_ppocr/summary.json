@@ -1,0 +1,54 @@
+{
+  "status": "OK",
+  "missing_requested_roots": [
+    {
+      "path": "C:\\Users\\User\\Downloads\\manga_test_chapters\\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-mitekuru-kedo-zannen-desu-ga-teokure_desu_ch16",
+      "status": "MISSING"
+    },
+    {
+      "path": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev_gui_probe\\dl_out",
+      "status": "MISSING"
+    }
+  ],
+  "manifest": {
+    "path": "research\\dataset\\manifest.json",
+    "status": "USED"
+  },
+  "roots_used": [],
+  "page_count": 76,
+  "pages_with_results": 76,
+  "inventory": {
+    "python": "3.11.0 (main, Oct 24 2022, 18:26:48) [MSC v.1933 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "onnxruntime": "1.24.1",
+    "opencv": "5.0.0",
+    "numpy": "2.2.2",
+    "psutil": "7.2.1",
+    "providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "ctd_model": {
+      "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\detection\\detector-v4-s_int8.onnx",
+      "exists": true,
+      "bytes": 11120765,
+      "sha256": "5fe9e4f576e49d4e7e8b0e029d6d3cdc252abd4694113e1cae120e62c931ea79"
+    },
+    "ppocr_det_model": {
+      "path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\research-ppocrv6-optimization\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+      "exists": true,
+      "bytes": 9880512,
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+    }
+  },
+  "peak_rss_bytes": {
+    "ctd": 436899840,
+    "ppocr": 436899840
+  },
+  "protocols": [
+    "manifest_ocr_box"
+  ],
+  "notes": [
+    "Fixed manifest pages were used; source images were external to the worktree."
+  ]
+}

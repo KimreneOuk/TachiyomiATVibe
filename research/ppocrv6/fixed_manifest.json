@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "description": "Stable committed real manga page/crop roots used by the PP-OCRv6 INT8/QDQ experiments. The harness expands these roots in sorted order and records the resolved paths and hashes in every result.",
+  "provenance": [
+    "tools/aot_corpus/real_corpus: committed real manga pages with detector metadata",
+    "tools/aot_corpus/real_corpus_faithful: committed real manga detector crops/pages"
+  ],
+  "roots": [
+    "tools/aot_corpus/real_corpus",
+    "tools/aot_corpus/real_corpus_faithful"
+  ],
+  "extensions": [".jpg", ".jpeg", ".png", ".webp", ".bmp"]
+}
+
