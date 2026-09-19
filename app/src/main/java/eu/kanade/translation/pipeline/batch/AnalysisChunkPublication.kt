@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.AnalysisChunkStatus
@@ -38,12 +39,30 @@ internal object AnalysisChunkPublication {
     /** Reason prefix used by the coordinator's typed diagnostics. */
     const val ORDINAL_REJECTION = "chunk ordinal out of order"
 
+    /** Compatibility overload retained while callers migrate to the facade seam. */
+    @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
+    fun publish(
+        artifact: ChapterArtifactStore,
+        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
+        result: AnalysisChunkResult,
+        nowEpochMs: Long,
+    ): ChapterArtifactStore.TransactionOutcome = publish(
+        store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            artifactStore = artifact,
+        ),
+        manifest = manifest,
+        result = result,
+        nowEpochMs = nowEpochMs,
+    )
+
     /**
      * Publishes one validated chunk result. `expectedOrdinal` is the current
      * `analysisChunks` size — the ONLY ordinal this transaction accepts.
      */
     fun publish(
-        artifact: ChapterArtifactStore,
+        store: ChapterTranslationStore,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         result: AnalysisChunkResult,
         nowEpochMs: Long,
@@ -63,29 +82,31 @@ internal object AnalysisChunkPublication {
                     "got ${result.chunkOrdinal} (${result.chunkId})",
             )
         }
-        val contentFingerprint = contentFingerprint(result)
-        val fileName = artifact.analysisChunkSidecarName(contentFingerprint)
-        return artifact.publishSidecarPointers(
-            manifest = manifest,
-            sidecars = listOf(
-                artifact.jsonSidecarPublication(
-                    fileName = fileName,
-                    contentFingerprint = contentFingerprint,
-                    document = result,
-                    serializer = AnalysisChunkResult.serializer(),
-                ),
-            ),
-            updatePointers = { current ->
-                current.copy(
-                    analysisChunks = current.analysisChunks + SidecarPointer(
+        return store.withArtifactEngine { artifact ->
+            val contentFingerprint = contentFingerprint(result)
+            val fileName = artifact.analysisChunkSidecarName(contentFingerprint)
+            artifact.publishSidecarPointers(
+                manifest = manifest,
+                sidecars = listOf(
+                    artifact.jsonSidecarPublication(
                         fileName = fileName,
-                        schemaVersion = AnalysisChunkResult.SCHEMA_VERSION,
                         contentFingerprint = contentFingerprint,
+                        document = result,
+                        serializer = AnalysisChunkResult.serializer(),
                     ),
-                )
-            },
-            nowEpochMs = nowEpochMs,
-        )
+                ),
+                updatePointers = { current ->
+                    current.copy(
+                        analysisChunks = current.analysisChunks + SidecarPointer(
+                            fileName = fileName,
+                            schemaVersion = AnalysisChunkResult.SCHEMA_VERSION,
+                            contentFingerprint = contentFingerprint,
+                        ),
+                    )
+                },
+                nowEpochMs = nowEpochMs,
+            )
+        } ?: ChapterArtifactStore.TransactionOutcome.Rejected("artifact engine unavailable")
     }
 
     /**

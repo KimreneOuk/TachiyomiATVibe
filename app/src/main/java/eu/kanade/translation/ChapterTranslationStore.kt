@@ -15,6 +15,7 @@ import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterArtifactManifestReader
 import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.CommittedDisplayRef
 import eu.kanade.translation.artifact.DurableFailureMetadata
@@ -164,10 +165,51 @@ class ChapterTranslationStore(
     internal val artifactParent: UniFile? = null,
     private val artifactFileName: String? = null,
 ) {
+    /** Explicit memory/lazy/eager storage mode used by the P2-02 merge. */
+    internal var engineMode: eu.kanade.translation.store.ChapterStoreEngineMode =
+        artifactStore?.let { eu.kanade.translation.store.ChapterStoreEngineMode.Durable(it) }
+            ?: if (translationFile != null || fileCreator != null || artifactParent != null || artifactFileName != null) {
+                eu.kanade.translation.store.ChapterStoreEngineMode.LazyDurable(
+                    artifactParent = artifactParent,
+                    artifactFileName = artifactFileName,
+                    fileCreator = fileCreator,
+                )
+            } else {
+                eu.kanade.translation.store.ChapterStoreEngineMode.Memory
+            }
+
     internal val mutex = Mutex()
 
     internal val chapterKey: String?
         get() = artifactStore?.layout?.chapterKey ?: translationFile?.name?.substringBeforeLast('.')
+
+    /**
+     * Facade-owned read/write seam for callers that still need an artifact
+     * transaction during the staged merge. Commit 2 removes the nullable
+     * engine exposure after all callers have moved behind this seam.
+     */
+    internal inline fun <T> withArtifactEngine(block: (ChapterArtifactStore) -> T): T? =
+        artifactStore?.let(block)
+
+    /** Runs one external artifact transaction under the facade mutex. */
+    internal suspend inline fun <T> withArtifactEngineLocked(
+        crossinline block: (ChapterArtifactStore) -> T,
+    ): T? = mutex.withLock {
+        artifactStore?.let(block)
+    }
+
+    /** Read-only run-record projection used by progress/status consumers. */
+    internal fun readActiveRunRecord(): ChapterRunRecord? {
+        val pointer = artifactManifest?.activeRun ?: return null
+        val artifact = artifactStore ?: return null
+        return (artifact.readRunRecord(pointer) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
+    }
+
+    /** Read-only manifest projection for context/status consumers. */
+    internal fun readArtifactManifest(): ChapterArtifactManifest? = artifactStore?.readManifest()
+
+    /** Read-only chapter key projection without exposing the engine. */
+    internal fun artifactChapterKey(): String? = artifactStore?.layout?.chapterKey
 
     @Volatile
     internal var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
@@ -2402,6 +2444,7 @@ class ChapterTranslationStore(
         val store = ChapterArtifactStore(documents, layout)
         val manifest = synchronized(artifactOpenLock(parent, fileName)) { store.load().manifest }
         artifactStore = store
+        engineMode = eu.kanade.translation.store.ChapterStoreEngineMode.Durable(store)
         artifactManifest = manifest
         return true
     }

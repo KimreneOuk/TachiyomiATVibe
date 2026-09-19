@@ -4,7 +4,6 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.DurableFailureMetadata
 import eu.kanade.translation.pipeline.batch.BatchProgressReconciler
@@ -181,12 +180,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
      * chapter to READY_WITH_WARNINGS.
      */
     private fun completedRunRecordStatus(manifest: ChapterArtifactManifest): Translation.State? {
-        val pointer = manifest.activeRun ?: return null
-        val artifact = store.artifactStore ?: return null
-        val record = when (val read = artifact.readRunRecord(pointer)) {
-            is ChapterArtifactStore.RunRecordRead.Usable -> read.record
-            else -> return null
-        }
+        val record = store.readActiveRunRecord() ?: return null
         if (record.state != ChapterRunState.COMPLETE) return null
         val pagesSnapshot = state.value
         val pageRecords = manifest.pages.values

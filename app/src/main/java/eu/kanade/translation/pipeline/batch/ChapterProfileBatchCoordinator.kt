@@ -371,7 +371,7 @@ internal class ChapterProfileBatchCoordinator(
             return BatchPass1Outcome(needsTranslation = emptyList())
         }
         currentCoroutineContext().ensureActive()
-        val artifact = store.artifactStore
+        val artifact = store.withArtifactEngine { it }
         if (artifact == null || store.artifactManifest == null) {
             // The preflight writes origin-neutral checkpoints; without artifact
             // authority the flagged path cannot do its one job. Fail fast
@@ -875,7 +875,7 @@ internal class ChapterProfileBatchCoordinator(
                 val manifestForPublish = store.artifactManifest
                 if (manifestForPublish != null) {
                     val publication = ProfileFreezePublication.publish(
-                        artifact = artifact,
+                        store = store,
                         manifest = manifestForPublish,
                         profile = adopted,
                         nowEpochMs = nowEpochMs(),
@@ -1150,7 +1150,7 @@ internal class ChapterProfileBatchCoordinator(
                         )
                     val result = AnalysisChunkPublication.buildResult(chunk, input, nowEpochMs())
                     val publication = AnalysisChunkPublication.publish(
-                        artifact = artifact,
+                        store = store,
                         manifest = store.artifactManifest ?: return BatchPass1Outcome(
                             needsTranslation = emptyList(),
                             status = BatchPass1Status.PERSISTENCE_REJECTED,
@@ -1453,7 +1453,7 @@ internal class ChapterProfileBatchCoordinator(
         )
         return when (
             val publication = ProfileFreezePublication.publish(
-                artifact = artifact,
+                store = store,
                 manifest = manifestForPublish,
                 profile = profile,
                 nowEpochMs = nowEpochMs(),
@@ -1699,7 +1699,7 @@ internal class ChapterProfileBatchCoordinator(
         // (degraded-but-correct, never partially trusted).
         val frozenProfile = when (
             val profileRead = ProfileFreezePublication.readReusableFrozenProfile(
-                artifact = artifact,
+                store = store,
                 manifest = manifest,
                 expectedInputFingerprint = profileInputFingerprintOf(corpusFingerprint),
             )
@@ -1791,7 +1791,7 @@ internal class ChapterProfileBatchCoordinator(
                 // ST-11 resume rule: identical inputs re-derive an identical
                 // plan fingerprint — reuse the published plan, no write.
                 val reuse = manifest.envelopePlan != null &&
-                    EnvelopePlanPublication.readValidatedPlan(artifact, manifest).let { read ->
+                    EnvelopePlanPublication.readValidatedPlan(store, manifest).let { read ->
                         read is EnvelopePlanPublication.EnvelopePlanRead.Usable &&
                             read.plan.planFingerprint == fresh.planFingerprint
                     }
@@ -1803,7 +1803,7 @@ internal class ChapterProfileBatchCoordinator(
                     )
                     when (
                         val publication = EnvelopePlanPublication.publish(
-                            artifact = artifact,
+                            store = store,
                             manifest = manifestForPublish,
                             plan = fresh,
                             nowEpochMs = nowEpochMs(),
@@ -2696,7 +2696,7 @@ internal class ChapterProfileBatchCoordinator(
                 val manifestNow = store.artifactManifest
                     ?: return ReplanResult.Failed("manifest unavailable for superseding plan")
                 val alreadyPublished =
-                    EnvelopePlanPublication.readValidatedPlan(artifact, manifestNow)
+                    EnvelopePlanPublication.readValidatedPlan(store, manifestNow)
                         .let { read ->
                             read is EnvelopePlanPublication.EnvelopePlanRead.Usable &&
                                 read.plan.planFingerprint == rebuilt.plan.planFingerprint
@@ -2709,7 +2709,7 @@ internal class ChapterProfileBatchCoordinator(
                 } else {
                     when (
                         val publication = EnvelopePlanPublication.publish(
-                            artifact = artifact,
+                            store = store,
                             manifest = manifestNow,
                             plan = rebuilt.plan,
                             nowEpochMs = nowEpochMs(),
@@ -3580,7 +3580,7 @@ internal class ChapterProfileBatchCoordinator(
         val inputFingerprint = profileInputFingerprintOf(corpusFingerprint)
         return when (
             val read = ProfileFreezePublication.readReusableFrozenProfile(
-                artifact = artifact,
+                store = store,
                 manifest = manifest,
                 expectedInputFingerprint = inputFingerprint,
             )

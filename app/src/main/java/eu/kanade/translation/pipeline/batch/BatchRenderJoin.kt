@@ -383,7 +383,7 @@ internal class BatchRenderJoin(
         page: PageTranslation,
         postSnapshot: ChapterTranslationStore.PageSnapshot,
     ) {
-        val artifact = store.artifactStore ?: return
+        val artifact = store.withArtifactEngine { it } ?: return
         val manifest = store.artifactManifest ?: return
         val artifactPage = manifest.pages[pageKey] ?: return
 

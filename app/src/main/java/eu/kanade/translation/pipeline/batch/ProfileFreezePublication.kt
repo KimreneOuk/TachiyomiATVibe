@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.ProfilePointer
@@ -34,6 +35,24 @@ import eu.kanade.translation.artifact.StageFingerprints
  */
 internal object ProfileFreezePublication {
 
+    /** Compatibility overload retained while callers migrate to the facade seam. */
+    @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
+    fun publish(
+        artifact: ChapterArtifactStore,
+        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
+        profile: ChapterTranslationProfile,
+        nowEpochMs: Long,
+    ): ChapterArtifactStore.TransactionOutcome = publish(
+        store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            artifactStore = artifact,
+        ),
+        manifest = manifest,
+        profile = profile,
+        nowEpochMs = nowEpochMs,
+    )
+
     /**
      * Publishes the frozen profile + pointer in ONE transaction.
      *
@@ -43,7 +62,7 @@ internal object ProfileFreezePublication {
      * `(manifest.profile?.version ?: 0) + 1`.
      */
     fun publish(
-        artifact: ChapterArtifactStore,
+        store: ChapterTranslationStore,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         profile: ChapterTranslationProfile,
         nowEpochMs: Long,
@@ -66,30 +85,32 @@ internal object ProfileFreezePublication {
                 "profile version not monotonic: expected $expectedVersion, got ${profile.version}",
             )
         }
-        val fileName = artifact.profileSidecarName(profile.contentFingerprint)
-        return artifact.publishSidecarPointers(
-            manifest = manifest,
-            sidecars = listOf(
-                artifact.jsonSidecarPublication(
-                    fileName = fileName,
-                    contentFingerprint = profile.contentFingerprint,
-                    document = profile,
-                    serializer = ChapterTranslationProfile.serializer(),
-                ),
-            ),
-            updatePointers = { current ->
-                current.copy(
-                    profile = ProfilePointer(
+        return store.withArtifactEngine { artifact ->
+            val fileName = artifact.profileSidecarName(profile.contentFingerprint)
+            artifact.publishSidecarPointers(
+                manifest = manifest,
+                sidecars = listOf(
+                    artifact.jsonSidecarPublication(
                         fileName = fileName,
-                        schemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
                         contentFingerprint = profile.contentFingerprint,
-                        version = profile.version,
-                        profileInputFingerprint = profile.profileInputFingerprint,
+                        document = profile,
+                        serializer = ChapterTranslationProfile.serializer(),
                     ),
-                )
-            },
-            nowEpochMs = nowEpochMs,
-        )
+                ),
+                updatePointers = { current ->
+                    current.copy(
+                        profile = ProfilePointer(
+                            fileName = fileName,
+                            schemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
+                            contentFingerprint = profile.contentFingerprint,
+                            version = profile.version,
+                            profileInputFingerprint = profile.profileInputFingerprint,
+                        ),
+                    )
+                },
+                nowEpochMs = nowEpochMs,
+            )
+        } ?: ChapterArtifactStore.TransactionOutcome.Rejected("artifact engine unavailable")
     }
 
     /** Why a manifest's frozen profile is (not) reusable at a resume point. */
@@ -131,32 +152,48 @@ internal object ProfileFreezePublication {
         artifact: ChapterArtifactStore,
         manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
         expectedInputFingerprint: String,
+    ): FrozenProfileRead = readReusableFrozenProfile(
+        store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            artifactStore = artifact,
+        ),
+        manifest = manifest,
+        expectedInputFingerprint = expectedInputFingerprint,
+    )
+
+    fun readReusableFrozenProfile(
+        store: ChapterTranslationStore,
+        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
+        expectedInputFingerprint: String,
     ): FrozenProfileRead {
-        val pointer = manifest.profile ?: return FrozenProfileRead.NotReusable
-        if (!pointer.isWellFormed()) return FrozenProfileRead.NotReusable
-        val profile = when (
-            val read = artifact.readSidecarDocument(
-                pointer = pointer.toSidecarPointer(),
-                serializer = ChapterTranslationProfile.serializer(),
-                currentSchemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
-                expectedKind = ChapterTranslationProfile.KIND,
-                schemaVersionOf = { it.schemaVersion },
-                kindOf = { it.kind },
-                isValid = { it.isSemanticallyValid },
-            )
-        ) {
-            is SidecarRead.Usable -> read.document
-            else -> return FrozenProfileRead.NotReusable
-        }
-        if (pointer.contentFingerprint != profile.contentFingerprint ||
-            pointer.version != profile.version ||
-            pointer.profileInputFingerprint != expectedInputFingerprint
-        ) {
-            return FrozenProfileRead.NotReusable
-        }
-        if (StageFingerprints.profileContentFingerprint(profile) != profile.contentFingerprint) {
-            return FrozenProfileRead.NotReusable
-        }
-        return FrozenProfileRead.Reusable(profile)
+        return store.withArtifactEngine { artifact ->
+            val pointer = manifest.profile ?: return@withArtifactEngine FrozenProfileRead.NotReusable
+            if (!pointer.isWellFormed()) return@withArtifactEngine FrozenProfileRead.NotReusable
+            val profile = when (
+                val read = artifact.readSidecarDocument(
+                    pointer = pointer.toSidecarPointer(),
+                    serializer = ChapterTranslationProfile.serializer(),
+                    currentSchemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
+                    expectedKind = ChapterTranslationProfile.KIND,
+                    schemaVersionOf = { it.schemaVersion },
+                    kindOf = { it.kind },
+                    isValid = { it.isSemanticallyValid },
+                )
+            ) {
+                is SidecarRead.Usable -> read.document
+                else -> return@withArtifactEngine FrozenProfileRead.NotReusable
+            }
+            if (pointer.contentFingerprint != profile.contentFingerprint ||
+                pointer.version != profile.version ||
+                pointer.profileInputFingerprint != expectedInputFingerprint
+            ) {
+                return@withArtifactEngine FrozenProfileRead.NotReusable
+            }
+            if (StageFingerprints.profileContentFingerprint(profile) != profile.contentFingerprint) {
+                return@withArtifactEngine FrozenProfileRead.NotReusable
+            }
+            FrozenProfileRead.Reusable(profile)
+        } ?: FrozenProfileRead.NotReusable
     }
 }

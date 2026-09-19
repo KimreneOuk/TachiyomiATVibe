@@ -6,7 +6,6 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.model.BatchRebuildProgress
@@ -450,9 +449,7 @@ internal class BatchProgressProjector(
     /** Read-only look at the chapter's durable active run record, if any. */
     private fun readActiveRunRecord(chapterId: Long): ChapterRunRecord? {
         val store = activeStores.get(chapterId) ?: return null
-        val pointer = store.artifactManifest?.activeRun ?: return null
-        val artifact = store.artifactStore ?: return null
-        return (artifact.readRunRecord(pointer) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
+        return store.readActiveRunRecord()
     }
 
     private fun snapshotFromStore(

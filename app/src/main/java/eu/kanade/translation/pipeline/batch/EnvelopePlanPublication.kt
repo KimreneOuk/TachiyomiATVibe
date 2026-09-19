@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterArtifactManifest
@@ -37,6 +38,24 @@ import tachiyomi.core.common.util.system.logcat
  */
 internal object EnvelopePlanPublication {
 
+    /** Compatibility overload retained while callers migrate to the facade seam. */
+    @Deprecated("Pass ChapterTranslationStore so the facade owns the engine")
+    fun publish(
+        artifact: ChapterArtifactStore,
+        manifest: ChapterArtifactManifest,
+        plan: EnvelopePlan,
+        nowEpochMs: Long,
+    ): ChapterArtifactStore.TransactionOutcome = publish(
+        store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            artifactStore = artifact,
+        ),
+        manifest = manifest,
+        plan = plan,
+        nowEpochMs = nowEpochMs,
+    )
+
     /**
      * Publishes the envelope plan + its manifest pointer in ONE transaction.
      * The caller supplies the freshly re-planned [EnvelopePlan]; the
@@ -61,7 +80,7 @@ internal object EnvelopePlanPublication {
      * before (T924-SC-20/22).
      */
     fun publish(
-        artifact: ChapterArtifactStore,
+        store: ChapterTranslationStore,
         manifest: ChapterArtifactManifest,
         plan: EnvelopePlan,
         nowEpochMs: Long,
@@ -75,40 +94,42 @@ internal object EnvelopePlanPublication {
                 "envelope plan fingerprint mismatch: field=${plan.planFingerprint} recomputed=$recomputed",
             )
         }
-        val fileName = artifact.envelopePlanSidecarName(plan.planFingerprint)
-        fun publishPointers(on: ChapterArtifactManifest): ChapterArtifactStore.TransactionOutcome =
-            artifact.publishSidecarPointers(
-                manifest = on,
-                sidecars = listOf(
-                    artifact.jsonSidecarPublication(
-                        fileName = fileName,
-                        contentFingerprint = plan.planFingerprint,
-                        document = plan,
-                        serializer = EnvelopePlan.serializer(),
-                    ),
-                ),
-                updatePointers = { current ->
-                    current.copy(
-                        envelopePlan = SidecarPointer(
+        return store.withArtifactEngine { artifact ->
+            val fileName = artifact.envelopePlanSidecarName(plan.planFingerprint)
+            fun publishPointers(on: ChapterArtifactManifest): ChapterArtifactStore.TransactionOutcome =
+                artifact.publishSidecarPointers(
+                    manifest = on,
+                    sidecars = listOf(
+                        artifact.jsonSidecarPublication(
                             fileName = fileName,
-                            schemaVersion = EnvelopePlan.SCHEMA_VERSION,
                             contentFingerprint = plan.planFingerprint,
+                            document = plan,
+                            serializer = EnvelopePlan.serializer(),
                         ),
-                    )
-                },
-                nowEpochMs = nowEpochMs,
-            )
-        val firstAttempt = publishPointers(manifest)
-        if (!artifact.isStaleManifestRejection(firstAttempt)) return firstAttempt
-        val fresh = artifact.readManifest() ?: return firstAttempt
-        logcat(LogPriority.WARN) {
-            "TachiyomiAT artifact stale manifest retried once: seam=envelope-plan " +
-                "chapter=${fresh.chapterKey} " +
-                "staleUpdatedAt=${manifest.updatedAtEpochMs} " +
-                "freshUpdatedAt=${fresh.updatedAtEpochMs}"
-        }
-        val retry = publishPointers(fresh)
-        return if (retry is ChapterArtifactStore.TransactionOutcome.Committed) retry else firstAttempt
+                    ),
+                    updatePointers = { current ->
+                        current.copy(
+                            envelopePlan = SidecarPointer(
+                                fileName = fileName,
+                                schemaVersion = EnvelopePlan.SCHEMA_VERSION,
+                                contentFingerprint = plan.planFingerprint,
+                            ),
+                        )
+                    },
+                    nowEpochMs = nowEpochMs,
+                )
+            val firstAttempt = publishPointers(manifest)
+            if (!artifact.isStaleManifestRejection(firstAttempt)) return@withArtifactEngine firstAttempt
+            val fresh = artifact.readManifest() ?: return@withArtifactEngine firstAttempt
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT artifact stale manifest retried once: seam=envelope-plan " +
+                    "chapter=${fresh.chapterKey} " +
+                    "staleUpdatedAt=${manifest.updatedAtEpochMs} " +
+                    "freshUpdatedAt=${fresh.updatedAtEpochMs}"
+            }
+            val retry = publishPointers(fresh)
+            if (retry is ChapterArtifactStore.TransactionOutcome.Committed) retry else firstAttempt
+        } ?: ChapterArtifactStore.TransactionOutcome.Rejected("artifact engine unavailable")
     }
 
     /** Why a manifest's envelope-plan pointer is (not) usable at a resume point. */
@@ -130,30 +151,44 @@ internal object EnvelopePlanPublication {
     fun readValidatedPlan(
         artifact: ChapterArtifactStore,
         manifest: ChapterArtifactManifest,
+    ): EnvelopePlanRead = readValidatedPlan(
+        store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            artifactStore = artifact,
+        ),
+        manifest = manifest,
+    )
+
+    fun readValidatedPlan(
+        store: ChapterTranslationStore,
+        manifest: ChapterArtifactManifest,
     ): EnvelopePlanRead {
-        val pointer = manifest.envelopePlan ?: return EnvelopePlanRead.NotUsable
-        if (!pointer.isWellFormed()) return EnvelopePlanRead.NotUsable
-        val plan = when (
-            val read = artifact.readSidecarDocument(
-                pointer = pointer,
-                serializer = EnvelopePlan.serializer(),
-                currentSchemaVersion = EnvelopePlan.SCHEMA_VERSION,
-                expectedKind = EnvelopePlan.KIND,
-                schemaVersionOf = { it.schemaVersion },
-                kindOf = { it.kind },
-                isValid = { it.isSemanticallyValid },
-            )
-        ) {
-            is SidecarRead.Usable -> read.document
-            else -> return EnvelopePlanRead.NotUsable
-        }
-        if (pointer.contentFingerprint != plan.planFingerprint) {
-            return EnvelopePlanRead.NotUsable
-        }
-        if (recomputedContentFingerprint(plan) != plan.planFingerprint) {
-            return EnvelopePlanRead.NotUsable
-        }
-        return EnvelopePlanRead.Usable(plan)
+        return store.withArtifactEngine { artifact ->
+            val pointer = manifest.envelopePlan ?: return@withArtifactEngine EnvelopePlanRead.NotUsable
+            if (!pointer.isWellFormed()) return@withArtifactEngine EnvelopePlanRead.NotUsable
+            val plan = when (
+                val read = artifact.readSidecarDocument(
+                    pointer = pointer,
+                    serializer = EnvelopePlan.serializer(),
+                    currentSchemaVersion = EnvelopePlan.SCHEMA_VERSION,
+                    expectedKind = EnvelopePlan.KIND,
+                    schemaVersionOf = { it.schemaVersion },
+                    kindOf = { it.kind },
+                    isValid = { it.isSemanticallyValid },
+                )
+            ) {
+                is SidecarRead.Usable -> read.document
+                else -> return@withArtifactEngine EnvelopePlanRead.NotUsable
+            }
+            if (pointer.contentFingerprint != plan.planFingerprint) {
+                return@withArtifactEngine EnvelopePlanRead.NotUsable
+            }
+            if (recomputedContentFingerprint(plan) != plan.planFingerprint) {
+                return@withArtifactEngine EnvelopePlanRead.NotUsable
+            }
+            EnvelopePlanRead.Usable(plan)
+        } ?: EnvelopePlanRead.NotUsable
     }
 
     /**
