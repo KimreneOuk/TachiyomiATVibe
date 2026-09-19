@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.CopyOnWriteArrayList
 import logcat.LogPriority
 import mihon.core.archive.ArchiveReader
 import mihon.core.archive.archiveReader
@@ -302,6 +303,14 @@ class ChapterTranslator(
     @Volatile
     private var translationJob: Job? = null
 
+    /**
+     * Parent job captured by the quiescent batch-to-reader transition. A
+     * bounded join can time out while native work is still unwinding; keeping
+     * this reference lets the coordinator retry the same job instead of
+     * accidentally treating a timeout as quiescence.
+     */
+    private val sessionSwitchJobs = CopyOnWriteArrayList<Job>()
+
     val isRunning: Boolean
         get() = translationJob?.isActive == true
 
@@ -390,6 +399,23 @@ class ChapterTranslator(
 
     fun pause() {
         cancelTranslatorJob()
+        queueState.value.filter { it.status == Translation.State.TRANSLATING }
+            .forEach { it.status = Translation.State.QUEUE }
+        isPaused = true
+    }
+
+    /**
+     * Non-blocking pause used before a session switch. The cancelled parent
+     * job is retained by [cancelTranslatorJobAndJoinForSession] when native
+     * work needs more than one bounded join attempt to unwind.
+     */
+    fun pauseForSessionSwitch() {
+        val job = translationJob
+        if (job != null) {
+            job.cancel()
+            translationJob = null
+            retainSessionSwitchJob(job)
+        }
         queueState.value.filter { it.status == Translation.State.TRANSLATING }
             .forEach { it.status = Translation.State.QUEUE }
         isPaused = true
@@ -569,17 +595,52 @@ class ChapterTranslator(
      * rejects subsequent writes and NativeRunQuarantine invalidates the timed-out
      * native generation.
      */
-    suspend fun cancelTranslatorJobAndJoin() {
-        val job = translationJob ?: return
+    suspend fun cancelTranslatorJobAndJoin(timeoutMs: Long = BATCH_JOIN_TIMEOUT_MS) {
+        cancelTranslatorJobAndJoinResult(timeoutMs)
+    }
+
+    /** Joined counterpart that reports whether the old batch fully unwound. */
+    suspend fun cancelTranslatorJobAndJoinResult(timeoutMs: Long = BATCH_JOIN_TIMEOUT_MS): Boolean {
+        val job = translationJob ?: return true
         translationJob = null
-        val joined = withTimeoutOrNull(BATCH_JOIN_TIMEOUT_MS) { job.cancelAndJoin() }
-        if (joined == null) {
+        val joined = withTimeoutOrNull(timeoutMs) { job.cancelAndJoin() } != null
+        if (!joined) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT batch translator job did not unwind within " +
-                    "$BATCH_JOIN_TIMEOUT_MS ms on delete; proceeding (defunct guard + " +
+                    "$timeoutMs ms; proceeding (defunct guard + " +
                     "native-run quarantine will neutralize any late write)"
             }
         }
+        return joined
+    }
+
+    /**
+     * Join the job captured by [pauseForSessionSwitch], retrying the same
+     * parent after a timeout. This is intentionally separate from the delete
+     * path above: existing delete/reset callers retain their historical
+     * timeout behavior, while a session switch must never lose the old job
+     * between attempts.
+     */
+    suspend fun cancelTranslatorJobAndJoinForSession(timeoutMs: Long): Boolean {
+        val job = translationJob
+        if (job != null) {
+            translationJob = null
+            job.cancel()
+            retainSessionSwitchJob(job)
+        }
+
+        for (pendingJob in sessionSwitchJobs.toList()) {
+            if (withTimeoutOrNull(timeoutMs) { pendingJob.join() } == null) {
+                return false
+            }
+            sessionSwitchJobs.remove(pendingJob)
+        }
+        return true
+    }
+
+    private fun retainSessionSwitchJob(job: Job) {
+        sessionSwitchJobs += job
+        job.invokeOnCompletion { sessionSwitchJobs.remove(job) }
     }
 
     /**

@@ -92,6 +92,13 @@
     <string name="reader_translation_not_downloaded">Translation requires downloaded chapters</string>
     <string name="reader_translation_stop_all">Stop all translation</string>
     <string name="reader_translation_stop_all_summary">Cancels every page being translated right now</string>
+    <string name="reader_batch_switch_title">Batch translation is active</string>
+    <string name="reader_batch_switch_message">Pause batch translation and switch to reader translation?</string>
+    <string name="reader_batch_switch_confirm">Pause and switch</string>
+    <string name="reader_batch_switch_cancel">Keep batch running</string>
+    <string name="reader_batch_switch_cancelled">Reader translation was not started; batch translation is still active</string>
+    <string name="reader_batch_switch_wait">Batch translation is still winding down; reader translation will wait</string>
+    <string name="reader_batch_switch_reader_active">Reader translation is already active</string>
 
     <!-- TachiyomiAT: live queue view shown in the reader translation settings sheet -->
     <string name="reader_translation_queue_summary">Translating page %1$d of %2$d · %3$d queued</string>

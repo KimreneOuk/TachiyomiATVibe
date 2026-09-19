@@ -75,6 +75,7 @@ internal class ReaderTeardownCoordinator(
         // ReaderActivity lifecycle callbacks return without touching those bridges on main.
         applicationScope.launch(start = CoroutineStart.DEFAULT) {
             readerTeardownMutex.withLock {
+                sessionCoordinator.abortPausingToBatch()
                 cancelAllPageTranslations(cancelBatchQueue = false)
                 if (!isAnyBatchTranslationActive) {
                     translatorStop(reason, closeEngines = false)
@@ -100,6 +101,7 @@ internal class ReaderTeardownCoordinator(
         // here so a future lifecycle caller cannot reintroduce a main-thread synchronous prefix.
         withContext(Dispatchers.IO) {
             readerTeardownMutex.withLock {
+                sessionCoordinator.abortPausingToBatch()
                 scheduler.awaitReaderStop()
                 val chapterIdsToEvict = activeStores.chapterIds()
                     .filter { !isBatchTranslationRetained(it) }

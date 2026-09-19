@@ -1,5 +1,7 @@
 package eu.kanade.translation.orchestration
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -93,6 +95,89 @@ class TranslationSessionCoordinator(
     fun completePausingForReader(): Boolean = synchronized(lock) {
         if (_state.value != TranslationSessionState.PAUSING) return false
         _state.value = TranslationSessionState.READER_SESSION
+        true
+    }
+
+    /**
+     * Perform the joined BATCH -> READER transition. The caller supplies the
+     * non-blocking pause and the batch-job join so this coordinator never
+     * reaches through manager, reader, or store locks. A timed-out join leaves
+     * the state in PAUSING and retries forever; no reader admission is returned
+     * until the old batch has genuinely unwound.
+     */
+    suspend fun switchBatchToReader(
+        intent: ReaderSessionIntent,
+        pauseBatch: () -> Unit,
+        joinBatch: suspend (timeoutMs: Long) -> Boolean,
+        timeoutMs: Long = 3_000L,
+        retryDelayMs: Long = 2_000L,
+        onJoinTimeout: (timeoutMs: Long) -> Unit = {},
+    ): SessionAdmission {
+        if (!intent.confirmBatchSwitch) return requestReaderSession(intent)
+
+        val previous = synchronized(lock) {
+            when (_state.value) {
+                TranslationSessionState.IDLE -> {
+                    _state.value = TranslationSessionState.READER_SESSION
+                    return@synchronized null
+                }
+
+                TranslationSessionState.READER_SESSION -> return@synchronized null
+                TranslationSessionState.PAUSING -> {
+                    return@synchronized TranslationSessionState.PAUSING
+                }
+
+                TranslationSessionState.BATCH_SESSION -> {
+                    _state.value = TranslationSessionState.PAUSING
+                    TranslationSessionState.BATCH_SESSION
+                }
+            }
+        }
+
+        if (previous == null) return SessionAdmission.Admitted(TranslationSessionState.READER_SESSION)
+        if (previous == TranslationSessionState.PAUSING) {
+            return SessionAdmission.Rejected(SessionRejection.PAUSING_IN_PROGRESS)
+        }
+
+        try {
+            pauseBatch()
+            while (true) {
+                if (synchronized(lock) { _state.value != TranslationSessionState.PAUSING }) {
+                    return SessionAdmission.Rejected(SessionRejection.PAUSING_IN_PROGRESS)
+                }
+                if (joinBatch(timeoutMs)) {
+                    synchronized(lock) {
+                        if (_state.value == TranslationSessionState.PAUSING) {
+                            _state.value = TranslationSessionState.READER_SESSION
+                            return SessionAdmission.Switched(TranslationSessionState.BATCH_SESSION)
+                        }
+                    }
+                    return SessionAdmission.Rejected(SessionRejection.PAUSING_IN_PROGRESS)
+                }
+                onJoinTimeout(timeoutMs)
+                delay(retryDelayMs)
+            }
+        } catch (cancelled: CancellationException) {
+            // A reader teardown can cancel the transition while the native
+            // batch is still unwinding. Restore the batch owner rather than
+            // leaving the global admission gate stranded in PAUSING.
+            synchronized(lock) {
+                if (_state.value == TranslationSessionState.PAUSING) {
+                    _state.value = TranslationSessionState.BATCH_SESSION
+                }
+            }
+            throw cancelled
+        }
+    }
+
+    /**
+     * Abort an in-flight reader handoff when the reader is torn down. The
+     * batch remains the owner; a still-running switch coroutine observes the
+     * state change and cannot publish a reader session after teardown.
+     */
+    fun abortPausingToBatch(): Boolean = synchronized(lock) {
+        if (_state.value != TranslationSessionState.PAUSING) return false
+        _state.value = TranslationSessionState.BATCH_SESSION
         true
     }
 

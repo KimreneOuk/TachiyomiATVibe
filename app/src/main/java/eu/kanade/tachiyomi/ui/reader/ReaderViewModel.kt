@@ -74,6 +74,9 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.orchestration.ReaderSessionIntent
+import eu.kanade.translation.orchestration.SessionAdmission
+import eu.kanade.translation.orchestration.SessionRejection
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationScheduler
@@ -1833,6 +1836,42 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(dialog = null) }
     }
 
+    fun dismissBatchReaderSwitch() {
+        closeDialog()
+        viewModelScope.launchIO {
+            withUIContext {
+                Injekt.get<Application>().toast(ATMR.strings.reader_batch_switch_cancelled)
+            }
+        }
+    }
+
+    /**
+     * Runs the confirmed batch-to-reader handoff off the manager/reader/store
+     * locks. A timeout only logs and retries inside the coordinator; this
+     * method does not admit the page until the old batch job really joins.
+     */
+    fun confirmBatchReaderSwitch(request: Dialog.BatchReaderSwitch) {
+        closeDialog()
+        viewModelScope.launchIO {
+            when (val admission = translationManager.switchReaderSession(request.page.chapter.chapter.id)) {
+                is SessionAdmission.Admitted,
+                is SessionAdmission.Switched,
+                -> translateSinglePage(request.page, request.force)
+
+                is SessionAdmission.Rejected -> {
+                    withUIContext {
+                        val message = when (admission.reason) {
+                            SessionRejection.PAUSING_IN_PROGRESS -> ATMR.strings.reader_batch_switch_wait
+                            SessionRejection.BATCH_ACTIVE -> ATMR.strings.reader_batch_switch_cancelled
+                            SessionRejection.READER_ACTIVE -> ATMR.strings.reader_batch_switch_reader_active
+                        }
+                        Injekt.get<Application>().toast(message)
+                    }
+                }
+            }
+        }
+    }
+
     fun setBrightnessOverlayValue(value: Int) {
         mutableState.update { it.copy(brightnessOverlayValue = value) }
     }
@@ -2212,6 +2251,32 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
+        when (val admission = translationManager.sessionCoordinator.requestReaderSession(
+            ReaderSessionIntent(chapterId = page.chapter.chapter.id),
+        )) {
+            is SessionAdmission.Admitted,
+            is SessionAdmission.Switched,
+            -> translateSinglePageAfterAdmission(page, force)
+
+            is SessionAdmission.Rejected -> when (admission.reason) {
+                SessionRejection.BATCH_ACTIVE -> mutableState.update {
+                    it.copy(dialog = Dialog.BatchReaderSwitch(page = page, force = force))
+                }
+
+                SessionRejection.PAUSING_IN_PROGRESS -> {
+                    Injekt.get<Application>().toast(ATMR.strings.reader_batch_switch_wait)
+                }
+
+                SessionRejection.READER_ACTIVE -> {
+                    // The existing reader session owns this request; the
+                    // scheduler's idempotent admission will continue it.
+                    translateSinglePageAfterAdmission(page, force)
+                }
+            }
+        }
+    }
+
+    private fun translateSinglePageAfterAdmission(page: ReaderPage, force: Boolean? = null) {
         val chapter = page.chapter.chapter
         val pageKey = resolvePageKey(page)
         val manga = manga ?: run {
@@ -3068,6 +3133,7 @@ class ReaderViewModel @JvmOverloads constructor(
         data object ReadingModeSelect : Dialog
         data object OrientationModeSelect : Dialog
         data class PageActions(val page: ReaderPage) : Dialog
+        data class BatchReaderSwitch(val page: ReaderPage, val force: Boolean? = null) : Dialog
     }
 
     sealed interface Event {

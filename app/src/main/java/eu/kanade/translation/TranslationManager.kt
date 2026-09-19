@@ -353,6 +353,26 @@ class TranslationManager(
         }
     }
 
+    /**
+     * Quiesce the batch owner before admitting a confirmed reader request.
+     * This method deliberately owns no manager/store/request lock while the
+     * bounded native join retries; the coordinator invokes the translator's
+     * non-blocking pause first and then joins the same parent job until it
+     * genuinely unwinds.
+     */
+    suspend fun switchReaderSession(chapterId: Long?): SessionAdmission = withContext(Dispatchers.IO) {
+        sessionCoordinator.switchBatchToReader(
+            intent = ReaderSessionIntent(chapterId = chapterId, confirmBatchSwitch = true),
+            pauseBatch = translator::pauseForSessionSwitch,
+            joinBatch = translator::cancelTranslatorJobAndJoinForSession,
+            onJoinTimeout = { timeoutMs ->
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT reader admission waiting for batch unwind after $timeoutMs ms"
+                }
+            },
+        )
+    }
+
     // T909 Phase 9: bodies moved to manager/TranslationRequestCoordinator.kt;
     // same-signature stubs keep the manager's public (and reflection-tested) seams.
 

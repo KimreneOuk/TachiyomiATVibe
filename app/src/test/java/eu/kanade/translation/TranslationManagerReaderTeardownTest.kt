@@ -2,6 +2,7 @@ package eu.kanade.translation
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.scheduling.TranslationScheduler
 import io.mockk.coEvery
 import io.mockk.every
@@ -257,6 +258,10 @@ class TranslationManagerReaderTeardownTest {
         val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
         setField(manager, "scheduler", scheduler)
         setField(manager, "translator", translator)
+        // Unsafe.allocateInstance skips the manager's admission-owner
+        // initializer; ReaderTeardownCoordinator now aborts a pending
+        // batch-to-reader handoff before it joins reader work.
+        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
         setField(manager, "activeStores", activeStores)
         setField(manager, "applicationScope", applicationScope)
         setField(manager, "readerTeardownMutex", Mutex())

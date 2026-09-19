@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -103,6 +104,7 @@ import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -664,6 +666,24 @@ class ReaderActivity : BaseActivity() {
                         onTranslatePage = {
                             val page = (state.dialog as? ReaderViewModel.Dialog.PageActions)?.page
                             if (page != null) viewModel.translateSinglePage(page)
+                        },
+                    )
+                }
+                is ReaderViewModel.Dialog.BatchReaderSwitch -> {
+                    val request = state.dialog as ReaderViewModel.Dialog.BatchReaderSwitch
+                    AlertDialog(
+                        onDismissRequest = viewModel::dismissBatchReaderSwitch,
+                        title = { Text(stringResource(ATMR.strings.reader_batch_switch_title)) },
+                        text = { Text(stringResource(ATMR.strings.reader_batch_switch_message)) },
+                        confirmButton = {
+                            TextButton(onClick = { viewModel.confirmBatchReaderSwitch(request) }) {
+                                Text(stringResource(ATMR.strings.reader_batch_switch_confirm))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = viewModel::dismissBatchReaderSwitch) {
+                                Text(stringResource(ATMR.strings.reader_batch_switch_cancel))
+                            }
                         },
                     )
                 }
