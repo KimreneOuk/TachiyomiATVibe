@@ -45,4 +45,33 @@ class PaddleOcrRollingP95PolicyTest {
         policy.record(1.0)
         assertEquals(PaddleOcrBatchSize.B4, policy.activeBatchSize)
     }
+
+    @Test
+    fun `B4 governor downgrades to B2 then B1 and recovery is capped at requested B4`() {
+        val policy = PaddleOcrRollingP95HysteresisDowngradePolicy(
+            initialBatchSize = PaddleOcrBatchSize.B4,
+            maximumBatchSize = PaddleOcrBatchSize.B4,
+            config = PaddleOcrRollingP95Config(
+                windowSize = 2,
+                downgradeP95Ms = 100.0,
+                recoveryP95Ms = 50.0,
+                highWindowsBeforeDowngrade = 1,
+                lowWindowsBeforeRecovery = 1,
+            ),
+        )
+
+        policy.record(200.0)
+        policy.record(200.0)
+        assertEquals(PaddleOcrBatchSize.B2, policy.activeBatchSize)
+
+        policy.record(200.0)
+        policy.record(200.0)
+        assertEquals(PaddleOcrBatchSize.B1, policy.activeBatchSize)
+
+        repeat(6) { policy.record(10.0) }
+        assertEquals(PaddleOcrBatchSize.B4, policy.activeBatchSize)
+        policy.record(10.0)
+        policy.record(10.0)
+        assertEquals(PaddleOcrBatchSize.B4, policy.activeBatchSize)
+    }
 }

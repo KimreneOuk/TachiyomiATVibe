@@ -32,6 +32,11 @@
     <string name="pref_paddle_ocr_provider_cpu">CPU</string>
     <string name="pref_paddle_ocr_provider_gpu">Qualcomm GPU (QNN GPU)</string>
     <string name="pref_paddle_ocr_provider_htp">Qualcomm HTP/NPU (QNN HTP)</string>
+    <string name="pref_paddle_ocr_batch">PaddleOCR v6 recognition batch</string>
+    <string name="pref_paddle_ocr_batch_summary">B1 is the production default. B2 and B4 are experimental and apply when a new reader/translation session creates OCR sessions; restart the current session after changing.</string>
+    <string name="pref_paddle_ocr_batch_b1">B1</string>
+    <string name="pref_paddle_ocr_batch_b2">B2 (experimental)</string>
+    <string name="pref_paddle_ocr_batch_b4">B4 (experimental)</string>
     <string name="pref_translate_to">Translate To</string>
     <string name="pref_group_engine">Translator</string>
     <string name="pref_translator_engine">Translator Engine</string>

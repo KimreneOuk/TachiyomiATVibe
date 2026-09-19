@@ -45,6 +45,9 @@ enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
  */
 enum class PaddleOcrExecutionProvider { CPU, QUALCOMM_QNN_GPU, QUALCOMM_QNN_HTP }
 
+/** User-requested PaddleOCR v6 recognizer microbatch size. */
+enum class PaddleOcrRecognitionBatch { B1, B2, B4 }
+
 /**
  * TachiyomiAT: source reading order for a manga/comic page. Determines how the
  * recognition engine orders detected blocks and which direction the inpainter
@@ -137,6 +140,16 @@ class TranslationPreferences(
     fun paddleOcrExecutionProvider() = preferenceStore.getEnum(
         "translation_paddle_ocr_execution_provider",
         PaddleOcrExecutionProvider.CPU,
+    )
+
+    /**
+     * PaddleOCR v6 recognizer microbatch size. The recognition engine reads
+     * this once at initialization, so changing it takes effect after the
+     * current reader/translation session is restarted.
+     */
+    fun paddleOcrRecognitionBatch() = preferenceStore.getEnum(
+        "translation_paddle_ocr_recognition_batch",
+        PaddleOcrRecognitionBatch.B1,
     )
 
     /**

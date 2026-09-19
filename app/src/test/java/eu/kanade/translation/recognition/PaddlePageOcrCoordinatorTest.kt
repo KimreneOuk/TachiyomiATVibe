@@ -73,7 +73,9 @@ class PaddlePageOcrCoordinatorTest {
             assertTrue(dispatcher.batchTraces.all { trace ->
                 trace.pageGeneration == page && trace.leafIdentities.all { it.pageGeneration == page }
             })
-            assertTrue(dispatcher.batchTraces.all { it.queueWaitMs >= 0.0 && it.admissionWaitMs >= 0.0 })
+            assertTrue(dispatcher.batchTraces.all {
+                it.queueWaitMs >= 0.0 && it.admissionWaitMs >= 0.0 && it.batchLatencyMs >= 0.0
+            })
             leaves.forEach { assertTrue(it.cropOwnership.isReleased) }
         }
     }

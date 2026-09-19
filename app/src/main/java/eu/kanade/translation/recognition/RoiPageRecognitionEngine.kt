@@ -29,9 +29,10 @@ import eu.kanade.translation.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchSize
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchActivationPolicy
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrPageGeneration
+import eu.kanade.translation.ocr.paddle.batch.PaddleOcrP95Action
+import eu.kanade.translation.ocr.paddle.batch.PaddleOcrRollingP95HysteresisDowngradePolicy
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.runtime.onnx.PaddleOcrProviderResolution
@@ -78,6 +79,8 @@ class RoiPageRecognitionEngine(
     private var bubbleSegmenter: OnnxBubbleSegmenter? = null
     private var roiOcrEngine: RoiOcrEngine? = null
     private var paddlePageOcrCoordinator: PaddlePageOcrCoordinator? = null
+    private var paddleBatchGovernor: PaddleOcrRollingP95HysteresisDowngradePolicy? = null
+    private var paddleBatchGovernorReason = "not_paddle"
     private val paddlePageGenerationCounter = AtomicLong(0L)
 
     /**
@@ -224,7 +227,15 @@ class RoiPageRecognitionEngine(
                     }
                     OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also {
                         val paddlePaths = modelStore.ensurePaddleOcrV6Small()
-                        val activation = PaddleOcrBatchActivationPolicy.current()
+                        val activation = PaddleOcrBatchActivationPolicy.currentFromPreferences(
+                            preferences = Injekt.get<TranslationPreferences>(),
+                            requestedProvider = paddleProvider?.requested,
+                        )
+                        paddleBatchGovernor = PaddleOcrRollingP95HysteresisDowngradePolicy(
+                            initialBatchSize = activation.activeBatchSize,
+                            maximumBatchSize = activation.activeBatchSize,
+                        )
+                        paddleBatchGovernorReason = activation.reason
                         val providerConfiguration = if (activation.forceCpuB1EmergencyFallback) {
                             PaddleOcrProviderTestConfiguration.cpuB1EmergencyFallback()
                         } else {
@@ -333,6 +344,32 @@ class RoiPageRecognitionEngine(
         return PaddleOcrSessionFactory.resolve(requested)
     }
 
+    private fun recordPaddleBatchLatencies(
+        engine: PaddleOcrV6SmallEngine,
+        completedCoordinator: PaddlePageOcrCoordinator,
+    ) {
+        val governor = paddleBatchGovernor ?: return
+        completedCoordinator.lastBatchTrace.forEach { trace ->
+            val previous = governor.activeBatchSize
+            val decision = governor.record(trace.batchLatencyMs)
+            if (decision.action != PaddleOcrP95Action.HOLD) {
+                paddleBatchGovernorReason = decision.reason
+                logcat(LogPriority.INFO) {
+                    "[paddle_batch_governor] action=${decision.action.name} " +
+                        "from=${previous.value} to=${decision.activeBatchSize.value} " +
+                        "p95Ms=${decision.rollingP95Ms ?: "n/a"} cap=${governor.maximumBatchSize.value} " +
+                        "reason=${decision.reason}"
+                }
+            }
+        }
+        if (governor.activeBatchSize != completedCoordinator.validatedBatchSize) {
+            paddlePageOcrCoordinator = PaddlePageOcrCoordinator(
+                engine = engine,
+                validatedBatchSize = governor.activeBatchSize,
+            )
+        }
+    }
+
     override suspend fun analyze(bitmap: Bitmap): PageTranslation {
         if (!initialized) initialize()
         // TachiyomiAT: bail before any ONNX call if the engine was closed
@@ -346,7 +383,7 @@ class RoiPageRecognitionEngine(
             ?: throw IllegalStateException("ONNX detector closed mid-analyze")
         val localOcrEngine = roiOcrEngine
             ?: throw IllegalStateException("ONNX OCR engine closed mid-analyze")
-        val localPaddlePageCoordinator = paddlePageOcrCoordinator
+        var localPaddlePageCoordinator = paddlePageOcrCoordinator
         val startTime = System.nanoTime()
         TranslationMemoryBudget.logSnapshot("analyze_start", bitmap.width, bitmap.height)
         // TachiyomiAT: hold nativeGuard across detect + the per-ROI OCR loop so
@@ -364,6 +401,8 @@ class RoiPageRecognitionEngine(
         var openRecognitionSpan: TranslationStageSpan? = null
         val analyzed = try {
             nativeGuard.withLock {
+                localPaddlePageCoordinator = paddlePageOcrCoordinator
+                val pagePaddlePageCoordinator = localPaddlePageCoordinator
                 if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
                 val detectSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.DETECT,
@@ -457,7 +496,7 @@ class RoiPageRecognitionEngine(
                 )
                 openRecognitionSpan = ocrSpan
                 val paddleRegionResults = if (
-                    engine is PaddleOcrV6SmallEngine && localPaddlePageCoordinator != null
+                    engine is PaddleOcrV6SmallEngine && pagePaddlePageCoordinator != null
                 ) {
                     val traceIdentity = TranslationTrace.currentRun()?.identity
                     val pageId = traceIdentity?.page?.takeUnless { it.isBlank() || it == "none" }
@@ -473,7 +512,7 @@ class RoiPageRecognitionEngine(
                         null,
                         -> PaddlePageOcrMode.MANUAL
                     }
-                    localPaddlePageCoordinator.recognizePage(
+                    pagePaddlePageCoordinator.recognizePage(
                         pageGeneration = pageGeneration,
                         bitmap = bitmap,
                         detections = filteredDetections,
@@ -483,14 +522,15 @@ class RoiPageRecognitionEngine(
                         mode = mode,
                         isClosed = { closed },
                     ).also { results ->
-                        val waitMs = localPaddlePageCoordinator.lastBatchTrace.sumOf {
+                        val waitMs = pagePaddlePageCoordinator.lastBatchTrace.sumOf {
                             it.queueWaitMs + it.admissionWaitMs
                         }
                         logcat(LogPriority.INFO) {
                             "Paddle page generation=${pageGeneration.generation} mode=${mode.name.lowercase()} " +
-                                "leaves=${localPaddlePageCoordinator.lastResolvedLeafCount} " +
-                                "batches=${localPaddlePageCoordinator.lastBatchTrace.size} waitMs=$waitMs"
+                                "leaves=${pagePaddlePageCoordinator.lastResolvedLeafCount} " +
+                                "batches=${pagePaddlePageCoordinator.lastBatchTrace.size} waitMs=$waitMs"
                         }
+                        recordPaddleBatchLatencies(engine, pagePaddlePageCoordinator)
                     }
                 } else {
                     null
@@ -723,6 +763,13 @@ class RoiPageRecognitionEngine(
         // the surviving OCR blocks. See PageInpaintingPlanner + contract #14.
         pageTranslation.inpaintMaskBoxes = PageInpaintingPlanner.computeMask(pageTranslation)
         val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
+        val paddleBatchSize = localPaddlePageCoordinator?.validatedBatchSize?.value ?: 1
+        val paddleBatched = localPaddlePageCoordinator != null && paddleBatchSize > 1
+        val paddleGovernorReason = if (localPaddlePageCoordinator != null) {
+            paddleBatchGovernorReason
+        } else {
+            "not_paddle"
+        }
         logcat(LogPriority.INFO) {
             // T922 Phase 3: the ambiguous global route= token (device
             // preference) was removed — per-engine execution providers below
@@ -732,7 +779,8 @@ class RoiPageRecognitionEngine(
                 "segmenter=${bubbleSegmenter?.executionProviderLabel ?: "n/a"}, " +
                 "ocr=${localOcrEngine.executionProviderLabel}) " +
                 "stage=recognition total=${elapsedMs}ms detector=${detectMs}ms segmenter=${segmentMs}ms " +
-                "ocr=${ocrMs}ms (blocks=${pageTranslation.blocks.size} batched=${!localOcrEngine.prefersHorizontalText})"
+                "ocr=${ocrMs}ms (blocks=${pageTranslation.blocks.size} batched=$paddleBatched " +
+                "batchSize=$paddleBatchSize governorReason=$paddleGovernorReason)"
         }
         logcat(LogPriority.INFO) {
             "RoiPageRecognitionEngine analyzed ${pageTranslation.blocks.size} blocks " +
@@ -1034,6 +1082,8 @@ class RoiPageRecognitionEngine(
         } finally {
             roiOcrEngine = null
             paddlePageOcrCoordinator = null
+            paddleBatchGovernor = null
+            paddleBatchGovernorReason = "not_paddle"
         }
         try {
             paddleDet?.close()

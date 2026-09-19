@@ -36,8 +36,8 @@ internal enum class PaddlePageOcrMode {
 }
 
 /**
- * Rollout policy. B1 is the only reviewed/promoted size at this ticket; later
- * device validation can inject B4/B8 without changing page ownership or mapping.
+ * Rollout policy. B1 remains the default; the device gate can inject a larger
+ * size without changing page ownership or mapping.
  */
 internal data class PaddlePageOcrPolicy(
     val mode: PaddlePageOcrMode,
@@ -58,6 +58,7 @@ internal data class PaddlePageBatchTrace(
     val requestedBatchSize: PaddleOcrBatchSize,
     val queueWaitMs: Double,
     val admissionWaitMs: Double,
+    val batchLatencyMs: Double,
 )
 
 /**
@@ -77,6 +78,7 @@ internal class PaddlePageOcrBatchDispatcher<CROP, RESULT>(
     private val batchCallMutex: Mutex,
     private val nowNanos: () -> Long = System::nanoTime,
     private val traceSequence: () -> Long = { 0L },
+    private val executorLatencyMs: () -> Double? = { null },
 ) {
     private val planner = PaddleOcrBatchPlanner<CROP>(pageGeneration, policy.validatedBatchSize)
     private val admittedAtNanos = LinkedHashMap<PaddleOcrLeafIdentity, Long>()
@@ -136,6 +138,8 @@ internal class PaddlePageOcrBatchDispatcher<CROP, RESULT>(
                 requestedBatchSize = policy.validatedBatchSize,
                 queueWaitMs = nanosToMs(beforeMutex - firstAdmission),
                 admissionWaitMs = nanosToMs(afterMutex - beforeMutex),
+                batchLatencyMs = executorLatencyMs()?.takeIf { it.isFinite() && it >= 0.0 }
+                    ?: nanosToMs(afterMutex - beforeMutex),
             )
         } catch (cancelled: CancellationException) {
             if (!batch.isComplete) planner.release(batch)
@@ -160,7 +164,7 @@ internal class PaddlePageOcrBatchDispatcher<CROP, RESULT>(
  */
 internal class PaddlePageOcrCoordinator(
     private val engine: PaddleOcrV6SmallEngine,
-    private val validatedBatchSize: PaddleOcrBatchSize = PaddleOcrBatchSize.B1,
+    internal val validatedBatchSize: PaddleOcrBatchSize = PaddleOcrBatchSize.B1,
     private val nowNanos: () -> Long = System::nanoTime,
 ) {
     /** One guard per engine session; no output-buffer downgrade is concurrency design. */
@@ -295,6 +299,7 @@ internal class PaddlePageOcrCoordinator(
         policy = policy,
         batchCallMutex = batchCallMutex,
         nowNanos = nowNanos,
+        executorLatencyMs = { engine.lastBatchTelemetry?.latencyMs },
         traceSequence = {
             nextTraceSequence++
         },

@@ -37,6 +37,7 @@ object PaddleOcrDevicePolicy {
         widthBucket: PaddleOcrWidthBucket = PaddleOcrWidthBucket.WIDTH_640,
         thermalSeverity: Int = 0,
         thermalPolicy: PaddleOcrThermalPolicy = PaddleOcrThermalPolicy(),
+        debugProvisionalOptIn: Boolean = false,
     ): PaddleOcrBatchActivation {
         if (requestedBatchSize == PaddleOcrBatchSize.B1) {
             return PaddleOcrBatchActivation(
@@ -54,6 +55,17 @@ object PaddleOcrDevicePolicy {
         }
         val combination = PaddleOcrMatrixCombination(requestedProvider, requestedBatchSize, widthBucket)
         if (!profile.isConfirmed(combination)) {
+            if (debugProvisionalOptIn) {
+                if (thermalPolicy.blocksAcceleration(thermalSeverity)) {
+                    return emergency("thermal_guard")
+                }
+                return PaddleOcrBatchActivation(
+                    activeBatchSize = requestedBatchSize,
+                    providerTarget = requestedProvider,
+                    forceCpuB1EmergencyFallback = false,
+                    reason = "debug_provisional_optin",
+                )
+            }
             return emergency("combination_not_confirmed")
         }
         if (thermalPolicy.blocksAcceleration(thermalSeverity)) {

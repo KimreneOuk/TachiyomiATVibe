@@ -38,11 +38,18 @@ data class PaddleOcrP95Decision(
 class PaddleOcrRollingP95HysteresisDowngradePolicy(
     initialBatchSize: PaddleOcrBatchSize,
     private val config: PaddleOcrRollingP95Config = PaddleOcrRollingP95Config(),
+    val maximumBatchSize: PaddleOcrBatchSize = initialBatchSize,
 ) {
     private val samples = ArrayDeque<Double>()
     private val initialBatchSize = initialBatchSize
     private var highWindows = 0
     private var lowWindows = 0
+
+    init {
+        require(initialBatchSize.value <= maximumBatchSize.value) {
+            "initial batch size must not exceed maximum batch size"
+        }
+    }
 
     var activeBatchSize: PaddleOcrBatchSize = initialBatchSize
         private set
@@ -110,7 +117,7 @@ class PaddleOcrRollingP95HysteresisDowngradePolicy(
         PaddleOcrBatchSize.B2 -> PaddleOcrBatchSize.B4
         PaddleOcrBatchSize.B4 -> PaddleOcrBatchSize.B8
         PaddleOcrBatchSize.B8 -> PaddleOcrBatchSize.B8
-    }
+    }.let { next -> if (next.value <= maximumBatchSize.value) next else maximumBatchSize }
 
     private fun percentile(values: Collection<Double>, percentile: Double): Double {
         val sorted = values.sorted()
