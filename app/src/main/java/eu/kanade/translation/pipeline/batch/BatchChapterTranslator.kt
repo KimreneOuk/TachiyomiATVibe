@@ -544,12 +544,6 @@ internal class BatchChapterTranslator(
                 // pipeline/batch/BatchLaneWorkers.kt (nativeWorker,
                 // translatorWorker). The closure web became class
                 // state; the SAME registry/identity/frontier instances are injected.
-                // T917 D3 defer-and-rescan: shared per-batch deferral record +
-                // typed schedule listener. The native worker records denials
-                // (and routes externally-completed rescans via the same map);
-                // the coordinator re-runs recorded pages within the pass once
-                // their lease is handed back.
-                val deferredPages = LinkedHashMap<String, PageWriteOrigin?>()
                 val batchScheduleListener = object : BatchScheduleListener() {
                     override fun ocrStarted(pageKey: String) {
                         // Live progress: reused preflight pages emit the same
@@ -562,10 +556,6 @@ internal class BatchChapterTranslator(
 
                     override fun ocrPublished(pageKey: String) {
                         tracker?.markOcrDone(pageKey)
-                    }
-
-                    override fun ocrDeferred(pageKey: String, owner: PageWriteOrigin?) {
-                        deferredPages.putIfAbsent(pageKey, owner)
                     }
 
                     // T934 LI-4: the envelope plan-build window (resume
@@ -631,7 +621,6 @@ internal class BatchChapterTranslator(
                     persistCleanedBitmapFn = persistCleanedBitmap,
                     abortBatchCandidateFn = ::abortBatchCandidate,
                     scheduleListener = batchScheduleListener,
-                    deferredPages = deferredPages,
                 )
 
 

@@ -145,7 +145,6 @@ internal class BatchLaneWorkers(
     ) -> ChapterTranslationStore.PageSnapshot?,
     private val abortBatchCandidateFn: suspend (String, String) -> Unit,
     private val scheduleListener: BatchScheduleListener = BatchScheduleListener.NOOP,
-    private val deferredPages: MutableMap<String, PageWriteOrigin?>? = null,
 
 ) {
 
@@ -323,21 +322,16 @@ internal class BatchLaneWorkers(
             coroutineContext.ensureActive()
             if (aborted.get()) return null
             val streamFn = streamsByKey[pageKey] ?: return null
-            // Phase 3: the batch owns this page until it reaches a
-            // terminal render/failure boundary. A reader-owned page is
-            // skipped this pass and rescanned later — never a
-            // competing writer.
+            // Session admission prevents a reader-owned page from reaching
+            // this batch worker. A defensive foreign-owner denial remains a
+            // fail-closed skip; the coordinator publishes the incomplete
+            // OCR corpus and pauses rather than rescan another session.
             val batchLease = when (val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)) {
                 is LeaseAcquisition.Denied -> {
                     logcat(LogPriority.INFO) {
-                        "TachiyomiAT batch defers ${acquisition.owner}-owned page: " +
+                        "TachiyomiAT batch skips ${acquisition.owner}-owned page under session exclusion: " +
                             "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
                     }
-                    // T917 D3: record the deferral so the coordinator re-runs
-                    // the page within the same pass once the lease is free,
-                    // and emit the typed schedule event for observability.
-                    deferredPages?.putIfAbsent(pageKey, acquisition.owner)
-                    scheduleListener.ocrDeferred(pageKey, acquisition.owner)
                     return null
                 }
                 is LeaseAcquisition.Granted -> acquisition.lease
@@ -351,21 +345,7 @@ internal class BatchLaneWorkers(
                 artifactPageVersion = batchLease.artifactPageVersion,
             )
             val existing = store.state.value[pageKey]
-            // T917 D3: a page this pass deferred earlier (its lease was denied)
-            // that the OTHER origin has since driven to a terminal render must
-            // not be re-run: the resume plans were built before that work
-            // existed, so resumeGate would still plan RUN/WAIT_FOR_DEPENDENCY
-            // and the provider call would repeat. Force the SKIP_ALL route —
-            // the terminal state is already published, the render join keeps
-            // it, and the paid call is never repeated.
-            val externallyCompletedByOwner = existing != null &&
-                existing.hasRenderedResult &&
-                deferredPages?.remove(pageKey) != null
-            val gate = if (externallyCompletedByOwner) {
-                BatchResumeGate.SKIP_ALL
-            } else {
-                resumeGate(existing)
-            }
+            val gate = resumeGate(existing)
             if (gate == BatchResumeGate.SKIP_ALL) {
                 // Fully durable (OCR+inpaint done): no decode/slot; render reloads disk.
                 val p = existing!!

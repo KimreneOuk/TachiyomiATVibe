@@ -626,11 +626,11 @@ internal class ChapterProfileBatchCoordinator(
                     null
                 }
                 if (ref == null) {
-                    // Lease-deferred / externally completed: another origin owns
-                    // the page's outcome. Not a failure; the final diagnostic
-                    // counts every uncheckpointed page as a gap.
+                    // Lease-denied or otherwise unresolved: no checkpoint was
+                    // published. The final diagnostic counts every
+                    // uncheckpointed page as a gap.
                     logcat(LogPriority.INFO) {
-                        "TachiyomiAT t924 preflight skipped pageHash=${pageHash(pageKey)} (deferred or externally completed)"
+                        "TachiyomiAT t924 preflight skipped pageHash=${pageHash(pageKey)} (denied or unresolved)"
                     }
                 } else {
                     listener.ocrPublished(pageKey)
@@ -721,88 +721,6 @@ internal class ChapterProfileBatchCoordinator(
             }
         }
 
-        // S8 (Milestone M2): In-pass corpus-gap rescan.
-        // Before declaring preflight incomplete and returning PAUSED, run a bounded
-        // rescan pass over gap pages: adopt completed checkpoints (e.g. from manual taps)
-        // or re-OCR pages whose leases/workers were temporarily deferred.
-        if (total - corpusFingerprints.size > 0) {
-            val initialGaps = total - corpusFingerprints.size
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT S8 in-pass gap rescan starting: $initialGaps gap(s) across $total pages"
-            }
-            for (page in orderedPages) {
-                val (pageKey, pageIndex) = page
-                if (corpusFingerprints.any { it.first == pageKey }) continue
-                currentCoroutineContext().ensureActive()
-                yield()
-
-                when (val reusable = checkpointReuse(artifact, pageKey)) {
-                    is CheckpointReuse.Reusable -> {
-                        val before = store.snapshot(pageKey)
-                        val hydrated = before.page != null &&
-                            before.page.ocrStatus == StageStatus.READY &&
-                            before.page.blocks.isNotEmpty()
-                        val adoption = if (hydrated) {
-                            CheckpointAdoption.Adopted(before)
-                        } else {
-                            adoptCheckpointSnapshot(artifact, pageKey, before)
-                        }
-                    if (adoption is CheckpointAdoption.Adopted) {
-                        reusedPages++
-                        corpusFingerprints += pageKey to reusable.ocrContentFingerprint
-                        // Same live-progress marks as the primary preflight's
-                        // reuse path (drawer must tick, not freeze).
-                        listener.ocrStarted(pageKey)
-                        listener.ocrPublished(pageKey)
-                        stampAdoptedRenderTerminal(pageKey)
-                        continue
-                    }
-                    // Same typed cliff accounting as the primary walk. The
-                    // sealed hierarchy has exactly two cases, so the
-                    // early-continue above leaves only Failed — spelled as a
-                    // `when` because the compiler does not narrow a sealed
-                    // type from a negated `is` after an if-statement.
-                    when (adoption) {
-                        is CheckpointAdoption.Failed ->
-                            recordAdoptionFailure(pageKey, adoption.failure, adoption.detail)
-                        is CheckpointAdoption.Adopted -> Unit
-                    }
-                    }
-                    is CheckpointReuse.Unavailable -> {
-                        if (reusable.failure != CheckpointAdoptionFailure.NO_POINTER) {
-                            recordAdoptionFailure(pageKey, reusable.failure, null)
-                        }
-                    }
-                }
-
-                listener.ocrStarted(pageKey)
-                var ref: OcrReadyPageRef? = null
-                try {
-                    ref = nativeWorker.runOcrStage(pageKey, pageIndex)
-                    if (ref != null) {
-                        listener.ocrPublished(pageKey)
-                        val outcome = checkpointPage(artifact, pageKey, ref)
-                        if (outcome is CheckpointOcrResult.Committed) {
-                            checkpointedPages++
-                            readCheckpointFingerprint(artifact, pageKey)?.let { fingerprint ->
-                                corpusFingerprints += pageKey to fingerprint
-                            }
-                        }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT S8 in-pass gap rescan failed for pageHash=${pageHash(pageKey)}: ${e.message}"
-                    }
-                } finally {
-                    ref?.let(nativeWorker::releaseNativeHandoff)
-                    releaseBatchLease(pageKey)
-                    listener.ocrFinished(pageKey)
-                }
-            }
-        }
-
         // ---- OCR_PREFLIGHT complete durably; continue into the analysis ----
         // ---- phase when the corpus is complete (T924-ST-07/08).        ----
         store.flush()
@@ -834,7 +752,7 @@ internal class ChapterProfileBatchCoordinator(
             ),
         )
         if (corpusFingerprint == null) {
-            // Incomplete corpus (reused/deferred gaps): analysis needs the
+            // Incomplete corpus (reused/unresolved gaps): analysis needs the
             // whole OCR corpus — stop exactly like the S3 shell did.
             logcat(LogPriority.INFO) {
                 "TachiyomiAT t924 preflight stopped-not-finished: ocr=$total reused=$reusedPages gaps=$corpusGaps " +

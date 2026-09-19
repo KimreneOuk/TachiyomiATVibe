@@ -155,12 +155,6 @@ sealed interface SinglePageOutcome {
     /** The page was owned by [owner]; the executor attached to the owner's terminal commit. */
     data class Attached(val owner: PageWriteOrigin) : SinglePageOutcome
 
-    /**
-     * The executor attached but never observed the owner's terminal commit
-     * (wait bound hit, or cancellation while observing). No page write happened.
-     */
-    data class AttachedUnresolved(val owner: PageWriteOrigin, val reason: String) : SinglePageOutcome
-
     /** The intent could not run or attach (defunct store, unknown owner). */
     data class Rejected(val owner: PageWriteOrigin?, val reason: String) : SinglePageOutcome
 }

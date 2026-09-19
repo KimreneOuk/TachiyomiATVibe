@@ -186,7 +186,8 @@ class D6DrainNotCancelTest {
      * Pins the production grace bound. T917 Phase 4 (D7 §1.6) CONTRACT CHANGE
      * (recorded in the phase-4 implementation log): the bound moved from the
      * pinned 90 s to exactly the drained call chain's own legitimate budget —
-     * [eu.kanade.translation.TranslationPipeline.ATTACH_TIMEOUT_MS] (ONNX 90 s +
+     * [eu.kanade.translation.TranslationPipeline.ONNX_PHASE_TIMEOUT_MS] +
+     * [eu.kanade.translation.TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS] (ONNX 90 s +
      * HTTP/render 120 s, sequential = 210 s) — so a healthy long call is never
      * cut cancellation-class mid-chain (phase3-verification finding 4).
      */
@@ -201,7 +202,10 @@ class D6DrainNotCancelTest {
                     "companion constant does not exist",
             )
         }
-        (field.get(null) as Long) shouldBe eu.kanade.translation.TranslationPipeline.ATTACH_TIMEOUT_MS
+        (field.get(null) as Long) shouldBe (
+            eu.kanade.translation.TranslationPipeline.ONNX_PHASE_TIMEOUT_MS +
+                eu.kanade.translation.TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS
+            )
     }
 
     // ------------------------------------------------------------------

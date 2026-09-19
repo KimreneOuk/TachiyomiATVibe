@@ -5,12 +5,10 @@ import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageStageLease
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.model.PageStage
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
 
 // T909 Phase 17a: the page-stage lease table moved from
 // `ChapterTranslationStore` (record + backing map + the five lease members).
@@ -43,19 +41,6 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     val pageLeases = ConcurrentHashMap<String, PageLeaseRecord>()
     private var nextLeaseToken = 0L
 
-    /**
-     * T917 D3: per-page waiters parked until the page's lease is released.
-     * Registration happens under `synchronized(pageLeases)` and every release
-     * path removes its lease AND completes this page's waiters inside the same
-     * `synchronized(pageLeases)` critical section (nested in the store mutex),
-     * so a release racing a registration can never strand a waiter: either the
-     * waiter observes the empty lease first, or the releasing path finds and
-     * completes it in the same monitor. Entries are removed on completion and
-     * in the waiter's `finally`, so the registry never grows unbounded.
-     */
-    private val leaseReleaseWaiters =
-        ConcurrentHashMap<String, CopyOnWriteArrayList<CompletableDeferred<Unit>>>()
-
     internal data class PageLeaseRecord(
         val token: Long,
         val origin: PageWriteOrigin,
@@ -85,14 +70,15 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     ): LeaseAcquisition = mutex.withLock {
         if (defunct) return@withLock LeaseAcquisition.Denied("store is defunct", null)
         val existing = pageLeases[pageKey]
-        // T917 D1 priority matrix: a MANUAL (reader tap) request is the one
+        // T917 D1 reader-session policy: a MANUAL request is the one
         // cross-origin preemption — it evicts an in-flight AUTO lease and takes
         // a fresh record + token. It is safe by the existing fencing: the
         // evicted AUTO holder's guarded writes fail closed on
         // `expected.leaseToken != pageLeases[pageKey].token`, and the AUTO side
-        // already treats a lost/stale page as "try again". MANUAL-vs-BATCH is
-        // never a preemption (the caller attaches instead), and AUTO/BATCH
-        // requests never preempt anything.
+        // already treats a lost/stale page as "try again". The session gate
+        // prevents BATCH and READER admission from overlapping; this low-level
+        // foreign-owner denial remains fail-closed if an un-gated caller slips
+        // through. No cross-session observer/attach is performed here.
         val evictsAuto = existing != null &&
             existing.origin == PageWriteOrigin.AUTO &&
             origin == PageWriteOrigin.MANUAL
@@ -155,7 +141,6 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
                     if (pageLeases[pageKey]?.origin == origin) {
                         pageLeases.remove(pageKey)
                     }
-                    completeLeaseReleaseWaitersLocked(pageKey)
                 }
             }
         }
@@ -186,7 +171,6 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
                     record.attaches == 0
                 if (removed) {
                     pageLeases.remove(pageKey)
-                    completeLeaseReleaseWaitersLocked(pageKey)
                 }
                 removed
             }
@@ -241,7 +225,6 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
                         if (cancelled && pageLeases[pageKey]?.origin == origin) {
                             pageLeases.remove(pageKey)
                         }
-                        completeLeaseReleaseWaitersLocked(pageKey)
                         cancelled
                     } else {
                         false
@@ -259,7 +242,6 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
                         .filter { it.value.origin == origin }
                         .map { it.key }
                     releasedKeys.forEach { pageLeases.remove(it) }
-                    releasedKeys.forEach { completeLeaseReleaseWaitersLocked(it) }
                 }
             }
         }
@@ -269,16 +251,4 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
         pageLeases[pageKey]?.origin
     }
 
-    /**
-     * T917 D3 defer-and-rescan remnant: completes any lease-release waiters.
-     * The only waiter producer (the deleted [awaitPageLeaseRelease] used by
-     * the deleted in-pass re-scan consumer) is gone, so this currently
-     * completes nothing; retained because the release paths still call it
-     * (T924 D2 follow-up: retire together with the defer-and-rescan wiring).
-     * Caller MUST hold `synchronized(pageLeases)` and the page's lease must already be removed.
-     */
-    private fun completeLeaseReleaseWaitersLocked(pageKey: String) {
-        if (pageLeases[pageKey] != null) return
-        leaseReleaseWaiters.remove(pageKey)?.forEach { it.complete(Unit) }
-    }
 }

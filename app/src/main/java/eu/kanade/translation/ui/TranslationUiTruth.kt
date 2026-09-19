@@ -110,7 +110,6 @@ object TranslationUiTruth {
         cancelled -> CANCELLED
         outcome is SinglePageOutcome.Admitted -> QUEUED
         outcome is SinglePageOutcome.Attached -> attached(outcome.owner)
-        outcome is SinglePageOutcome.AttachedUnresolved -> attachedUnresolved(outcome)
         outcome is SinglePageOutcome.Rejected -> rejected(outcome)
         outcome is SinglePageOutcome.Stalled -> STALLED
         outcome is SinglePageOutcome.Paused -> paused(outcome.nextEligibleRetryAtEpochMs)
@@ -500,6 +499,7 @@ object TranslationUiTruth {
     )
 
     private fun attached(owner: PageWriteOrigin): PageUiTruth {
+        if (owner == PageWriteOrigin.BATCH) return BATCH_SESSION_SWITCH
         val ownerWord = owner.name.lowercase()
         return PageUiTruth(
             label = "Translating · $ownerWord job.",
@@ -512,10 +512,10 @@ object TranslationUiTruth {
         )
     }
 
-    private fun attachedUnresolved(@Suppress("UNUSED_PARAMETER") unresolved: SinglePageOutcome.AttachedUnresolved): PageUiTruth = ATTACHED_UNRESOLVED
-
     private fun rejected(rejection: SinglePageOutcome.Rejected): PageUiTruth =
-        if (rejection.reason == TranslationPipeline.REASON_TRANSLATION_NOT_SAVED) {
+        if (rejection.owner == PageWriteOrigin.BATCH) {
+            BATCH_SESSION_SWITCH
+        } else if (rejection.reason == TranslationPipeline.REASON_TRANSLATION_NOT_SAVED) {
             NOT_SAVED
         } else {
             PageUiTruth(
@@ -595,15 +595,14 @@ object TranslationUiTruth {
             "Translation was produced but could not be saved; no durable result is available. Retry is required.",
     )
 
-    private val ATTACHED_UNRESOLVED = PageUiTruth(
-        label = "Background translation did not finish yet.",
+    private val BATCH_SESSION_SWITCH = PageUiTruth(
+        label = "Batch translation is pausing; confirm switch to reader.",
         severity = UiSeverity.WARNING,
-        retryMode = UiRetryMode.EXPLICIT,
+        retryMode = UiRetryMode.NONE,
         retryAtEpochMs = null,
-        actions = setOf(UiAction.RETRY, UiAction.DETAILS),
+        actions = setOf(UiAction.REVIEW, UiAction.DETAILS),
         terminalSuccess = false,
-        contentDescription = "Background translation did not finish within the wait; " +
-            "retry is available after the owner releases the page.",
+        contentDescription = "Batch translation is pausing before reader translation can start; confirm the switch.",
     )
 
     private val CANCELLED = PageUiTruth(

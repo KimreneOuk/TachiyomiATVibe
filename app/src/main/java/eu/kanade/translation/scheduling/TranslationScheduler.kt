@@ -779,14 +779,11 @@ class TranslationScheduler(
                     // rolling coordinator by [updateAutoWindow]'s manual
                     // arbitration becomes admissible again. Poke a reconcile.
                     reconcileAutoWindow()
-                    // T917 D2 §2.3: an attach-family outcome means the job never
-                    // owned the page — it only observed the owner's terminal
-                    // commit. The stranded-RUNNING reset must be skipped for it:
-                    // a write here would flip the OWNER's (e.g. the batch's)
-                    // in-flight stages to CANCELLED. Gated on the observed
-                    // outcome, not on a new flag.
+                    // An attached outcome means the job never owned the page —
+                    // it only observed another origin's terminal commit. Keep
+                    // the stranded-RUNNING reset scoped to owned work.
                     val attachFamily = when (outcome) {
-                        is SinglePageOutcome.Attached, is SinglePageOutcome.AttachedUnresolved -> true
+                        is SinglePageOutcome.Attached -> true
                         else -> false
                     }
                     if (cancelledMidFlight && !attachFamily) {
@@ -835,7 +832,7 @@ class TranslationScheduler(
         is SinglePageOutcome.Paused -> TranslationTraceOutcome.PAUSE
         is SinglePageOutcome.Failed -> TranslationTraceOutcome.FAILURE
         is SinglePageOutcome.Stalled -> TranslationTraceOutcome.FAILURE
-        is SinglePageOutcome.Attached, is SinglePageOutcome.AttachedUnresolved -> TranslationTraceOutcome.ATTACHED
+        is SinglePageOutcome.Attached -> TranslationTraceOutcome.ATTACHED
         is SinglePageOutcome.Rejected -> TranslationTraceOutcome.SKIP
         is SinglePageOutcome.Admitted -> TranslationTraceOutcome.TEARDOWN_EXCEPTION
     }

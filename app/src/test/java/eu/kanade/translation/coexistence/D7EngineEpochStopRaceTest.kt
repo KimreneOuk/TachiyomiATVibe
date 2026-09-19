@@ -249,11 +249,11 @@ class D7EngineEpochStopRaceTest {
                 it,
             )
         }
-        val attach = TranslationPipeline::class.java.getField("ATTACH_TIMEOUT_MS").get(null) as Long
-        if (grace < attach) {
+        val chainBudget = TranslationPipeline.ONNX_PHASE_TIMEOUT_MS + TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS
+        if (grace < chainBudget) {
             throw AssertionError(
                 "T917 P3-finding-4 defect: PROVIDER_DRAIN_GRACE_MS (${grace}ms) is SHORTER than the drained " +
-                    "chain's own legitimate budget ATTACH_TIMEOUT_MS (${attach}ms) — ONNX (<=90s) plus " +
+                    "chain's own legitimate budget (${chainBudget}ms) — ONNX (<=90s) plus " +
                     "HTTP+render (<=120s) run sequentially, so a healthy long call can be cut " +
                     "cancellation-class mid-chain and its D9 entry left unresolved " +
                     "(phase4-design §1.6; phase3-verification finding 4)",

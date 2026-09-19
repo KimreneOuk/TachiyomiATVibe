@@ -19,9 +19,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
-import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.CleanedPublication
@@ -66,7 +63,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -140,15 +136,6 @@ class TranslationPipeline(
 
         /** D8 occupancy threshold; aligned with the native result timer. */
         const val NATIVE_STALL_THRESHOLD_MS = ONNX_PHASE_TIMEOUT_MS
-
-        /**
-         * T917 D2 §2.3: bound for the wait-and-attach observation on a denied
-         * page lease. Exactly the owner's own bounded phase chain (permit-held
-         * ONNX phase + HTTP/render phase), so the attach can never outwait the
-         * owner's own timers by construction; a pathological native hang still
-         * terminates the wait with a typed AttachedUnresolved outcome.
-         */
-        const val ATTACH_TIMEOUT_MS = ONNX_PHASE_TIMEOUT_MS + SINGLE_PAGE_TIMEOUT_MS
 
         // T909 Phase 20.1: HELD_BITMAP_MAX_COUNT / HELD_BITMAP_BYTE_CEILING moved to
         // pipeline/batch/HeldBitmapRegistry.kt with the held-bitmap registry.
@@ -411,14 +398,14 @@ class TranslationPipeline(
             return SinglePageOutcome.Stalled(stalled.pageKey, stalled.stalledAtEpochMs)
         }
         val leaseStore = resolveActiveStore(manga, chapter, source)
-        // T917 D2 §2.3: lease admission holds the interactive reservation; the
-        // attach wait on a denied lease runs OUTSIDE it — a passive observer
-        // must hold no interactive wallet reservation (D6 formalizes later).
+        // Session admission owns the batch/reader boundary; a low-level lease
+        // denial is returned as a typed rejection without observing another
+        // origin's terminal state.
         val acquisition = withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
             leaseStore?.let { acquireReaderPageLease(it, chapter, pageKey, origin) }
         }
         if (acquisition is LeaseAcquisition.Denied) {
-            return attachToOwnerTerminal(leaseStore, chapter, pageKey, acquisition)
+            return SinglePageOutcome.Rejected(acquisition.owner, acquisition.reason)
         }
         return withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
             runGrantedSinglePageBoundary(
@@ -464,9 +451,9 @@ class TranslationPipeline(
      *
      * T917 D1: the whole boundary runs under an origin-typed page lease
      * ([PageWriteOrigin.MANUAL] for reader taps, [PageWriteOrigin.AUTO] for the
-     * legacy auto window's resume-render path). When a batch run owns the page,
-     * the request attaches to the batch result (observes store emissions)
-     * instead of opening a competing writer; a MANUAL request evicts an
+     * legacy auto window's resume-render path). Session admission prevents
+     * reader and batch sessions from entering concurrently; a low-level lease
+     * denial is returned as a typed rejection. MANUAL still evicts an
      * in-flight AUTO lease (fenced fail-closed for the evicted holder).
      */
     private suspend fun runSinglePageBoundary(
@@ -482,7 +469,7 @@ class TranslationPipeline(
         val leaseStore = resolveActiveStore(manga, chapter, source)
         val acquisition = leaseStore?.let { acquireReaderPageLease(it, chapter, pageKey, origin) }
         if (acquisition is LeaseAcquisition.Denied) {
-            return attachToOwnerTerminal(leaseStore, chapter, pageKey, acquisition)
+            return SinglePageOutcome.Rejected(acquisition.owner, acquisition.reason)
         }
         return runGrantedSinglePageBoundary(
             leaseStore = leaseStore,
@@ -723,82 +710,10 @@ class TranslationPipeline(
     }
 
     /**
-     * T917 D2 wait-and-attach (design note §2.2-§2.3): the request did NOT
-     * acquire the page — [acquisition] carries the owning origin. The boundary
-     * does NOT open a competing writer and performs ZERO native/provider/render
-     * work; it observes the owner's terminal commit through the store's
-     * StateFlow. The owner commits its terminal stage BEFORE releasing the
-     * lease, so the stage observation carries the outcome; terminal states are
-     * last-write on a StateFlow, so conflation cannot lose the wakeup. The wait
-     * is bounded by [ATTACH_TIMEOUT_MS] — exactly the owner's own bounded phase
-     * chain — and cancellable at its single suspension point.
-     */
-    private suspend fun attachToOwnerTerminal(
-        store: ChapterTranslationStore?,
-        chapter: Chapter,
-        pageKey: String,
-        acquisition: LeaseAcquisition.Denied,
-    ): SinglePageOutcome {
-        val owner = acquisition.owner
-            ?: return SinglePageOutcome.Rejected(null, acquisition.reason)
-        if (store == null) {
-            return SinglePageOutcome.Rejected(owner, "store disappeared before attach")
-        }
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT reader single-page request attaches to $owner owner: " +
-                "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
-        }
-        val terminal = try {
-            withTimeoutOrNull(ATTACH_TIMEOUT_MS) {
-                store.state.first { snapshot ->
-                    val page = snapshot[pageKey]
-                    // T924 zero-legacy (D1): the surviving batch lanes end runs
-                    // translation-terminal WITHOUT an in-pass render
-                    // (renderStatus stays PENDING — the display rides the live
-                    // overlay + candidate snapshots). A committed
-                    // READY/PARTIAL/SKIPPED translation is therefore the
-                    // durable obligation a reader attach resolves against;
-                    // hasRenderedResult / textless / stage failure remain for
-                    // AUTO and manual owners and legacy textless terminals.
-                    page != null && (
-                        page.hasRenderedResult ||
-                            page.isTextlessTerminal ||
-                            page.isStageFailed ||
-                            page.translationStatus == StageStatus.READY ||
-                            page.translationStatus == StageStatus.PARTIAL ||
-                            page.translationStatus == StageStatus.SKIPPED
-                        )
-                }
-            }
-        } catch (e: CancellationException) {
-            // §2.3: cancelled while observing (chapter switch / reader exit /
-            // Stop). Return the attach-cancelled outcome instead of propagating
-            // so the scheduler's finally sees the job never owned the page and
-            // skips markPageCancelled — a stranded-RUNNING reset here would
-            // flip the OWNER's in-flight stages to CANCELLED. No suspension
-            // happens after this catch, so swallowing cannot strand work.
-            return SinglePageOutcome.AttachedUnresolved(
-                owner,
-                "cancelled while waiting for the owner's terminal state",
-            )
-        }
-        return if (terminal != null) {
-            SinglePageOutcome.Attached(owner)
-        } else {
-            SinglePageOutcome.AttachedUnresolved(
-                owner,
-                "owner did not reach a terminal state within ${ATTACH_TIMEOUT_MS}ms",
-            )
-        }
-    }
-
-    /**
-     * Phase 3 lease admission for reader-originated single-page work. Returns
-     * the acquisition; only [LeaseAcquisition.Denied] blocks owned work under
-     * the T917 D1 priority matrix (a MANUAL request on a BATCH-owned page
-     * attaches to the owner's result through [attachToOwnerTerminal] rather
-     * than opening a competing writer; a MANUAL request evicts an in-flight
-     * AUTO lease).
+     * Phase 3 lease admission for reader-originated single-page work. Session
+     * admission prevents a BATCH-owned page from being reached by a reader;
+     * any low-level denial is returned as a typed rejection. A MANUAL request
+     * still evicts an in-flight AUTO lease under reader-session policy.
      */
     private suspend fun acquireReaderPageLease(
         store: ChapterTranslationStore,

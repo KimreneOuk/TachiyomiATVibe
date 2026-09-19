@@ -57,11 +57,9 @@ class StandardPipelineCoexistenceTest {
             val firstProviderStart =
                 arrivals.indexOfFirst { it.first == CoexistenceBarrier.BarrierPoint.PROVIDER_START }
             (firstProviderStart >= 0) shouldBe true
-            // T934 authorized assertion conversion (diagnosis §3): the S8
-            // in-pass gap rescan (ChapterProfileBatchCoordinator) may
-            // legitimately re-decode a deferred page before the translate
-            // tail, so per-page decode MULTIPLICITY is not a schedule
-            // property; DISTINCT-page coverage before the first paid call IS.
+            // T934 authorized assertion conversion (diagnosis §3): per-page
+            // decode MULTIPLICITY is not a schedule property; DISTINCT-page
+            // coverage before the first paid call IS.
             // The flagged preflight still decodes EVERY page before any
             // translate, and the legacy page-serial standard schedule
             // (LOCAL_COMPUTE chunk of one) interleaves decode → translate →

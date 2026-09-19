@@ -65,7 +65,7 @@ internal class EngineLane(
          * native-memory release (recognition engine teardown) — bounded memory
          * outranks the rare extra paid call. This asymmetry with the PROVIDER drain
          * grace (RollingAutoCoordinator.PROVIDER_DRAIN_GRACE_MS, aligned to
-         * ATTACH_TIMEOUT_MS) is a decision, not an oversight. `[TARGET]` per D13.
+         * the provider's own chain budget) is a decision, not an oversight. `[TARGET]` per D13.
          */
         const val ENGINE_DRAIN_GRACE_MS = 5_000L
     }

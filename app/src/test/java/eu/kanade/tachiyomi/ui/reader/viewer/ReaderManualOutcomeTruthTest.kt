@@ -214,7 +214,7 @@ class ReaderManualOutcomeTruthTest {
     }
 
     @Test
-    fun `T917 P5 reader-hop RED defect - attached and unresolved outcomes carry waiting-on-owner truth`() {
+    fun `T917 P5 reader-hop - attached outcome carries session-aware truth`() {
         val attached = SinglePageOutcome.Attached(PageWriteOrigin.BATCH)
         val attachedFeedback = readerManualOutcomeFeedback(
             chapterId = 1L,
@@ -226,21 +226,8 @@ class ReaderManualOutcomeTruthTest {
         )
         attachedFeedback shouldBe manualTruthOf(attached)
         val attachedTruth = (attachedFeedback as ReaderPageFeedbackState.ManualTruth).truth
-        attachedTruth.label shouldBe "Translating · batch job."
-        attachedTruth.severity shouldBe UiSeverity.PROGRESS
-
-        val unresolved = SinglePageOutcome.AttachedUnresolved(PageWriteOrigin.AUTO, "wait bound")
-        val unresolvedFeedback = readerManualOutcomeFeedback(
-            chapterId = 1L,
-            pageKey = "009.jpg",
-            attemptActive = false,
-            lookup = lookupFor(1L, "009.jpg", unresolved),
-            nativeStall = null,
-            durable = null,
-        )
-        unresolvedFeedback shouldBe manualTruthOf(unresolved)
-        (unresolvedFeedback as ReaderPageFeedbackState.ManualTruth).truth.label shouldBe
-            "Background translation did not finish yet."
+        attachedTruth.label shouldBe "Batch translation is pausing; confirm switch to reader."
+        attachedTruth.severity shouldBe UiSeverity.WARNING
     }
 
     // ------------------------------------------------------------------

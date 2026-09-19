@@ -34,6 +34,7 @@ import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.ocrBlockFingerprints
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.EngineLane
@@ -689,12 +690,14 @@ internal class TranslationCoexistenceHarness private constructor(
             }
 
             // ---- real scheduler over the real pipeline ----------------------
+            val sessionCoordinator = TranslationSessionCoordinator()
             val scheduler = TranslationScheduler(
                 executor = pipeline,
                 storeResolver = TranslationStoreResolver { chapterId ->
                     extraStores[chapterId] ?: store
                 },
                 immediateStoreResolver = { extraStores[it] ?: store },
+                sessionCoordinator = sessionCoordinator,
             )
             val schedulerJobMap = CapturingJobMap()
             setFields(
@@ -738,6 +741,7 @@ internal class TranslationCoexistenceHarness private constructor(
                     // store registry the observe paths use (TranslationManager.kt:275).
                     "scheduler" to scheduler,
                     "translator" to translator,
+                    "sessionCoordinator" to sessionCoordinator,
                     "context" to context,
                     "pendingRequestStore" to mockk<TranslationPendingRequestStore>(relaxed = true),
                     "pendingTranslationRequestsState" to MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap()),

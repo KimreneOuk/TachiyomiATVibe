@@ -224,31 +224,14 @@ class P5OutcomeProjectionTest {
     @Test
     fun `attached outcome names the owner and starts no duplicate paid work`() {
         val truth = projectManual(SinglePageOutcome.Attached(PageWriteOrigin.BATCH), null)
-        withClue("attach must be visible as owner work, never a manual success") {
-            str(truth, "label") shouldBe "Translating · batch job."
-            word(truth, "severity") shouldBe "PROGRESS"
-            word(truth, "retryMode") shouldBe "NONE"
-            names(truth, "actions") shouldBe setOf("DETAILS")
-            flag(truth, "terminalSuccess") shouldBe false
-            str(truth, "contentDescription") shouldBe
-                "Waiting for the batch translation job; no duplicate request started."
-        }
-    }
-
-    @Test
-    fun `attached unresolved outcome is visible and never success`() {
-        val truth = projectManual(
-            SinglePageOutcome.AttachedUnresolved(PageWriteOrigin.AUTO, "attach bound hit"),
-            null,
-        )
-        withClue("attach-unresolved must be a visible non-success") {
-            str(truth, "label") shouldBe "Background translation did not finish yet."
+        withClue("batch ownership must surface the session switch truth, never a manual success") {
+            str(truth, "label") shouldBe "Batch translation is pausing; confirm switch to reader."
             word(truth, "severity") shouldBe "WARNING"
-            word(truth, "retryMode") shouldBe "EXPLICIT"
-            names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
+            word(truth, "retryMode") shouldBe "NONE"
+            names(truth, "actions") shouldBe setOf("REVIEW", "DETAILS")
             flag(truth, "terminalSuccess") shouldBe false
             str(truth, "contentDescription") shouldBe
-                "Background translation did not finish within the wait; retry is available after the owner releases the page."
+                "Batch translation is pausing before reader translation can start; confirm the switch."
         }
     }
 

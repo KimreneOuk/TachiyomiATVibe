@@ -1,6 +1,5 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.translator.ProviderFailure
 
 /**
@@ -185,14 +184,6 @@ open class BatchScheduleListener {
     open fun ocrStarted(pageKey: String) {}
     open fun ocrFinished(pageKey: String) {}
     open fun ocrPublished(pageKey: String) {}
-
-    /**
-     * T917 D3 defer-and-rescan: the page's stage lease was DENIED (another
-     * origin — e.g. a manual reader tap — owns the page), so the pass skipped
-     * it instead of doing paid work. The coordinator records the deferral and
-     * re-runs the page within the same pass once its lease is free.
-     */
-    open fun ocrDeferred(pageKey: String, owner: PageWriteOrigin?) {}
 
     /**
      * T934 LI-4: the coordinator began rebuilding the envelope dispatch work

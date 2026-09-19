@@ -55,9 +55,10 @@ import java.util.concurrent.atomic.AtomicLong
  *    within the legacy one-decoded-bitmap envelope (gate 6.4 budget: overlap
  *    adds no second concurrent bitmap, it only re-times the same lane).
  *  - Native admission is unchanged: the page's BATCH inpaint lease is
- *    acquired with `tryAcquirePageStageLease` (attaches behind MANUAL, never
- *    preempts); a denied lease skips the page (counted) — MANUAL/native
- *    quarantine rules are never preempted. T934 track I round 2 adds a
+ *    acquired with `tryAcquirePageStageLease`; a denied foreign-owner lease
+ *    skips the page (counted) — MANUAL/native quarantine rules are never
+ *    preempted. Same-origin sibling attaches remain part of the batch overlap
+ *    contract. T934 track I round 2 adds a
  *    slot-free ADMISSION pre-check ahead of the acquire (see
  *    [inpaintOne]): a page whose BATCH write slot is CURRENTLY held by an
  *    in-flight same-origin writer (the standard translate tail or the
