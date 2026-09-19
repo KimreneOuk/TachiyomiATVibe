@@ -60,9 +60,21 @@ Reports: [implementation](team/p1-implementation-report.md) · [review](team/p1-
 Corrections made during execution: flavor-qualified Gradle tasks (dev/standard); P1-03 mechanism.
 Awaiting Director: merge decision, P1-05 Option A/B, Phase 2 go.
 
-### Phases 2–5
+### Phase 2 — Storage Unification & Legacy Elimination (IN PROGRESS, branch `t936/phase2-storage-unification`)
 
-To be ticketed after Phase 1 lands. Roadmap in `report/DIRECTOR_REPORT.md` §8, with the
+Director authorized full roadmap execution 2026-09-19 ("Proceed until the last phase");
+P1-05 resolved as **Option A** (defer excision, gather device evidence).
+
+| Ticket | Title | Notes |
+|---|---|---|
+| [P2-00](ticket/p2-00-nnapi-provider-diagnostic.md) | NNAPI provider diagnostic (P1-05 evidence) | 1 log line in OnnxRuntimeProvider |
+| [P2-01](ticket/p2-01-eliminate-legacy-flat-files.md) | Eliminate legacy flat-file subsystem + `ManifestAuthority` | Pre-artifact chapters stop migrating (flagged, authorized); ~20 files |
+| [P2-02](ticket/p2-02-merge-dual-stores.md) | Merge dual stores into one engine, one lock | Scoping memo to orchestrator REQUIRED before code; ≤3 commits |
+| [P2-03](ticket/p2-03-consolidate-progress-projection.md) | Progress from unified store, drop `BatchProgressProjector` | After P2-02; tracker stays (Phase 3 scope) |
+
+### Phases 3–5
+
+To be ticketed as each phase begins. Roadmap in `report/DIRECTOR_REPORT.md` §8, with the
 coexistence model corrected by `engineering/batch-pause-cancel-trace-and-mutual-exclusion-evaluation.md` §3
 (mutual-exclusion session model: `IDLE` / `BATCH_SESSION` / `READER_SESSION`, quiescent pause via
 `cancelTranslatorJobAndJoin()` with bounded 3s timeout, Pass 1 sequential OCR push-through,
