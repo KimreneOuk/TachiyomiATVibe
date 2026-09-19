@@ -1,5 +1,7 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
@@ -15,7 +17,7 @@ import java.security.MessageDigest
  * T924 LI-4: a one-shot stale-manifest retry inside [ChapterArtifactStore] for
  * the first-publication seams the flagged Batch lane hits. When a chapter
  * with more than 8 pages opens, the ARTIFACTS path launches the background
- * `verifyLegacyArtifactHealth`, which republishes a VERIFIED manifest AFTER the
+ * background artifact-health republisher, which republishes a VERIFIED manifest AFTER the
  * façade cached the pre-verification copy — so a dispatch started in that
  * window presents a stale manifest to its FIRST durable publication
  * (`checkpointOcr` / `publishActiveRun`) and was CAS-rejected, surfacing a
@@ -48,7 +50,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             .joinToString("") { byte -> "%02x".format(byte) }
 
     /**
-     * Mirrors the real LI-4 writer: `verifyLegacyArtifactHealth` republishes
+     * Mirrors the real LI-4 writer: the artifact-health republisher republishes
      * the manifest with the VERIFIED health marker and a bumped timestamp,
      * behind the caller's back.
      */
@@ -86,10 +88,9 @@ class ChapterArtifactStoreStaleManifestRetryTest {
         val documents = AtomicChapterDocuments(FakeChapterDocumentIo())
         val artifact = ChapterArtifactStore(documents, layout)
         var manifest = artifact
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
-            authority = ManifestAuthority.ARTIFACTS,
             cutoverAtEpochMs = 1L,
             migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
@@ -174,8 +175,8 @@ class ChapterArtifactStoreStaleManifestRetryTest {
         lastModifiedMs = 1L,
     )
 
-    private fun legacySnapshot(page: PageTranslation) = LegacyChapterSnapshot(
-        pages = mapOf("page.jpg" to LegacyPageFacts(page, CleanedFileState.VALID)),
+    private fun legacySnapshot(page: PageTranslation) = ArtifactSeed(
+        pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
         glossary = emptyMap(),
         legacyIdentity = identity("v1"),
         sourceFileName = "Chapter 1.json",
@@ -204,7 +205,7 @@ class ChapterArtifactStoreStaleManifestRetryTest {
             },
         )
         val ocrSnapshot = ocrPage()
-        val migrated = store.loadOrMigrate(legacySnapshot(ocrSnapshot)).manifest
+        val migrated = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
         val opened = store.openCandidate(
             migrated,
             "page.jpg",
@@ -352,10 +353,9 @@ class ChapterArtifactStoreStaleManifestRetryTest {
     private fun authorityFlipFixture(): ChapterArtifactStore {
         val artifact = ChapterArtifactStore(AtomicChapterDocuments(FakeChapterDocumentIo()), layout)
         var manifest = artifact
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
-            authority = ManifestAuthority.ARTIFACTS,
             cutoverAtEpochMs = 1L,
             migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,

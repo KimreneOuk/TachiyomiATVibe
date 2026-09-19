@@ -87,7 +87,6 @@ class GroupCommitSliceBTest {
             val store = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
-                authority = ManifestAuthority.ARTIFACTS,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
             )
             AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
@@ -104,7 +103,6 @@ class GroupCommitSliceBTest {
 
             // When flag is OFF, promoteLiveCandidate requires candidate snapshot file
             val page = displayReadyPage()
-            io.write(layout.legacyCompanionImageFile("0001.cleaned.jpg"), byteArrayOf(1, 2, 3))
 
             val promoteRes = store.promoteLiveCandidate(
                 manifest = openedManifest,
@@ -132,7 +130,6 @@ class GroupCommitSliceBTest {
             val store = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
-                authority = ManifestAuthority.ARTIFACTS,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
             )
             AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
@@ -147,7 +144,6 @@ class GroupCommitSliceBTest {
             val openedManifest = (openRes as ChapterArtifactStore.TransactionOutcome.Committed).manifest
 
             val page = displayReadyPage()
-            io.write(layout.legacyCompanionImageFile("0001.cleaned.jpg"), byteArrayOf(1, 2, 3))
 
             val promoteRes = store.promoteLiveCandidate(
                 manifest = openedManifest,
@@ -202,7 +198,6 @@ class GroupCommitSliceBTest {
             val artifactStore = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
-                authority = ManifestAuthority.ARTIFACTS,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
             )
             AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
@@ -243,7 +238,6 @@ class GroupCommitSliceBTest {
             val artifactStore = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
-                authority = ManifestAuthority.ARTIFACTS,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
             )
             AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)

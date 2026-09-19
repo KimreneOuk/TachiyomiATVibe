@@ -2,7 +2,6 @@ package eu.kanade.translation.store
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.ChapterTranslationStore
-import eu.kanade.translation.artifact.ManifestAuthority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -76,15 +75,9 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
 
     internal fun persistLocked(): Boolean {
         if (defunct) return false
-        // Once the artifact manifest owns this chapter, the flat JSON is a
-        // legacy compatibility snapshot only. Writing the mutable candidate
-        // map back into it would erase the durable committed pointer on the
-        // next reopen, so all page durability is handled by the artifact
-        // bridge in publishLocked().
+        // All page durability is handled by the artifact bridge.
         persistCount++
-        // All durable page writes go through the artifact bridge. A legacy
-        // flat file is a migration-time read/recovery source only.
-        return artifactManifest?.authority == ManifestAuthority.ARTIFACTS
+        return artifactManifest != null
     }
 
     suspend fun flush() {
@@ -110,7 +103,7 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         // path itself (DurableChapterStatusResolver.withProbeStore's finally),
         // so the multi-second recursive SAF crawl stalled every first open of
         // a chapter (measured ~15s on a 68-page chapter, proportional to the
-        // 57s crawl on a 260-page chapter). Same rationale as the loadOrMigrate
+        // 57s crawl on a 260-page chapter). Same rationale as the artifact-load
         // removal: deferred cleanup is owned by the event-driven retention
         // follow-up. Explicit reconcileArtifactRetention() remains available
         // for callers that truly want it at a boundary.

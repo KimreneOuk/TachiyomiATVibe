@@ -12,7 +12,6 @@ import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.GroupCommitConfiguration
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageTranslation
@@ -220,7 +219,6 @@ class GroupCommitSliceCTest {
             val artifactStore = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
             val initialManifest = ChapterArtifactManifest(
                 chapterKey = layout.chapterKey,
-                authority = ManifestAuthority.ARTIFACTS,
                 pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
             )
             AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)

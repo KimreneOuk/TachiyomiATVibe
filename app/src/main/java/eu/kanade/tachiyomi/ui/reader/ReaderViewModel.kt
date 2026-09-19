@@ -53,7 +53,6 @@ import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.artifact.GroupCommitConfiguration
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.rendering.HydratedLayout
 import eu.kanade.translation.rendering.LayoutPlanPublication
@@ -2993,7 +2992,6 @@ class ReaderViewModel @JvmOverloads constructor(
         }
         PersistedLayoutReaderBridge.installChapterSource(PersistedLayoutReaderBridge.PageKeyedSource { pageKey, blocks, width, height ->
             val manifest = store.artifactManifest ?: return@PageKeyedSource null
-            if (manifest.authority != ManifestAuthority.ARTIFACTS) return@PageKeyedSource null
             val page = store.state.value[pageKey] ?: return@PageKeyedSource null
             if (page.imgWidth <= 0f || page.imgHeight <= 0f) return@PageKeyedSource null
             // Fresh manifest read per consult: the pointer/compat identity is

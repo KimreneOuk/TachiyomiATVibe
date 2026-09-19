@@ -138,7 +138,7 @@ class EnvelopePlanPublicationTest {
     // ------------------------------------------------------------------
 
     /**
-     * Mirrors the real background writer: `verifyLegacyArtifactHealth`
+     * Mirrors the real background artifact-health writer
      * republishes the manifest with the VERIFIED health marker and a bumped
      * timestamp, behind the caller's back.
      */

@@ -1,5 +1,7 @@
 package eu.kanade.translation.manager
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.ActiveChapterStoreRegistry
@@ -11,8 +13,7 @@ import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.LegacyChapterSnapshot
-import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -82,10 +83,9 @@ class ResetRetiresActiveRunTest {
             ChapterArtifactLayout("Chapter 1"),
         )
         var manifest = artifact
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
-            authority = ManifestAuthority.ARTIFACTS,
             cutoverAtEpochMs = 1L,
             migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,

@@ -2,7 +2,6 @@ package eu.kanade.translation.store
 
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.MutationAdmission
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -43,7 +42,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
      */
     internal fun currentGlossaryVersion(): Int? {
         val manifest = store.artifactManifest
-        return if (manifest?.authority == ManifestAuthority.ARTIFACTS) manifest.glossary?.version else null
+        return manifest?.glossary?.version
     }
 
     /**
@@ -135,7 +134,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
             }
             val artifact = store.artifactStore
             val manifest = store.artifactManifest
-            if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
+            if (artifact != null && manifest != null) {
                 val glossaryWriter = eu.kanade.translation.ActiveChapterStoreRegistry.registerWriter(
                     chapterKey = store.chapterKey,
                     origin = eu.kanade.translation.WriterOrigin.GLOSSARY_LANE,
@@ -176,20 +175,19 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
     internal fun loadGlossary() {
         val artifact = store.artifactStore
         val manifest = store.artifactManifest
-        if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
+        if (artifact != null && manifest != null) {
             manifest.glossary?.let { pointer ->
                 glossary = artifact.readGlossary(pointer)?.entries.orEmpty()
             }
             return
         }
-        val documents = store.legacyDocuments() ?: return
-        glossary = documents.readValidated<Map<String, String>>(store.glossaryName()) ?: emptyMap()
+        glossary = emptyMap()
     }
 
     internal fun persistGlossaryLocked(): Boolean {
         val artifact = store.artifactStore
         val manifest = store.artifactManifest
-        if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
+        if (artifact != null && manifest != null) {
             val pointer = artifact.publishGlossary(glossary) ?: return false
             val updated = manifest.copy(
                 glossary = pointer,

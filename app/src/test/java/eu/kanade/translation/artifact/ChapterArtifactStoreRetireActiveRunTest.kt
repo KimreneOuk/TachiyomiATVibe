@@ -1,5 +1,7 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -29,10 +31,9 @@ class ChapterArtifactStoreRetireActiveRunTest {
         val documents = AtomicChapterDocuments(FakeChapterDocumentIo())
         val artifact = ChapterArtifactStore(documents, ChapterArtifactLayout("Chapter 1"))
         var manifest = artifact
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
-            authority = ManifestAuthority.ARTIFACTS,
             cutoverAtEpochMs = 1L,
             migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,

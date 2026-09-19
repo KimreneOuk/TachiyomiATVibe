@@ -1,5 +1,7 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.TranslationPipeline
@@ -8,8 +10,7 @@ import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.LegacyChapterSnapshot
-import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -116,31 +117,15 @@ class D7EngineEpochStopRaceTest {
         // itself, so the companion-object seam does not apply) answering the
         // decoded page's 100x100 — TranslationManagerArtifactReadTest precedent.
         val layout = ChapterArtifactLayout(CHAPTER_DIR)
-        io.files[layout.legacyCompanionImageFile("p0.cleaned.jpg")] = byteArrayOf(1)
         val imageProbe = CleanedImageProbe { ProbedImage(100, 100) }
         val artifactStore = ChapterArtifactStore(
             AtomicChapterDocuments(io),
             layout,
             imageProbe,
         )
-        var manifest = artifactStore
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+        val manifest = artifactStore
+            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
-        if (manifest.authority == ManifestAuthority.LEGACY &&
-            manifest.legacyMigration == null &&
-            manifest.pages.isEmpty()
-        ) {
-            manifest = manifest.copy(
-                authority = ManifestAuthority.ARTIFACTS,
-                cutoverAtEpochMs = manifest.cutoverAtEpochMs ?: 1L,
-                migratedFromLegacyAtEpochMs = manifest.migratedFromLegacyAtEpochMs ?: 1L,
-                updatedAtEpochMs = 1L,
-            )
-            check(artifactStore.publishManifest(manifest)) { "D7 fixture: authority flip publish failed" }
-        }
-        check(manifest.authority == ManifestAuthority.ARTIFACTS) {
-            "D7 fixture: expected ARTIFACTS authority, got ${manifest.authority}"
-        }
         return ChapterTranslationStore(
             translationFile = null as UniFile?,
             fileCreator = null,

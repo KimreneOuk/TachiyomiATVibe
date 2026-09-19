@@ -1,5 +1,7 @@
 package eu.kanade.translation.store
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.ArtifactStageStatus
@@ -13,8 +15,7 @@ import eu.kanade.translation.artifact.CommittedBundleMetadata
 import eu.kanade.translation.artifact.DisplayBaseKind
 import eu.kanade.translation.artifact.DisplayBaseReference
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.LegacyChapterSnapshot
-import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.StageArtifactRecord
@@ -82,13 +83,12 @@ class StoreStatusProjectorRunRecordTest {
             ChapterArtifactLayout("Chapter 1"),
         )
         var manifest = artifact
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
             pages = pages,
             expectedPageCount = expectedPageCount,
             expectedPageCountTrusted = expectedPageCount != null,
-            authority = ManifestAuthority.ARTIFACTS,
             cutoverAtEpochMs = 1L,
             migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,

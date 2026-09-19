@@ -4,7 +4,6 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.AttemptLedgerEntry
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
-import eu.kanade.translation.artifact.ManifestAuthority
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -43,8 +42,7 @@ internal class ChapterAttemptLedger(private val store: ChapterTranslationStore) 
     /** True when the artifact authority owns this chapter's sidecars. */
     private val artifactAuthorityLive: Boolean
         get() {
-            val manifest = store.artifactManifest
-            return store.artifactStore != null && manifest?.authority == ManifestAuthority.ARTIFACTS
+            return store.artifactStore != null && store.artifactManifest != null
         }
 
     /** Caller holds the store mutex. */

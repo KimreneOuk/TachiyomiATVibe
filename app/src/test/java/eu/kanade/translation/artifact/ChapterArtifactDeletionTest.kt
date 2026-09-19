@@ -22,7 +22,6 @@ class ChapterArtifactDeletionTest {
         val glossaryIdentity = identity(glossary)
         return ChapterArtifactManifest(
             chapterKey = layout.chapterKey,
-            authority = ManifestAuthority.ARTIFACTS,
             legacySource = sourceIdentity,
             legacyMigration = LegacyMigrationMetadata(
                 sourceFileName = "Chapter 1.json",
@@ -35,7 +34,6 @@ class ChapterArtifactDeletionTest {
                 resolvedGlossaryFileName = "Chapter 1.glossary.json.migrated",
                 sourceIdentity = sourceIdentity,
                 glossaryIdentity = glossaryIdentity,
-                sourcePageKeyDigest = LegacyArtifactMigration.legacyPageKeyDigest(emptyList()),
                 migratedByVersionCode = 1L,
                 migratedAtEpochMs = 1L,
             ),
@@ -70,7 +68,9 @@ class ChapterArtifactDeletionTest {
         io.exists("${layout.manifestFileName}.corrupt.deadbeef") shouldBe false
         io.exists(layout.artifactRootDirectoryName) shouldBe false
         io.exists("Chapter 1.json") shouldBe true
-        io.exists("Chapter 1.json.migrated") shouldBe false
+        // Legacy flat files are user data and remain untouched by artifact
+        // deletion; the app simply no longer reads them.
+        io.exists("Chapter 1.json.migrated") shouldBe true
         io.exists("Chapter 1.glossary.json.migrated") shouldBe true
         ChapterArtifactDeletionPlan.capture(io, "Chapter 1.json") shouldBe null
     }

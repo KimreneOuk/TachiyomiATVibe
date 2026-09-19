@@ -4,7 +4,6 @@ import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.artifact.CleanedImageProbe
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
@@ -63,12 +62,12 @@ class TranslationManagerArtifactReadTest {
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
     )
 
-    private fun writeLegacyChapter(chapterName: String) {
-        File(mangaDir, "${chapterName}_images").mkdirs()
-        File(mangaDir, "${chapterName}_images/page.cleaned.jpg").writeBytes(byteArrayOf(1))
-        File(mangaDir, "$chapterName.json").writeText(
-            Json.encodeToString(mapOf("page.jpg" to page())),
-        )
+    private suspend fun writeArtifactChapter(chapterName: String) {
+        File(mangaDir, "$chapterName.json").createNewFile()
+        val root = FakeUniFile(parent = null, backing = mangaDir)
+        val store = ChapterTranslationStore.openArtifact(root, "$chapterName.json")
+        store.updatePage("page.jpg") { page() }
+        store.closeAndFlush()
     }
 
     private fun translationFile(chapterName: String): UniFile =
@@ -95,7 +94,6 @@ class TranslationManagerArtifactReadTest {
         setField(manager, "sourceManager", sourceManager)
         setField(manager, "translator", translator)
         setField(manager, "activeStores", activeStores)
-        setField(manager, "legacyPageJson", Json { ignoreUnknownKeys = true })
         setField(manager, "durableStatusCache", ConcurrentHashMap<Any, Any>())
         // Unsafe.allocateInstance skips field initializers; the resolver's
         // document-memo provider captures this field and NPEs when unset.
@@ -121,7 +119,7 @@ class TranslationManagerArtifactReadTest {
     @Test
     fun `artifact authority status and reader reads survive a fresh manager`() = runTest {
         installImageProbe()
-        writeLegacyChapter("Chapter 1")
+        writeArtifactChapter("Chapter 1")
         val file = translationFile("Chapter 1")
         val store = ChapterTranslationStore.open(file)
         store.updatePage("page.jpg") { current ->
@@ -129,17 +127,8 @@ class TranslationManagerArtifactReadTest {
         }
         store.closeAndFlush()
 
-        ChapterTranslationStore.probeArtifactManifest(file).manifest?.authority shouldBe ManifestAuthority.ARTIFACTS
         ChapterTranslationStore.probeArtifactManifest(file).manifest?.expectedPageCount shouldBe 1
         ChapterTranslationStore.probeArtifactManifest(file).manifest?.expectedPageCountTrusted shouldBe false
-        // The T933 legacy-rescue machine retires the flat file itself: open()
-        // preserves it into the artifact tree with identity proof, verifies the
-        // graph health, and deletes the exact source (LegacyArtifactRescue
-        // .deletePreservedLegacyInput). The fixture step below therefore
-        // asserts ABSENCE — the stronger form of this test's premise that the
-        // reader no longer needs the flat file — instead of deleting a file
-        // that production already retired.
-        file.exists() shouldBe false
         File(mangaDir, "Chapter 1.summary.json").exists() shouldBe false
 
         val manager = newManager(file)
@@ -153,7 +142,7 @@ class TranslationManagerArtifactReadTest {
     @Test
     fun `artifact status reports warnings for a partial page after restart`() = runTest {
         installImageProbe()
-        writeLegacyChapter("Chapter 4")
+        writeArtifactChapter("Chapter 4")
         val file = translationFile("Chapter 4")
         val store = ChapterTranslationStore.open(file)
         store.updatePage("page.jpg") { current ->
@@ -167,7 +156,6 @@ class TranslationManagerArtifactReadTest {
         }
         store.closeAndFlush()
 
-        ChapterTranslationStore.probeArtifactManifest(file).manifest?.authority shouldBe ManifestAuthority.ARTIFACTS
         val manager = newManager(file)
         manager.getChapterTranslationStatus(45L, "Chapter 4", null, "Manga", 77L) shouldBe
             Translation.State.READY_WITH_WARNINGS
@@ -213,81 +201,4 @@ class TranslationManagerArtifactReadTest {
         isFreshOrphanedCleanedImage(0L, now) shouldBe true
     }
 
-    @Test
-    fun `legacy authority chapter still resolves from the flat file`() = runTest {
-        writeLegacyChapter("Chapter 2")
-        val file = translationFile("Chapter 2")
-        val manager = newManager(file)
-        manager.getChapterTranslationStatus(43L, "Chapter 2", null, "Manga", 77L) shouldBe Translation.State.READY_WITH_WARNINGS
-        val pages = manager.getChapterTranslationForReader(43L, "Chapter 2", null, "Manga", mockk<Source>(relaxed = true))
-        pages["page.jpg"]?.blocks?.single()?.translation shouldBe "hello"
-    }
-
-    @Test
-    // T912 ANR fix: getChapterTranslationStatus is now suspend (durable
-    // resolution must leave the caller thread free). runBlocking keeps the
-    // original real-I/O execution semantics of this test.
-    fun `corrupt flat file is quarantined without deletion`() = kotlinx.coroutines.runBlocking {
-        val original = File(mangaDir, "Chapter 3.json")
-        original.writeText("{ not json")
-        val file = translationFile("Chapter 3").also { check(it.exists()) }
-        val manager = newManager(file)
-
-        manager.getChapterTranslationStatus(44L, "Chapter 3", null, "Manga", 77L) shouldBe Translation.State.NOT_TRANSLATED
-        manager.getChapterTranslation(file).isEmpty() shouldBe true
-
-        original.exists() shouldBe false
-        File(mangaDir, "Chapter 3.json.corrupt").readText() shouldBe "{ not json"
-    }
-
-    @Test
-    fun `corrupt quarantine preserves an existing target copy`() {
-        val original = File(mangaDir, "Chapter 6.json")
-        val corruptBytes = "{ corrupt-v2".toByteArray()
-        original.writeBytes(corruptBytes)
-        File(mangaDir, "Chapter 6.json.corrupt").writeText("older-quarantine")
-        val file = translationFile("Chapter 6").also { check(it.exists()) }
-        val manager = newManager(file)
-
-        manager.getChapterTranslation(file).isEmpty() shouldBe true
-
-        original.exists() shouldBe false
-        File(mangaDir, "Chapter 6.json.corrupt").readText() shouldBe "older-quarantine"
-        mangaDir.listFiles()!!.filter { it.name.startsWith("Chapter 6.json.corrupt.") }
-            .map { it.readBytes().toList() } shouldBe listOf(corruptBytes.toList())
-    }
-
-    @Test
-    fun `corrupt quarantine retains the source when every destination races`() {
-        File(mangaDir, "Chapter 8.json").writeText("{ corrupt-v3")
-        val manager = newManager(translationFile("Chapter 8"))
-        val io = eu.kanade.translation.artifact.FakeChapterDocumentIo()
-        val corruptBytes = "{ corrupt-v3".toByteArray()
-        io.files["Chapter 8.json"] = corruptBytes
-        io.beforeRenameAttempt = { from, to ->
-            if (from == "Chapter 8.json" && to.startsWith("Chapter 8.json.corrupt")) {
-                io.files[to] = "external-quarantine".toByteArray()
-            }
-        }
-
-        manager.quarantineCorruptDocument(io, "Chapter 8.json") shouldBe null
-        io.files["Chapter 8.json"] shouldBe corruptBytes
-        io.files.filterKeys { it.startsWith("Chapter 8.json.corrupt") }
-            .values.forEach { it shouldBe "external-quarantine".toByteArray() }
-    }
-
-    @Test
-    fun `recoverable missing legacy input is retried by the same manager`() = kotlinx.coroutines.runBlocking {
-        File(mangaDir, "Chapter 7.json").createNewFile()
-        val file = translationFile("Chapter 7")
-        val manager = newManager(file)
-        manager.getChapterTranslationStatus(47L, "Chapter 7", null, "Manga", 77L) shouldBe
-            Translation.State.NOT_TRANSLATED
-
-        File(mangaDir, "Chapter 7.json").writeText(
-            Json.encodeToString(mapOf("page.jpg" to page())),
-        )
-        manager.getChapterTranslationStatus(47L, "Chapter 7", null, "Manga", 77L) shouldBe
-            Translation.State.READY_WITH_WARNINGS
-    }
 }

@@ -1,7 +1,6 @@
 package eu.kanade.translation.artifact
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import kotlinx.serialization.json.decodeFromStream
 
 internal data class ArtifactManifestProbe(
@@ -16,13 +15,6 @@ internal data class ArtifactManifestProbe(
  * callers and tests.
  */
 internal object ChapterArtifactManifestReader {
-
-    /**
-     * The flat page map predates the artifact schema and may contain fields
-     * removed by a later refactor. Unknown keys are additive compatibility
-     * data here, so they must not make an otherwise valid page unreadable.
-     */
-    private val legacyPageJson = LegacyFlatFileDecoder.legacyPageJson
 
     /** Reads only the small manifest header; page snapshots stay unopened. */
     internal fun probeArtifactManifest(translationFile: UniFile): ArtifactManifestProbe {
@@ -39,7 +31,7 @@ internal object ChapterArtifactManifestReader {
         if (!manifestFile.exists()) return ArtifactManifestProbe(exists = false, manifest = null)
         val manifest = runCatching {
             manifestFile.openInputStream().use { input ->
-                legacyPageJson.decodeFromStream<ChapterArtifactManifest>(input)
+                ArtifactDocumentJson.decodeFromStream<ChapterArtifactManifest>(input)
             }
         }.getOrNull()
         return ArtifactManifestProbe(exists = true, manifest = manifest)

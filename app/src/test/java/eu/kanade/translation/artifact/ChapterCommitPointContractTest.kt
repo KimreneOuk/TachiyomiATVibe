@@ -1,5 +1,7 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -68,8 +70,8 @@ class ChapterCommitPointContractTest {
         lastModifiedMs = 1L,
     )
 
-    private fun legacySnapshot(page: PageTranslation) = LegacyChapterSnapshot(
-        pages = mapOf("page.jpg" to LegacyPageFacts(page, CleanedFileState.VALID)),
+    private fun legacySnapshot(page: PageTranslation) = ArtifactSeed(
+        pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
         glossary = emptyMap(),
         legacyIdentity = identity("v1"),
         sourceFileName = "Chapter 1.json",
@@ -118,7 +120,7 @@ class ChapterCommitPointContractTest {
     fun `ocr checkpoint CLOSE is a commit point while REBASE is stageable`() {
         val (store, _) = createStore()
         val ocrSnapshot = ocrPage()
-        val manifest = store.loadOrMigrate(legacySnapshot(ocrSnapshot)).manifest
+        val manifest = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
 
         val opened = store.openCandidate(
             manifest = manifest,
@@ -190,7 +192,7 @@ class ChapterCommitPointContractTest {
 
         // 2. CLOSE branch on a fresh store -> commitPoint is CommitPoint.OCR_CHECKPOINT_CLOSE
         val (store2, _) = createStore()
-        val manifest2 = store2.loadOrMigrate(legacySnapshot(ocrSnapshot)).manifest
+        val manifest2 = store2.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
         val opened2 = store2.openCandidate(
             manifest = manifest2,
             pageKey = "page.jpg",
@@ -237,7 +239,7 @@ class ChapterCommitPointContractTest {
     fun `page-terminal promotion is a commit point while intermediate mutations are stageable`() {
         val (store, _) = createStore()
         val ocrSnapshot = ocrPage()
-        val manifest = store.loadOrMigrate(legacySnapshot(ocrSnapshot)).manifest
+        val manifest = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
 
         // Open candidate -> stageable (null commitPoint)
         val openOutcome = store.openCandidate(
@@ -285,7 +287,7 @@ class ChapterCommitPointContractTest {
     fun `run record mutations carry CHAPTER_PHASE_RECORD commit point`() {
         val (store, _) = createStore()
         val ocrSnapshot = ocrPage()
-        val manifest = store.loadOrMigrate(legacySnapshot(ocrSnapshot)).manifest
+        val manifest = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
 
         val runRecord = ChapterRunRecord(
             runId = "run-test-1",

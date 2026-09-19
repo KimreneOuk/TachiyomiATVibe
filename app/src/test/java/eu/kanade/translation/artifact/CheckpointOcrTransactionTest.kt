@@ -1,5 +1,7 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -74,8 +76,8 @@ class CheckpointOcrTransactionTest {
         lastModifiedMs = 1L,
     )
 
-    private fun legacySnapshot(page: PageTranslation = ocrPage()) = LegacyChapterSnapshot(
-        pages = mapOf("page.jpg" to LegacyPageFacts(page, CleanedFileState.VALID)),
+    private fun legacySnapshot(page: PageTranslation = ocrPage()) = ArtifactSeed(
+        pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
         glossary = emptyMap(),
         legacyIdentity = identity("v1"),
         sourceFileName = "Chapter 1.json",
@@ -100,7 +102,7 @@ class CheckpointOcrTransactionTest {
 
     private fun fixtureWithActiveCandidate(io: FakeChapterDocumentIo, ocrSnapshot: PageTranslation = ocrPage()): Fixture {
         val store = store(io)
-        val migrated = store.loadOrMigrate(legacySnapshot(ocrSnapshot)).manifest
+        val migrated = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
         val opened = store.openCandidate(
             migrated,
             "page.jpg",
@@ -296,7 +298,6 @@ class CheckpointOcrTransactionTest {
         ocrSnapshot: PageTranslation = ocrPage(),
     ): Triple<ChapterArtifactStore, ChapterArtifactManifest, PageTranslation> {
         val fx = fixtureWithActiveCandidate(io, ocrSnapshot)
-        io.write(layout.legacyCompanionImageFile("page.cleaned.abc.jpg"), byteArrayOf(2))
         val promoted = fx.store.promoteLiveCandidate(
             manifest = fx.manifest,
             pageKey = "page.jpg",
@@ -387,7 +388,7 @@ class CheckpointOcrTransactionTest {
     fun `adopt without a committed bundle is rejected`() {
         val io = FakeChapterDocumentIo()
         val store = store(io)
-        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val migrated = store.loadArtifact(legacySnapshot()).manifest
         // Demote the committed bundle so neither candidate nor committed exists.
         val demoted = store.demoteLivePage(migrated, "page.jpg")
             .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>().manifest

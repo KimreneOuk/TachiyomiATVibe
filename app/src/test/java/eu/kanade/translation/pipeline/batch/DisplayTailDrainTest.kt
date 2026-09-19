@@ -149,27 +149,10 @@ class DisplayTailDrainTest {
         artifactFileName = "Chapter 1.json",
     )
 
-    // The promotion the drain's stamp write triggers validates the cleaned
-    // display base against the REAL companion file on the store's document IO
-    // (displayBaseIsValid over the store-injected probe) — the same fixture
-    // fidelity the coexistence harness documents for every display-commit
-    // fixture (D10's freshStore gap is exactly its absence). Without the
-    // seeded companion bytes and a JVM-decodable probe stub, every stamp write
-    // is rejected ARTIFACT_PUBLICATION_FAILED and the drain has nothing to
-    // drain. The stub answers the pages' source identity (imgWidth=100,
-    // imgHeight=160 in ocrPage).
-
     private var probeBeforeDisplayBaseFixture: CleanedImageProbe? = null
 
     @BeforeEach
     fun seedDisplayBaseFixtures() {
-        val layout = ChapterArtifactLayout("Chapter 1")
-        // Superset of every test's page set.
-        listOf("p1", "p2", "p3", "p4", "p5").forEach { key ->
-            val companion = File(mangaDir, layout.legacyCompanionImageFile("$key.cleaned.jpg"))
-            companion.parentFile.mkdirs()
-            companion.writeBytes(ByteArray(1))
-        }
         probeBeforeDisplayBaseFixture = ChapterTranslationStore.artifactImageProbe
         ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
     }

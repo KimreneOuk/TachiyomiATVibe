@@ -8,7 +8,6 @@ import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.CommittedBundleMetadata
 import eu.kanade.translation.artifact.DisplayBaseKind
 import eu.kanade.translation.artifact.DisplayBaseReference
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageDisplayState
@@ -169,83 +168,27 @@ class ChapterTranslationStoreArtifactMigrationTest {
             artifactPageVersion = artifactPageVersion,
         )
 
-    private fun writeLegacyChapter(
-        cleanedBytes: ByteArray = pngBytes(100, 100),
-        pageJson: JsonObject = Json.encodeToJsonElement(displayablePage()).jsonObject,
-    ) {
-        File(mangaDir, "Chapter 1_images").mkdirs()
-        File(mangaDir, "Chapter 1_images/page.cleaned.abc.jpg").writeBytes(cleanedBytes)
-        File(mangaDir, "Chapter 1.glossary.json").writeText("""{"sensei":"teacher"}""")
-        File(mangaDir, "Chapter 1.json").writeText(
-            buildJsonObject { put("page.jpg", pageJson) }.toString(),
-        )
+    private suspend fun writeArtifactChapter() {
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        File(mangaDir, "Chapter 1.json").createNewFile()
+        File(mangaDir, "image-fixtures/page.cleaned.abc.jpg").apply {
+            parentFile?.mkdirs()
+            writeBytes(pngBytes(100, 100))
+        }
+        val store = ChapterTranslationStore.openArtifact(root, "Chapter 1.json")
+        store.preRegisterPages(listOf("page.jpg"))
+        store.updatePage("page.jpg") { displayablePage() }
+        store.updateGlossary(mapOf("sensei" to "teacher"))
+        store.closeAndFlush()
     }
 
-    private fun legacyPageWithRemovedBatchContextFields(): JsonObject =
-        Json.encodeToJsonElement(displayablePage()).jsonObject.toMutableMap().apply {
-            put("batchContextCheckpointHash", JsonPrimitive("legacy-checkpoint"))
-            put("batchContextComplete", JsonPrimitive(true))
-            put("batchSceneCheckpoint", JsonPrimitive("legacy-scene"))
-        }.let(::JsonObject)
-
     private fun translationFile(): UniFile =
-        com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir).findFile("Chapter 1.json")
-            ?: com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
-                .findFile("Chapter 1.json.migrated")!!
+        com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir).findFile("Chapter 1.json")!!
 
     private fun readManifest(chapterName: String = "Chapter 1"): ChapterArtifactManifest =
         Json.decodeFromStream<ChapterArtifactManifest>(
             File(mangaDir, "$chapterName.manifest.json").inputStream(),
         )
-
-    @Test
-    fun `opening a legacy chapter migrates the artifact manifest non-destructively`() {
-        installPngHeaderProbe()
-        writeLegacyChapter()
-        val legacyBytes = File(mangaDir, "Chapter 1.json").readBytes()
-
-        val store = ChapterTranslationStore.open(translationFile())
-
-        store.state.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.abc.jpg"
-        val manifest = readManifest()
-        manifest.chapterKey shouldBe "Chapter 1"
-        val record = manifest.pages.getValue("page.jpg")
-        val committed = record.committed.shouldNotBeNull()
-        committed.provisional shouldBe true
-        committed.displayBase.legacyLayout shouldBe true
-        committed.displayBase.fileName shouldBe "page.cleaned.abc.jpg"
-        committed.displayBase.validated shouldBe true
-        record.displayState shouldBe PageDisplayState.DISPLAY_READY
-        manifest.legacySource shouldNotBe null
-
-        val glossary = Json.decodeFromStream<ChapterGlossary>(
-            File(mangaDir, "Chapter 1_artifacts/glossary/chapter.glossary.1.json").inputStream(),
-        )
-        glossary.kind shouldBe ChapterGlossary.KIND_VOCABULARY_HINTS
-        glossary.entries shouldBe mapOf("sensei" to "teacher")
-
-        File(mangaDir, "Chapter 1.json").exists() shouldBe false
-        File(mangaDir, "Chapter 1.json.migrated").readBytes() shouldBe legacyBytes
-    }
-
-    @Test
-    fun `opening a legacy chapter with removed batch context fields preserves page progress`() {
-        installPngHeaderProbe()
-        writeLegacyChapter(pageJson = legacyPageWithRemovedBatchContextFields())
-        val legacyBytes = File(mangaDir, "Chapter 1.json").readBytes()
-
-        val store = ChapterTranslationStore.open(translationFile())
-        val page = store.state.value.getValue("page.jpg")
-
-        page.blocks.single().translation shouldBe "hello"
-        page.ocrStatus shouldBe StageStatus.READY
-        page.translationStatus shouldBe StageStatus.READY
-        page.inpaintStatus shouldBe StageStatus.READY
-        page.renderStatus shouldBe StageStatus.READY
-        readManifest().pages.keys shouldBe setOf("page.jpg")
-        File(mangaDir, "Chapter 1.json").exists() shouldBe false
-        File(mangaDir, "Chapter 1.json.migrated").readBytes() shouldBe legacyBytes
-    }
 
     @Test
     fun `committed-only artifact fixture rehydrates with no legacy flat file`() {
@@ -273,7 +216,6 @@ class ChapterTranslationStoreArtifactMigrationTest {
             ),
             expectedPageCount = 1,
             expectedPageCountTrusted = false,
-            authority = ManifestAuthority.ARTIFACTS,
         )
         File(mangaDir, layout.manifestFileName).writeText(Json.encodeToString(manifest))
         File(mangaDir, snapshotFile).apply {
@@ -375,81 +317,6 @@ class ChapterTranslationStoreArtifactMigrationTest {
     }
 
     @Test
-    fun `first live mutation cuts over to artifact authority and legacy bytes cannot resync`() = runTest {
-        installPngHeaderProbe()
-        writeLegacyChapter()
-        val legacyBytes = File(mangaDir, "Chapter 1.json").readBytes()
-        // First open performs the initial migration.
-        ChapterTranslationStore.open(translationFile()).closeAndFlush()
-        val firstManifest = readManifest()
-
-        // The first production mutation is the Phase 3 authority cutover. The
-        // manual edit is written to a candidate snapshot and promoted without
-        // rewriting the legacy flat file.
-        val store = ChapterTranslationStore.open(translationFile())
-        store.updatePage("page.jpg") { page ->
-            page!!.apply { blocks[0].userEditedAt = 4242L }
-        }
-        store.flush()
-        store.closeAndFlush()
-        val legacyBytesAfterCutover = File(mangaDir, "Chapter 1.json.migrated").readBytes()
-
-        // Reopen: artifact authority ignores the unchanged legacy document and
-        // reconstructs the promoted committed snapshot.
-        val reopened = ChapterTranslationStore.open(translationFile())
-
-        val cutOver = readManifest()
-        cutOver.authority shouldBe eu.kanade.translation.artifact.ManifestAuthority.ARTIFACTS
-        cutOver.legacySource shouldBe firstManifest.legacySource
-        val committed = cutOver.pages.getValue("page.jpg").committed.shouldNotBeNull()
-        committed.hasManualEdits shouldBe true
-        reopened.display.value.getValue("page.jpg").blocks.single().userEditedAt shouldBe 4242L
-        legacyBytesAfterCutover shouldBe legacyBytes
-    }
-
-    @Test
-    fun `reopening without legacy changes takes the manifest fast path`() {
-        installPngHeaderProbe()
-        writeLegacyChapter()
-        ChapterTranslationStore.open(translationFile())
-        val manifestBytes = File(mangaDir, "Chapter 1.manifest.json").readBytes()
-
-        ChapterTranslationStore.open(translationFile())
-
-        File(mangaDir, "Chapter 1.manifest.json").readBytes() shouldBe manifestBytes
-        File(mangaDir, "Chapter 1.manifest.json.bak").exists() shouldBe false
-    }
-
-    @Test
-    fun `non-empty undecodable cleaned bytes are never committed`() {
-        installPngHeaderProbe()
-        writeLegacyChapter(cleanedBytes = "definitely not an image".toByteArray())
-
-        ChapterTranslationStore.open(translationFile())
-
-        val record = readManifest().pages.getValue("page.jpg")
-        record.committed.shouldNotBeNull().displayBase.kind shouldBe DisplayBaseKind.ORIGINAL_SOURCE
-        record.legacyVisible.shouldBeNull()
-        record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
-        record.inpaint shouldNotBe null
-    }
-
-    @Test
-    fun `wrong-dimension cleaned image is never committed`() {
-        installPngHeaderProbe()
-        // Page records 100x100; the file decodes as 64x64.
-        writeLegacyChapter(cleanedBytes = pngBytes(64, 64))
-
-        ChapterTranslationStore.open(translationFile())
-
-        val record = readManifest().pages.getValue("page.jpg")
-        record.committed.shouldNotBeNull().displayBase.kind shouldBe DisplayBaseKind.ORIGINAL_SOURCE
-        record.legacyVisible.shouldBeNull()
-        record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
-        record.inpaint shouldNotBe null
-    }
-
-    @Test
     fun `chapter without a legacy translation file gains no manifest`() {
         installPngHeaderProbe()
         val root: UniFile = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
@@ -458,39 +325,9 @@ class ChapterTranslationStoreArtifactMigrationTest {
     }
 
     @Test
-    fun `missing companion image maps to failed-no-result with corrupt inpaint`() {
-        installPngHeaderProbe()
-        File(mangaDir, "Chapter 1_images").mkdirs()
-        File(mangaDir, "Chapter 1.json").writeText(
-            Json.encodeToString(mapOf("page.jpg" to displayablePage())),
-        )
-
-        ChapterTranslationStore.open(translationFile())
-
-        val record = readManifest().pages.getValue("page.jpg")
-        record.committed.shouldNotBeNull().displayBase.kind shouldBe DisplayBaseKind.ORIGINAL_SOURCE
-        record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
-        record.inpaint shouldNotBe null
-    }
-
-    @Test
-    fun `corrupt legacy json still opens the store and records an empty migration`() {
-        installPngHeaderProbe()
-        File(mangaDir, "Chapter 1.json").writeText("{ not json")
-
-        val store = ChapterTranslationStore.open(translationFile())
-
-        store.state.value.isEmpty() shouldBe true
-        val manifest = readManifest()
-        manifest.pages.isEmpty() shouldBe true
-        manifest.migratedFromLegacyAtEpochMs shouldNotBe null
-        File(mangaDir, "Chapter 1.json").readText() shouldBe "{ not json"
-    }
-
-    @Test
     fun `artifact-authoritative reopen keeps committed display while incomplete candidate resumes`() = runTest {
         installPngHeaderProbe()
-        writeLegacyChapter()
+        writeArtifactChapter()
         val first = ChapterTranslationStore.open(translationFile())
         first.updatePage("page.jpg") { page ->
             page!!.copy(
@@ -508,7 +345,10 @@ class ChapterTranslationStoreArtifactMigrationTest {
         afterProcessDeath.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.abc.jpg"
         afterProcessDeath.state.value.getValue("page.jpg").ocrStatus shouldBe StageStatus.RUNNING
 
-        File(mangaDir, "Chapter 1_images/page.cleaned.retried.jpg").writeBytes(pngBytes(100, 100))
+        File(mangaDir, "image-fixtures/page.cleaned.retried.jpg").apply {
+            parentFile?.mkdirs()
+            writeBytes(pngBytes(100, 100))
+        }
 
         afterProcessDeath.updatePage("page.jpg") { page ->
             page!!.copy(
@@ -531,7 +371,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
     @Test
     fun `artifact candidate cancel and failure reopen retain committed display`() = runTest {
         installPngHeaderProbe()
-        writeLegacyChapter()
+        writeArtifactChapter()
         val first = ChapterTranslationStore.open(translationFile())
         first.updatePage("page.jpg") { page ->
             page!!.copy(
@@ -567,7 +407,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
     @Test
     fun `released batch callbacks cannot overwrite a reacquired artifact candidate`() = runTest {
         installPngHeaderProbe()
-        writeLegacyChapter()
+        writeArtifactChapter()
         val store = ChapterTranslationStore.open(translationFile())
         val pageKey = "page.jpg"
 
@@ -625,9 +465,9 @@ class ChapterTranslationStoreArtifactMigrationTest {
     @Test
     fun `production promotion retains a held previous cleaned stream until release`() = runTest {
         installPngHeaderProbe()
-        writeLegacyChapter()
+        writeArtifactChapter()
         val store = ChapterTranslationStore.open(translationFile())
-        val imageDir = File(mangaDir, "Chapter 1_images")
+        val imageDir = File(mangaDir, "image-fixtures").apply { mkdirs() }
         val previous = File(imageDir, "page.cleaned.abc.jpg")
         val next = File(imageDir, "page.cleaned.promoted.jpg").also { it.writeBytes(pngBytes(100, 100)) }
         val registry = TranslationStreamRegistry(cleanedRetirementGraceMs = 60_000L)
@@ -697,7 +537,6 @@ class ChapterTranslationStoreArtifactMigrationTest {
         val flatFile = File(mangaDir, "Chapter 2.json")
         flatFile.exists() shouldBe false
         val candidateManifest = readManifest("Chapter 2")
-        candidateManifest.authority shouldBe eu.kanade.translation.artifact.ManifestAuthority.ARTIFACTS
         candidateManifest.expectedPageCount shouldBe 1
         candidateManifest.expectedPageCountTrusted shouldBe false
         candidateManifest.pages.getValue("page.jpg").committed shouldBe null
@@ -743,7 +582,6 @@ class ChapterTranslationStoreArtifactMigrationTest {
         store.flush()
 
         creatorCalls shouldNotBe 0
-        readManifest("Chapter 8").authority shouldBe eu.kanade.translation.artifact.ManifestAuthority.ARTIFACTS
         readManifest("Chapter 8").expectedPageCount shouldBe 2
         readManifest("Chapter 8").expectedPageCountTrusted shouldBe true
         store.state.value.getValue("p1.jpg").ocrStatus shouldBe StageStatus.RUNNING
@@ -772,7 +610,6 @@ class ChapterTranslationStoreArtifactMigrationTest {
         val manifest = ChapterArtifactManifest(
             schemaVersion = ChapterArtifactManifest.SCHEMA_VERSION,
             chapterKey = layout.chapterKey,
-            authority = ManifestAuthority.ARTIFACTS,
             pages = mapOf(
                 "page1.jpg" to PageArtifactRecord(
                     pageKey = "page1.jpg",
@@ -813,4 +650,3 @@ class ChapterTranslationStoreArtifactMigrationTest {
         store.state.value["page1.jpg"]?.blocks?.single()?.translation shouldBe "translated"
     }
 }
-

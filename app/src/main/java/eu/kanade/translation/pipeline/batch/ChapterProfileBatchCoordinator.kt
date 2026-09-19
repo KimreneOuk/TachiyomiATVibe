@@ -33,7 +33,6 @@ import eu.kanade.translation.artifact.ExtractedRelationship
 import eu.kanade.translation.artifact.ExtractedTerm
 import eu.kanade.translation.artifact.ExtractedTermKind
 import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.OcrCheckpointMode
 import eu.kanade.translation.artifact.PageRange
 import eu.kanade.translation.artifact.ProfilePointer
@@ -373,7 +372,7 @@ internal class ChapterProfileBatchCoordinator(
         }
         currentCoroutineContext().ensureActive()
         val artifact = store.artifactStore
-        if (artifact == null || store.artifactManifest?.authority != ManifestAuthority.ARTIFACTS) {
+        if (artifact == null || store.artifactManifest == null) {
             // The preflight writes origin-neutral checkpoints; without artifact
             // authority the flagged path cannot do its one job. Fail fast
             // WITHOUT burning any OCR work (the legacy path remains available).

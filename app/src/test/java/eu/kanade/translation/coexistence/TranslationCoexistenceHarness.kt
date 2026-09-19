@@ -2,6 +2,8 @@
 
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import android.content.Context
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
@@ -23,8 +25,7 @@ import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.LegacyChapterSnapshot
-import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -884,27 +885,15 @@ internal class TranslationCoexistenceHarness private constructor(
         ): ChapterTranslationStore {
             val documentIo = FakeChapterDocumentIo()
             val layout = ChapterArtifactLayout("Chapter 1")
-            // T924 zero-legacy (D1) harness deviation: production's manual lane
-            // writes the cleaned companion JPEG into the chapter dir before the
-            // display-ready commit promotes it; the harness stubs that encoder,
-            // so seed the companion bytes and a passing geometry probe (all
-            // fixtures decode 100x100). Without this, a manual commit under
-            // ARTIFACTS authority would be rejected on the display-base probe
-            // (the promotion path batch-only tests never reach) and the page
-            // would be silently re-paid by the batch.
-            for (key in pageKeys) {
-                documentIo.files[layout.legacyCompanionImageFile("$key.cleaned.jpg")] = ByteArray(1)
-            }
             val artifact = ChapterArtifactStore(
                 AtomicChapterDocuments(documentIo),
                 layout,
                 displayBaseProbe = { eu.kanade.translation.artifact.ProbedImage(100, 100) },
             )
             var manifest = artifact
-                .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+                .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
                 .manifest
             manifest = manifest.copy(
-                authority = ManifestAuthority.ARTIFACTS,
                 cutoverAtEpochMs = 1L,
                 migratedFromLegacyAtEpochMs = 1L,
                 updatedAtEpochMs = 1L,

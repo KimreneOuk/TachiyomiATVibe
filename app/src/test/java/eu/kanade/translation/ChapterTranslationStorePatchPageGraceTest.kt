@@ -1,12 +1,13 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.LegacyChapterSnapshot
-import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -56,22 +57,9 @@ class ChapterTranslationStorePatchPageGraceTest {
             AtomicChapterDocuments(FakeChapterDocumentIo()),
             ChapterArtifactLayout("Grace Chapter"),
         )
-        var manifest = artifactStore
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+        val manifest = artifactStore
+            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
             .manifest
-        if (manifest.authority == ManifestAuthority.LEGACY &&
-            manifest.legacyMigration == null &&
-            manifest.pages.isEmpty()
-        ) {
-            manifest = manifest.copy(
-                authority = ManifestAuthority.ARTIFACTS,
-                cutoverAtEpochMs = manifest.cutoverAtEpochMs ?: 1L,
-                migratedFromLegacyAtEpochMs = manifest.migratedFromLegacyAtEpochMs ?: 1L,
-                updatedAtEpochMs = 1L,
-            )
-            check(artifactStore.publishManifest(manifest)) { "fixture: authority flip publish failed" }
-        }
-        check(manifest.authority == ManifestAuthority.ARTIFACTS)
         return ChapterTranslationStore(
             translationFile = null as UniFile?,
             fileCreator = null,

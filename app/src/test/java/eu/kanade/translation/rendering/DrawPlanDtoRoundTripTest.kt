@@ -7,7 +7,6 @@ import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ColorStylePreparation
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.artifact.SidecarPointer
@@ -102,7 +101,6 @@ class DrawPlanDtoRoundTripTest {
         store.publishManifest(
             ChapterArtifactManifest(
                 chapterKey = "Chapter 1",
-                authority = ManifestAuthority.ARTIFACTS,
                 pages = mapOf(PAGE_KEY to PageArtifactRecord(pageKey = PAGE_KEY, pageVersion = 7L)),
                 updatedAtEpochMs = 1L,
             ),

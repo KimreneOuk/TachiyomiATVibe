@@ -18,7 +18,6 @@ import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ColorStylePreparation
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.StageArtifactRecord
@@ -386,7 +385,6 @@ internal class BatchRenderJoin(
     ) {
         val artifact = store.artifactStore ?: return
         val manifest = store.artifactManifest ?: return
-        if (manifest.authority != ManifestAuthority.ARTIFACTS) return
         val artifactPage = manifest.pages[pageKey] ?: return
 
         // T924-TX-23 precondition set, checked against the post-render-merge
@@ -605,7 +603,7 @@ internal class BatchRenderJoin(
                 page.translationStatus == StageStatus.PARTIAL
             if (!translationReady || page.inpaintStatus != StageStatus.READY) return false
             if (page.blocks.isEmpty()) return false
-            if (manifestNow == null || manifestNow.authority != ManifestAuthority.ARTIFACTS) return false
+            if (manifestNow == null) return false
             publishPersistedLayout(pageKey, page, snapshot)
             true
         } catch (e: CancellationException) {

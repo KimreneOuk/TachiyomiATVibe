@@ -143,12 +143,6 @@ internal class ChapterDataResetController(
         disposeBatchTracker(chapterId)
         unregisterActiveTranslationStore(chapterId)
         streamRegistry.clearChapter(source.id, manga.id, chapterId)
-        val file = deletionDocument?.file ?: provider.findTranslationFile(
-            chapter.name,
-            chapter.scanlator,
-            manga.title,
-            source,
-        )
         var authorityRemoved = true
         artifactDeletionPlan?.let { plan ->
             val result = withContext(Dispatchers.IO) { plan.delete() }
@@ -161,11 +155,9 @@ internal class ChapterDataResetController(
                     "retainedLegacy=${result.retainedLegacyNames.size} " +
                     "failures=${result.failures.size}"
             }
-            // An artifact-authoritative chapter owns its flat source only when
-            // the migration marker proves its current identity. Unknown or
-            // mismatched legacy files remain untouched by the plan.
-            if (!plan.isArtifactAuthoritative) file?.delete()
-        } ?: file?.delete()
+            // Legacy flat files are deliberately retained on disk. Phase 2
+            // removes their read path; it does not delete user data.
+        }
         if (authorityRemoved) retireChapterCompanionImages(manga, chapter, source)
         durableStatusResolver.clearDurableStatusCache()
     }

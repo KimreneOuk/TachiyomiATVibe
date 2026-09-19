@@ -10,7 +10,6 @@ import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
@@ -82,7 +81,6 @@ class T934ProjectorRebuildTruthTest {
         artifact.publishManifest(
             ChapterArtifactManifest(
                 chapterKey = "Chapter 9",
-                authority = ManifestAuthority.ARTIFACTS,
                 updatedAtEpochMs = 1L,
             ),
         )

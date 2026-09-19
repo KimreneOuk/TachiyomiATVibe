@@ -1,5 +1,7 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.artifact.loadArtifact
+
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -70,8 +72,8 @@ class ChapterArtifactStoreManifestCoalescingTest {
         inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 1)),
     )
 
-    private fun legacySnapshot(pageKeys: List<String>) = LegacyChapterSnapshot(
-        pages = pageKeys.associateWith { key -> LegacyPageFacts(page(key), CleanedFileState.VALID) },
+    private fun legacySnapshot(pageKeys: List<String>) = ArtifactSeed(
+        pages = pageKeys.associateWith { key -> ArtifactPageFacts(page(key), CleanedFileState.VALID) },
         glossary = emptyMap(),
         legacyIdentity = LegacySourceIdentity(
             sha256 = "sha-chapter",
@@ -110,7 +112,7 @@ class ChapterArtifactStoreManifestCoalescingTest {
         val io = FakeChapterDocumentIo()
         val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
         val pageKeys = (1..100).map { index -> "p%03d.jpg".format(index) }
-        artifact.loadOrMigrate(legacySnapshot(pageKeys))
+        artifact.loadArtifact(legacySnapshot(pageKeys))
         val writesBeforeWindow = durableManifestWrites(io)
 
         var facade = artifact.readManifest().shouldNotBeNull()
@@ -146,7 +148,7 @@ class ChapterArtifactStoreManifestCoalescingTest {
         val io = FakeChapterDocumentIo()
         val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
         val pageKeys = (1..3).map { index -> "p%03d.jpg".format(index) }
-        artifact.loadOrMigrate(legacySnapshot(pageKeys))
+        artifact.loadArtifact(legacySnapshot(pageKeys))
 
         // The façade cached the pre-verification snapshot; the background
         // health verify then republished VERIFIED behind its back.
@@ -192,7 +194,7 @@ class ChapterArtifactStoreManifestCoalescingTest {
         val io = FakeChapterDocumentIo()
         val artifact = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
         val pageKeys = (1..40).map { index -> "p%03d.jpg".format(index) }
-        artifact.loadOrMigrate(legacySnapshot(pageKeys))
+        artifact.loadArtifact(legacySnapshot(pageKeys))
         val writesBeforeWindow = durableManifestWrites(io)
 
         // Arm the durable manifest rewrite to fail; the 32nd staged

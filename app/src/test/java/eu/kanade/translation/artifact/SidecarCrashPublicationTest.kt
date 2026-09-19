@@ -62,7 +62,6 @@ class SidecarCrashPublicationTest {
         store.publishManifest(
             ChapterArtifactManifest(
                 chapterKey = "Chapter 1",
-                authority = ManifestAuthority.ARTIFACTS,
                 updatedAtEpochMs = 1L,
             ),
         )

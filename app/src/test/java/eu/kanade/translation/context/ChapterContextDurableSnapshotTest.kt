@@ -10,7 +10,6 @@ import eu.kanade.translation.artifact.ChapterContextSnapshot
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.GroupCommitConfiguration
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageTranslation
@@ -130,7 +129,6 @@ class ChapterContextDurableSnapshotTest {
         val initialManifest = ChapterArtifactManifest(
             schemaVersion = 4,
             chapterKey = layout.chapterKey,
-            authority = ManifestAuthority.ARTIFACTS,
             pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
         )
         val store = createStoreWithManifest(io, initialManifest)
@@ -170,7 +168,6 @@ class ChapterContextDurableSnapshotTest {
         val initialManifest = ChapterArtifactManifest(
             schemaVersion = 4,
             chapterKey = layout.chapterKey,
-            authority = ManifestAuthority.ARTIFACTS,
             pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
         )
         val store = createStoreWithManifest(io, initialManifest)
@@ -212,7 +209,6 @@ class ChapterContextDurableSnapshotTest {
         val initialManifest = ChapterArtifactManifest(
             schemaVersion = 4,
             chapterKey = layout.chapterKey,
-            authority = ManifestAuthority.ARTIFACTS,
         )
         val store = createStoreWithManifest(io, initialManifest)
 
@@ -236,7 +232,6 @@ class ChapterContextDurableSnapshotTest {
         val initialManifest = ChapterArtifactManifest(
             schemaVersion = 4,
             chapterKey = layout.chapterKey,
-            authority = ManifestAuthority.ARTIFACTS,
         )
         val pages = (1..200).associate { i ->
             val pageKey = "%04d.jpg".format(i)

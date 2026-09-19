@@ -7,7 +7,6 @@ import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.pipeline.batch.BatchProgressReconciler
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
@@ -80,7 +79,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
      */
     fun artifactStatus(): Translation.State? {
         val manifest = artifactManifest ?: return null
-        if (manifest.authority == ManifestAuthority.ARTIFACTS && manifest.activeRun != null) {
+        if (manifest.activeRun != null) {
             completedRunRecordStatus(manifest)?.let { return it }
         }
         val pagesSnapshot = state.value

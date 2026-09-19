@@ -43,14 +43,6 @@ data class ChapterArtifactManifest(
     val legacySource: LegacySourceIdentity? = null,
     /** Additive provenance and preservation state for a legacy rescue. */
     val legacyMigration: LegacyMigrationMetadata? = null,
-    /**
-     * Which document owns this manifest's metadata (Phase 3 cutover). While
-     * [ManifestAuthority.LEGACY], opens may resync from the authoritative
-     * legacy bytes; once a Phase 3 transaction flips this to
-     * [ManifestAuthority.ARTIFACTS], legacy resync never rewrites the
-     * manifest.
-     */
-    val authority: ManifestAuthority = ManifestAuthority.LEGACY,
     val cutoverAtEpochMs: Long? = null,
     val migratedFromLegacyAtEpochMs: Long? = null,
     val updatedAtEpochMs: Long = 0L,

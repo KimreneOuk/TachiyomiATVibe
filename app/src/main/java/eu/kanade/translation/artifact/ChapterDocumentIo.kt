@@ -338,7 +338,7 @@ class AtomicChapterDocuments(
      * temp name is deterministic ([tempNameFor]), so two in-process writers
      * targeting the same document from DIFFERENT store/documents instances
      * (the batch preflight publishing the run record vs. the >8-page open
-     * path's background `verifyLegacyArtifactHealth` manifest republisher)
+     * path's background artifact-health manifest republisher)
      * used to collide on `name.tmp` and interleave the rotation renames — the
      * loser got a mechanical `false` with no diagnostics and every caller
      * mapped that to a fatal Rejected. Serializing per name eliminates both

@@ -207,7 +207,7 @@ internal class ArtifactRetention(
             listOfNotNull(page.committed, page.previousCommitted).forEach { bundle ->
                 add(layout.generationFile(bundle.generationId))
                 bundle.pageSnapshotFileName?.let(::add)
-                bundle.displayBase.fileName?.takeIf { !bundle.displayBase.legacyLayout }?.let(::add)
+                bundle.displayBase.fileName?.let(::add)
             }
             page.candidate?.let {
                 add(layout.generationFile(it.generationId))

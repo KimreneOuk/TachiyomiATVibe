@@ -8,8 +8,7 @@ import java.security.MessageDigest
  * Given a chapter translation file base name `X` (e.g. `Group_Chapter 1`), the
  * manifest is the sibling document `X.manifest.json` — matching the existing
  * `X.glossary.json` / `X.summary.json` sidecar convention — and all immutable
- * payloads live under the chapter directory `X_artifacts/`, next to the legacy
- * `X_images/` companion directory:
+ * payloads live under the chapter directory `X_artifacts/`:
  *
  * ```
  * X_artifacts/
@@ -33,9 +32,9 @@ import java.security.MessageDigest
  *   tree nor collide with a different value.
  * - File extensions are strict: `[A-Za-z0-9]{1,8}` or rejected.
  *
- * The layout is additive: the legacy flat translation file and companion image
- * directory remain authoritative for the live reader until the store
- * transaction and UI phases switch consumption.
+ * Artifact documents are the sole durable translation representation. Existing
+ * flat-file documents are intentionally left untouched and are not part of this
+ * layout.
  */
 class ChapterArtifactLayout(chapterBaseName: String) {
 
@@ -47,8 +46,7 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     private val imageDirectoryName = "$artifactRootDirectoryName/images"
     private val pageSnapshotDirectoryName = "$artifactRootDirectoryName/pages"
 
-    // Legacy scene-checkpoint sidecar directory: no longer written, still swept
-    // by the retention reconciler so pre-refactor files get reclaimed.
+    // Scene-checkpoint sidecar directory.
     private val contextDirectoryName = "$artifactRootDirectoryName/context"
     private val generationDirectoryName = "$artifactRootDirectoryName/generations"
     private val glossaryDirectoryName = "$artifactRootDirectoryName/glossary"
@@ -85,9 +83,6 @@ class ChapterArtifactLayout(chapterBaseName: String) {
         ).joinToString("/")
 
     fun imageDirectory(pageKey: String): String = "$imageDirectoryName/${pageSegment(pageKey)}"
-
-    /** Relative path for a legacy companion image still produced by the live pipeline. */
-    fun legacyCompanionImageFile(fileName: String): String = "${chapterKey}_images/$fileName"
 
     /** Durable complete page snapshots used by the live store bridge. */
     fun committedPageSnapshotFile(pageKey: String, generationId: String): String =

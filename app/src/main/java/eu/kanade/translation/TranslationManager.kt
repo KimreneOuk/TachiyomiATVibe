@@ -6,13 +6,10 @@ import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
-import eu.kanade.translation.artifact.ChapterDocumentIo
 import eu.kanade.translation.artifact.ArtifactManifestProbe
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.PageTranslation
@@ -312,10 +309,6 @@ class TranslationManager(
 
     private val activeStores = ActiveChapterStoreRegistry()
     private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
-    // T909 Phase 3a: the single legacy Json config lives in LegacyFlatFileDecoder;
-    // this field stays for the reflective test seam.
-    private val legacyPageJson = LegacyFlatFileDecoder.legacyPageJson
-
     /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
     private val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -1176,10 +1169,6 @@ class TranslationManager(
         }
     }
 
-    private fun statusFromReadablePages(
-        pages: Map<String, PageTranslation>,
-    ): Translation.State? = LegacyFlatFileDecoder.statusFromReadablePages(pages)
-
     fun getChapterTranslation(
         chapterName: String,
         scanlator: String?,
@@ -1216,7 +1205,7 @@ class TranslationManager(
                 val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
                     ?: return@withContext emptyMap()
                 val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-                if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
+                if (manifestProbe.exists) {
                     return@withContext openExistingChapterTranslationStore(
                         chapterId,
                         chapterName,
@@ -1227,8 +1216,7 @@ class TranslationManager(
                         preflightManifestProbe = manifestProbe,
                     )?.state?.value.orEmpty()
                 }
-                return@withContext document.file
-                    ?.let { decodeLegacyChapterTranslation(it, quarantineOnFailure = true) }.orEmpty()
+                return@withContext emptyMap()
             }
         } finally {
             entryStage.end()
@@ -1239,17 +1227,15 @@ class TranslationManager(
         file: UniFile,
     ): Map<String, PageTranslation> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
-        if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
+        if (manifestProbe.exists) {
+            val parent = file.parentFile ?: return@runBlocking emptyMap()
             val store = activeStores.getOrCreateFile(file.registryKey()) {
-                ChapterTranslationStore.open(file)
+                ChapterTranslationStore.openArtifact(parent, file.name ?: "translation.json")
             }
-            // Opening an artifact store may complete a LEGACY rescue and
-            // advance its preservation marker. Do not retain a status observed
-            // before that durable transition.
             durableStatusResolver.clearDurableStatusCache()
             return@runBlocking store?.state?.value.orEmpty()
         }
-        return@runBlocking decodeLegacyChapterTranslation(file, quarantineOnFailure = true)
+        return@runBlocking emptyMap()
     }
 
     private suspend fun openExistingChapterTranslationStore(
@@ -1268,36 +1254,19 @@ class TranslationManager(
             ?: return null
         val manifestProbe = preflightManifestProbe
             ?: ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-        if (document.file?.exists() != true && !manifestProbe.exists) return null
-        // Only an actual open can complete a LEGACY rescue and advance
-        // durable truth. A registry hit performed no open — wiping here would
-        // defeat the reader's own status lookup immediately afterwards.
+        if (!manifestProbe.exists) return null
         val hadActive = if (chapterId != null) {
             activeStores.get(chapterId) != null
         } else {
             activeStores.getByFile(document.registryKey) != null
         }
-        val isArtifactAuthoritative = manifestProbe.exists &&
-            manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS
         val store = if (chapterId != null) {
             activeStores.getOrCreate(chapterId, document.registryKey) {
-                if (isArtifactAuthoritative) {
-                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
-                } else if (document.file?.exists() == true) {
-                    ChapterTranslationStore.open(document.file)
-                } else {
-                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
-                }
+                ChapterTranslationStore.openArtifact(document.parent, document.fileName)
             }
         } else {
             activeStores.getOrCreateFile(document.registryKey) {
-                if (isArtifactAuthoritative) {
-                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
-                } else if (document.file?.exists() == true) {
-                    ChapterTranslationStore.open(document.file)
-                } else {
-                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
-                }
+                ChapterTranslationStore.openArtifact(document.parent, document.fileName)
             }
         }
         if (!hadActive) {
@@ -1318,27 +1287,14 @@ class TranslationManager(
     ): TranslationDocument? =
         durableStatusResolver.findTranslationDocument(chapterName, scanlator, mangaTitle, source)
 
-    // T909 Phase 3a: legacy decode/quarantine bodies moved to legacy/LegacyFlatFileDecoder.kt.
-    private fun decodeLegacyChapterTranslation(
-        file: UniFile,
-        quarantineOnFailure: Boolean,
-    ): Map<String, PageTranslation> =
-        LegacyFlatFileDecoder.decodeLegacyChapterTranslation(file, quarantineOnFailure)
-
-    private fun quarantineCorruptTranslationFile(file: UniFile, error: Throwable) {
-        LegacyFlatFileDecoder.quarantineCorruptTranslationFile(file, error)
-    }
-
-    internal fun quarantineCorruptDocument(io: ChapterDocumentIo, name: String): String? =
-        LegacyFlatFileDecoder.quarantineCorruptDocument(io, name)
-
     private fun UniFile.registryKey(): String = filePath ?: uri.toString()
 
     /** Returns whether this chapter has an existing or active translation store. */
     fun hasTranslationStore(chapter: Chapter, manga: Manga, source: Source): Boolean {
         chapter.id?.let { activeStores.get(it) }?.let { return it.state.value.isNotEmpty() }
-        return provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-            ?.exists() == true
+        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+            ?: return false
+        return ChapterTranslationStore.probeArtifactManifest(file).exists
     }
 
     /** Re-keys source URL pages to the names written by a completed download. */
@@ -1485,19 +1441,11 @@ class TranslationManager(
             chapterId,
             document?.registryKey,
         ) {
-            val file = document?.file
-            if (file?.exists() == true) {
-                ChapterTranslationStore.open(file)
-            } else if (manifestProbe?.exists == true) {
+            if (manifestProbe?.exists == true) {
                 ChapterTranslationStore.openArtifact(document.parent, fileName)
             } else {
-                // Create a LAZY store: the artifact manifest materializes only on the first real
-                // write, so merely opening a chapter never leaves an empty compatibility document
-                // behind that could make isChapterTranslated report a false TRANSLATED state.
-                // A never-translated chapter has no on-disk document yet (artifactParent is
-                // null), so the creator performs the same create-the-manga-directory
-                // resolution the pipeline fallback uses; without it the first batch
-                // mutation is rejected with LEGACY_RESCUE_FAILED.
+                // Create a lazy artifact store: opening a chapter never
+                // creates an empty manifest; the first real write materializes it.
                 ChapterTranslationStore.lazy(
                     artifactParent = document?.parent,
                     artifactFileName = fileName,

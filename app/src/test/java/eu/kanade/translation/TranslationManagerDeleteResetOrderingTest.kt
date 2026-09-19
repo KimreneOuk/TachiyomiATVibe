@@ -205,9 +205,9 @@ class TranslationManagerDeleteResetOrderingTest {
                 "clearDurableStatusCache",
                 // Step 5: stale reader closures pointing at the deleted PNGs are dropped.
                 "clearChapter",
-                // Step 6: only now is the on-disk file resolved for deletion...
-                "findTranslationFile",
-                // ...and companion-image retirement runs after the manifest removal.
+                // Step 6: legacy flat files stay on disk; only artifact
+                // authority is removed. Companion-image retirement runs after
+                // the manifest removal.
                 "findCompanionImageDir",
                 // The durable-status cache is invalidated once everything is wound down.
                 "clearDurableStatusCache",

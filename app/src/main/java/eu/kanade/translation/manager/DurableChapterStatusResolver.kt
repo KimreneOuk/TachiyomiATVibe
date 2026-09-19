@@ -5,9 +5,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.ActiveChapterStoreRegistry
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.ReaderEntryTrace
-import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import eu.kanade.translation.model.Translation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -89,14 +87,6 @@ internal class DurableChapterStatusResolver(
         durableDocumentCache.clear()
     }
 
-    // T909 Phase 3a: legacy decode/quarantine bodies live in
-    // legacy/LegacyFlatFileDecoder.kt; the moved resolve body keeps calling
-    // the same-name collaborator.
-    private fun decodeLegacyChapterStatus(
-        file: UniFile,
-        chapterName: String,
-    ): Translation.State? = LegacyFlatFileDecoder.decodeLegacyChapterStatus(file, chapterName)
-
     // T912 ANR fix: suspend. This resolution reopens the durable artifact
     // store over SAF/UniFile and reads page snapshots — O(pages) FUSE/binder
     // round-trips (60-130 ms per page observed on a 68-page chapter). The
@@ -142,19 +132,10 @@ internal class DurableChapterStatusResolver(
         val document = findTranslationDocument(chapterName, chapterScanlator, mangaTitle, source)
             ?: return null
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-        return when {
-            manifestProbe.exists && manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS -> {
-                withProbeStore(document, chapterId) { store ->
-                    store.artifactStatus()
-                }
-            }
-            manifestProbe.exists && manifestProbe.manifest == null -> {
-                // A present but unreadable manifest must not fall back to stale flat JSON.
-                withProbeStore(document, chapterId) { store ->
-                    store.artifactStatus()
-                }
-            }
-            else -> document.file?.let { decodeLegacyChapterStatus(it, chapterName) }
+        return if (manifestProbe.exists) {
+            withProbeStore(document, chapterId) { store -> store.artifactStatus() }
+        } else {
+            null
         }
     }
 
@@ -198,9 +179,18 @@ internal class DurableChapterStatusResolver(
         sourceId: Long,
         block: suspend (ChapterTranslationStore) -> T,
     ): T? {
+        // An active store is already the reader's authority. Return it before
+        // resolving the source or walking storage so the in-memory active
+        // path remains probe-free during progress projection.
+        if (chapterId != null) {
+            activeStores.get(chapterId)?.let { return block(it) }
+        }
         val source = sourceManager.get(sourceId) ?: return null
         val document = findTranslationDocument(chapterName, chapterScanlator, mangaTitle, source)
             ?: return null
+        if (!ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName).exists) {
+            return null
+        }
         return withProbeStore(document, chapterId, block)
     }
 
@@ -213,11 +203,7 @@ internal class DurableChapterStatusResolver(
             activeStores.get(chapterId)?.let { return block(it) }
         }
         val result = activeStores.getOrCreateProbe(document.registryKey) {
-            if (document.file?.exists() == true) {
-                ChapterTranslationStore.open(document.file)
-            } else {
-                ChapterTranslationStore.openArtifact(document.parent, document.fileName)
-            }
+            ChapterTranslationStore.openArtifact(document.parent, document.fileName)
         } ?: return null
         // A newly created probe can perform the one-way rescue and rename
         // intent recovery while it opens; statuses cached before that

@@ -23,21 +23,11 @@ import tachiyomi.core.common.util.system.logcat
  * TachiyomiAT: owns the chapter artifact manifest and the immutable artifact
  * tree for one chapter (lifecycle contract §15).
  *
- * Phase 2 delivered deterministic mapping of the legacy flat translation
- * record, crash-safe publication, and bounded retention. Phase 3 adds the
- * store-transaction layer on top of the same primitives: candidate
- * generation lifecycle, preconditioned stage sidecar commits, atomic
- * committed-pointer promotion, cancel/failure semantics, and the
- * legacy-to-artifact authority cutover.
- *
- * Authority cutover: while [ManifestAuthority.LEGACY], the manifest is a
- * rescue staging record and one load may materialize the legacy graph. The
- * final rescue publication flips it to [ManifestAuthority.ARTIFACTS]; from
- * then on loads never resync from legacy, so open-time legacy identity changes
- * cannot overwrite transactional manifest writes. Rollback/recovery is
- * preserved: a manifest lost on both copies rebuilds conservatively from the
- * legacy record (authority resets to LEGACY), and backup/quarantine rotation
- * remains crash-safe.
+ * The store owns the chapter artifact manifest and immutable sidecar tree.
+ * Candidate generation lifecycle, preconditioned stage commits, atomic
+ * committed-pointer promotion, cancel/failure semantics, crash recovery, and
+ * bounded retention all operate on artifact documents only. Flat translation
+ * files from pre-artifact builds are intentionally not read or migrated.
  */
 /**
  * T924-TX-03 close-vs-rebase decision for [ChapterArtifactStore.checkpointOcr].
@@ -81,24 +71,16 @@ sealed interface SidecarRead<out T : Any> {
 class ChapterArtifactStore(
     private val documents: AtomicChapterDocuments,
     internal val layout: ChapterArtifactLayout,
+    @Suppress("UNUSED_PARAMETER")
     private val displayBaseProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe,
 ) {
     private val io: ChapterDocumentIo get() = documents.rawIo()
-
-    /** Legacy flat-file rescue/preservation/health machine (T909 Phase 2). */
-    private val legacyRescue: LegacyArtifactRescue by lazy {
-        LegacyArtifactRescue(io, layout, this)
-    }
 
     /** Bounded retention sweep (T909 Phase 2b). */
     private val retentionSweep = ArtifactRetention(io, layout)
 
     data class LoadResult(
         val manifest: ChapterArtifactManifest,
-        /** True when this load performed the initial legacy migration and published it. */
-        val migratedFromLegacy: Boolean,
-        /** Retained compatibility field; one-way rescue never performs resync. */
-        val resyncedFromLegacy: Boolean,
     )
 
     /** Outcome of a durable-failure record attempt; only [Stored] is durable. */
@@ -107,38 +89,25 @@ class ChapterArtifactStore(
         data class NotStored(val reason: String) : RecordOutcome
     }
 
-    /**
-     * Loads the manifest and performs one serialized legacy rescue when needed.
-     * Future-schema documents (primary or backup) are
-     * returned read-only and never renamed, deleted, quarantined, or
-     * overwritten by this version.
-     *
-     * ARTIFACTS-authoritative manifests are never resynced from legacy bytes;
-     * instead interrupted RUNNING stages are recovered to retryable (process
-     * death, lifecycle contract §13).
-     */
     @Synchronized
-    fun loadOrMigrate(legacy: LegacyChapterSnapshot): LoadResult {
+    fun load(): LoadResult {
         val readManifestStage = ReaderEntryTrace.begin("store.readManifest", null)
         val primary = readManifestDocument(layout.manifestFileName)
         val backup = readManifestDocument(backupName())
         readManifestStage.end()
 
         if (primary?.schemaVersion != null && primary.schemaVersion > ChapterArtifactManifest.SCHEMA_VERSION) {
-            return legacyRescue.refuseFutureDocument("primary", primary)
+            return LoadResult(primary)
         }
         if (backup?.schemaVersion != null && backup.schemaVersion > ChapterArtifactManifest.SCHEMA_VERSION) {
-            // Never touch the future backup. A usable v1 primary stays in
-            // charge; otherwise surface the future document read-only so the
-            // caller knows a newer schema owns this chapter.
             logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact manifest backup has unsupported schema; preserved untouched: " +
                     "chapter=${layout.chapterKey} schema=${backup.schemaVersion}"
             }
             return if (primary != null) {
-                LoadResult(primary, migratedFromLegacy = false, resyncedFromLegacy = false)
+                LoadResult(primary)
             } else {
-                LoadResult(backup, migratedFromLegacy = false, resyncedFromLegacy = false)
+                LoadResult(backup)
             }
         }
 
@@ -147,21 +116,12 @@ class ChapterArtifactStore(
             ?: recoverPrimaryFromBackupOrNull(backup)
         recoverBackupStage.end()
         if (existing != null) {
-            // A backup can be parsed successfully even when the SAF rename
-            // that promotes it to the primary document fails. Keep that
-            // recoverable copy read-only until a valid primary is durable;
-            // retention and recovery publications must not delete or replace
-            // the only known-good manifest.
-            // T921: the guard only matters when the primary was missing and
-            // `existing` came from the backup — when the primary parsed, a
-            // re-read would just re-parse the same document over SAF on
-            // every open.
             if (primary == null && readManifestDocument(layout.manifestFileName) == null) {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT artifact manifest primary recovery incomplete; backup preserved: " +
                         "chapter=${layout.chapterKey}"
                 }
-                return LoadResult(existing, migratedFromLegacy = false, resyncedFromLegacy = false)
+                return LoadResult(existing)
             }
             // T921: the recursive sweep must not run for large chapters — it
             // holds this store's monitor and serialized reader entry behind
@@ -176,51 +136,29 @@ class ChapterArtifactStore(
                 reconcileRetention(existing)
                 retentionStage.end()
             }
-            if (existing.authority == ManifestAuthority.ARTIFACTS) {
-                // Phase 3 cutover: transactional writes own this manifest.
-                // Legacy bytes (still written by the live pipeline) must never
-                // resync over committed pointers, candidates, or generations.
-                val hadInterruptedStage = existing.pages.values.any { page ->
-                    ArtifactStage.entries.any { stage -> page.stage(stage)?.status == ArtifactStageStatus.RUNNING }
-                }
-                val recoverInterruptedStage = ReaderEntryTrace.begin("store.recoverInterrupted", null)
-                val recovered = recoverInterruptedStages(existing)
-                recoverInterruptedStage.end()
-                // If recovery publication failed, the backup is the last
-                // crash-safe copy and must remain available for the next load.
-                // A successful recovery (or a load with no RUNNING stage) can
-                // safely discard the stale backup.
-                if (!hadInterruptedStage || recovered != existing) {
-                    io.delete(backupName())
-                }
-                return LoadResult(recovered, migratedFromLegacy = false, resyncedFromLegacy = false)
+            val hadInterruptedStage = existing.pages.values.any { page ->
+                ArtifactStage.entries.any { stage -> page.stage(stage)?.status == ArtifactStageStatus.RUNNING }
             }
-            // A legacy manifest is only a rescue staging state. Never keep an
-            // identity-resync loop alive: map the currently readable source
-            // once, materialize its complete graph, and switch authority only
-            // after every referenced document validates.
-            val rescueStage = ReaderEntryTrace.begin("store.rescue", null)
-            return legacyRescue.rescueLegacy(existing, legacy).also { rescueStage.end() }
+            val recoverInterruptedStage = ReaderEntryTrace.begin("store.recoverInterrupted", null)
+            val recovered = recoverInterruptedStages(existing)
+            recoverInterruptedStage.end()
+            if (!hadInterruptedStage || recovered != existing) {
+                io.delete(backupName())
+            }
+            return LoadResult(recovered)
         }
 
-        val migrated = stampChapterKey(LegacyArtifactMigration.migrateChapter(legacy)).copy(glossary = null)
-        val published = publishManifestInternal(migrated)
+        val created = ChapterArtifactManifest(
+            chapterKey = layout.chapterKey,
+            updatedAtEpochMs = System.currentTimeMillis(),
+        )
+        val published = publishManifestInternal(created)
         if (!published) {
             logcat(LogPriority.WARN) {
-                "TachiyomiAT artifact manifest migration publish failed: chapter=${layout.chapterKey}"
+                "TachiyomiAT artifact manifest creation failed: chapter=${layout.chapterKey}"
             }
         }
-        if (legacy.translationFileCorrupt) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT legacy translation file corrupt; migrated empty manifest and kept legacy file: " +
-                    "chapter=${layout.chapterKey}"
-            }
-        }
-        // T921 hotfix: no retention sweep on the open path (see the matching
-        // comment above) — the crawl holds the store monitor and froze entry.
-        if (!published) return LoadResult(migrated, migratedFromLegacy = false, resyncedFromLegacy = false)
-        val rescueStage = ReaderEntryTrace.begin("store.rescue", null)
-        return legacyRescue.rescueLegacy(migrated, legacy).also { rescueStage.end() }
+        return LoadResult(created)
     }
 
     fun readManifest(): ChapterArtifactManifest? {
@@ -548,11 +486,6 @@ class ChapterArtifactStore(
         }
         val page = manifest.pages[pageKey]
             ?: return TransactionOutcome.Rejected("page missing: pageKey=$pageKey")
-        if (manifest.authority != ManifestAuthority.ARTIFACTS) {
-            return TransactionOutcome.Rejected(
-                "manifest is not artifact-authoritative: authority=${manifest.authority}",
-            )
-        }
         if (page.pageVersion != expectedPageVersion) {
             return TransactionOutcome.Rejected(
                 "stale page version: pageKey=$pageKey expected=$expectedPageVersion actual=${page.pageVersion}",
@@ -948,7 +881,7 @@ class ChapterArtifactStore(
      * stale-manifest rebase-retry ([retryOnStaleManifest], seam-tagged), for
      * the resume-hydration seams whose caller can hold a snapshot that predates
      * durable publications performed outside the façade (the background health
-     * verify's `legacyMigration` stamp) — the page-registration write of the
+     * concurrent manifest publication) — the page-registration write of the
      * adoption path. On a stale-manifest rejection ONLY, [updatePointers] is
      * re-run against the freshly re-read durable manifest — the mutation must
      * be a pure function of the base manifest so the rebase carries every
@@ -1173,63 +1106,6 @@ class ChapterArtifactStore(
     /** Reads a complete live-store page snapshot referenced by a manifest pointer. */
     fun readPageSnapshot(fileName: String?): PageTranslation? =
         fileName?.let { documents.readValidated<PageTranslation>(it) }
-
-    /**
-     * Materializes the legacy committed page into an immutable artifact
-     * snapshot before authority cutover. The legacy flat file remains
-     * authoritative until [openCandidate] flips the manifest, but reopening
-     * after that flip can now reconstruct the last-known-good page without
-     * consulting mutable candidate JSON.
-     */
-    @Synchronized
-    fun materializeLegacyCommittedSnapshot(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        pageSnapshot: PageTranslation,
-        nowEpochMs: Long = System.currentTimeMillis(),
-    ): TransactionOutcome {
-        staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
-        val page = manifest.pages[pageKey]
-            ?: return TransactionOutcome.Rejected("page missing: pageKey=$pageKey")
-        val committed = page.committed
-            ?: return TransactionOutcome.Rejected("committed bundle missing: pageKey=$pageKey")
-        committed.pageSnapshotFileName?.let { fileName ->
-            if (readPageSnapshot(fileName) != null) {
-                return TransactionOutcome.Committed(manifest, committed.generationId)
-            }
-        }
-        val fileName = layout.committedPageSnapshotFile(pageKey, committed.generationId)
-        val compatibilitySnapshot = pageSnapshot.detachedCopy().let { snapshot ->
-            if (committed.displayBase.kind == DisplayBaseKind.CLEANED_IMAGE &&
-                committed.displayBase.validated &&
-                committed.displayBase.fileName == snapshot.cleanedImageName
-            ) {
-                snapshot
-            } else {
-                snapshot.copy(cleanedImageName = null)
-            }
-        }
-        if (!documents.publishJson(fileName, compatibilitySnapshot)) {
-            return TransactionOutcome.Rejected("committed page snapshot publication failed: pageKey=$pageKey")
-        }
-        val updated = manifest.copy(
-            pages = manifest.pages + (
-                pageKey to page.copy(
-                    committed = committed.copy(pageSnapshotFileName = fileName),
-                    // Attaching the immutable compatibility snapshot does not
-                    // mutate the page itself. Keep the page version stable so
-                    // a candidate opened from the rescued LEGACY record keeps
-                    // the same optimistic-concurrency precondition.
-                    pageVersion = page.pageVersion,
-                )
-                ),
-            updatedAtEpochMs = nowEpochMs,
-        )
-        if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; committed snapshot pointer unchanged")
-        }
-        return TransactionOutcome.Committed(updated, committed.generationId)
-    }
 
     /**
      * Persists the mutable live candidate in its own immutable sidecar and
@@ -1475,11 +1351,6 @@ class ChapterArtifactStore(
             if (!ChapterArtifactLayout.isSafeSegment(cleanedName)) {
                 return TransactionOutcome.Rejected("unsafe cleaned display file name: pageKey=$pageKey")
             }
-            if (!displayBaseIsValid(layout.legacyCompanionImageFile(cleanedName), resolvedPage.source)) {
-                return TransactionOutcome.Rejected(
-                    "cleaned display base file missing, corrupt, or wrong-sized: pageKey=$pageKey file=$cleanedName",
-                )
-            }
         }
         if (!GroupCommitConfiguration.enabled) {
             val candidateFile = candidate.pageSnapshotFileName
@@ -1499,7 +1370,7 @@ class ChapterArtifactStore(
             kind = if (pageSnapshot.cleanedImageName != null) DisplayBaseKind.CLEANED_IMAGE else DisplayBaseKind.ORIGINAL_SOURCE,
             fileName = pageSnapshot.cleanedImageName,
             validated = pageSnapshot.cleanedImageName != null,
-            legacyLayout = pageSnapshot.cleanedImageName != null,
+            legacyLayout = false,
         )
         val committed = CommittedBundleMetadata(
             generationId = generationId,
@@ -1735,7 +1606,6 @@ class ChapterArtifactStore(
                 )
             else -> newGenerationId(pageKey, nowEpochMs)
         }
-        val cutOver = manifest.authority == ManifestAuthority.LEGACY
         val candidate = CandidateGenerationMetadata(
             generationId = generationId,
             origin = origin,
@@ -1769,8 +1639,6 @@ class ChapterArtifactStore(
                 manifest.activeCandidateGenerationIds -
                     existing?.generationId.orEmpty()
                 ) + generationId,
-            authority = ManifestAuthority.ARTIFACTS,
-            cutoverAtEpochMs = manifest.cutoverAtEpochMs ?: nowEpochMs.takeIf { cutOver },
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
@@ -1867,9 +1735,6 @@ class ChapterArtifactStore(
     ): String? {
         staleManifestRejection(manifest)?.let { return it }
         val page = manifest.pages[pageKey] ?: return "page missing: pageKey=$pageKey"
-        if (manifest.authority != ManifestAuthority.ARTIFACTS) {
-            return "manifest is not artifact-authoritative: authority=${manifest.authority}"
-        }
         if (page.candidate?.generationId != generationId) {
             return "candidate mismatch: pageKey=$pageKey expected=$generationId actual=${page.candidate?.generationId}"
         }
@@ -1978,7 +1843,7 @@ class ChapterArtifactStore(
     /**
      * T924 LI-4: one-shot stale-manifest retry for the flagged Batch lane's
      * first-publication seams. When the >8-page open path's background
-     * `verifyLegacyArtifactHealth` republishes a VERIFIED manifest after the
+     * artifact-health retry republishes a VERIFIED manifest after the
      * façade cached the pre-verification copy, a dispatch presenting that stale
      * copy to its FIRST durable publication was CAS-rejected — a spurious
      * CHECKPOINT_REJECTED preflight failure or PAUSED run on a healthy chapter.
@@ -2018,19 +1883,6 @@ class ChapterArtifactStore(
         return io.exists(fileName) &&
             io.length(fileName) > 0L &&
             documents.readValidated<JsonObject>(fileName) != null
-    }
-
-    internal fun displayBaseIsValid(fileName: String, source: SourceIdentity?): Boolean {
-        if (!io.exists(fileName) || io.length(fileName) <= 0L) return false
-        val probed = runCatching {
-            io.openInputStream(fileName)?.use(displayBaseProbe::probe)
-        }.getOrNull() ?: return false
-        if (probed.width <= 0 || probed.height <= 0) return false
-        val expectedWidth = source?.width
-        val expectedHeight = source?.height
-        val matches = (expectedWidth == null || expectedWidth == probed.width) &&
-            (expectedHeight == null || expectedHeight == probed.height)
-        return matches
     }
 
     private fun PageArtifactRecord.withStage(
@@ -2167,39 +2019,6 @@ class ChapterArtifactStore(
         if (backup == null) return null
         documents.recoverPrimaryFromBackup(layout.manifestFileName, backupName())
         return readManifestDocument(layout.manifestFileName) ?: backup
-    }
-
-    // T909 Phase 2: the legacy rescue/preservation/health machine moved to
-    // LegacyArtifactRescue.kt; the synchronized entry points stay here.
-
-    /** Retries INTENT preservation for an already ARTIFACTS-authoritative chapter. */
-    @Synchronized
-    fun reconcileLegacyPreservation(manifest: ChapterArtifactManifest): ChapterArtifactManifest =
-        legacyRescue.reconcileLegacyPreservation(manifest)
-
-    /**
-     * Verifies one already-open chapter before making preserved legacy inputs
-     * eligible for deletion. This is intentionally chapter-scoped and
-     * synchronized with every manifest/source operation; it is never a
-     * library-startup scan.
-     */
-    @Synchronized
-    fun verifyLegacyArtifactHealth(
-        manifest: ChapterArtifactManifest,
-        currentVersionCode: Long,
-        hasActiveLease: Boolean = false,
-        nowEpochMs: Long = System.currentTimeMillis(),
-    ): LegacyArtifactHealthResult {
-        val healthWriter = eu.kanade.translation.ActiveChapterStoreRegistry.registerWriter(
-            chapterKey = layout.chapterKey,
-            origin = eu.kanade.translation.WriterOrigin.HEALTH_VERIFY,
-            nowEpochMs = nowEpochMs,
-        )
-        try {
-            return legacyRescue.verifyLegacyArtifactHealth(manifest, currentVersionCode, hasActiveLease, nowEpochMs)
-        } finally {
-            healthWriter.close()
-        }
     }
 
     private fun futureBackupPresent(): Boolean =
