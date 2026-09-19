@@ -10,7 +10,15 @@ object OnnxRuntimeProvider {
 
     val environment: OrtEnvironment by lazy {
         logcat { "Creating ONNX Runtime environment" }
-        OrtEnvironment.getEnvironment()
+        val environment = OrtEnvironment.getEnvironment()
+        runCatching {
+            logcat(LogPriority.INFO) {
+                "[onnx_runtime] compiledProviders=${OrtEnvironment.getAvailableProviders().joinToString(",") { it.getName() }}"
+            }
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "[onnx_runtime] provider query failed" }
+        }
+        environment
     }
 
     /**
