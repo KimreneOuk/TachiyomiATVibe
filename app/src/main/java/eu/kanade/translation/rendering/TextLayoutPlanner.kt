@@ -1,11 +1,9 @@
 package eu.kanade.translation.rendering
 
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.segmentation.MaskConversionBudgets
 import eu.kanade.translation.segmentation.MaskGeometry
 import eu.kanade.translation.segmentation.OrderedMaskResult
-import java.util.IdentityHashMap
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -243,127 +241,6 @@ internal data class PagePlanWithAttempts(val plan: PageLayoutPlan, val finalPlac
  * occupancy collision detection.
  */
 internal data class PlacedFootprint(val cellRect: FloatRect?, val occupancy: FloatRect)
-
-/**
- * TachiyomiAT: per-page mask grouping for the layout plan.
- *
- * Walks block masks in INPUT order and assigns a compact group id:
- *  - repeated references to the SAME [BubbleMaskRle] instance reuse the group
- *    with no rescan (production always shares one mask instance per bubble);
- *  - distinct instances are matched through a bounded 64-bit streaming
- *    fingerprint (FNV-1a over width/height/bounds/run count/run pairs) used
- *    ONLY to select a small verification bucket; the group is reused after
- *    FULL geometry-defining equality (width, height, bounds, runs) is
- *    verified, so a hash collision can never merge two different masks;
- *  - [BubbleMaskRle.score] is deliberately excluded from fingerprint and
- *    equality — it has no geometric effect on partitioning or components.
- *
- * Fingerprint scans and conversion scans both consume the session's page
- * [MaskConversionBudgets]. Beyond [MAX_MASK_REFERENCES_PER_PAGE] references or
- * [MAX_UNIQUE_MASKS_PER_PAGE] unique masks, further masks are GROUPLESS
- * (negative group id): they keep legacy region partitioning grouped by
- * reference identity and never receive component metadata.
- *
- * `fingerprint` is injectable so tests can force bucket collisions.
- */
-internal class SharedMaskSession(
-    val budgets: MaskConversionBudgets = MaskConversionBudgets(),
-    private val fingerprint: (BubbleMaskRle) -> Long = ::defaultMaskFingerprint,
-) {
-    private val referenceGroups = IdentityHashMap<BubbleMaskRle, Int>()
-    private val grouplessIds = IdentityHashMap<BubbleMaskRle, Int>()
-    private val fingerprintBuckets = HashMap<Long, MutableList<Int>>()
-    private val groupMasks = ArrayList<BubbleMaskRle>()
-    private val conversions = ArrayList<MaskGeometry?>()
-    private var converted = false
-    private var nextGrouplessId = -1
-
-    /** Number of distinct verified mask groups on this page. */
-    internal val groupCount: Int get() = groupMasks.size
-
-    /**
-     * Group id for [mask]: `0 until groupCount` when grouped, negative when
-     * groupless. Safe to call repeatedly — reference identity short-circuits
-     * with no rescan.
-     */
-    fun groupIdOf(mask: BubbleMaskRle): Int {
-        referenceGroups[mask]?.let { return it }
-        grouplessIds[mask]?.let { return it }
-        if (referenceGroups.size + grouplessIds.size >= MAX_MASK_REFERENCES_PER_PAGE) {
-            return assignGroupless(mask)
-        }
-        // The fingerprint scan consumes the page RLE-int budget; abort
-        // (groupless) before scanning when the budget would be exceeded.
-        if (budgets.rleIntsScanned + mask.runs.size > budgets.maxRleIntsScannedPerPage) {
-            return assignGroupless(mask)
-        }
-        budgets.rleIntsScanned += mask.runs.size
-        val hash = fingerprint(mask)
-        fingerprintBuckets[hash]?.forEach { candidate ->
-            if (geometricallyEqual(groupMasks[candidate], mask)) {
-                referenceGroups[mask] = candidate
-                return candidate
-            }
-        }
-        if (groupMasks.size >= MAX_UNIQUE_MASKS_PER_PAGE) return assignGroupless(mask)
-        val groupId = groupMasks.size
-        groupMasks += mask
-        fingerprintBuckets.getOrPut(hash) { mutableListOf() }.add(groupId)
-        referenceGroups[mask] = groupId
-        return groupId
-    }
-
-    /** Convert every grouped mask once, in group order. Idempotent. */
-    fun convertAll() {
-        if (converted) return
-        converted = true
-        repeat(groupMasks.size) { groupId ->
-            conversions += when (val result = MaskGeometry.fromOrderedRle(groupMasks[groupId], budgets)) {
-                is OrderedMaskResult.Success -> result.geometry
-                is OrderedMaskResult.Fallback -> null
-            }
-        }
-    }
-
-    /** Geometry for a grouped id, or null when groupless or conversion fell back. */
-    fun geometryFor(groupId: Int): MaskGeometry? {
-        if (groupId < 0) return null
-        convertAll()
-        return conversions.getOrNull(groupId)
-    }
-
-    private fun assignGroupless(mask: BubbleMaskRle): Int {
-        val id = nextGrouplessId
-        nextGrouplessId -= 1
-        grouplessIds[mask] = id
-        return id
-    }
-
-    private fun geometricallyEqual(a: BubbleMaskRle, b: BubbleMaskRle): Boolean =
-        a.width == b.width && a.height == b.height && a.bounds == b.bounds && a.runs == b.runs
-
-    internal companion object {
-        /** Hard guard: distinct mask references grouped per page (beyond → groupless). */
-        internal const val MAX_MASK_REFERENCES_PER_PAGE = 128
-
-        /** Hard guard: distinct unique masks grouped per page (beyond → groupless). */
-        internal const val MAX_UNIQUE_MASKS_PER_PAGE = 32
-    }
-}
-
-/** Bounded FNV-1a-style 64-bit streaming fingerprint over the geometry-defining mask fields. */
-internal fun defaultMaskFingerprint(mask: BubbleMaskRle): Long {
-    var hash = -0x340d631b7bdddcdbL // FNV-1a 64-bit offset basis
-    fun mix(value: Int) {
-        hash = (hash xor value.toLong()) * 0x100000001b3L
-    }
-    mix(mask.width)
-    mix(mask.height)
-    for (bound in mask.bounds) mix(bound)
-    mix(mask.runs.size)
-    for (run in mask.runs) mix(run)
-    return hash
-}
 
 /**
  * TachiyomiAT T912 slice 5: the isolated adaptive-layout tuning envelope (task
