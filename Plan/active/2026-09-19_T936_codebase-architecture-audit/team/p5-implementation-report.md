@@ -80,7 +80,14 @@ baseline scan over `app/src` reported the following lexical matches before editi
 
 Removed the ticket tags while retaining the technical contracts, and deleted/reworked pure
 phase-history header essays (including the former coordinator and batch-worker chronicles).
-The final comment-aware Kotlin/Java/XML scanner reports zero targeted tag hits in comments.
+The review follow-up found three missed ticket prefixes in comments: the `T934` stranded-page
+note in `TranslationBatchProgressTrackerTest.kt:101`, plus the `D8` and `D11` seam notes in
+`NextPageAdmittedDuringParkedPublicationTest.kt:59` and `:77`. This follow-up rewords all three
+while retaining their technical invariants. One intentional ticket-shaped comment residue
+remains as a fixture path in `StageFingerprints.kt:481`:
+`t924/golden/envelope-plan-small.json`. The corrected comment-residue ledger is therefore:
+**3 reworded + 1 retained fixture-path exception**; no other ticket-tag comment residues remain.
+
 The broad lexical recount still reports 488 residual matches (`T9=326`, `D=244`, `ST=7`,
 `TX=0`, `FF=2`, `LI=1`, `R1=0`). These are false positives in executable code, string/log
 content, test display names, variables, and fixture paths; they were not comment tags and were

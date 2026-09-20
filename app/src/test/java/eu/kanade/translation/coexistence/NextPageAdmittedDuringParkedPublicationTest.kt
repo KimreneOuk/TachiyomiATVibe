@@ -56,7 +56,7 @@ class NextPageAdmittedDuringParkedPublicationTest {
     fun `second page is admitted while the first page's cleaned publication is still parked`() =
         runBlocking<Unit> {
             // p0 IS pre-registered (the resume-inpaint fixture is the parked
-            // work); p1 is deliberately ABSENT (D8 harness note: a
+            // work); p1 is deliberately ABSENT (harness note: a
             // pre-registered PENDING page projects WAIT_FOR_DEPENDENCY for
             // every stage and resume-skips before the decode seam — an absent
             // record plans a fresh native run).
@@ -74,7 +74,7 @@ class NextPageAdmittedDuringParkedPublicationTest {
                 harness.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
                 harness.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p1")
 
-                // The D11 seam: the resume tail's cleaned-image publication is
+                // The resume-tail seam: the cleaned-image publication is
                 // a REAL store commit that parks at the COMMIT barrier
                 // mid-publication (fake only at the sanctioned disk/graphics
                 // seam — the commit itself goes through the real store).
