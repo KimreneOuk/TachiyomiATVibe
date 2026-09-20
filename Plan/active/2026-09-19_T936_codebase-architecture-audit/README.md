@@ -83,13 +83,28 @@ transition (3s join, timeout-never-admits policy), cross-origin attach/defer/S8 
 Roadmap corrections applied: analysis-package deletion dropped (live code); pipelined batch reclassified
 as already implemented.
 
-### Phase 4 — Monolith Decomposition (IN PROGRESS, branch `t936/phase4-monolith-decomposition`)
+### Phase 4 — Monolith Decomposition (COMPLETE — merged to main @ `ce714c6`/`eb4615e`, final review PASS WITH NOTES after one FAIL→remediation cycle)
 
-| Ticket | Title |
-|---|---|
-| [P4-01](ticket/p4-01-decompose-batch-coordinator.md) | Decompose `ChapterProfileBatchCoordinator` (4,256 lines) into phase workers |
-| [P4-02](ticket/p4-02-extract-layout-geometry.md) | Extract geometry from `TextLayoutPlanner` (3,605 lines) |
-| [P4-03](ticket/p4-03-extract-reader-translation-controller.md) | Extract `ReaderTranslationController` from `ReaderViewModel` (2,945 lines) |
+Reports: [implementation](team/p4-implementation-report.md) · [review](team/p4-review-report.md).
+Key outcomes: coordinator 4,256 → 1,991 (7 phase workers), planner 3,605 → 2,458 non-blank
+(MaskGeometryClustering + FontFittingAlgorithms + CollisionRelaxation), ReaderViewModel 2,945 → 1,647
+(+ ReaderTranslationController 1,618). Zero test files changed phase-wide.
+
+### Phase 5 — Packages, Test Renames & Comment Hygiene (COMPLETE — merged to main @ `46b67ba`, review PASS WITH NOTES)
+
+Reports: [implementation](team/p5-implementation-report.md) · [review](team/p5-review-report.md).
+Key outcomes: `recognition` merged into `ocr`; 0 files at translation package root
+(storage/orchestration/pipeline); 23 ticket-named suites renamed to behavioral invariants;
+ticket tags stripped from comments (1 justified fixture-path residue); 2,025×2 tests green throughout.
+
+## CAMPAIGN COMPLETE (2026-09-20)
+
+All 5 phases merged to main. Net vs campaign base `7262bf4`: 491 files changed,
++16,440 / −151,906 lines. Full audit trail: `ticket/`, `team/`, `report/`, `engineering/`.
+
+Open follow-ups (post-campaign): P1-05 NNAPI excise-or-keep decision (needs one device logcat read of
+the P2-00 `compiledProviders=` line); manifest write-amplification reduction (spec §4.4);
+MangaScreenModel mockk-tree rewrite; aot_corpus input corpora untracking (declined as reproducibility base).
 
 ### Phases 3–5
 
@@ -107,6 +122,8 @@ Pass 2 overlapped Lane A rolling translation + Lane B concurrent inpainting, ren
 - [x] Audit artifacts synced into main workspace
 - [x] Phase 1 tickets written — awaiting Director review before execution
 - [x] Phase 1 execution (7 commits on `t936/phase1-zero-risk-purge` @ `e2d8a89`, review PASS WITH NOTES, review notes closed)
-- [ ] Director: merge Phase 1 → main
-- [ ] Director decision: P1-05 NNAPI (Option A defer-and-verify vs B excise now)
-- [ ] Phase 2 ticketing + execution (storage unification & legacy elimination)
+- [x] Phase 2 execution + review (merged, PASS WITH NOTES)
+- [x] Phase 3 scoping + execution + review (merged, PASS WITH NOTES)
+- [x] Phase 4 execution + review incl. FAIL→remediation cycle (merged, final PASS WITH NOTES)
+- [x] Phase 5 execution + review (merged @ `46b67ba`, PASS WITH NOTES)
+- [x] Campaign closed 2026-09-20 — all 5 phases on main
