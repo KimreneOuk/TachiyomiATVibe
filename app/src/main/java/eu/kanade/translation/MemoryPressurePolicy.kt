@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.orchestration.*
+
 /**
  * Coarse classification of an Android [android.content.ComponentCallbacks2] trim-memory
  * level into the two ownership classes the translation subsystem cares about.

@@ -49,8 +49,8 @@ import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy
 import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.ReaderEntryTrace
-import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.orchestration.ReaderEntryTrace
+import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.artifact.PageLayoutDrawPlan

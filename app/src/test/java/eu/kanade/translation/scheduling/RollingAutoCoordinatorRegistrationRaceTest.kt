@@ -1,7 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.TranslationSession
+import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.diagnostics.TranslationIdentityKeys
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator

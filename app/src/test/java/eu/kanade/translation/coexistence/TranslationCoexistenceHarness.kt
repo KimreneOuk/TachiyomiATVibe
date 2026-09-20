@@ -11,12 +11,12 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.ChapterTranslator
+import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.InMemorySharedPreferences
 import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
-import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.storage.TranslationPendingRequestStore
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.storage.TranslationQueueStore

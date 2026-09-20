@@ -4,7 +4,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.ReaderEntryTrace
+import eu.kanade.translation.orchestration.ReaderEntryTrace
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation
 import kotlinx.coroutines.Dispatchers

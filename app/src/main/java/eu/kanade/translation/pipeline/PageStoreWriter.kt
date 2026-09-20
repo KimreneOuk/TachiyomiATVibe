@@ -18,7 +18,7 @@ import java.io.InputStream
 /**
  * Store-patch/failure-writer helpers moved from `TranslationPipeline`
  * (T909 Phase 6). Stateless over the pipeline's store resolver (injected
- * as a getter, it is re-wired by [eu.kanade.translation.TranslationManager]),
+ * as a getter, it is re-wired by [eu.kanade.translation.orchestration.TranslationManager]),
  * the stream registry, and the pipeline's critical-OOM handler.
  */
 internal class PageStoreWriter(

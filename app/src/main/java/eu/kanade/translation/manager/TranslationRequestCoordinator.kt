@@ -1,6 +1,6 @@
 package eu.kanade.translation.manager
 
-import eu.kanade.translation.ChapterTranslator
+import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.storage.TranslationPendingRequestRecord
 import eu.kanade.translation.storage.TranslationPendingRequestStore
 import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics

@@ -13,7 +13,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.TranslationSession
+import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.PreparedPage
 import eu.kanade.translation.scheduling.RollingAutoCoordinator

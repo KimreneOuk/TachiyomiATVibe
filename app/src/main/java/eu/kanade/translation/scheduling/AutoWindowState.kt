@@ -87,7 +87,7 @@ val AutoSlotState.deferralReason: AutoDeferralReason?
 
 /**
  * One page slot in the rolling auto window. [pageIndex] is the 0-based reader
- * page index (matching [eu.kanade.translation.TranslationPageId.pageIndex]).
+ * page index (matching [eu.kanade.translation.orchestration.TranslationPageId.pageIndex]).
  * Ordering is implied by position in [AutoTranslationSnapshot.orderedSlots]:
  * the foreground slot first, then ahead slots in ascending page index.
  */

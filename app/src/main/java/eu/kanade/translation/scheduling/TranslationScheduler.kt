@@ -3,8 +3,8 @@ package eu.kanade.translation.scheduling
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.TranslationPageRequest
-import eu.kanade.translation.TranslationSession
+import eu.kanade.translation.orchestration.TranslationPageRequest
+import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
@@ -57,7 +57,7 @@ import java.util.concurrent.atomic.AtomicReference
  * cancelled on chapter change, reader exit, or translation disable.
  *
  * Job-scheduling + dedup + cancel surface extracted from
- * [eu.kanade.translation.TranslationManager]. Per-page work is delegated to
+ * [eu.kanade.translation.orchestration.TranslationManager]. Per-page work is delegated to
  * [TranslationExecutor]; the store is resolved through
  * [TranslationStoreResolver] (still owned by TranslationManager).
  */
@@ -310,7 +310,7 @@ class TranslationScheduler(
 
     /**
      * T922 Phase 3 amendment §10.7 reachability inventory: the ONLY caller of
-     * this method is [eu.kanade.translation.TranslationManager.requestAutoWindow],
+     * this method is [eu.kanade.translation.orchestration.TranslationManager.requestAutoWindow],
      * which itself has zero callers in live code (repo-wide sweep: definitions
      * plus this delegation only; the reader drives
      * [updateAutoWindow]/[RollingAutoCoordinator]). The path is dormant, so it

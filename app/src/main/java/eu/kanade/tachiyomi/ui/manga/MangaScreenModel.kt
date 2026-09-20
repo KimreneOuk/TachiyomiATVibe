@@ -43,7 +43,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
@@ -1801,7 +1801,7 @@ class MangaScreenModel(
         data class TranslationProgress(val chapterId: Long) : Dialog
         data class ChapterReset(
             val item: ChapterList.Item,
-            val preflight: eu.kanade.translation.ChapterResetPreflight,
+            val preflight: eu.kanade.translation.orchestration.ChapterResetPreflight,
         ) : Dialog
         data class ConfirmTranslation(
             val item: ChapterList.Item,

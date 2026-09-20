@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * B3 pure-logic coverage for the queue conflict detection and stale-entry
- * eviction that backs [eu.kanade.translation.TranslationManager.translateChapterPreflight]
+ * eviction that backs [eu.kanade.translation.orchestration.TranslationManager.translateChapterPreflight]
  * and `evictStaleQueuedChapters`. The manager wraps these helpers; they own the
  * actual queue-scan rules, so testing them directly proves the bug-3 contract
  * without constructing a full TranslationManager (which needs HttpSource + DI).

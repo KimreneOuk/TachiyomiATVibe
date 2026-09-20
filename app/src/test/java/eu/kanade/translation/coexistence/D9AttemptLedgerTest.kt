@@ -188,7 +188,7 @@ class D9AttemptLedgerTest {
     }
 
     /** Startup reconcile over exactly the bounded chapter set (never a library scan). */
-    private fun reconcileStartup(manager: eu.kanade.translation.TranslationManager, store: ChapterTranslationStore) {
+    private fun reconcileStartup(manager: eu.kanade.translation.orchestration.TranslationManager, store: ChapterTranslationStore) {
         invokeSuspending(
             manager,
             "reconcileAttemptLedgersForStartup",

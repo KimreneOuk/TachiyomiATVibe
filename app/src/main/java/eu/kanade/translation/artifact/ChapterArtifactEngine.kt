@@ -1,6 +1,6 @@
 package eu.kanade.translation.artifact
 
-import eu.kanade.translation.ReaderEntryTrace
+import eu.kanade.translation.orchestration.ReaderEntryTrace
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
 import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics

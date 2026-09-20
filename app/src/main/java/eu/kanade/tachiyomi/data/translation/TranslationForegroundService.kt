@@ -12,7 +12,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
-import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.ui.NotificationAction
 import eu.kanade.translation.ui.SurfaceVisibility

@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
 /**
- * TachiyomiAT bug 3 fix: result of [eu.kanade.translation.TranslationManager.translateChapterPreflight].
+ * TachiyomiAT bug 3 fix: result of [eu.kanade.translation.orchestration.TranslationManager.translateChapterPreflight].
  *
  * Encodes the conflict state the UI must resolve before starting a new batch on
  * a chapter when another chapter of the same source is already queued or running.
@@ -20,8 +20,8 @@ sealed interface ChapterQueuePreflight {
      * Another chapter of the same source is actively translating. The UI should
      * ask the user to confirm cancellation of [chapterId] before proceeding.
      * On confirm, call
-     * [eu.kanade.translation.TranslationManager.cancelRunningChapterForReplace]
-     * then [eu.kanade.translation.TranslationManager.translateChapter].
+     * [eu.kanade.translation.orchestration.TranslationManager.cancelRunningChapterForReplace]
+     * then [eu.kanade.translation.orchestration.TranslationManager.translateChapter].
      */
     data class RunningConflict(
         val chapterId: Long,

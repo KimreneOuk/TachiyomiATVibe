@@ -14,7 +14,7 @@ data class QueuedChapterView(
 
 /**
  * TachiyomiAT bug 3 fix: pure conflict detection extracted from
- * [eu.kanade.translation.TranslationManager.translateChapterPreflight] so the
+ * [eu.kanade.translation.orchestration.TranslationManager.translateChapterPreflight] so the
  * queue-scan logic is unit-testable without constructing the full manager.
  *
  * Returns the first actively translating chapter of [sourceId] in [queue] that
