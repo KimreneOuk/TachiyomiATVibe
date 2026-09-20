@@ -30,7 +30,7 @@ import tachiyomi.core.common.util.system.logcat
  * files from pre-artifact builds are intentionally not read or migrated.
  */
 /**
- * T924-TX-03 close-vs-rebase decision for [ChapterArtifactEngine.checkpointOcr].
+ * 03 close-vs-rebase decision for [ChapterArtifactEngine.checkpointOcr].
  *
  * - [CLOSE] (default): close the active BATCH candidate (CANCELLED generation
  *   record, candidate pointer cleared, checkpoint pointer installed in ONE
@@ -43,13 +43,13 @@ import tachiyomi.core.common.util.system.logcat
  *   deterministically re-acquire the lease.
  *
  * An "origin-neutral open candidate" is not representable: `ArtifactOrigin`
- * has exactly two durable values (T924-TX-03), so neutrality lives in the
+ * has exactly two durable values, so neutrality lives in the
  * checkpoint sidecar, never in the candidate.
  */
 enum class OcrCheckpointMode { CLOSE, REBASE }
 
 /**
- * T924 WP9 (additive): outcome of reading a generic sidecar document through
+ *  WP9 (additive): outcome of reading a generic sidecar document through
  * its manifest pointer — same semantics as [RunRecordRead]/[OcrCheckpointRead],
  * generalized over the document type for the persisted-layout track
  * (`layoutPlans` / `colorPreparations`).
@@ -59,7 +59,7 @@ sealed interface SidecarRead<out T : Any> {
     data class Usable<T : Any>(val document: T) : SidecarRead<T>
 
     /**
-     * T924-SC-13: a newer schema owns the semantics — unusable here, bytes
+     * 13: a newer schema owns the semantics — unusable here, bytes
      * preserved untouched, never deleted, quarantined, or overwritten.
      */
     data class UnsupportedVersion(val schemaVersion: Int) : SidecarRead<Nothing>
@@ -76,7 +76,7 @@ class ChapterArtifactEngine(
 ) {
     private val io: ChapterDocumentIo get() = documents.rawIo()
 
-    /** Bounded retention sweep (T909 Phase 2b). */
+    /** Bounded retention sweep ( Phase 2b). */
     private val retentionSweep = ArtifactRetention(io, layout)
 
     data class LoadResult(
@@ -121,10 +121,10 @@ class ChapterArtifactEngine(
                 }
                 return LoadResult(existing)
             }
-            // T921: the recursive sweep must not run for large chapters — it
+            //  the recursive sweep must not run for large chapters — it
             // runs at the serialized reader boundary. Large-chapter cleanup
             // is owned by the deferred
-            // maintenance path (follow-up: event-driven retention per T920
+            // maintenance path (follow-up: event-driven retention per
             // Recommendation 1). Small chapters keep the synchronous sweep:
             // their managed tree is a handful of SAF listings, and
             // crash/cancel garbage must not accumulate between passes.
@@ -194,7 +194,7 @@ class ChapterArtifactEngine(
         }
 
     /**
-     * T917 Phase 3 (D9): reads the chapter's durable attempt-ledger document.
+     *  Phase 3: reads the chapter's durable attempt-ledger document.
      * A future-schema document is returned read-only and never overwritten —
      * the same preservation rule as the manifest.
      */
@@ -209,16 +209,16 @@ class ChapterArtifactEngine(
         documents.publishJson(layout.attemptLedgerFileName, document)
 
     // ------------------------------------------------------------------
-    // T924 Stage 1 (T924-SC-19/20/22): versioned sidecar publication.
+    //  Stage 1 (/22): versioned sidecar publication.
     //
     // The ONLY publication mechanism for the new sidecar kinds is the
     // existing AtomicChapterDocuments publish path, and the ONLY
     // manifest-update mechanism is publishManifestInternal. Sidecars are
-    // published FIRST (content-addressed names, T924-SC-21), and one atomic
+    // published FIRST (content-addressed names, ), and one atomic
     // manifest publication installs their pointers SECOND — a crash between
     // the two leaves at most an orphan sidecar, never a dangling pointer.
     // On any precondition or publication failure the prior manifest stays
-    // authoritative (T924-SC-22); orphan sidecars are reclaimed exclusively
+    // authoritative; orphan sidecars are reclaimed exclusively
     // by retention store-reachability sweeps.
     // ------------------------------------------------------------------
 
@@ -228,14 +228,14 @@ class ChapterArtifactEngine(
         data class Usable(val record: ChapterRunRecord) : RunRecordRead
 
         /**
-         * T924-SC-13: a newer schema owns the semantics — unusable for
+         * 13: a newer schema owns the semantics — unusable for
          * planning (artifact = ABSENT for decisions), bytes preserved
          * untouched, never deleted or overwritten by this version.
          */
         data class UnsupportedVersion(val schemaVersion: Int) : RunRecordRead
 
         /**
-         * T924-SC-17: missing, corrupt (parse failure, kind mismatch, bound
+         * 17: missing, corrupt (parse failure, kind mismatch, bound
          * violation — quarantined as `.corrupt` by the document layer), or
          * otherwise invalid. Treated as ABSENT for planning; corrupt bytes
          * stay quarantined while a pointer references them.
@@ -243,7 +243,7 @@ class ChapterArtifactEngine(
         data object Absent : RunRecordRead
     }
 
-    /** Reads the pointed run record with unknown-version preservation (T924-SC-12/13). */
+    /** Reads the pointed run record with unknown-version preservation. */
     fun readRunRecord(pointer: SidecarPointer): RunRecordRead {
         if (!pointer.isWellFormed()) return RunRecordRead.Absent
         val bytes = io.read(pointer.fileName) ?: return RunRecordRead.Absent
@@ -264,13 +264,13 @@ class ChapterArtifactEngine(
     }
 
     /**
-     * T924-SC-20/SC-22 run-record publication: validates the record, publishes
+     * 20/SC-22 run-record publication: validates the record, publishes
      * the immutable sidecar into the content-addressed `runs/` directory
      * FIRST, then installs the [ChapterArtifactManifest.activeRun] pointer in
      * ONE atomic manifest publication. Any failure leaves the prior manifest
      * authoritative and at most an orphan sidecar behind.
      *
-     * T924 LI-4: a stale-manifest CAS rejection (the >8-page open path's
+     *   a stale-manifest CAS rejection (the >8-page open path's
      * background health verify republishing after the façade cached its copy)
      * triggers ONE retry against the freshly re-read durable manifest — the
      * first-publication seam the flagged Batch lane hits must not surface a
@@ -324,7 +324,7 @@ class ChapterArtifactEngine(
 
 
     /**
-     * T924 LI-2: retires the [ChapterArtifactManifest.activeRun] pointer in ONE
+     *   retires the [ChapterArtifactManifest.activeRun] pointer in ONE
      * CAS'd manifest publication — [manifest.copy](activeRun = null) guarded by
      * [staleManifestRejection], so a concurrent writer's manifest wins and the
      * caller retries with fresh state. Retiring an already-null pointer is an
@@ -334,13 +334,13 @@ class ChapterArtifactEngine(
      * the manifest-pointed `activeRun` sidecar, so once the pointer is gone the
      * next reachability sweep reclaims the orphaned record file.
      *
-     * Reset semantics (T924 LI-2): a user reset means the recorded run must
+     * Reset semantics ( ): a user reset means the recorded run must
      * never short-circuit a future dispatch — the COMPLETE fast path
      * ([eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.resumeFinalizeOrComplete])
      * keys on this pointer, so clearing it forces the next run to start fresh
      * instead of returning a zero-work finished outcome over demoted displays.
      *
-     * T924 LI-4 / T934: a stale-manifest CAS rejection (the >8-page open
+     *   /  a stale-manifest CAS rejection (the >8-page open
      * path's background health verify republishing after the caller cached its
      * copy) triggers ONE retry against the freshly re-read durable manifest —
      * the batch resume teardown must not surface a spurious rejection on a
@@ -377,41 +377,41 @@ class ChapterArtifactEngine(
     }
 
     // ------------------------------------------------------------------
-    // T924 Stage 1 Phase 2a: the checkpointOcr transaction (T924-TX-01..).
-    // Contract: Plan/active/2026-09-05_T924_chunk-sizing-and-fast-feedback/
+    //  Stage 1 Phase 2a: the checkpointOcr transaction (..).
+    // Contract: Plan/active/2026-09-05__chunk-sizing-and-fast-feedback/
     // stage0/contracts-state-transactions.md §2. The transaction owns ONLY
     // the durable publication; the caller keeps the page lease until after
     // a Committed outcome and releases it as a separate, strictly-later
-    // step (T924-TX-06). Store-generation/pageVersion/leaseToken fencing
-    // (TX-02 inputs 1-3) belongs to the ChapterTranslationStore façade;
+    // step. Store-generation/pageVersion/leaseToken fencing
+    // ( inputs 1-3) belongs to the ChapterTranslationStore façade;
     // this transaction compares the manifest-level identity (inputs 4-6)
     // against the durable manifest under the whole-manifest CAS.
     // ------------------------------------------------------------------
 
     /**
-     * T924-TX-01: atomically publishes the origin-neutral
+     * 01: atomically publishes the origin-neutral
      * [PageOcrCheckpoint] sidecar plus its immutable OCR page snapshot, and
      * closes or rebases the active BATCH candidate — all in ONE manifest
-     * publication (T924-SC-20). Three branches:
+     * publication. Three branches:
      *
      * - **Standard CLOSE/REBASE** ([checkpoint.producerGenerationId] != null,
      *   active BATCH candidate): compares candidateGenerationId,
      *   artifact pageVersion, and dependency fingerprint against the
-     *   durable manifest (TX-02 inputs 4-6, no grace clause — T924-TX-02.1),
+     *   durable manifest ( inputs 4-6, no grace clause —.1),
      *   then CLOSE clears the candidate (CANCELLED record) or REBASE opens a
      *   successor generation whose dependency fingerprint equals the
-     *   checkpoint content fingerprint (T924-TX-03). The prior committed
-     *   display pointer is never touched (T924-TX-07).
+     *   checkpoint content fingerprint. The prior committed
+     *   display pointer is never touched.
      * - **Adopt-committed** ([checkpoint.producerGenerationId] == null,
-     *   no active candidate, TX-03.1): requires a committed bundle whose
+     *   no active candidate,.1): requires a committed bundle whose
      *   OCR content fingerprint equals the checkpoint's; publishes the
      *   checkpoint sidecar + pointer ONLY. A fingerprint mismatch is
      *   REJECTED as content drift — Batch must re-plan, not adopt.
      *
      * On any precondition or publication failure the prior manifest stays
-     * authoritative (TX-11 BX) and at most an orphan sidecar exists (B1-B2).
+     * authoritative ( BX) and at most an orphan sidecar exists (B1-B2).
      *
-     * T924 LI-4: a stale-manifest CAS rejection (the >8-page open path's
+     *   a stale-manifest CAS rejection (the >8-page open path's
      * background health verify republishing after the façade cached its copy)
      * triggers ONE retry against the freshly re-read durable manifest — the
      * first-publication seam the flagged Batch lane hits must not surface a
@@ -522,7 +522,7 @@ class ChapterArtifactEngine(
                     "candidate provenance mismatch: pageKey=$pageKey expected=BATCH actual=${candidate.origin}",
                 )
             }
-            // T924-TX-02.1 (fail closed): the store-level grace clause that
+            // 02.1 (fail closed): the store-level grace clause that
             // disarms the dependency-fingerprint check without a candidate
             // (patchPage) must never be copied here — C2.
             if (expectedDependencyFingerprint == null) {
@@ -590,7 +590,7 @@ class ChapterArtifactEngine(
                         candidate = CandidateGenerationMetadata(
                             generationId = successorId,
                             origin = ArtifactOrigin.BATCH,
-                            // T924-TX-03(c): the successor's first write
+                            // 03(c): the successor's first write
                             // validates against the checkpoint content.
                             dependencyFingerprint = checkpoint.ocrContentFingerprint,
                             createdAtEpochMs = nowEpochMs,
@@ -609,10 +609,10 @@ class ChapterArtifactEngine(
                 }
             }
         } else {
-            // T924-TX-03.1 adopt-committed: no active candidate; a committed
+            // 03.1 adopt-committed: no active candidate; a committed
             // bundle exists whose OCR content fingerprint equals the input.
             // Publish the checkpoint sidecar + pointer ONLY — the committed
-            // display pointer is untouched by construction (T924-TX-07).
+            // display pointer is untouched by construction.
             if (candidate != null) {
                 return TransactionOutcome.Rejected(
                     "active candidate present; standard checkpoint branch required: pageKey=$pageKey",
@@ -620,7 +620,7 @@ class ChapterArtifactEngine(
             }
             val committed = page.committed
             if (committed == null) {
-                // T924 Phase 4 Wave B (blank-page CLOSE gap): a genuinely
+                //  Phase 4 Wave B (blank-page CLOSE gap): a genuinely
                 // blank page (OCR READY, ZERO blocks) never opens an artifact
                 // candidate — `shouldPersistUpdate` treats the empty-block
                 // write as transient — so the preflight CLOSE side arrives
@@ -664,7 +664,7 @@ class ChapterArtifactEngine(
                     contentFingerprint = checkpoint.ocrContentFingerprint,
                 )
                 ),
-            // T934 R2a.1 (write-time digests): the page's source SHA-256 is
+            //  R2a.1 (write-time digests): the page's source SHA-256 is
             // recorded AT FIRST ADMISSION in the SAME atomic transaction that
             // installs the checkpoint pointer — never at run end. Only a
             // well-formed (lowercase 64-hex) sha is stamped; anything else
@@ -694,7 +694,7 @@ class ChapterArtifactEngine(
         return when (outcome) {
             is TransactionOutcome.Committed ->
                 if (sweepAfterCommit) {
-                    // T930 Slice A4 (Amendment D): the checkpoint runs once per
+                    //  Slice A4 (Amendment D): the checkpoint runs once per
                     // OCR'd page on the serialized batch lane; a full SAF tree
                     // crawl here costs seconds-to-a-minute per page once the
                     // chapter accumulates sidecars (the same measured cost that
@@ -738,9 +738,9 @@ class ChapterArtifactEngine(
     }
 
     /**
-     * The committed bundle's OCR content fingerprint (T924-FP-02 identity),
+     * The committed bundle's OCR content fingerprint ( identity),
      * computed with the same source identity (including orientation) the
-     * checkpoint claims, so both sides of the T924-TX-03.1 comparison
+     * checkpoint claims, so both sides of the.1 comparison
      * canonicalize identically.
      */
     private fun committedOcrContentFingerprint(
@@ -811,7 +811,7 @@ class ChapterArtifactEngine(
 
     /**
      * One immutable sidecar to publish before its manifest pointer may move
-     * (T924-SC-19/20). [contentFingerprint] is the semantic content identity
+     *. [contentFingerprint] is the semantic content identity
      * the caller established for the sidecar (it must match the pointer's);
      * [publish] must go through [AtomicChapterDocuments.publish]/[AtomicChapterDocuments.publishJson].
      */
@@ -822,7 +822,7 @@ class ChapterArtifactEngine(
     )
 
     /**
-     * T924-SC-20: the generic sidecar-then-pointer transaction. Every
+     * 20: the generic sidecar-then-pointer transaction. Every
      * [SidecarPublication] is durably published FIRST, then [updatePointers]
      * installs all pointers in ONE atomic manifest publication. Crash or
      * failure windows:
@@ -832,7 +832,7 @@ class ChapterArtifactEngine(
      * - during the manifest publication → `.bak` rotation semantics.
      *
      * On any precondition or publication failure the prior manifest stays
-     * authoritative (T924-SC-22) and pointers never dangle.
+     * authoritative  and pointers never dangle.
      */
     fun publishSidecarPointers(
         manifest: ChapterArtifactManifest,
@@ -865,7 +865,7 @@ class ChapterArtifactEngine(
     }
 
     /**
-     * T934 LI-x: [publishSidecarPointers] with the store's standard ONE-shot
+     *  LI-x: [publishSidecarPointers] with the store's standard ONE-shot
      * stale-manifest rebase-retry ([retryOnStaleManifest], seam-tagged), for
      * the resume-hydration seams whose caller can hold a snapshot that predates
      * durable publications performed outside the façade (the background health
@@ -874,7 +874,7 @@ class ChapterArtifactEngine(
      * re-run against the freshly re-read durable manifest — the mutation must
      * be a pure function of the base manifest so the rebase carries every
      * fresh durable field forward. Every other rejection reason is returned
-     * as-is (T924-SC-20/22); a retry that also fails surfaces the retry's own
+     * as-is; a retry that also fails surfaces the retry's own
      * rejection, exactly like the store's other wrapped seams.
      */
     internal fun publishSidecarPointersWithStaleRetry(
@@ -910,21 +910,21 @@ class ChapterArtifactEngine(
         data class Usable(val checkpoint: PageOcrCheckpoint) : OcrCheckpointRead
 
         /**
-         * T924-SC-13: a newer schema owns the semantics — unusable for
+         * 13: a newer schema owns the semantics — unusable for
          * planning (artifact = ABSENT for decisions), bytes preserved
          * untouched, never deleted or overwritten by this version.
          */
         data class UnsupportedVersion(val schemaVersion: Int) : OcrCheckpointRead
 
         /**
-         * T924-SC-17: missing, corrupt, or otherwise invalid. Treated as
+         * 17: missing, corrupt, or otherwise invalid. Treated as
          * ABSENT for planning; the page re-enters OCR planning (safe
-         * re-derivation) per T924-SC-17.
+         * re-derivation) per.
          */
         data object Absent : OcrCheckpointRead
     }
 
-    /** Reads the pointed OCR checkpoint with unknown-version preservation (T924-SC-12/13). */
+    /** Reads the pointed OCR checkpoint with unknown-version preservation. */
     fun readOcrCheckpoint(pointer: SidecarPointer): OcrCheckpointRead {
         if (!pointer.isWellFormed()) return OcrCheckpointRead.Absent
         val bytes = io.read(pointer.fileName) ?: return OcrCheckpointRead.Absent
@@ -948,42 +948,42 @@ class ChapterArtifactEngine(
     internal fun ocrStageSnapshotName(pageKey: String, fingerprint: String): String =
         layout.stageArtifactFile(pageKey, ArtifactStage.OCR, fingerprint)
 
-    /** Content-addressed `PageOcrCheckpoint` sidecar name under `ocr/` (T924-SC-21). */
+    /** Content-addressed `PageOcrCheckpoint` sidecar name under `ocr/`. */
     internal fun ocrCheckpointSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.ocrCheckpointFile(pageKey, contentFingerprint)
 
     // ------------------------------------------------------------------
-    // T924 WP9 (additive): generic sidecar reading/publication support for
+    //  WP9 (additive): generic sidecar reading/publication support for
     // the persisted-layout track (`layoutPlans` / `colorPreparations`
     // pointers). Mirrors the readOcrCheckpoint/readRunRecord idioms exactly
     // (quarantine on corrupt, unknown-version preservation) and the
     // publishActiveRun sidecar-then-pointer pattern; nothing existing changed.
     // ------------------------------------------------------------------
 
-    /** Content-addressed `PageLayoutDrawPlan` sidecar name under `layout/` (T924-SC-21). */
+    /** Content-addressed `PageLayoutDrawPlan` sidecar name under `layout/`. */
     internal fun layoutPlanSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.layoutPlanFile(pageKey, contentFingerprint)
 
-    /** Content-addressed `AnalysisChunkResult` sidecar name under `analysis/` (T924-SC-21). */
+    /** Content-addressed `AnalysisChunkResult` sidecar name under `analysis/`. */
     internal fun analysisChunkSidecarName(contentFingerprint: String): String =
         layout.analysisChunkFile(contentFingerprint)
 
-    /** Content-addressed `ChapterTranslationProfile` sidecar name under `profiles/` (T924-SC-21). */
+    /** Content-addressed `ChapterTranslationProfile` sidecar name under `profiles/`. */
     internal fun profileSidecarName(contentFingerprint: String): String =
         layout.profileFile(contentFingerprint)
 
     /**
-     * T924 Stage-6 slice A (additive, WP9 idiom): content-addressed
-     * `EnvelopePlan` sidecar name under `envelopes/` (T924-SC-21).
+     *  Stage-6 slice A (additive, WP9 idiom): content-addressed
+     * `EnvelopePlan` sidecar name under `envelopes/`.
      */
     internal fun envelopePlanSidecarName(contentFingerprint: String): String =
         layout.envelopePlanFile(contentFingerprint)
 
-    /** Content-addressed `ColorStylePreparation` sidecar name under `color/` (T924-SC-21). */
+    /** Content-addressed `ColorStylePreparation` sidecar name under `color/`. */
     internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.colorPreparationFile(pageKey, contentFingerprint)
 
-    /** T933 Increment 2: content-addressed `ChapterContextSnapshot` sidecar name under `context/`. */
+    /**  Increment 2: content-addressed `ChapterContextSnapshot` sidecar name under `context/`. */
     internal fun contextSidecarName(contentFingerprint: String): String =
         layout.contextFile(contentFingerprint)
 
@@ -1042,7 +1042,7 @@ class ChapterArtifactEngine(
     /**
      * Builds one immutable JSON sidecar publication for
      * [publishSidecarPointers] through the shared [AtomicChapterDocuments]
-     * Json (T924-SC-06), so callers outside this package can stage
+     * Json, so callers outside this package can stage
      * sidecar-then-pointer transactions without touching the document layer.
      */
     fun <T : Any> jsonSidecarPublication(
@@ -1061,7 +1061,7 @@ class ChapterArtifactEngine(
      * Generic pointer read with the `readOcrCheckpoint` idiom: well-formedness
      * gate, parse with quarantine on corruption, unknown-version preservation
      * (NEVER quarantined), kind check + semantic validation with quarantine on
-     * invalid payloads (T924-SC-12/13/17).
+     * invalid payloads (/17).
      */
     fun <T : Any> readSidecarDocument(
         pointer: SidecarPointer,
@@ -1099,7 +1099,7 @@ class ChapterArtifactEngine(
      * advances only the candidate pointer. The committed pointer is untouched
      * until [promoteLiveCandidate] succeeds.
      *
-     * T924 LI-4 / T934: a stale-manifest CAS rejection (the leading
+     *   /  a stale-manifest CAS rejection (the leading
      * [candidateWriteRejection] check) triggers ONE retry against the freshly
      * re-read durable manifest — this is the store transaction behind the
      * façade's stage-patch/candidate persistence, and the batch resume path
@@ -1257,7 +1257,7 @@ class ChapterArtifactEngine(
      * pointer changes, so a crash can only leave an orphan candidate file,
      * never a committed pointer to a missing or partial page.
      *
-     * T924 LI-4 / T934: a stale-manifest CAS rejection (the leading
+     *   /  a stale-manifest CAS rejection (the leading
      * [candidateWriteRejection] check) triggers ONE retry against the freshly
      * re-read durable manifest — the batch resume's candidate-promotion
      * transaction must not surface a spurious ARTIFACT_PUBLICATION_FAILED
@@ -1511,7 +1511,7 @@ class ChapterArtifactEngine(
      * bytes. Preconditions bind the caller to the current page version and
      * dependency fingerprint (stale workers are rejected).
      *
-     * T924 LI-4 / T934: a stale-manifest CAS rejection (the >8-page open
+     *   /  a stale-manifest CAS rejection (the >8-page open
      * path's background health verify republishing after the façade cached its
      * copy) triggers ONE retry against the freshly re-read durable manifest —
      * the batch resume's first candidate open must not surface a spurious
@@ -1689,7 +1689,7 @@ class ChapterArtifactEngine(
         if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; candidate remains recorded")
         }
-        // Event-driven reclamation (T930 Slice A4): relaunch teardown cancels
+        // Event-driven reclamation ( Slice A4): relaunch teardown cancels
         // every stale candidate left by a dead process — one full SAF tree
         // sweep per page there cost tens of seconds per page on large
         // chapters (the same measured crawl removed from the checkpoint and
@@ -1783,7 +1783,7 @@ class ChapterArtifactEngine(
         "g-$nowEpochMs-${layout.pageSegment(pageKey).takeLast(24)}"
 
     /**
-     * T924 LI-4: stable reason prefix of the stale-manifest CAS rejection. The
+     *   stable reason prefix of the stale-manifest CAS rejection. The
      * one-shot retry on the first-publication seams ([publishActiveRun],
      * [checkpointOcr], [openCandidate], [retireActiveRun],
      * [persistLiveCandidate] — including [persistLiveCandidateAndFailure] —
@@ -1810,17 +1810,17 @@ class ChapterArtifactEngine(
             ?.takeIf { it.startsWith(STALE_MANIFEST_REJECTION_REASON) }
 
     /**
-     * T934 LI-x: stale-manifest CAS detection exposed to the one seam whose
+     *  LI-x: stale-manifest CAS detection exposed to the one seam whose
      * publication lives OUTSIDE this store ([EnvelopePlanPublication.publish]):
      * the CAS there keys on the same [STALE_MANIFEST_REJECTION_REASON] prefix
      * so every other rejection reason keeps failing exactly as before
-     * (T924-SC-20/22).
+     *
      */
     internal fun isStaleManifestRejection(outcome: TransactionOutcome): Boolean =
         outcome.staleManifestRejectionOrNull() != null
 
     /**
-     * T924 LI-4: one-shot stale-manifest retry for the flagged Batch lane's
+     *   one-shot stale-manifest retry for the flagged Batch lane's
      * first-publication seams. When the >8-page open path's background
      * artifact-health retry republishes a VERIFIED manifest after the
      * façade cached the pre-verification copy, a dispatch presenting that stale
@@ -1833,7 +1833,7 @@ class ChapterArtifactEngine(
      * the original Rejected outcome unchanged, so the caller-visible contract
      * stays "Committed or Rejected".
      *
-     * T934: the same race aborted the whole batch RESUME at its other
+     *  the same race aborted the whole batch RESUME at its other
      * first-publication seams (candidate open, stage-patch candidate
      * persist/promote, run-pointer retirement), so the wrapped set now covers
      * every seam the resume path hits. [recordDurableFailure]'s RecordOutcome
@@ -1923,7 +1923,7 @@ class ChapterArtifactEngine(
      * its whole body — the crawl may have listed a sidecar whose file was
      * already written while its manifest pointer was not yet installed — and
      * verifying against that stale graph deletes a sidecar the just-completed
-     * publication points at (observed: the T924 COMPLETE run record vanishing
+     * publication points at (observed: the  COMPLETE run record vanishing
      * between its publication and the next read, leaving a dangling
      * `activeRun`). This monitor serializes with every publication's manifest
      * rotation, so a manifest read here is never older than any installed
@@ -1937,7 +1937,7 @@ class ChapterArtifactEngine(
     }
 
     /**
-     * T930 Slice A4 (Amendment D): event-driven known-orphan deletion.
+     *  Slice A4 (Amendment D): event-driven known-orphan deletion.
      * Reclaims explicitly unlinked artifact files without a full tree crawl.
      * Race register #6: files referenced in stagedReachable are spared; when
      * [durableManifest] is supplied, files still reachable from it are spared too.
@@ -1959,7 +1959,7 @@ class ChapterArtifactEngine(
     }.getOrNull()?.normalizeSupportedSchema()
 
     /**
-     * T930 Slice A3 (Amendment A): cache for schema normalization decisions.
+     *  Slice A3 (Amendment A): cache for schema normalization decisions.
      * Maps schemaVersion -> boolean indicating whether schema normalization is required.
      * Future-schema guard reads at :130 and :230 (and CAS at :1642) are NEVER cached:
      * always fresh from disk.
@@ -1976,7 +1976,7 @@ class ChapterArtifactEngine(
     }
 
     /**
-     * T924-SC-04: new code reads manifest schema versions 2 and 3 and writes
+     * 04: new code reads manifest schema versions 2 and 3 and writes
      * v3. Older supported manifests load with the additive pointer fields
      * defaulted and are normalized in memory to the current schema version so
      * the next publication rewrites them as v3 — new pointers can never ride
@@ -2001,7 +2001,7 @@ class ChapterArtifactEngine(
             ?: false
 
     // ------------------------------------------------------------------
-    // T934 LI-x: adoption-write manifest coalescing for the batch-resume
+    //  LI-x: adoption-write manifest coalescing for the batch-resume
     // rebuild. The resume hydration loop (`buildEnvelopeDispatchWork` →
     // `adoptCheckpointSnapshot` → the façade's open/persist/promote candidate
     // transactions) republished the FULL manifest JSON once or more PER PAGE
@@ -2026,7 +2026,7 @@ class ChapterArtifactEngine(
     // is what [staleManifestRejection] compares against, so the serialized
     // transaction chain never stale-rejects against its own deferred writes
     // and never rebases onto a manifest that would drop them. With no window
-    // open the baseline is the durable file exactly as before T934.
+    // open the baseline is the durable file exactly as before.
     // ------------------------------------------------------------------
 
     /** Bounded unflushed state: a durable manifest rewrite at most every N stashed publications. */
@@ -2048,7 +2048,7 @@ class ChapterArtifactEngine(
 
     /**
      * Closes one coalescing window and flushes the stashed manifest when the
-     * OUTERMOST window ends (T934 LI-x: the rebuild always ends coherent —
+     * OUTERMOST window ends ( LI-x: the rebuild always ends coherent —
      * `store.artifactManifest` tracks each Committed manifest, so after the
      * final flush the façade equals the durable file). A failed final flush is
      * logged and dropped: the transactions already reported Committed, and the
@@ -2071,14 +2071,14 @@ class ChapterArtifactEngine(
     }
 
     /**
-     * T934 LI-x: the manifest CAS baseline — the coalesced (intended) manifest
+     *  LI-x: the manifest CAS baseline — the coalesced (intended) manifest
      * while a window is open, else the durable file. Must only be called while
      * the facade Mutex is held by the owning ChapterTranslationStore.
      */
     private fun casBaselineManifest(): ChapterArtifactManifest? =
         coalescedManifest ?: readManifest()
 
-    // T934 LI-x: callers hold the owning ChapterTranslationStore facade Mutex.
+    //  LI-x: callers hold the owning ChapterTranslationStore facade Mutex.
     // The coalescing stash therefore shares the one mutable-state lock with
     // every transaction. Lock order is facade Mutex → per-name document lock;
     // document/open locks never acquire the facade Mutex.
@@ -2104,7 +2104,7 @@ class ChapterArtifactEngine(
             if (syncToDisk) coalescedSyncToDisk = true
             coalescedPublications += 1
             if (coalescedPublications % MANIFEST_COALESCING_FLUSH_EVERY == 0) {
-                // T934 LI-x: bounded unflushed state — flush through the normal
+                //  LI-x: bounded unflushed state — flush through the normal
                 // path WITHOUT closing the window (depth stays > 0).
                 val pending = coalescedManifest
                 coalescedManifest = null

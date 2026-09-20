@@ -15,7 +15,7 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Test
 
 /**
- * Characterization tests for the durable pre-queue request store (T906
+ * Characterization tests for the durable pre-queue request store (
  * area-3 finding F3: no direct unit coverage). Pins the add/phase/reason/
  * remove round-trip over SharedPreferences, the blank-reason drop, and the
  * `load()` numeric-key filter that keeps reason keys out of the id set.
@@ -89,7 +89,7 @@ class TranslationPendingRequestStoreTest {
         store.load() shouldContainExactly setOf(7L)
     }
 
-    // T911 slice 2: durable record (generation/group/timestamps/typed failure)
+    //  slice 2: durable record (generation/group/timestamps/typed failure)
 
     @Test
     fun `legacy pending entry without new fields parses with defaults`() {

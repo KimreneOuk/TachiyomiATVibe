@@ -19,7 +19,7 @@ object PageWorkPlanner {
     /**
      * Compatibility projection for the older four-boolean API.
      *
-     * T924-R012: a caller that can observe current source/configuration
+     * R012: a caller that can observe current source/configuration
      * evidence may supply [expectedFingerprints]/[sourceFingerprint]; a forced
      * plan then validates its detection/OCR reuse against that evidence.
      * Callers that supply none (the historical signature) keep the
@@ -43,7 +43,7 @@ object PageWorkPlanner {
         }
 
         if (force) {
-            // T924-R012: forced translation reuses valid detection/OCR evidence
+            // R012: forced translation reuses valid detection/OCR evidence
             // independently of inpaint readiness. Inpaint readiness only decides
             // the inpaint stage: a page with valid OCR evidence is no longer
             // re-OCR'd just because its cleaned image is missing or stale. A
@@ -310,7 +310,7 @@ object PageWorkPlanner {
             else -> StageWorkDecision(stage, StageDecision.REUSE, StageReasonCode.VALID_ARTIFACT)
         }
 
-        // TachiyomiAT T917 D5 glossary-aware reuse gate (phase3-design §1.2):
+        // TachiyomiAT   glossary-aware reuse gate (phase3-design §1.2):
         // when the chapter's current glossary version is greater than the
         // version recorded on the persisted translation (absence = 0), a
         // translation-stage REUSE downgrades to RUN — a targeted, one-time
@@ -395,7 +395,7 @@ object PageWorkPlanner {
     }
 
     /**
-     * T924-R012 evidence gate for the forced path's combined detection+OCR
+     * R012 evidence gate for the forced path's combined detection+OCR
      * reuse decision. Mirrors the batch planner's [fingerprintMatches] and
      * [stageEvidence] semantics:
      *  - a supplied configuration expectation must equal the recorded

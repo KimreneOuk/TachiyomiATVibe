@@ -393,7 +393,7 @@ class RoiPageRecognitionEngine(
         var detectMs = 0L
         var segmentMs = 0L
         var ocrMs = 0L
-        // T922 Phase 3: correlated engine stages. The run arrives through the
+        //  Phase 3: correlated engine stages. The run arrives through the
         // installed TranslationTrace element; outside a traced coroutine every
         // span is a fail-open NO_OP. openRecognitionSpan tracks whichever
         // engine stage is currently open so the outer catch below can settle
@@ -771,7 +771,7 @@ class RoiPageRecognitionEngine(
             "not_paddle"
         }
         logcat(LogPriority.INFO) {
-            // T922 Phase 3: the ambiguous global route= token (device
+            //  Phase 3: the ambiguous global route= token (device
             // preference) was removed — per-engine execution providers below
             // and the correlated trace stages are the execution truth.
             "[translation_perf] " +
@@ -802,7 +802,7 @@ class RoiPageRecognitionEngine(
         // Re-check [closed] inside the lock. Box/mask computation is delegated to
         // PageInpaintingEngine (do not duplicate here — an earlier copy was
         // unreachable and masked the real planner path).
-        // T922 Phase 3: correlated inpaint stage. AOT provenance: the
+        //  Phase 3: correlated inpaint stage. AOT provenance: the
         // inpainter exposes only its execution-proven route (lastAcceptedRoute)
         // after inference, so that is the `provenProvider` level; no
         // registered-provider label exists yet (Phase 5).
@@ -843,7 +843,7 @@ class RoiPageRecognitionEngine(
             provenProvider = TranslationPipelineDiagnostics.providerFromLabel(inpainting?.lastAcceptedRoute),
         )
         logcat(LogPriority.INFO) {
-            // T922 Phase 3: the ambiguous global route= token (device
+            //  Phase 3: the ambiguous global route= token (device
             // preference) was removed; inpaintRoute= is the execution-proven
             // route and stays.
             "[translation_perf] " +
@@ -1199,7 +1199,7 @@ class RoiPageRecognitionEngine(
         }
     }
 
-    // T909 Phase 5b: block dedup + parent-bubble geometry bodies moved to
+    //  Phase 5b: block dedup + parent-bubble geometry bodies moved to
     // recognition/OcrBlockDeduplication.kt.
     private fun suppressCrossLabelDuplicates(
         textDetections: List<Detection>,

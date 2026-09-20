@@ -4,13 +4,13 @@ import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.StageFingerprints
 
 /**
- * T924 WP3 (pure planner, S4): deterministic hierarchical analysis chunking
+ *  WP3 (pure planner, S4): deterministic hierarchical analysis chunking
  * over the OCR corpus (design §6.1, schemas contract §1.3).
  *
  * Whole-page windows only — a page is never split across chunks (page
  * atomicity invariant). Every chunk carries `core` pages (primary extraction
  * duty) plus up to [AnalysisChunkPolicy.overlapPages] immediately preceding
- * `context` overlap pages (citation-only evidence, T924-AP-03/V9 duty split).
+ * `context` overlap pages (citation-only evidence, /V9 duty split).
  *
  * This planner is the pure windowing skeleton ONLY: chunk ids, contributing
  * sets, contributing corpus fingerprints and the evidence-universe predicate.
@@ -19,7 +19,7 @@ import eu.kanade.translation.artifact.StageFingerprints
  * evidence reference must resolve into (pure subset of V1/V9).
  */
 
-/** Measured/planning constants for analysis chunking (T924-SC-02 split: policy, not schema). */
+/** Measured/planning constants for analysis chunking ( split: policy, not schema). */
 data class AnalysisChunkPolicy(
     /**
      * Maximum core pages per chunk. Hard schema bound:
@@ -68,7 +68,7 @@ data class ChunkPlannerPage(
     val naturalPageIndex: Int?,
     /**
      * The page's semantic content fingerprint
-     * ([StageFingerprints.pageOcrContentFingerprint], T924-FP-02); feeds the
+     * ([StageFingerprints.pageOcrContentFingerprint], ); feeds the
      * per-chunk contributing corpus fingerprint (schemas contract §1.3).
      */
     val contentFingerprint: String,
@@ -92,7 +92,7 @@ data class PlannedAnalysisChunk(
     val corePageKeys: List<String>,
     /** CONTEXT overlap pages (adjacent predecessors), ordered, may be empty. */
     val contextOverlapPageKeys: List<String>,
-    /** Corpus fingerprint over the contributing set in order (T924-FP-03). */
+    /** Corpus fingerprint over the contributing set in order. */
     val contributingCorpusFingerprint: String,
     /** Block count carried by CORE pages only. */
     val coreBlockCount: Int,
@@ -108,7 +108,7 @@ data class PlannedAnalysisChunk(
         get() = corePageKeys + contextOverlapPageKeys
 
     /**
-     * Pure subset of evidence validation V1/V9 (T924-AP-05): the reference
+     * Pure subset of evidence validation V1/V9: the reference
      * must name a contributing page, the block id must belong to that page's
      * contributing block list, and it must start with its page key (guards
      * the common `p12_b4` cited under `p13`). Excerpt-hash recomputation

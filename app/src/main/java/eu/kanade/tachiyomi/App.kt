@@ -168,7 +168,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         initializeMigrator()
 
         if (BuildConfig.DEBUG) {
-            // TachiyomiAT (T922 §3.5): automatic QNN diagnostics no longer run at
+            // TachiyomiAT ( §3.5): automatic QNN diagnostics no longer run at
             // debug startup — they overlapped real translation work and polluted
             // timing measurements. QnnDiagnostics stays intact and reachable, with
             // this narrow developer-only trigger that never runs during normal
@@ -187,7 +187,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 IntentFilter(ACTION_DEBUG_RUN_QNN_DIAGNOSTICS),
                 ContextCompat.RECEIVER_EXPORTED,
             )
-            // TachiyomiAT (T922 §10.5 device A/B): debug-only toggle for the
+            // TachiyomiAT ( §10.5 device A/B): debug-only toggle for the
             // detailed translation trace gate. Mirrors the QNN diagnostics
             // receiver pattern above; adb shell only, release never registers:
             //   adb shell am broadcast -a tachi.action.DEBUG_SET_TRANSLATION_TRACE --ez enabled false

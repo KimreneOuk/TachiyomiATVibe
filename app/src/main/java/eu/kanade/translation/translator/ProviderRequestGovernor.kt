@@ -77,7 +77,7 @@ data class ProviderQuotaPolicy(
     val quotaCooldownMs: Long = 60_000L,
     val windowMs: Long = 60_000L,
     /**
-     * T917 Phase 3 (D6 §2.1): fraction of the token window held back for
+     *  Phase 3 ( §2.1): fraction of the token window held back for
      * INTERACTIVE (reader) requests while one waits. While the bucket holds a
      * waiting INTERACTIVE request, a BACKGROUND request's effective token
      * limit shrinks to `tokensPerMinute * (1 - fraction)` and its request
@@ -450,7 +450,7 @@ class ProviderRequestGovernor(
         }
 
         val tokenCost = waiter.metadata.estimatedTokens
-        // T917 Phase 3 (D6 §2.1): while the bucket holds at least one waiting
+        //  Phase 3 ( §2.1): while the bucket holds at least one waiting
         // INTERACTIVE request, a BACKGROUND request sees reduced limits so a
         // draining batch cannot consume the reader's headroom. Interactive
         // requests always ride the full window, and the reduced token limit
@@ -562,7 +562,7 @@ class ProviderRequestGovernor(
     }
 
     /**
-     * T924 DR-D all-or-nothing nested admission: releases a permit obtained
+     *  DR-D all-or-nothing nested admission: releases a permit obtained
      * via [admit] WITHOUT executing the request. Used by the Batch sub-limit
      * gate when the inner (provider) bucket defers after the outer (sub-limit)
      * bucket already granted — the outer permit is given back before waiting,
@@ -699,7 +699,7 @@ object SharedProviderRequestGovernor {
 }
 
 /**
- * T924 DR-C/DR-D (Stage 5): the Batch aggregate sub-limit. ONE allowance per
+ *  DR-C/DR-D (Stage 5): the Batch aggregate sub-limit. ONE allowance per
  * credential, shared by ALL Batch traffic (analysis chunks and, from Stage 6,
  * Batch translation envelopes) — never two pools of 15. A measured constant,
  * not a flag; Manual/Auto/reader INTERACTIVE requests never enter this bucket.
@@ -758,7 +758,7 @@ object BatchProviderSublimit {
  * structurally unaffected; the bucket-1 interactive reserve and starvation
  * guard are untouched.
  */
-// T924 Stage 7: `open` ONLY so the coordinator can wrap the gate with the
+//  Stage 7: `open` ONLY so the coordinator can wrap the gate with the
 // OverlapScheduler's remote-window signalling subclass (gate 6.5 evidence).
 // Admission semantics are untouched; the default construction behaves
 // byte-identically.
@@ -799,7 +799,7 @@ open class BatchRequestSublimitGate(
 }
 
 /**
- * T924 wave-4 F-W4-2: the process-wide Batch sub-limit gate. The sub-limit is
+ *  wave-4 F-W4-2: the process-wide Batch sub-limit gate. The sub-limit is
  * ONE allowance per credential (DR-C) — every production Batch executor must
  * share THIS gate exactly like [SharedProviderRequestGovernor]; a per-instance
  * default would create independent 15-RPM pools ("two pools of 15"). Test

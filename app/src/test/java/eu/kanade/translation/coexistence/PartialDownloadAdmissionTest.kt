@@ -28,11 +28,11 @@ import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 
 /**
- * T917 Phase 4 — D10 partial-download admission + honest missing-page
+ *  Phase 4 —  partial-download admission + honest missing-page
  * accounting (phase4-design §3).
  *
  * Drives the REAL production graph over an ARTIFACT-authority store
- * (FakeChapterDocumentIo + the production fresh-chapter recipe, D9 harness
+ * (FakeChapterDocumentIo + the production fresh-chapter recipe,  harness
  * precedent) so the manifest — the durable record the design makes carry the
  * partial truth — is observable. The batch enumerates a partially-downloaded
  * directory (1 of 2 source pages), and the trigger's admission-probe
@@ -77,7 +77,7 @@ class PartialDownloadAdmissionTest {
     // fixtures
     // ------------------------------------------------------------------
 
-    /** Production fresh-chapter recipe over the shared IO (D9 harness precedent). */
+    /** Production fresh-chapter recipe over the shared IO ( harness precedent). */
     private fun freshStore(
         pageKeys: List<String>,
         pageOverrides: Map<String, PageTranslation.() -> Unit> = emptyMap(),
@@ -134,7 +134,7 @@ class PartialDownloadAdmissionTest {
 
     /**
      * The run-1 terminal state of p0, reopened for the post-completion re-run:
-     * provenance matches the current engine exactly (D5 reuse-fixture recipe),
+     * provenance matches the current engine exactly ( reuse-fixture recipe),
      * so the batch re-run has every reason to plan REUSE/SKIP_ALL for it and
      * spend its work on the newly downloaded p1.
      */
@@ -293,7 +293,7 @@ class PartialDownloadAdmissionTest {
             ?.apply { isAccessible = true }?.get(null)
             ?: throw AssertionError("T917 D10 RED defect: BatchAdmissionRouting is not a Kotlin object")
         val choiceInstance = choice?.let { name ->
-            // Top-level enum in the D10 seam file (with a nested fallback).
+            // Top-level enum in the  seam file (with a nested fallback).
             val resolved = try {
                 Class.forName("eu.kanade.translation.pipeline.batch.PartialDownloadChoice")
             } catch (e: ClassNotFoundException) {
@@ -527,7 +527,7 @@ class PartialDownloadAdmissionTest {
                 }
                 withClue("D10: the reopened terminal p0 counts done; the run strands and fails nothing") {
                     val reconciliation = secondRun.reconciliation.await().shouldNotBeNull()
-                    // T924 zero-legacy (D1): the flagged COMPLETED projection
+                    //  zero-legacy: the flagged COMPLETED projection
                     // counts EVERY expected page done — the reopened terminal
                     // p0 (its run coverage) and the freshly worked p1 alike.
                     reconciliation.doneCount shouldBe 2

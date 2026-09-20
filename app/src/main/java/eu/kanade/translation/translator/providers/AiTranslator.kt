@@ -17,16 +17,16 @@ import eu.kanade.translation.model.PageTranslation
  */
 abstract class AiTranslator : BaseTranslator(), ContextualTextTranslator {
 
-    /** T933: Certified accounting contract for final model request input tokens. */
+    /**  Certified accounting contract for final model request input tokens. */
     open val inputAccountingContract: InputAccountingContract? get() = null
 
     // ------------------------------------------------------------------
-    // T924 Stage-7/WP5 (wave-7c): the typed structured-analysis transport.
+    //  Stage-7/WP5 (wave-7c): the typed structured-analysis transport.
     // Engines that expose a raw text completion opt in by overriding these
-    // members; [AnalysisEngineTransport] adapts them to the T924-AP-02
+    // members; [AnalysisEngineTransport] adapts them to the
     // [eu.kanade.translation.translator.analysis.AnalysisTextTransport] seam
     // (typed failures only — `promptText` is forbidden for analysis because
-    // it swallows every failure into an empty string, T924-AP-01/08).
+    // it swallows every failure into an empty string, ).
     // ------------------------------------------------------------------
 
     /** The governor backend spelling for Batch admission keys, or null when the engine has no analysis transport. */
@@ -35,7 +35,7 @@ abstract class AiTranslator : BaseTranslator(), ContextualTextTranslator {
     /** The model identity frozen into the analyzer provenance. */
     open val analysisModelId: String? get() = null
 
-    /** Opaque credential signature; never a raw credential (T924-FP-04). */
+    /** Opaque credential signature; never a raw credential. */
     open val analysisCredentialScope: String? get() = null
 
     /**

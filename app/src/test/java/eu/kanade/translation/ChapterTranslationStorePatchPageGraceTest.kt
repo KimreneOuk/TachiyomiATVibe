@@ -26,7 +26,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 3 backlog fold-in (phase3-design §4, §5.4): `patchPage` must grant
+ *  Phase 3 backlog fold-in (phase3-design §4, §5.4): `patchPage` must grant
  * the same `record.candidate != null` grace `persistArtifactMutationLocked`
  * already applies to the dependency-fingerprint check.
  *
@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test
  * even though no real candidate ever moved — while the guarded-writer chain
  * (`pageWriteRejection`) and `persistArtifactMutationLocked` both waive the
  * check when `candidate == null`. A retried page, never corruption — but a
- * known false-reject under the D5 stamp traffic, so it aligns in Phase 3.
+ * known false-reject under the  stamp traffic, so it aligns in Phase 3.
  *
  * The grace is fail-direction-preserving: the generation, pageVersion,
  * artifact-pageVersion, candidate-generation, block-fingerprint, and

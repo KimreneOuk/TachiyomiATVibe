@@ -14,15 +14,15 @@ import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
 /**
- * T924 zero-legacy (D1) — the DISPATCH-LEVEL resume wiring through the REAL
+ *  zero-legacy  — the DISPATCH-LEVEL resume wiring through the REAL
  * production shell (`ChapterTranslator.translateChapterInternal` →
- * `BatchChapterTranslator.runBatchPass1` → the coordinator's ST-14
+ * `BatchChapterTranslator.runBatchPass1` → the coordinator's
  * `resumeFinalizeOrComplete`), rewritten for the post-flag world.
  *
- * The former flag-OFF wiring cases are gone with the FF-01 flag:
+ * The former flag-OFF wiring cases are gone with the  flag:
  *  - the shell-level `resumeCompletedOutcome`/`decideResume` consultation was
  *    DELETED — there is no flag-OFF state, so ALL resume wiring goes through
- *    the coordinator (ST-14 FINALIZE/COMPLETE idempotent resume + LI-2
+ *    the coordinator ( FINALIZE/COMPLETE idempotent resume +
  *    work-product evidence gate). The pure decision tests
  *    (`OcrPreflightFlagOffMidRunTest` DropToLegacy/TreatAsFinished) were
  *    deleted with the behavior.
@@ -37,7 +37,7 @@ import java.security.MessageDigest
  *  - the COMPLETE-with-missing-evidence supersession is pinned at the
  *    coordinator level in `Stage7FinalizeResumeCoordinatorTest`
  *    (`a recorded COMPLETE lacking per-page display evidence is superseded by
- *    a fresh run (LI-2)`).
+ *    a fresh run `).
  *
  * What THIS file pins is the wiring itself — that a plain re-request of a
  * chapter the pipeline already finished (the Director's device A/B flow,
@@ -48,10 +48,10 @@ import java.security.MessageDigest
  *     store (single COMPLETE record, `standard:mlkit` provider identity);
  *  2. re-dispatch (run 2) over the identical store: zero transport calls, the
  *     chapter still finishes TRANSLATED, and the durable COMPLETE record is
- *     byte-untouched (ST-14 idempotent COMPLETE resume);
+ *     byte-untouched ( idempotent COMPLETE resume);
  *  3. after a user-style reset demotes one page's translated evidence, the
  *     re-dispatch starts REAL paid work for that page in the new lane (the
- *     LI-2 evidence gate supersedes the recorded COMPLETE) while the healthy
+ *      evidence gate supersedes the recorded COMPLETE) while the healthy
  *     page is not re-paid.
  */
 class BatchDispatchResumeWiringTest {
@@ -72,7 +72,7 @@ class BatchDispatchResumeWiringTest {
                     batch.reconciliation.await().shouldNotBeNull()
                 }
             }
-            // T934 flake hardening (diagnosis §2): a non-null reconciliation is
+            //  flake hardening (diagnosis §2): a non-null reconciliation is
             // NOT a completion oracle — a typed non-COMPLETED stop (PAUSED /
             // FAILED / PERSISTENCE_REJECTED) ALSO reconciles non-null, and the
             // durable record's last published phase before the translate tail
@@ -155,7 +155,7 @@ class BatchDispatchResumeWiringTest {
                 // ZERO paid work: with the flag gone there is no shell-level
                 // short-circuit left — the re-dispatch re-enters the
                 // pipeline and the resume obligation is settled by the
-                // coordinator's ST-14 COMPLETE fast path (LI-2 evidence gate
+                // coordinator's  COMPLETE fast path ( evidence gate
                 // satisfied by the open candidate work products; pinned at
                 // coordinator level in StandardPipelineCoordinatorTest T3).
                 second.transportCallsFor("p0") shouldBe 0
@@ -196,7 +196,7 @@ class BatchDispatchResumeWiringTest {
 
             // User-style reset of p1 only: clear its live translated state and
             // demote its durable display/work-product evidence (the real
-            // reset primitives, mirroring the coordinator-level LI-2 test).
+            // reset primitives, mirroring the coordinator-level  test).
             runBlocking {
                 first.store.updatePageFromCurrentSnapshot("p1", "t924 dispatch reset") { page ->
                     page?.copy(
@@ -218,7 +218,7 @@ class BatchDispatchResumeWiringTest {
                 second.stubChapterPages(pageKeys)
                 val batch = second.launchBatch(pageKeys)
 
-                // The LI-2 gate supersedes the recorded COMPLETE: p1 gets REAL
+                // The  gate supersedes the recorded COMPLETE: p1 gets REAL
                 // paid work in the SAME (standard) lane — a legacy coordinator
                 // no longer exists to be involved.
                 runBlocking {

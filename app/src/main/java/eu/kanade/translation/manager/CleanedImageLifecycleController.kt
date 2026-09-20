@@ -17,7 +17,7 @@ private const val ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS = 30_000L
 internal fun isFreshOrphanedCleanedImage(lastModified: Long, nowEpochMs: Long): Boolean =
     lastModified <= 0L || nowEpochMs - lastModified < ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS
 
-// T909 Phase 16: cleaned-image lifecycle moved from `TranslationManager`
+//  Phase 16: cleaned-image lifecycle moved from `TranslationManager`
 // (retired-image drains, orphan sweeps, companion-image retirement, and the
 // reader-facing cleaned-image stream). The SAF/threading constraints that
 // gated the pre-move region moved with it (see the KDoc on

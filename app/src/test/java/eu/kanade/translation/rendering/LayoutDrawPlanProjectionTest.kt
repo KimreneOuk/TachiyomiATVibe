@@ -12,7 +12,7 @@ import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
 
 /**
- * T924 WP8 gate 7.1: the [LayoutDrawPlanProjection] round trip —
+ *  WP8 gate 7.1: the [LayoutDrawPlanProjection] round trip —
  * project → serialize → deserialize → rehydrate — reproduces the real
  * planner's geometry EXACTLY (floats bit-for-bit; the DTO has no Int
  * truncation). Runs the production [TextLayoutPlanner.planPage] against
@@ -91,7 +91,7 @@ class LayoutDrawPlanProjectionTest {
         val drawn = project(plan)
         drawn.validationError() shouldBe null
         val json = LayoutDrawPlanProjection.encodeToCanonicalJson(drawn)
-        // T924-SC-06: encode → decode → encode is byte-identical.
+        // 06: encode → decode → encode is byte-identical.
         val decoded = LayoutDrawPlanProjection.decodeFromCanonicalJson(json)
         LayoutDrawPlanProjection.encodeToCanonicalJson(decoded) shouldBe json
         return LayoutDrawPlanProjection.rehydrate(decoded, inputs)
@@ -208,7 +208,7 @@ class LayoutDrawPlanProjectionTest {
         val first = block("p2_b1", x = 110f, y = 100f, w = 100f, h = 40f, text = "Hi", score = 0.5f)
         val plan = planOf(listOf(blank, first))
 
-        // Blank inputs are the ONLY intentional absence (T912 contract): they
+        // Blank inputs are the ONLY intentional absence ( contract): they
         // produce no result at all, hence no plan block either.
         plan.resultsInInputOrder shouldHaveSize 1
         plan.resultsInInputOrder.single().identity.inputIndex shouldBe 1

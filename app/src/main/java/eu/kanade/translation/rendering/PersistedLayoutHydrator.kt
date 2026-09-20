@@ -7,7 +7,7 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.MaskGeometry
 
 /**
- * T924 WP9 (T924-FF-02a(2)): resolves a page's persisted
+ * Resolves a page's persisted
  * [PageLayoutDrawPlan] and rehydrates it to the planner's draw shape
  * ([LayoutDrawPlanProjection.rehydrate]), with an EXPLICIT, typed loss
  * contract (wave-2 review F5 / gap 7): the caller can always distinguish a
@@ -15,8 +15,9 @@ import eu.kanade.translation.segmentation.MaskGeometry
  * by COUNT comparison and reported as [HydratedLayout.Lossy], never silently
  * returned as a partial draw list. Every failure mode maps to exactly one
  * typed outcome, and every outcome except [HydratedLayout.Resolved] sends the
- * caller to the async planner fallback (T924-FF-02b — fallback mandatory for
- * Manual/Auto, legacy data, missing/corrupt/unsupported plans, FF-02 OFF).
+ * caller to the async planner fallback. The fallback is mandatory for
+ * Manual/Auto, legacy data, missing/corrupt/unsupported plans, or a disabled
+ * feature flag.
  *
  * Compatibility boundary (gates 7.2/7.5, invalidation rows 9/10/11): a plan
  * whose font digest, font/paint identity, planner version, stroke policy
@@ -37,8 +38,7 @@ class PersistedLayoutHydrator(
      * Store-side document read with the `readOcrCheckpoint`/`readRunRecord`
      * idioms: corrupt bytes are quarantined and reported
      * [SidecarRead.Absent]; a newer schema version is reported
-     * [SidecarRead.UnsupportedVersion] with the bytes preserved untouched
-     * (T924-SC-13).
+     * [SidecarRead.UnsupportedVersion] with the bytes preserved untouched.
      */
     private val readDocument: (SidecarPointer) -> SidecarRead<PageLayoutDrawPlan>,
     /** The pinned production font digest ([PersistedLayoutRuntime.productionFontSha256]). */
@@ -193,7 +193,7 @@ class PersistedLayoutHydrator(
 
 /**
  * Typed hydration outcomes. Everything except [Resolved] routes the caller to
- * the async planner (T924-FF-02b).
+ * the async planner.
  */
 sealed interface HydratedLayout {
 
@@ -216,7 +216,7 @@ sealed interface HydratedLayout {
     /** Compatibility matrix mismatch — replan, never mis-draw (gates 7.2/7.5). */
     data class Incompatible(val reason: String) : HydratedLayout
 
-    /** T924-SC-13: a newer schema owns the semantics; bytes preserved untouched. */
+    /** 13: a newer schema owns the semantics; bytes preserved untouched. */
     data class UnsupportedVersion(val schemaVersion: Int) : HydratedLayout
 
     /** Missing pointer, unreadable sidecar, corrupt (quarantined), or invalid. */
@@ -224,12 +224,12 @@ sealed interface HydratedLayout {
 }
 
 /**
- * T924 WP9: the reader-side hydration seam. The overlay's
+ * The reader-side hydration seam. The overlay's
  * [TextLayoutCoordinator] consults [hydrate] BEFORE the async planner; a null
- * return (FF-02 OFF, nothing installed, or any non-Resolved outcome) is the
+ * return (feature flag OFF, nothing installed, or any non-Resolved outcome) is the
  * mandatory fallback path. The production source is installed by the reader
  * chapter wiring with the chapter's artifact context; no installation means
- * byte-for-byte legacy behavior (planner path, T924-FF-01c).
+ * byte-for-byte legacy behavior (planner path, ).
  */
 object PersistedLayoutReaderBridge {
 
@@ -239,7 +239,7 @@ object PersistedLayoutReaderBridge {
     }
 
     /**
-     * T924 Stage 7 (D3): the chapter-keyed production source. Receives the
+     *  Stage 7: the chapter-keyed production source. Receives the
      * page key alongside the bind inputs so the install site can resolve the
      * page's manifest `layoutPlans` pointer directly (the page key is
      * propagated from the reader holder binding — the overlay's legacy
@@ -257,7 +257,7 @@ object PersistedLayoutReaderBridge {
     @Volatile
     internal var source: Source? = null
 
-    /** T924 Stage 7 (D3): the per-chapter production source (FF-02-gated). */
+    /**  Stage 7: the per-chapter production source. */
     @Volatile
     internal var chapterSource: PageKeyedSource? = null
 
@@ -267,9 +267,9 @@ object PersistedLayoutReaderBridge {
     }
 
     /**
-     * T924 Stage 7 (D3): installs (or uninstalls with null) the chapter
+     *  Stage 7: installs (or uninstalls with null) the chapter
      * hydration source. Called by the reader chapter wiring when the chapter's
-     * artifact store opens/closes; FF-02 OFF installs null.
+     * artifact store opens/closes;  OFF installs null.
      */
     fun installChapterSource(source: PageKeyedSource?) {
         this.chapterSource = source
@@ -277,15 +277,15 @@ object PersistedLayoutReaderBridge {
 
     /**
      * Never throws to the caller: a source failure degrades to the planner
-     * fallback exactly like an absent plan (T924-FF-02b).
+     * fallback exactly like an absent plan.
      */
     fun hydrate(blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int): List<BlockLayout>? =
         runCatching { source?.hydrate(blocks, pageWidth, pageHeight) }.getOrNull()
 
     /**
-     * T924 Stage 7 (D3): page-keyed consult. The chapter source is preferred;
+     *  Stage 7: page-keyed consult. The chapter source is preferred;
      * a null pageKey, a null/throwing chapter source, or any non-Resolved
-     * outcome returns null — the async planner fallback (T924-FF-02b).
+     * outcome returns null — the async planner fallback.
      */
     fun hydrate(
         pageKey: String?,

@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
-// T909 Phase 17a: the page-stage lease table moved from
+//  Phase 17a: the page-stage lease table moved from
 // `ChapterTranslationStore` (record + backing map + the five lease members).
 // The DUAL locking discipline is load-bearing and moved verbatim: the store
 // mutex guards lease/patch paths (via [store]'s `mutex`) while
@@ -47,7 +47,7 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
         val stage: PageStage,
         val generation: Long,
         /**
-         * T934 R1.2: same-origin attach re-grants since this record was minted
+         *   same-origin attach re-grants since this record was minted
          * (the overlap inpaint riding the envelope's token). Read ONLY by
          * [releasePageStageLeaseIfUnattached]; the plain release keeps its
          * Phase-3 contract — any matching release removes the record.
@@ -70,7 +70,7 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     ): LeaseAcquisition = mutex.withLock {
         if (defunct) return@withLock LeaseAcquisition.Denied("store is defunct", null)
         val existing = pageLeases[pageKey]
-        // T917 D1 reader-session policy: a MANUAL request is the one
+        //   reader-session policy: a MANUAL request is the one
         // cross-origin preemption — it evicts an in-flight AUTO lease and takes
         // a fresh record + token. It is safe by the existing fencing: the
         // evicted AUTO holder's guarded writes fail closed on
@@ -89,7 +89,7 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
             )
         }
         if (existing != null && existing.origin == origin) {
-            // T934 R1.2: a same-origin re-acquire is a SIBLING ATTACH to the
+            //   a same-origin re-acquire is a SIBLING ATTACH to the
             // same slot (the overlap inpaint riding the envelope's token).
             // Count it so the envelope's attach-aware release can leave the
             // record — and every identity fenced on its token — intact for
@@ -147,7 +147,7 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     }
 
     /**
-     * T934 R1.2: releases the ENVELOPE's hold on its BATCH lease WITHOUT
+     *   releases the ENVELOPE's hold on its BATCH lease WITHOUT
      * invalidating a live sibling attach. Envelope completion used to plainly
      * release pages the overlap inpaint had re-attached to (same token): the
      * removal let the next acquire mint a fresh token and fail-close every
@@ -178,7 +178,7 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     }
 
     /**
-     * T934 track V (continuous overlap admission): undoes a same-origin
+     *  track V (continuous overlap admission): undoes a same-origin
      * SIBLING ATTACH made in error. The overlap scheduler re-validates its
      * grant AFTER the atomic acquire: when the granted token carries the
      * record's stage instead of the requested one, the acquire attached to a

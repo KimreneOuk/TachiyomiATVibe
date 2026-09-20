@@ -30,7 +30,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T934 R2a — write-time digests + typed adoption failures.
+ *  R2a — write-time digests + typed adoption failures.
  *
  * Pins the golden-standard resume model the Director accepted:
  *  - R2a.1: the per-page source SHA-256 is recorded DURABLY at first

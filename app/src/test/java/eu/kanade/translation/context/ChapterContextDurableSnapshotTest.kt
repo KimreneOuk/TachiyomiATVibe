@@ -27,12 +27,12 @@ import java.io.File
 import kotlin.system.measureNanoTime
 
 /**
- * T933 Increment 2 Test Suite: Durable Unified Context.
+ *  Increment 2 Test Suite: Durable Unified Context.
  * Verifies:
  * - Three identities (chapterContextRevision, requestContextFingerprint, reuseCompatibility)
  * - Schema 4 pointer bump in ChapterArtifactManifest and future-schema guard
  * - Pointer unpublished = feature inert
- * - Reviewer condition 1: Crash-after-ledger test / D9 requestContextFingerprint preservation
+ * - Reviewer condition 1: Crash-after-ledger test /  requestContextFingerprint preservation
  * - Reviewer condition 2: Predecessor-replacement fail-closed
  * - Reviewer condition 3: Memory budget and work measurement on 200-page high-distinctness fixture
  */

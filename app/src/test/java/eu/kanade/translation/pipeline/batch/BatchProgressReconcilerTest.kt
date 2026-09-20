@@ -47,7 +47,7 @@ class BatchProgressReconcilerTest {
 
     @Test
     fun `persistence rejection is a retryable error without durable tail failures`() {
-        // T924 field fix (Chapter 21): the old in-memory READY_WITH_WARNINGS
+        //  field fix (Chapter 21): the old in-memory READY_WITH_WARNINGS
         // classification rendered the chapter as completed with no Retry
         // affordance while the tail pages were never resolved.
         val result = BatchProgressReconciler.reconcile(

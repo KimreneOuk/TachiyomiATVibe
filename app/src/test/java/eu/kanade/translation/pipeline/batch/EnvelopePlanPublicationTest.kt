@@ -19,12 +19,12 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
 
 /**
- * T924-ST-11 / SC-20: the ONE-transaction envelope plan publication.
+ * 11 / SC-20: the ONE-transaction envelope plan publication.
  * Pins: plan sidecar + manifest pointer commit together; the SC-10
  * fingerprint is recomputed before any byte is written and a mismatch is
  * rejected; a byte-identical re-publication is idempotent (same
  * content-addressed name, same pointer); and a pointer without a valid
- * sidecar reads as NOT USABLE (T924-ST-30, never partially trusted).
+ * sidecar reads as NOT USABLE ( never partially trusted).
  */
 class EnvelopePlanPublicationTest {
 
@@ -128,7 +128,7 @@ class EnvelopePlanPublicationTest {
     }
 
     // ------------------------------------------------------------------
-    // T934 LI-x: the resume rebuild adopts durable checkpoints page by page
+    //  LI-x: the resume rebuild adopts durable checkpoints page by page
     // (each adoption republishing the manifest) and the >8-page open path's
     // background health verify republishes the VERIFIED manifest behind the
     // façade's back — so the caller's plan-publish snapshot is stale by

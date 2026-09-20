@@ -57,7 +57,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Native-lane admission runner: the workers' nested `withNativeLane` calls are
- * served by the pipeline's own `withNativeLane` through this seam (T909 phase 20).
+ * served by the pipeline's own `withNativeLane` through this seam ( phase 20).
  */
 interface NativeLaneRunner {
     suspend fun <T> run(
@@ -71,15 +71,15 @@ interface NativeLaneRunner {
 }
 
 /**
- * T909 Phase 20.5: the batch lane workers moved verbatim from
- * `TranslationPipeline.translateBatch` (T909 phase 20): `nativeWorker`,
+ *  Phase 20.5: the batch lane workers moved verbatim from
+ * `TranslationPipeline.translateBatch` ( phase 20): `nativeWorker`,
  * `translatorWorker`. The closure web became class state — every captured
  * registry/identity/frontier instance is injected here as the SAME instance
  * the batch shell holds; pipeline-provided collaborators (native lane,
  * OCR/inpaint/decode/persist helpers, abort) arrive as constructor lambdas
  * behind same-name private members.
  *
- * T924 zero-legacy (D2): the legacy AI-chunk engine (`translateChunkAi`,
+ *  zero-legacy: the legacy AI-chunk engine (`translateChunkAi`,
  * `completeChunklessPage`, the chunk-completion bridge) had no surviving
  * caller after the SequentialBatchCoordinator deletion — the PROFILE lane
  * translates through [ProfileEnvelopeExecutor] — and was removed.
@@ -304,7 +304,7 @@ internal class BatchLaneWorkers(
 
     // ---- TachiyomiAT Phase 5: consolidated sequential coordinator ----
     // The batch schedule is driven by the coordinator pass (one serialized
-    // native lane and one ordered translation lane; T924 zero-legacy D2
+    // native lane and one ordered translation lane;  zero-legacy
     // removed the SBC AI-chunk machinery). The pipeline supplies the adapter
     // implementations of [NativeLaneWorker] / [TranslatorLaneWorker] that
     // reuse the existing OCR/inpaint/persist/translate/render helpers above,
@@ -458,7 +458,7 @@ internal class BatchLaneWorkers(
             }
             producedDecoded = decoded
 
-            // T922 Phase 4: page queueing on the pipeline native lane. The
+            //  Phase 4: page queueing on the pipeline native lane. The
             // span settles when admission grants (first statement inside the
             // lane) and is re-settled (idempotently) on timeout/failure.
             val nativeQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
@@ -602,7 +602,7 @@ internal class BatchLaneWorkers(
                 return
             }
 
-            // T922 Phase 4: page queueing on the pipeline native lane for the
+            //  Phase 4: page queueing on the pipeline native lane for the
             // inpaint pass. The span settles on admission (first statement in
             // the lane) and is re-settled (idempotently) on timeout/failure.
             val inpaintQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
@@ -684,7 +684,7 @@ internal class BatchLaneWorkers(
             val cleaned = target.cleanedBitmap
             if (cleaned != null) {
                 val companionDir = ensureCompanionDir()
-                // T922 Phase 4: cleaned-image publication substage with typed
+                //  Phase 4: cleaned-image publication substage with typed
                 // outcome; settles even when the persist call throws.
                 val persistSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.CLEANED_PERSIST,
@@ -698,7 +698,7 @@ internal class BatchLaneWorkers(
                     // captured — the stale precondition was our own cache, not
                     // a foreign writer, and it rejected EVERY page
                     // deterministically (2026-09-16 bubble-cleaning failures).
-                    // A lease/generation change still rejects below (T917
+                    // A lease/generation change still rejects below (
                     // ownership fence) — the manual lane is never preempted.
                     batchWriteIdentities[pageKey]?.let { identity ->
                         val live = store.snapshot(pageKey)
@@ -731,7 +731,7 @@ internal class BatchLaneWorkers(
                     throw t
                 }
                 if (published == null) {
-                    // T925 coexistence: the precondition raced a concurrent
+                    //  coexistence: the precondition raced a concurrent
                     // writer (typically the reader's live translate-on-view
                     // lane committing blocks). ONE fresh-snapshot retry; a
                     // second rejection means the page is being rewritten
@@ -763,7 +763,7 @@ internal class BatchLaneWorkers(
                         stage = BatchDiagnosticStage.INPAINT,
                     )
                 }
-                // T924 no-render batch design: the batch never runs an in-pass
+                //  no-render batch design: the batch never runs an in-pass
                 // render stage — the reader draws the text overlay on demand
                 // from the committed blocks. A page that just reached
                 // inpaint-terminal with translated blocks is therefore
@@ -846,7 +846,7 @@ internal class BatchLaneWorkers(
 
     // The translator lane performs per-page translation (standard path) as a
     // SINGLE serialized lane so only one provider request is in flight at a
-    // time. T924 zero-legacy (D2): the legacy SBC AI-chunk machinery (streaming
+    // time.  zero-legacy: the legacy SBC AI-chunk machinery (streaming
     // chunk completion, admission/probe buffering) had no surviving caller and
     // was deleted — the PROFILE lane translates through ProfileEnvelopeExecutor.
     val translatorWorker = object : TranslatorLaneWorker {
@@ -893,7 +893,7 @@ internal class BatchLaneWorkers(
             }
             val dependencyReadyAfterNative = p.ocrStatus == StageStatus.READY ||
                 p.ocrStatus == StageStatus.TEXTLESS
-            // T917 Phase 6: the plan's PRIOR_PAGE_INCOMPLETE marker is a
+            //  Phase 6: the plan's PRIOR_PAGE_INCOMPLETE marker is a
             // batch-start snapshot; whether the predecessor is STILL incomplete
             // is a live question. On the ordered standard lane a predecessor
             // that has already reached a terminal translation outcome must not
@@ -910,10 +910,10 @@ internal class BatchLaneWorkers(
                     expectedBatchFingerprints.translation == null ||
                         p.translationFingerprint == expectedBatchFingerprints.translation
                     )
-            // T917 Phase 6: standard-lane twin of the AI gap check. The plan
+            //  Phase 6: standard-lane twin of the AI gap check. The plan
             // snapshot cannot see commits that happen while the pass runs —
             // the batch's own unblocked pages, or a manual tap that finished
-            // mid-pass (D1: manual output is authoritative and must never be
+            // mid-pass ( manual output is authoritative and must never be
             // re-paid) — so this check reads the LIVE store rather than the
             // possibly-stale registry snapshot, and is deliberately
             // origin/fingerprint-blind: plan-time REUSE evidence still governs
@@ -1031,7 +1031,7 @@ internal class BatchLaneWorkers(
                 // Standard (per-page) path: translate, validate, persist, render.
                 var succeeded = false
                 var failedOutcome: ChunkCompletionOutcome? = null
-                // T917 Phase 3 (D9, design §3.2): durable attempt entry BEFORE
+                //  Phase 3 ( design §3.2): durable attempt entry BEFORE
                 // the paid call; resolved on any completed call (success or
                 // typed provider failure). Write failure is fail-open.
                 runCatching {

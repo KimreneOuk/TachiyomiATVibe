@@ -18,11 +18,11 @@ import org.junit.jupiter.api.assertThrows
 import java.io.IOException
 
 /**
- * T924 wave-7c: the engine-backed analysis transport adapter. Pins the
+ *  wave-7c: the engine-backed analysis transport adapter. Pins the
  * identity triple sourced from the engine's own hooks (one spelling for
  * provenance AND Batch admission keys — wave-6 F-W6-4), the prompt framing
- * (T924-AP-01 system + user above the raw JSON envelope), the typed-failure
- * guarantee (T924-AP-08: a raw IO failure becomes NETWORK/PAUSE, typed
+ * ( system + user above the raw JSON envelope), the typed-failure
+ * guarantee ( a raw IO failure becomes NETWORK/PAUSE, typed
  * failures pass through, cancellation is never swallowed), and the
  * construction fence for engines without a raw completion.
  */
@@ -66,7 +66,7 @@ class AnalysisEngineTransportTest {
         // so analyzer provenance and Batch admission keys share ONE identity.
         transport.providerId shouldBe "lm_studio"
         transport.modelId shouldBe "qwen3-8b"
-        // T924-FP-04: the signature is the opaque one-way value, never a raw key.
+        // 04: the signature is the opaque one-way value, never a raw key.
         transport.credentialSignature shouldBe "0123456789abcdef"
     }
 

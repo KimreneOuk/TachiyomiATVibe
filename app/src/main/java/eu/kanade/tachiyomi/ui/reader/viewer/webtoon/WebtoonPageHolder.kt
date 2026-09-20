@@ -100,7 +100,7 @@ class WebtoonPageHolder(
     private var autoFeedbackState: ReaderPageFeedbackState? = null
     private var feedbackAttemptActive = false
 
-    // TachiyomiAT T917 P5: the pipeline's single bounded native stall state,
+    // TachiyomiAT  P5: the pipeline's single bounded native stall state,
     // re-synced into the chip join under the bind fence (never across a page
     // rebind — the join itself is identity-fenced by chapter+pageKey).
     private var nativeStallState: NativeStallState? = null
@@ -185,7 +185,7 @@ class WebtoonPageHolder(
         } else if (!isBeingTranslated) {
             feedbackAttemptActive = false
         }
-        // TachiyomiAT T917 P5: the scheduler's typed outcome for THIS page
+        // TachiyomiAT  P5: the scheduler's typed outcome for THIS page
         // identity, wrapped verbatim by the pure TranslationUiTruth mapper.
         // The join is identity-fenced by chapter+pageKey, so a late outcome
         // from a prior page/chapter is dropped; a Completed outcome returns
@@ -270,7 +270,7 @@ class WebtoonPageHolder(
                 }
             }
             .launchIn(holderScope)
-        // TachiyomiAT T917 P5: the D8 stall flow re-syncs the chip so the
+        // TachiyomiAT  P5: the  stall flow re-syncs the chip so the
         // stalled page's truth appears without waiting for a store emission.
         // Fenced by the bind fence so a stale stall cannot cross a rebind.
         stallJob = viewer.activity.viewModel.nativeStallState

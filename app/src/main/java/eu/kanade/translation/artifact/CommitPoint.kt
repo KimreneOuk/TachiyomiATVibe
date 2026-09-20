@@ -1,7 +1,7 @@
 package eu.kanade.translation.artifact
 
 /**
- * T930 Slice A1: Commit-point contract.
+ *  Slice A1: Commit-point contract.
  *
  * Defines the authoritative set of store operations that require durable manifest
  * publication. Under group commit (Slice B), mutations occurring outside these points

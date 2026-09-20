@@ -11,11 +11,11 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 /**
- * T924 wave-2 review GAP-3 / F4 (BINDING): the request-builder pin. The wire
+ *  wave-2 review GAP-3 / F4 (BINDING): the request-builder pin. The wire
  * `pages` array MUST reproduce the contributing-set order exactly — CORE
  * pages first, CONTEXT overlap pages after — because the persisted
- * `contributingCorpusFingerprint` (T924-FP-03) hashes the same set in that
- * order with `naturalOrderProven=true`, and the T924-AP-03 request payload is
+ * `contributingCorpusFingerprint`  hashes the same set in that
+ * order with `naturalOrderProven=true`, and the  request payload is
  * the convention the whole pipeline references.
  */
 class AnalysisRequestOrderTest {
@@ -86,7 +86,7 @@ class AnalysisRequestOrderTest {
         pages.map { it.jsonObject["role"]!!.jsonPrimitive.content } shouldBe
             listOf("CORE", "CORE", "CORE", "CONTEXT")
 
-        // Envelope identity rides along (T924-AP-03).
+        // Envelope identity rides along.
         val envelope = parsed["envelope"]!!.jsonObject
         envelope["protocol"]!!.jsonPrimitive.content shouldBe AnalysisRequestBuilder.PROTOCOL
         envelope["schemaVersion"]!!.jsonPrimitive.content shouldBe "1"

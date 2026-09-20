@@ -74,7 +74,7 @@ class UniFileChapterDocumentIo(
     private val dirCache = java.util.concurrent.ConcurrentHashMap<String, UniFile>()
 
     /**
-     * T925-perf: per-directory name→document index. A SAF [UniFile.findFile]
+     * perf: per-directory name→document index. A SAF [UniFile.findFile]
      * scan walks the directory children through ONE binder round-trip per
      * entry — on the artifact tree (hundreds of sidecars in `generations/`,
      * one subdirectory per page) that made every sidecar read a multi-second
@@ -297,8 +297,8 @@ class UniFileChapterDocumentIo(
 }
 
 /**
- * T924-SC-06: the single canonical artifact Json configuration. Every durable
- * artifact document — manifests, sidecars, and the T924 versioned DTOs —
+ * 06: the single canonical artifact Json configuration. Every durable
+ * artifact document — manifests, sidecars, and the  versioned DTOs —
  * serializes through this shared instance (compact UTF-8 output,
  * declaration-order fields, defaults encoded); creating bespoke `Json`
  * instances for durable documents is forbidden.
@@ -333,7 +333,7 @@ class AtomicChapterDocuments(
     fun exists(name: String): Boolean = io.exists(name)
 
     /**
-     * T934: the whole write→validate→rotate→rename sequence runs under the
+     *  the whole write→validate→rotate→rename sequence runs under the
      * PROCESS-WIDE per-document-name lock ([lockFor] is companion state). The
      * temp name is deterministic ([tempNameFor]), so two in-process writers
      * targeting the same document from DIFFERENT store/documents instances
@@ -363,7 +363,7 @@ class AtomicChapterDocuments(
         }
         val written = io.read(tempName)
         val matches = if (io.isFileBacked() && GroupCommitConfiguration.enabled) {
-            // T930 Slice B3: read-back elision on File-backed storage (parse-validate only)
+            //  Slice B3: read-back elision on File-backed storage (parse-validate only)
             written != null && validate(written)
         } else {
             written != null && written.contentEquals(bytes) && validate(written)
@@ -497,7 +497,7 @@ class AtomicChapterDocuments(
         fun corruptNameFor(name: String): String = "$name.corrupt"
 
         /**
-         * T934: the process-wide per-document publication locks. Companion
+         *  the process-wide per-document publication locks. Companion
          * state ON PURPOSE: the racing writer may hold a DIFFERENT
          * [AtomicChapterDocuments] instance (a second store instance over the
          * same chapter), so an instance-level map would not serialize them.

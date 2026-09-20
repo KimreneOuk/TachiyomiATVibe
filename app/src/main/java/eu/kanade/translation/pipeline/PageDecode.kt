@@ -24,7 +24,7 @@ import java.security.MessageDigest
 
 /**
  * Page bitmap decode + source-fingerprint helpers moved from
- * `TranslationPipeline` (T909 Phase 1). Cross-helper memory reclaim and
+ * `TranslationPipeline` ( Phase 1). Cross-helper memory reclaim and
  * decode logging are delegated to [MemoryGovernance]; the pipeline's engine
  * read is injected as a getter.
  */

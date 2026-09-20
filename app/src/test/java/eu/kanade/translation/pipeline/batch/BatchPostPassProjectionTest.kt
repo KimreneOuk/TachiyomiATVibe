@@ -8,14 +8,14 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T924 LI-1: the flagged-lane COMPLETED completion projection
+ *   the flagged-lane COMPLETED completion projection
  * ([BatchProgressReconciler.reconcileFlaggedCompleted]). Both surviving
  * pipelines commit translations WITHOUT an in-pass render — pages end
  * translation-terminal with `renderStatus == PENDING` and no cleaned image —
  * so the legacy done-predicate (`hasRenderedResult`) would project every
  * healthy COMPLETED chapter as fully stranded → chapter ERROR.
  *
- * T924 zero-legacy (D1): the former pure selector
+ *  zero-legacy: the former pure selector
  * `BatchChapterTranslator.postPassReconciliation` was collapsed — dispatch is
  * always a flagged lane now, so the shell's single post-pass site calls
  * [BatchProgressReconciler.reconcileFlaggedCompleted] directly and the
@@ -107,7 +107,7 @@ class BatchPostPassProjectionTest {
 
     @Test
     fun `the legacy projection still strands flagged-shaped unrendered pages (bug anchor)`() {
-        // Characterizes the LI-1 bug the flagged projection fixes: feeding the
+        // Characterizes the  bug the flagged projection fixes: feeding the
         // COMPLETED page shapes through the legacy reconcile reports ERROR
         // with every translatable page stranded — which is why the shell's
         // post-pass site must never use it for a COMPLETED run.

@@ -3,7 +3,7 @@ package eu.kanade.translation.rendering
 import eu.kanade.translation.model.TranslationBlock
 
 /**
- * TachiyomiAT T920 3.1: content identity of one overlay text-layout planning
+ * TachiyomiAT  3.1: content identity of one overlay text-layout planning
  * request. Blocks participate by VALUE (data-class equals over their current
  * field content), so a rebind carrying equal block content in a fresh list
  * instance still hits, while any content/size/page-dimension change misses.
@@ -21,13 +21,13 @@ internal data class TextLayoutCacheKey(
 )
 
 /**
- * TachiyomiAT T920 3.1: bounded LRU cache of PREPARED overlay layouts, keyed by
+ * TachiyomiAT  3.1: bounded LRU cache of PREPARED overlay layouts, keyed by
  * [TextLayoutCacheKey] (blocks content + page dimensions). A hit lets
  * [eu.kanade.tachiyomi.ui.reader.viewer.TranslationOverlayView.bind] apply
  * layouts synchronously with zero planner work; the planner itself is never
  * invoked on the calling thread.
  *
- * T924 WP9 (gate 7.6): the cache holds HYDRATED/prepared draw objects only —
+ *  WP9 (gate 7.6): the cache holds HYDRATED/prepared draw objects only —
  * never persisted plan DTO bytes or documents — whether the value was produced
  * by the async planner or by persisted-layout hydration (a hydrated hit keeps
  * the planner-invocation counter at 0 across LRU re-binds and process-restart

@@ -3,7 +3,7 @@ package eu.kanade.translation.artifact
 import kotlinx.serialization.Serializable
 
 /**
- * T924 Stage 1 (schemas contract §1.6/§1.7): the versioned, immutable
+ *  Stage 1 (schemas contract §1.6/§1.7): the versioned, immutable
  * per-page persisted draw-plan DTO and the separately invalidatable
  * color/style sub-result (WP8 prototype data; fingerprint functions are Phase
  * 2). These DTOs deliberately do NOT serialize `BlockLayout`,
@@ -12,7 +12,7 @@ import kotlinx.serialization.Serializable
  * stay in source-image space.
  *
  * Serialized only through the shared [ArtifactDocumentJson] instance
- * (T924-SC-06).
+ *
  */
 
 /** Source-image-space axis-aligned float rectangle (canonical JSON shape). */
@@ -114,13 +114,13 @@ data class DrawPlanBlock(
 
 /**
  * The per-page persisted layout draw plan (schemas contract §1.6). Field
- * declaration order is the canonical byte order (T924-SC-06).
+ * declaration order is the canonical byte order.
  */
 @Serializable
 data class PageLayoutDrawPlan(
     val schemaVersion: Int = SCHEMA_VERSION,
     val kind: String = KIND,
-    /** Planner algorithm version; fingerprint input (T924-FP-07). */
+    /** Planner algorithm version; fingerprint input. */
     val layoutPlannerVersion: Int,
     val fontIdentity: DrawPlanFontIdentity,
     /** Platform text-shaping compatibility value (final-target-migration §1.2). */
@@ -136,7 +136,7 @@ data class PageLayoutDrawPlan(
     val strokeColorPolicyVersion: Int,
     val blocks: List<DrawPlanBlock>,
 ) {
-    /** T924-SC-01/SC-02 semantic validation; null when the document is usable. */
+    /** 01/SC-02 semantic validation; null when the document is usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"
@@ -162,7 +162,7 @@ data class PageLayoutDrawPlan(
         const val SCHEMA_VERSION = 1
         const val KIND = "PAGE_LAYOUT_DRAW_PLAN"
 
-        /** T924-SC-02 schema bound (T, tunable). */
+        /** 02 schema bound (T, tunable). */
         const val MAX_BLOCKS = 256
     }
 }
@@ -217,7 +217,7 @@ data class ColorStylePreparation(
     val pageHeight: Float,
     val blocks: List<ColorStyleEntry>,
 ) {
-    /** T924-SC-01/SC-02 semantic validation; null when the document is usable. */
+    /** 01/SC-02 semantic validation; null when the document is usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"
@@ -244,7 +244,7 @@ data class ColorStylePreparation(
         const val SCHEMA_VERSION = 1
         const val KIND = "COLOR_STYLE_PREPARATION"
 
-        /** T924-SC-02 schema bound (T, tunable). */
+        /** 02 schema bound (T, tunable). */
         const val MAX_BLOCKS = 256
     }
 }

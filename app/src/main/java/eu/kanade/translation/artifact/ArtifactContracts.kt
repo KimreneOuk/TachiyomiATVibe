@@ -76,7 +76,7 @@ enum class FailureCategory {
     PROTOCOL,
 
     /**
-     * T917 Phase 3 (D9): the provider call never completed because the process
+     *  Phase 3: the provider call never completed because the process
      * died mid-call — repeatedly, per the attempt-ledger cap. NOT a provider
      * fault and never auto-retryable: the user must explicitly force a retry.
      */
@@ -203,7 +203,7 @@ data class DurableFailureMetadata(
     /** Stable block ids still missing from a partial envelope candidate. */
     val missingBlockIds: Set<String> = emptySet(),
     /**
-     * T934 protocol parking: per omitted block id, the SOURCE text char
+     *  protocol parking: per omitted block id, the SOURCE text char
      * length at plan time. Diagnosis fingerprint only — never the text
      * itself — so a parked page's omitted blocks can be told apart (e.g.
      * one oversized block vs many tiny ones) without leaking content.

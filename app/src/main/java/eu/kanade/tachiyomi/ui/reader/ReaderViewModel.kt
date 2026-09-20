@@ -186,7 +186,7 @@ class ReaderViewModel @JvmOverloads constructor(
             )
 
     /**
-     * T917 P5 (spec §0.2.2, D8): the pipeline's native stall state. Consumed
+     *  P5 (spec §0.2.2, ): the pipeline's native stall state. Consumed
      * by the page holders so the chip can reflect the stalled pageKey through
      * the shared truth mapper. Pass-through of the manager's single bounded
      * [NativeStallState] StateFlow — no new buffering, no polling.
@@ -195,7 +195,7 @@ class ReaderViewModel @JvmOverloads constructor(
         get() = translationManager.nativeStall
 
     /**
-     * T917 P5 (spec §0.2.2, §6.2.8): read-only typed outcome of the last
+     *  P5 (spec §0.2.2, §6.2.8): read-only typed outcome of the last
      * completed manual single-page intent. The (chapterId, pageKey) pair IS
      * the identity fence: an outcome recorded for any other page or chapter is
      * never returned, so the page-holder chip join cannot bleed results across
@@ -814,7 +814,7 @@ class ReaderViewModel @JvmOverloads constructor(
         translationStoreJob?.cancel()
         translationBatchProgressJob?.cancel()
         translationStateJob?.cancel()
-        // T924 Stage 7 (D3): drop the chapter hydration source with the store
+        //  Stage 7: drop the chapter hydration source with the store
         // — without it the overlay keeps the byte-identical planner fallback.
         PersistedLayoutReaderBridge.installChapterSource(null)
         currentTranslationStore = null
@@ -919,7 +919,7 @@ class ReaderViewModel @JvmOverloads constructor(
             chapterList.getOrNull(chapterPos + 1),
         )
 
-        // T912 ANR fix: resolve the chapter translation status BEFORE the
+        //  ANR fix: resolve the chapter translation status BEFORE the
         // withUIContext block. The query falls through to the durable store
         // over SAF/UniFile (O(pages) FUSE/binder round-trips — 5-9s on a
         // 68-page translated chapter) and must never execute on Main. All

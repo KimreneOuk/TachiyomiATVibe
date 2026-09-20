@@ -199,7 +199,7 @@ class ChapterContextService(
 
         fun pairLineCount(): Int = pairLines.lineSequence().count { it.isNotBlank() }
 
-        // Trimming under budget constraint follows T933 reverse order:
+        // Trimming under budget constraint follows  reverse order:
         // 1. Scene / style dropped first (includeScenes = false)
         if (currentContextTokens() > maxBudget && includeScenes) {
             includeScenes = false

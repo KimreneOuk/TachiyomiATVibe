@@ -13,7 +13,7 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.MaskGeometry
 
 /**
- * T924 WP8 (schemas contract §1.6): pure, additive projection between the
+ *  WP8 (schemas contract §1.6): pure, additive projection between the
  * runtime layout result ([PageLayoutPlan] / [BlockLayout] /
  * [PositionedLine]) and the landed durable DTO
  * [PageLayoutDrawPlan]. `BlockLayout` itself is deliberately NOT serializable
@@ -130,7 +130,7 @@ object LayoutDrawPlanProjection {
      * resolves its input by `inputIndex` first, then by `stableBlockId`.
      * Plan blocks with no resolvable input are skipped — the caller treats a
      * lossy rehydration as an invalid plan and falls back to the async
-     * planner (T924-FF-02b).
+     * planner.
      *
      * `maskGeometryResolver` (WP9) rebuilds [MaskGeometry] from the page's OCR
      * snapshot for a durable ref; without it hydrated layouts keep
@@ -157,7 +157,7 @@ object LayoutDrawPlanProjection {
         if (planBlock.stableBlockId.isEmpty()) return blocks.getOrNull(planBlock.inputIndex)
         // Index-validated id match first (duplicate-id safe), then the first id
         // match anywhere; an unmatched id means the inputs changed — skip and
-        // let the caller fall back (never mis-draw, T924-FF-02b).
+        // let the caller fall back (never mis-draw, ).
         val byIndex = blocks.getOrNull(planBlock.inputIndex)
         if (byIndex?.blockId == planBlock.stableBlockId) return byIndex
         return blocks.firstOrNull { it.blockId == planBlock.stableBlockId }
@@ -215,13 +215,13 @@ object LayoutDrawPlanProjection {
     }
 
     /**
-     * Canonical serialization (T924-SC-06): the shared artifact Json instance
+     * Canonical serialization: the shared artifact Json instance
      * only — never a bespoke configuration.
      */
     fun encodeToCanonicalJson(plan: PageLayoutDrawPlan): String =
         ArtifactDocumentJson.encodeToString(PageLayoutDrawPlan.serializer(), plan)
 
-    /** Canonical decode through [ArtifactDocumentJson] (T924-SC-06). */
+    /** Canonical decode through [ArtifactDocumentJson]. */
     fun decodeFromCanonicalJson(json: String): PageLayoutDrawPlan =
         ArtifactDocumentJson.decodeFromString(PageLayoutDrawPlan.serializer(), json)
 

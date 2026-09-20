@@ -11,7 +11,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
 /**
- * T911 slice 1: full chapter-list rebuilds reconstruct every
+ *  slice 1: full chapter-list rebuilds reconstruct every
  * [ChapterList.Item] without progress, and the per-chapter collector can be
  * cancelled (terminal) or suppressed (unchanged canonical snapshot) at exactly
  * that moment. The screen-model registry must retain the last live/terminal

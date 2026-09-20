@@ -16,7 +16,7 @@ import java.nio.FloatBuffer
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T922 plan §6.1: JVM policy tests for the bubble segmenter's one-shot
+ *  plan §6.1: JVM policy tests for the bubble segmenter's one-shot
  * accelerated→CPU runtime recovery and its CPU-primary initialization.
  *
  * Uses the [OnnxBubbleSegmenter.SessionFactory] seam injected through the
@@ -126,7 +126,7 @@ class BubbleSegmenterRecoveryPolicyTest {
         factory.requests[1].useAccelerator shouldBe false
         factory.requests[1].useXnnpack shouldBe false
         segmenter.executionProviderLabel shouldBe "cpu"
-        // T922 Phase 5 (plan §3.3): QNN graph execute error 1100 is now
+        //  Phase 5 (plan §3.3): QNN graph execute error 1100 is now
         // classified as a hard accelerated-route EXECUTION failure BEFORE the
         // SSR heuristic — even though OrtException's ORT_ENGINE_ERROR enum
         // name leaks "ENGINE_ERROR" into the message text. The model is

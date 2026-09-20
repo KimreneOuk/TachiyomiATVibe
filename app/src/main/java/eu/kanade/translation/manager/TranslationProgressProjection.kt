@@ -31,11 +31,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withContext
 
-/** T934 U.1: minimum interval between durable run-record probes per chapter flow. */
+/**  U.1: minimum interval between durable run-record probes per chapter flow. */
 private const val REBUILD_PROBE_MIN_INTERVAL_MS = 500L
 
 /**
- * T934 U.1: pure rebuild/restore truth derived from the durable run record.
+ *  U.1: pure rebuild/restore truth derived from the durable run record.
  *
  * The resume-rebuild window is the run record's preflight preamble:
  *
@@ -74,7 +74,7 @@ internal fun rebuildTruthFromRunRecord(
                 totalPages = total,
             )
         }
-        // T934 LI-4: the envelope plan-build window. The run record parks in
+        //   the envelope plan-build window. The run record parks in
         // ENVELOPE_PLAN while the coordinator rebuilds the dispatch work (the
         // resume hydration loop) — without a branch this window projected null
         // and the sheet froze on a stale numeric hero. REBUILDING (no rendered
@@ -89,7 +89,7 @@ internal fun rebuildTruthFromRunRecord(
 }
 
 /**
- * T934 U.1: stamps the run-record rebuild truth onto a snapshot, but ONLY
+ *  U.1: stamps the run-record rebuild truth onto a snapshot, but ONLY
  * inside the live FIRST_PASS window (a TRANSLATING chapter whose phase is
  * FIRST_PASS or already a rebuild phase). Terminal snapshots, queued
  * chapters, and pauses are never restamped, so the rebuild phase can never
@@ -113,7 +113,7 @@ internal fun TranslationProgressSnapshot.withRunRecordTruth(
 }
 
 /**
- * T911 slice 2: the chapter's 1-based position among the outstanding
+ *  slice 2: the chapter's 1-based position among the outstanding
  * translation-queue entries (QUEUE/TRANSLATING), and the total. Null when the
  * chapter is not part of the outstanding work. Pure so the projection and its
  * test agree on what "2nd of 3" means.
@@ -132,7 +132,7 @@ internal fun translationQueuePosition(
 }
 
 /**
- * T911 slice 3: whether a durable artifact status is a reconstructible
+ *  slice 3: whether a durable artifact status is a reconstructible
  * terminal outcome (completed / warnings / failed, or a durable pause with
  * explicit resume detail). Live-looking states (queue/translating) are never
  * reconstructed — a crash mid-run must not look like running work.
@@ -162,7 +162,7 @@ internal class TranslationProgressProjection(
     private val pendingTranslationRequestsProvider: () -> StateFlow<Map<Long, TranslationRequestState>>,
     private val pipelineProvider: () -> TranslationPipeline,
     private val getQueuedTranslationOrNull: (Long) -> Translation?,
-    // T912 ANR fix: suspend — durable resolution performs SAF/FUSE I/O and
+    //  ANR fix: suspend — durable resolution performs SAF/FUSE I/O and
     // must never be synchronously reachable from the main thread.
     private val persistedChapterStatus: suspend (
         chapterId: Long?,
@@ -181,7 +181,7 @@ internal class TranslationProgressProjection(
     ) -> ChapterTranslationStore?,
     private val observeActiveDisplayStore: (Long) -> StateFlow<Map<String, PageTranslation>>?,
     /**
-     * T911 slice 3: read-through terminal reconstruction from the durable
+     *  slice 3: read-through terminal reconstruction from the durable
      * store/artifacts, used when the bounded registry misses (process death /
      * eviction) and no queue owner exists. Null when nothing durable is
      * reconstructible. Read-only: never creates a store, never caches.
@@ -205,7 +205,7 @@ internal class TranslationProgressProjection(
     ): ChapterTranslationStore? =
         openOrCreateStoreSuspend(chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
 
-    // T912 ANR fix: suspend. Priority order and returned states are unchanged
+    //  ANR fix: suspend. Priority order and returned states are unchanged
     // (queued translation → active-store display → durable store →
     // NOT_TRANSLATED); only the threading changed. In-memory steps (queue
     // check, active-store shortcut) stay synchronous inside the suspend body.
@@ -319,7 +319,7 @@ internal class TranslationProgressProjection(
                     flowOf(terminal)
                 } else {
                     val queued = getQueuedTranslationOrNull(chapterId)
-                    // T924 restart-retry fix: after a restart there is no queue
+                    //  restart-retry fix: after a restart there is no queue
                     // entry and no live tracker, so the fallback used to hard-
                     // code NOT_TRANSLATED — hiding a durably FAILED chapter's
                     // terminal state from the sheet (and its Retry affordance).
@@ -356,7 +356,7 @@ internal class TranslationProgressProjection(
                         }
                     } else if (store == null) {
                         flow {
-                            // T911 slice 3: registry miss and no queue owner —
+                            //  slice 3: registry miss and no queue owner —
                             // reconstruct a completed/failed chapter's terminal
                             // detail from the durable store/artifacts so
                             // re-entry and eviction keep truthful totals and
@@ -384,13 +384,13 @@ internal class TranslationProgressProjection(
                 .projectQueueStatus(queueStatus)
                 .withQueuePosition(chapterId)
         }
-        // T934 U.1: live snapshots are stamped with the durable run record's
+        //  U.1: live snapshots are stamped with the durable run record's
         // rebuild/restore truth (bounded probe; see withRunRecordRebuildTruth).
         .withRunRecordRebuildTruth(chapterId)
         .distinctUntilChanged()
 
     /**
-     * T911 slice 2: attach the chapter's truthful position among the
+     *  slice 2: attach the chapter's truthful position among the
      * outstanding translation-queue entries so a later chapter's drawer can
      * say "Queued (2nd of 3)" instead of implying it can resume now.
      */
@@ -403,14 +403,14 @@ internal class TranslationProgressProjection(
     }
 
     /**
-     * T934 U.1: augments live snapshots with the active run record's
+     *  U.1: augments live snapshots with the active run record's
      * rebuild/restore truth. Probes are bounded: they run only while the
      * snapshot shows a live FIRST_PASS/rebuild window, re-arm immediately
      * when such a window (re)starts so a new run never renders a previous
      * run's truth, and otherwise run at most once per
      * [REBUILD_PROBE_MIN_INTERVAL_MS]. The record read is small sidecar
      * I/O and is confined to [Dispatchers.IO] — the projection itself stays
-     * pure for the collector's context (T912 ANR discipline).
+     * pure for the collector's context ( ANR discipline).
      */
     private fun Flow<TranslationProgressSnapshot>.withRunRecordRebuildTruth(
         chapterId: Long,

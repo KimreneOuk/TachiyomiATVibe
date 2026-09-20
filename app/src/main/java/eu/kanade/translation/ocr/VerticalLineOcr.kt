@@ -13,7 +13,7 @@ import tachiyomi.core.common.util.system.logcat
 
 /**
  * Vertical / multi-line OCR machinery moved verbatim from
- * `RoiPageRecognitionEngine` (T909 Phase 5a). Pure over
+ * `RoiPageRecognitionEngine` ( Phase 5a). Pure over
  * `(RoiOcrEngine, Bitmap, flags, language)` inputs; the engine's `closed`
  * cancellation checkpoint is injected as [isClosed] getters.
  */

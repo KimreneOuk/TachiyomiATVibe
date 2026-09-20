@@ -11,7 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * T917 Phase 1 deterministic interleaving barrier (design note §2).
+ *  Phase 1 deterministic interleaving barrier (design note §2).
  *
  * Gates are [CompletableDeferred]s hosted INSIDE the fakes (fake decode,
  * fake provider transport, fake render reload), so every wait/park in the

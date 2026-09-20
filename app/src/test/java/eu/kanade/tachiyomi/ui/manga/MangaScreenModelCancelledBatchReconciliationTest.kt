@@ -74,7 +74,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
- * T918 — batch retry affordance, state-reconciliation leg.
+ * batch retry affordance, state-reconciliation leg.
  *
  * RED defect named here: "cancelled batch strands chapter in translating state
  * with no restart affordance". When a batch is cancelled and its queue entry is
@@ -265,7 +265,7 @@ class MangaScreenModelCancelledBatchReconciliationTest {
             withTimeout(AWAIT_TIMEOUT_MS) {
                 model.state.first { it is MangaScreenModel.State.Success }
             }
-            // T922 flake stabilization: the status emissions this class drives
+            //  flake stabilization: the status emissions this class drives
             // ride a no-replay MutableSharedFlow, and the screen model
             // subscribes to it asynchronously (init launch on Dispatchers.IO).
             // An emission fired before that subscription is live is silently
@@ -289,7 +289,7 @@ class MangaScreenModelCancelledBatchReconciliationTest {
             // uncaught exception in whichever test class runs next. Destroying
             // the lifecycle and JOINING the cancelled scope while the delegate
             // is still installed pins the unwind inside this teardown.
-            // T934: the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
+            //  the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
             model.screenModelScope.cancel()
             runBlocking {

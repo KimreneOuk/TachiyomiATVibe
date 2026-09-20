@@ -691,7 +691,7 @@ class ChapterArtifactEngineTest {
             start.countDown()
 
             val outcomes = futures.map { it.get(5, TimeUnit.SECONDS) }
-            // T934: the second opener's stale-CAS rejection retries once
+            //  the second opener's stale-CAS rejection retries once
             // against the fresh manifest — where the first opener's committed
             // candidate has already advanced the page version. That is
             // GENUINE drift, so the retry rejects with the real drift reason,
@@ -744,7 +744,7 @@ class ChapterArtifactEngineTest {
     }
 
     // ------------------------------------------------------------------
-    // T924 Stage 1 gate 1.1 (T924-SC-04): a pre-change schemaVersion-2
+    //  Stage 1 gate 1.1: a pre-change schemaVersion-2
     // manifest loads cleanly under the new code (additive pointer fields
     // defaulted) and survives a write cycle rewritten as schemaVersion 3
     // with the old data intact.

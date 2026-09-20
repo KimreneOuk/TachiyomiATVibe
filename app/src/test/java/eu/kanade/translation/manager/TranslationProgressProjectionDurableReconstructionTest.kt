@@ -26,7 +26,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T911 slice 3 (contract item 4): when the bounded tracker registry misses
+ *  slice 3 (contract item 4): when the bounded tracker registry misses
  * (process death / 20-entry eviction) and no queue owner exists, the
  * projection reconstructs a completed/failed chapter's terminal detail from
  * the durable store/artifacts — read-through only: no store is created and no
@@ -204,7 +204,7 @@ class TranslationProgressProjectionDurableReconstructionTest {
 
     @Test
     fun `durable state hint restores the terminal error projection after a restart`() = runTest {
-        // T924 restart-retry defect: after a restart the store is active but
+        //  restart-retry defect: after a restart the store is active but
         // no queue entry or tracker exists — the state fallback used to hard-
         // code NOT_TRANSLATED, hiding the terminal ERROR (and its Retry
         // affordance) from the progress sheet.

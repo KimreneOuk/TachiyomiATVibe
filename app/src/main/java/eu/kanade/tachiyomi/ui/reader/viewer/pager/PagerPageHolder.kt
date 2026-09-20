@@ -66,7 +66,7 @@ class PagerPageHolder(
     private var autoFeedbackState: ReaderPageFeedbackState? = null
     private var feedbackAttemptActive = false
 
-    // TachiyomiAT T917 P5: the pipeline's single bounded native stall state.
+    // TachiyomiAT  P5: the pipeline's single bounded native stall state.
     // Consumed by the chip join so the stalled pageKey renders stall truth
     // even when no durable store emission accompanies the stall.
     private var nativeStallState: NativeStallState? = null
@@ -215,7 +215,7 @@ class PagerPageHolder(
                 syncTranslationFeedback()
             }
             .launchIn(holderScope)
-        // TachiyomiAT T917 P5: the D8 stall flow re-syncs the chip so the
+        // TachiyomiAT  P5: the  stall flow re-syncs the chip so the
         // stalled page's truth appears without waiting for a store emission.
         viewer.activity.viewModel.nativeStallState
             .onEach { stall ->
@@ -251,7 +251,7 @@ class PagerPageHolder(
         } else if (!isBeingTranslated) {
             feedbackAttemptActive = false
         }
-        // TachiyomiAT T917 P5: the scheduler's typed outcome for THIS page
+        // TachiyomiAT  P5: the scheduler's typed outcome for THIS page
         // identity, wrapped verbatim by the pure TranslationUiTruth mapper.
         // The join is identity-fenced by chapter+pageKey, so a late outcome
         // from a prior page/chapter is dropped; a Completed outcome returns

@@ -35,7 +35,7 @@ sealed interface ReaderPageFeedbackState {
     data class Failed(val retryable: Boolean) : ReaderPageFeedbackState
 
     /**
-     * T917 P5 (spec §0.2.2, §6.2.8): a shared pure-truth projection from
+     *  P5 (spec §0.2.2, §6.2.8): a shared pure-truth projection from
      * [TranslationUiTruth.forManualOutcome]. The record is produced by the
      * mapper — the reader renders its label/content description verbatim and
      * never reinterprets precedence or wording.
@@ -104,13 +104,13 @@ internal fun selectReaderPageFeedback(
 }
 
 /**
- * T917 P5 (spec §0.2.2, §6.2.8, §6.2.10): identity-fenced join between the
+ *  P5 (spec §0.2.2, §6.2.8, §6.2.10): identity-fenced join between the
  * scheduler's typed manual single-page outcome and THIS holder's chip truth.
  *
  * Identity fencing lives in the lookup: [lookup] must be the scheduler's
  * read-only accessor keyed by the holder's own (chapterId, pageKey), so an
  * outcome recorded for any other page or chapter is never visible here. The
- * D8 stall flow ([nativeStall]) is fenced by the same pageKey comparison and
+ *  stall flow ([nativeStall]) is fenced by the same pageKey comparison and
  * only fills the stalled page when no scheduler outcome exists yet.
  *
  * All copy and precedence decisions stay in the pure
@@ -134,7 +134,7 @@ internal fun readerManualOutcomeFeedback(
     // Identity fence: the accessor is keyed by THIS page's own identity, so a
     // late outcome for a foreign page/chapter is never visible here.
     val outcome = lookup(chapterId, pageKey) ?: run {
-        // D8 stall consumption: the stall flow reflects the stalled pageKey;
+        //  stall consumption: the stall flow reflects the stalled pageKey;
         // fenced by the same key comparison it can only fill THIS page, and
         // only while no scheduler outcome exists yet.
         val stalled = nativeStall?.takeIf { it.pageKey == pageKey } ?: return null
@@ -145,7 +145,7 @@ internal fun readerManualOutcomeFeedback(
     val truth = TranslationUiTruth.forManualOutcome(
         outcome = outcome,
         durable = durable?.toPageDisplayProjection(),
-        // The D9 repeated-interruption fact rides with the durable page.
+        // The  repeated-interruption fact rides with the durable page.
         exhausted = durable?.hasExhaustedRetries == true,
     ) ?: return null
     return ReaderPageFeedbackState.ManualTruth(truth)
@@ -173,7 +173,7 @@ class ReaderTranslationFeedbackCoalescer(
             return null
         }
 
-        // T917 P5: a typed manual outcome is a scheduler fact, not a stage —
+        //  P5: a typed manual outcome is a scheduler fact, not a stage —
         // it never participates in stage ranking and it supersedes an earlier
         // displayed truth (the map only ever holds the LATEST outcome for the
         // identity). A non-progress truth closes the attempt against stale
@@ -315,7 +315,7 @@ fun ReaderPageFeedbackState.localizedLabel(context: Context): String = when (thi
     ReaderPageFeedbackState.Translated -> context.stringResource(ATMR.strings.reader_auto_stage_translated)
     is ReaderPageFeedbackState.Deferred -> context.stringResource(reason.localizedResource)
     is ReaderPageFeedbackState.Failed -> context.stringResource(ATMR.strings.reader_auto_stage_failed)
-    // T917 P5: the shared mapper owns the copy; render its English source
+    //  P5: the shared mapper owns the copy; render its English source
     // label verbatim (the accepted pure-copy tradeoff, i18n debt carried).
     is ReaderPageFeedbackState.ManualTruth -> truth.label
 }

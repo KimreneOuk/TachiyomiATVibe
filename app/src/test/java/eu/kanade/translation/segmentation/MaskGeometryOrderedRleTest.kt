@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * T912 slice 2: budgeted ordered RLE → [MaskGeometry] conversion.
+ *  slice 2: budgeted ordered RLE → [MaskGeometry] conversion.
  *
  * Pure-JVM. Pins the two-pass contract: no sorting, no dense decode, explicit
  * fallbacks (never exceptions) for empty/invalid/overflow/budget inputs, caps

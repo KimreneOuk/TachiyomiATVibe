@@ -95,7 +95,7 @@ private val ReadyBadgeColor = Color(0xFF059669)
 private val WarningAmber = Color(0xFFF59E0B)
 
 /**
- * T934 U.5: bound on the snapshot-driven "Resuming…" hold. The manager owns
+ *  U.5: bound on the snapshot-driven "Resuming…" hold. The manager owns
  * the asynchronous cooldown check and can reject an early retry while the
  * batch phase stays IDLE; the timeout returns the button instead of leaving
  * it permanently disabled.
@@ -106,7 +106,7 @@ private const val RESUME_PENDING_TIMEOUT_MS = 10_000L
 fun TranslationProgressSheet(
     chapterName: String,
     snapshot: TranslationProgressSnapshot,
-    // TachiyomiAT T911 slice 1: read-only download join so the drawer shows the
+    // TachiyomiAT  slice 1: read-only download join so the drawer shows the
     // download phase/progress while the batch waits for the chapter download.
     downloadState: Download.State? = null,
     downloadProgress: Int = 0,
@@ -117,20 +117,20 @@ fun TranslationProgressSheet(
     onCancel: () -> Unit,
     onResume: (() -> Unit)? = null,
     onPauseResume: ((paused: Boolean) -> Unit)? = null,
-    // TachiyomiAT T918: restart affordance for a cancelled (terminal-aborted)
+    // TachiyomiAT  restart affordance for a cancelled (terminal-aborted)
     // or terminal-failed batch. Null keeps the banner-only shape for callers
     // that cannot restart the batch.
     onRetry: (() -> Unit)? = null,
 ) {
     var paused by remember(snapshot.chapterId) { mutableStateOf(false) }
-    // T934 U.5: the "Resuming…" hold is snapshot-driven. It is armed by the
+    //  U.5: the "Resuming…" hold is snapshot-driven. It is armed by the
     // Resume action and holds until the batch truth shows the phase left
     // IDLE (rebuild/running/finalizing/finished). The old synchronous
     // self-reset — which cleared the state inside the click handler and
     // during composition, so "Resuming…" could never actually render — is
     // deleted.
     var isResuming by remember(snapshot.chapterId) { mutableStateOf(false) }
-    // T934 U.2: the Advanced view (stage cards, page grid, failure groups,
+    //  U.2: the Advanced view (stage cards, page grid, failure groups,
     // queue detail) behind the Simple default; the choice is persisted in
     // the translation preferences so it survives sheet reopenings.
     val translationPreferences = remember { Injekt.get<TranslationPreferences>() }
@@ -156,7 +156,7 @@ fun TranslationProgressSheet(
         animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
         label = "batch_progress",
     )
-    // TachiyomiAT T911 slice 1: phase-aware hero. Unknown translation totals are
+    // TachiyomiAT  slice 1: phase-aware hero. Unknown translation totals are
     // never rendered as 0% / 0/0; the owning phase is shown instead.
     val hero = BatchHeroProjection.of(
         snapshot = snapshot,
@@ -223,7 +223,7 @@ fun TranslationProgressSheet(
                 }
             }
 
-            // T934 LI-5: a terminal persistence-rejected presentation. The
+            //   a terminal persistence-rejected presentation. The
             // tracker carried the typed rejection reason in the snapshot's
             // nonDurableFailureReason but nothing rendered it (the abort
             // banner's twin). Same red-banner presentation as the abort
@@ -250,7 +250,7 @@ fun TranslationProgressSheet(
                 }
             }
 
-            // TachiyomiAT T918: a terminal-aborted (cancelled) or terminal-failed
+            // TachiyomiAT  a terminal-aborted (cancelled) or terminal-failed
             // batch must not dead-end in the banner — offer the restart the truth
             // projection allows, only when the caller wired a restart callback.
             // The P5 truth owns label/wording so no surface contradicts another.
@@ -318,7 +318,7 @@ fun TranslationProgressSheet(
                                 }
                             }
                             is BatchHeroProjection.Phase -> {
-                                // TachiyomiAT T911 slice 1: unknown translation total —
+                                // TachiyomiAT  slice 1: unknown translation total —
                                 // show the owning phase, never a numeric 0% / 0/0.
                                 Column {
                                     Text(
@@ -379,10 +379,10 @@ fun TranslationProgressSheet(
                         }
                     }
 
-                    // TachiyomiAT T911 slice 1: determinate only when a real
+                    // TachiyomiAT  slice 1: determinate only when a real
                     // fraction exists (translation totals or download percent);
                     // indeterminate for unknown-total phases; nothing for errors.
-                    // T934 U.2: a resume rebuild re-validates/re-adopts durable
+                    //  U.2: a resume rebuild re-validates/re-adopts durable
                     // work — its run-record counters are not page progress, so
                     // the bar is indeterminate until the phase leaves the
                     // rebuild/restore window.
@@ -436,7 +436,7 @@ fun TranslationProgressSheet(
                 }
             }
 
-            // T934 U.2: Simple is the default view (hero + ready chip +
+            //  U.2: Simple is the default view (hero + ready chip +
             // progress bar + ONE status line + actions); the Advanced depth —
             // stage cards, page grid, failure groups, queue detail — sits
             // behind this persisted chevron toggle.
@@ -512,7 +512,7 @@ fun TranslationProgressSheet(
                         )
                     }
             } else if (snapshot.failedCount > 0) {
-                // T934 U.2: Simple view keeps failures to a one-line notice —
+                //  U.2: Simple view keeps failures to a one-line notice —
                 // the per-group breakdown lives in the Advanced view.
                 Text(
                     text = stringResource(ATMR.strings.translation_sheet_failures_notice, snapshot.failedCount),
@@ -592,7 +592,7 @@ fun TranslationProgressSheet(
                                     )
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        // T934 U.6: resuming copy is truth-backed.
+                                        //  U.6: resuming copy is truth-backed.
                                         text = stringResource(ATMR.strings.translation_status_resuming),
                                         fontWeight = FontWeight.Bold,
                                     )
@@ -600,7 +600,7 @@ fun TranslationProgressSheet(
                             } else {
                                 Button(
                                     onClick = {
-                                        // T934 U.5: the snapshot-driven effects
+                                        //  U.5: the snapshot-driven effects
                                         // clear the hold once the phase truth
                                         // leaves IDLE (or via the bounded
                                         // timeout when the manager's cooldown
@@ -671,10 +671,10 @@ private fun LiveStatusPill(
     isResuming: Boolean = false,
 ) {
     val isAborted = snapshot.aborted
-    // TachiyomiAT T911 slice 1: the pill must not say "Idle" while a batch
+    // TachiyomiAT  slice 1: the pill must not say "Idle" while a batch
     // request is accepted/waiting for the chapter download.
     val requestPhase = snapshot.requestState?.phase
-    // T934 completion oracle: FINISHED alone is NOT completion — a run with
+    //  completion oracle: FINISHED alone is NOT completion — a run with
     // failure/attention pages or a failed/paused outcome renders the
     // attention/failed pill, never the celebratory green "Completed".
     val isTerminal = snapshot.batchPhase == TranslationBatchPhase.FINISHED &&
@@ -683,7 +683,7 @@ private fun LiveStatusPill(
     val isTranslating = isResuming ||
         snapshot.batchPhase == TranslationBatchPhase.FIRST_PASS ||
         snapshot.batchPhase == TranslationBatchPhase.FINALIZING ||
-        // T934 U.6: a resume rebuild is live work — the pill pulses with it.
+        //  U.6: a resume rebuild is live work — the pill pulses with it.
         snapshot.batchPhase == TranslationBatchPhase.REBUILDING ||
         snapshot.batchPhase == TranslationBatchPhase.RESTORING ||
         snapshot.state == eu.kanade.translation.model.Translation.State.TRANSLATING
@@ -703,7 +703,7 @@ private fun LiveStatusPill(
         isAborted -> MaterialTheme.colorScheme.error
         paused -> WarningAmber
         isTerminal -> SuccessGreen
-        // T934 completion oracle: finished-but-not-completed — error color
+        //  completion oracle: finished-but-not-completed — error color
         // when the run outcome itself failed, attention amber otherwise.
         finishedWithAttention && snapshot.state == eu.kanade.translation.model.Translation.State.ERROR ->
             MaterialTheme.colorScheme.error
@@ -740,7 +740,7 @@ private fun LiveStatusPill(
                     isAborted -> "Aborted"
                     paused -> stringResource(ATMR.strings.manga_batch_status_paused)
                     isTerminal -> "Completed"
-                    // T934 completion oracle: finished-but-not-completed
+                    //  completion oracle: finished-but-not-completed
                     // renders the failed/attention state, never the
                     // celebratory completed label.
                     finishedWithAttention &&
@@ -760,7 +760,7 @@ private fun LiveStatusPill(
                         TranslationRequestPhase.ADMISSION_FAILED ->
                             stringResource(ATMR.strings.manga_batch_phase_admission_failed)
                     }
-                    // T934 U.6: the resume rebuild states surface in the pill too,
+                    //  U.6: the resume rebuild states surface in the pill too,
                     // below the request acknowledgement and above "In Progress".
                     snapshot.batchPhase == TranslationBatchPhase.REBUILDING ->
                         stringResource(ATMR.strings.translation_status_rebuilding_short)
@@ -810,7 +810,7 @@ private fun LivePipelineGrid(snapshot: TranslationProgressSnapshot) {
                 modifier = Modifier.weight(1f),
             )
         }
-        // T924 no-render batch design: the pipeline never runs an in-pass
+        //  no-render batch design: the pipeline never runs an in-pass
         // overlay/render stage (the reader draws text overlays on demand), so
         // its card sat at 0/70 forever and read as a regression next to the
         // real stage counters. The genuinely user-facing readiness figure is
@@ -972,7 +972,7 @@ private fun PageMiniChip(page: TranslationProgressSnapshot.Page) {
     Box(
         modifier = Modifier
             .size(32.dp)
-            // T917 Phase 5: the chip's state truth is a semantic label —
+            //  Phase 5: the chip's state truth is a semantic label —
             // failed/partial/queued state is never color-or-icon alone.
             .semantics {
                 contentDescription = TranslationUiTruth.pageMiniChipLabel(page)
@@ -1024,7 +1024,7 @@ private fun FailureSummary(snapshot: TranslationProgressSnapshot) {
     }
 }
 
-/** TachiyomiAT T911 slice 1 (post-review): subtitle copy for unknown-total phases. */
+/** TachiyomiAT  slice 1 (post-review): subtitle copy for unknown-total phases. */
 private fun phaseSubtitleLine(hero: BatchHeroProjection.Phase): String {
     val percent = hero.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
     return when (hero.phase) {
@@ -1041,7 +1041,7 @@ private fun phaseSubtitleLine(hero: BatchHeroProjection.Phase): String {
         BatchHeroPhase.CANCELLED -> "Translation cancelled — the chapter download was cancelled or removed"
         BatchHeroPhase.ADMISSION_FAILED ->
             "Translation could not be queued — check the source and translation settings"
-        // T917 Phase 5 (D10): a partial download's available pages are real
+        //  Phase 5: a partial download's available pages are real
         // work, but the source total is unknown — never a percentage.
         BatchHeroPhase.UNKNOWN_TOTAL ->
             hero.donePages?.let { "$it pages available · source total unknown" }
@@ -1049,7 +1049,7 @@ private fun phaseSubtitleLine(hero: BatchHeroProjection.Phase): String {
     }
 }
 
-/** T911 slice 2: truthful queue position (delegates to the truth layer wording). */
+/**  slice 2: truthful queue position (delegates to the truth layer wording). */
 internal fun queuePositionLabel(position: Int, total: Int): String =
     TranslationUiTruth.queuedPositionLabel(position, total)
 
@@ -1057,7 +1057,7 @@ internal fun queuePositionLabel(position: Int, total: Int): String =
 internal fun ordinalSuffix(value: Int): String = TranslationUiTruth.ordinalSuffixOf(value)
 
 /**
- * T934 U.6: the sheet's ONE status line. Rebuild/restore wording is resolved
+ *  U.6: the sheet's ONE status line. Rebuild/restore wording is resolved
  * through the truth layer's status kind into the NEW string resources; every
  * other state keeps the historical subtitle rendering (existing truth
  * assertions stay untouched). The chain and its precedence live once in
@@ -1079,7 +1079,7 @@ private fun batchHeaderStatusText(
     }
 }
 
-/** T911 slice 1: hero label for unknown-total phases (never 0/0). */
+/**  slice 1: hero label for unknown-total phases (never 0/0). */
 @Composable
 private fun phaseHeroLabel(hero: BatchHeroProjection.Phase): String = when (hero.phase) {
     BatchHeroPhase.ACCEPTED -> stringResource(ATMR.strings.manga_batch_phase_accepted)
@@ -1128,7 +1128,7 @@ internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, is
     return when (snapshot.batchPhase) {
         TranslationBatchPhase.IDLE -> when (snapshot.state) {
             eu.kanade.translation.model.Translation.State.QUEUE ->
-                // T911 slice 2: a queued chapter that is not first in line must
+                //  slice 2: a queued chapter that is not first in line must
                 // say so instead of implying it can resume now.
                 snapshot.queuePosition?.takeIf { position -> snapshot.queueTotal != null && position > 1 }
                     ?.let { position -> queuePositionLabel(position, snapshot.queueTotal ?: position) }
@@ -1151,7 +1151,7 @@ internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, is
             snapshot.activeStages.contains(TranslationProgressStage.INPAINT) -> "Cleaning speech bubbles..."
             snapshot.activeStages.contains(TranslationProgressStage.RENDER) -> "Rendering English text overlays..."
             else -> {
-                // TachiyomiAT T911 slice 1 (post-review): unknown totals must never
+                // TachiyomiAT  slice 1 (post-review): unknown totals must never
                 // render as "(0/0)" anywhere — route the fallback through the same
                 // phase-aware projection as the hero.
                 when (val hero = BatchHeroProjection.of(snapshot)) {
@@ -1163,13 +1163,13 @@ internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, is
         }
         TranslationBatchPhase.FINALIZING -> "Finalizing translated chapter..."
         TranslationBatchPhase.FINISHED -> when {
-            // T934 completion oracle: a run with failure/attention pages (or a
+            //  completion oracle: a run with failure/attention pages (or a
             // failed/paused/aborted outcome) never renders the celebratory
             // completed subtitle — it renders the attention state instead.
             TranslationUiTruth.isCompletedOutcome(snapshot) -> "All pages translated and ready to read"
             else -> "${TranslationUiTruth.pagesNeedingAttentionCount(snapshot)} pages need attention"
         }
-        // T934 U.1/U.6: the resume rebuild/restore phases render the truth
+        //  U.1/U.6: the resume rebuild/restore phases render the truth
         // chain's English fallback in this plain (non-composable) function;
         // the composable call site (batchHeaderStatusText) resolves the
         // resource-backed copy for these kinds first.

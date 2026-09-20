@@ -24,13 +24,13 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T924 device fix (Chapter-21 batch failure): the batch write gate's cached
+ *  device fix (Chapter-21 batch failure): the batch write gate's cached
  * identity went stale behind an ungated store write, and the resulting CAS
  * rejection escalated into a whole-envelope TERMINAL provider failure without
  * a single provider call. These tests pin the gate's new same-lease drift
  * heal: a precondition miss while the batch STILL HOLDS the page lease
  * re-syncs from the live snapshot and retries ONCE; a lease owned by another
- * origin (T917 manual fence) must keep rejecting.
+ * origin ( manual fence) must keep rejecting.
  */
 class BatchWriteGateHealTest {
 
@@ -125,7 +125,7 @@ class BatchWriteGateHealTest {
         val gate = newGate(store, identities)
 
         // The batch releases its lease and the MANUAL lane takes the page
-        // (T917 coexistence: batch must never preempt a manual owner).
+        // ( coexistence: batch must never preempt a manual owner).
         store.releasePageStageLease("001.jpg", PageWriteOrigin.BATCH)
         store.tryAcquirePageStageLease("001.jpg", PageStage.Translation, PageWriteOrigin.MANUAL)
             .shouldBeInstanceOf<LeaseAcquisition.Granted>()

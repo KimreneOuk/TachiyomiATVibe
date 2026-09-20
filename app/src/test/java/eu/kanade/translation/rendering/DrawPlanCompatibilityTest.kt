@@ -10,7 +10,7 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
 
 /**
- * T924 WP9 — Stage-7 exit oracle `DrawPlanCompatibilityTest` (gate rows
+ *  WP9 — Stage-7 exit oracle `DrawPlanCompatibilityTest` (gate rows
  * 7.2/7.5, invalidation matrix rows 9/10/11): EVERY fingerprint-relevant
  * input — font asset digest, font/paint identity, layout planner version,
  * stroke policy version, stroke color policy version, platform shaping key,

@@ -48,13 +48,13 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 /**
- * T924 Stage 5 slice B: coordinator freeze behavior (T924-ST-09/10 +
- * T924-TX-22 + the ST-05/OCR_PLAN skip rule). Pins:
+ *  Stage 5 slice B: coordinator freeze behavior ( +
+ * profile freeze + the OCR_PLAN skip rule). Pins:
  *
  *  - a full pass synthesizes the glossary from the durable chunk summaries,
  *    freezes the profile in one transaction and ends PAUSED (never COMPLETED);
  *  - resume after freeze SKIPS the entire run through analysis: zero re-OCR,
- *    zero chunk executions (the T924 fast-feedback core);
+ *    zero chunk executions (the  fast-feedback core);
  *  - an FP-04 input change (target language) invalidates reuse and re-freezes
  *    the NEXT version without re-OCR or re-sent chunks;
  *  - a pointer whose sidecar turned corrupt is treated as UNFROZEN and the
@@ -342,7 +342,7 @@ class ChapterProfileFreezeCoordinatorTest {
         val resumed = coordinator(resumedStore, resumedWorker, pages, resumedAnalyzer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // ST-05 skip rule: compatible frozen profile — zero OCR, zero chunk
+        //  skip rule: compatible frozen profile — zero OCR, zero chunk
         // executions, and the SAME frozen pointer is reused untouched.
         resumedWorker.ocrPages shouldBe emptyList()
         resumedAnalyzer.executedOrdinals shouldBe emptyList()
@@ -379,7 +379,7 @@ class ChapterProfileFreezeCoordinatorTest {
         val resumed = coordinator(resumedStore, resumedWorker, pages, resumedAnalyzer, targetLang = "es")
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // Checkpoints are still reused (ST-06 identity — no re-OCR) and the
+        // Checkpoints are still reused ( identity — no re-OCR) and the
         // persisted chunk prefix is still valid (chunks are language
         // independent evidence) — but the profile RE-FREEZES under the new
         // input identity as version 2.
@@ -421,7 +421,7 @@ class ChapterProfileFreezeCoordinatorTest {
         val resumed = coordinator(resumedStore, resumedWorker, pages, resumedAnalyzer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // ST-30: unreadable target = absent, never partially trusted — so the
+        //  unreadable target = absent, never partially trusted — so the
         // run re-enters the normal path (checkpoints + persisted chunks are
         // still reusable: zero re-OCR, zero chunk executions) and RE-FREEZES.
         resumedWorker.ocrPages shouldBe emptyList()
@@ -432,7 +432,7 @@ class ChapterProfileFreezeCoordinatorTest {
         val (_, profile) = readProfile()
         profile.version shouldBe 2
         // The content-addressed name is content-derived: the byte-identical
-        // re-publication rewrote the SAME file with valid bytes (ST-10 (b)).
+        // re-publication rewrote the SAME file with valid bytes ( (b)).
         val pointer = artifactStore().readManifest().shouldNotBeNull().profile.shouldNotBeNull()
         val healed = File(mangaDir, pointer.fileName)
         healed.exists() shouldBe true

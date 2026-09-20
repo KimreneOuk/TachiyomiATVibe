@@ -203,7 +203,7 @@ internal class ProfileReconciler(
 
         fun freezeCounters(extra: Map<String, Int>): Map<String, Int> = baseCounters + extra
 
-        // ST-09 entry: re-read the durable chunk list from the manifest.
+        //  entry: re-read the durable chunk list from the manifest.
         val manifestAtEntry = store.artifactManifest
         if (manifestAtEntry == null || manifestAtEntry.analysisChunks.isEmpty()) {
             return BatchPass1Outcome(
@@ -226,7 +226,7 @@ internal class ProfileReconciler(
                 )
             } ?: SidecarRead.Absent
             if (read !is SidecarRead.Usable) {
-                // ST-30: unreadable/invalid target = absent, never partially
+                //  unreadable/invalid target = absent, never partially
                 // trusted. Resume re-validates the prefix (typed pause there).
                 return BatchPass1Outcome(
                     needsTranslation = emptyList(),
@@ -381,8 +381,8 @@ internal class ProfileReconciler(
                         "synthesized=${synthesis.summarizedChunks} entries=${synthesis.entities.size + synthesis.terms.size}"
                 }
                 // Stage-6 slice A: PROFILE_FROZEN no longer terminates the
-                // run — the coordinator CONTINUES into ENVELOPE_PLAN (ST-11)
-                // and TRANSLATE (ST-12). The terminal stays PAUSED (native /
+                // run — the coordinator CONTINUES into ENVELOPE_PLAN
+                // and TRANSLATE. The terminal stays PAUSED (native /
                 // render are Stage 7; NEVER COMPLETE in this slice).
                 return runEnvelopePlanAndTranslate(
                     artifact = artifact,
@@ -400,8 +400,8 @@ internal class ProfileReconciler(
                 )
             }
             is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                // Prior manifest authoritative (TX-22); the run pauses; the
-                // next attempt re-reconciles deterministically (ST-09 resume).
+                // Prior manifest authoritative; the run pauses; the
+                // next attempt re-reconciles deterministically ( resume).
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT t924 profile freeze rejected: ${publication.reason}"
                 }

@@ -60,9 +60,9 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T924 Stage-6 slice A: the serial envelope dispatch behind FF-01
- * (T924-ST-11/12, TX-21 revalidation + deterministic suffix re-plan,
- * TX-20 provenance commits, DR-A Option 1 retention, crash-resumable
+ *  Stage-6 slice A: the serial envelope dispatch behind
+ * (  revalidation + deterministic suffix re-plan,
+ *  provenance commits, DR-A Option 1 retention, crash-resumable
  * progress, one-envelope-in-flight, Batch sub-limit riding).
  */
 class ProfileEnvelopeDispatchTest {
@@ -343,7 +343,7 @@ class ProfileEnvelopeDispatchTest {
         translator.maxObservedInFlight shouldBe 1
         requestIds(translator.requests.single()) shouldContainExactly listOf("p0_b1", "p1_b1", "p2_b1")
 
-        // Every page committed READY with its translation (TX-20 ladder +
+        // Every page committed READY with its translation ( ladder +
         // provenance fields passed — otherwise the merge would reject).
         pageKeys.forEachIndexed { index, key ->
             val page = store.snapshot(key).page.shouldNotBeNull()
@@ -463,7 +463,7 @@ class ProfileEnvelopeDispatchTest {
             translator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // ST-11 skip rule: no translatable work never reaches TRANSLATE —
+        //  skip rule: no translatable work never reaches TRANSLATE —
         // typed PAUSED no-work terminal with ZERO provider calls and zero
         // re-OCR / re-analysis.
         resumedWorker.ocrPages shouldBe emptyList()
@@ -500,7 +500,7 @@ class ProfileEnvelopeDispatchTest {
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // T934 relaxed PROGRESS policy: envelope 2's protocol verdict no
+        //  relaxed PROGRESS policy: envelope 2's protocol verdict no
         // longer discards the response — each retry round recovered exactly
         // ONE more block (whole + 2 missing-only), so pages 9-11 (their
         // blocks were returned) COMMIT, pages 12-16 PARK durably, and
@@ -726,7 +726,7 @@ class ProfileEnvelopeDispatchTest {
         val planBytes = planFile.readBytes()
 
         // ---- simulated process death with UNCHANGED state: the pending set
-        // and all plan inputs are identical, so the ST-11 reuse branch must
+        // and all plan inputs are identical, so the  reuse branch must
         // skip republication entirely (same pointer, no file write) and the
         // run still drains.
         Thread.sleep(1_100) // exceed 1s-granularity filesystem clocks

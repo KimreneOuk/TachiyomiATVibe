@@ -95,7 +95,7 @@ class ChapterTranslator(
         // (ChapterTranslationStore.markDefunct) neutralizes any late write.
         const val BATCH_JOIN_TIMEOUT_MS = 2_000L
 
-        // T924 hotfix: poll interval while a per-chapter batch coroutine waits
+        //  hotfix: poll interval while a per-chapter batch coroutine waits
         // for the chapter's previous batch to finish unwinding (see
         // [inFlightChapterIds]).
         const val IN_FLIGHT_CLAIM_RETRY_MS = 100L
@@ -322,12 +322,12 @@ class ChapterTranslator(
     @Volatile
     var isPaused: Boolean = false
 
-    // T924 hotfix: serializes the check-and-launch of the translator job so
+    //  hotfix: serializes the check-and-launch of the translator job so
     // concurrent admissions cannot each observe isRunning == false and launch
     // a second translator job over the same queue head.
     private val translatorLaunchLock = Any()
 
-    // T924 hotfix: chapters whose batch is still in flight — launched, and
+    //  hotfix: chapters whose batch is still in flight — launched, and
     // possibly still unwinding uncancellable native work after a cancel. An
     // admission for one of these chapters must be a no-op for the running
     // work (no cancel, no restart, no second schedule): two live schedules
@@ -345,7 +345,7 @@ class ChapterTranslator(
                 return false
             }
 
-            // T924 hotfix: ERROR entries are excluded too — a generic queue
+            //  hotfix: ERROR entries are excluded too — a generic queue
             // start must not resurrect failed/restored work after a restart.
             // An ERROR chapter re-enters work only via an explicit per-chapter
             // request (translateChapter re-arms it) or requeueExisting.
@@ -530,7 +530,7 @@ class ChapterTranslator(
         var claimed = false
         try {
             if (chapterId != null) {
-                // T924 hotfix: one live schedule per chapter. Set.add is the
+                //  hotfix: one live schedule per chapter. Set.add is the
                 // atomic check-and-claim; a previous batch for this chapter may
                 // still be unwinding uncancellable native work after a
                 // pause/stop cancel, so wait for it to release the chapter
@@ -572,7 +572,7 @@ class ChapterTranslator(
                 stop()
             }
         } finally {
-            // T924 hotfix: release the in-flight claim only once this batch
+            //  hotfix: release the in-flight claim only once this batch
             // coroutine has fully unwound (the claim held off overlapping
             // admissions for the same chapter while it was still running).
             if (claimed) {
@@ -649,7 +649,7 @@ class ChapterTranslator(
     }
 
     /**
-     * T911 slice 2 (R10): mirrors [queueChapter]'s config preflight so callers
+     *  slice 2 (R10): mirrors [queueChapter]'s config preflight so callers
      * can classify an admission rejection (config invalid vs source unsupported)
      * without duplicating preference parsing. Add-only; queueChapter is untouched.
      */
@@ -669,7 +669,7 @@ class ChapterTranslator(
     fun queueChapter(
         manga: Manga,
         chapter: Chapter,
-        // T917 Phase 4 (D10): the trigger's admission-probe cross-check; the
+        //  Phase 4: the trigger's admission-probe cross-check; the
         // defaults keep every legacy caller byte-identical.
         probedSourcePageCount: Int? = null,
         sourceCountKnown: Boolean = false,
@@ -707,7 +707,7 @@ class ChapterTranslator(
         addToQueue(translation)
     }
 
-    // T911 slice 3: internal so focused unit tests can drive the exact
+    //  slice 3: internal so focused unit tests can drive the exact
     // exceptional exits (missing files, unexpected exceptions) without the
     // async queue worker.
     internal suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
@@ -767,7 +767,7 @@ class ChapterTranslator(
                 logcat(LogPriority.ERROR) {
                     "TachiyomiAT chapter files not found for ${translation.chapter.name}"
                 }
-                // T911 slice 3: emit the typed terminal snapshot so the drawer
+                //  slice 3: emit the typed terminal snapshot so the drawer
                 // shows the real reason instead of a bare/living 0/0.
                 failBeforePipeline(
                     translation,
@@ -815,11 +815,11 @@ class ChapterTranslator(
                 // pipeline planner while pages remain 1..N.
                 val orderedStreams = eu.kanade.translation.util.ResumeOrdering.naturalOrder(streams)
                 batchOrderedPageKeys = orderedStreams.map { it.first }
-                // T911 slice 3: a rejected pre-registration is an explicit
+                //  slice 3: a rejected pre-registration is an explicit
                 // pipeline error. Fail the chapter with a typed terminal tracker
                 // snapshot instead of running a live tracker whose totals would
                 // silently stay zero.
-                // T917 Phase 4 (D10): the queued cross-check rides the
+                //  Phase 4: the queued cross-check rides the
                 // pre-registration so the manifest's trusted total is the
                 // SOURCE total (or honestly unknown), never the found count.
                 val preRegistration = store.preRegisterPages(
@@ -883,12 +883,12 @@ class ChapterTranslator(
                 }
                 else -> {
                     val pageStates = store.state.value
-                    // T924 zero-legacy (D1): both surviving batch lanes end
+                    //  zero-legacy: both surviving batch lanes end
                     // runs translation-terminal WITHOUT an in-pass render, so
                     // the post-batch queue-status projection must use the
                     // flagged COMPLETED projection — the legacy done-predicate
                     // would project every healthy page as stranded and mark
-                    // the queue entry ERROR (same LI-1 class as the pass-1
+                    // the queue entry ERROR (same  class as the pass-1
                     // post-pass projection).
                     val reconciliation =
                         eu.kanade.translation.pipeline.batch.BatchProgressReconciler
@@ -913,7 +913,7 @@ class ChapterTranslator(
             }
             BitmapPool.releaseAll()
             translation.status = Translation.State.ERROR
-            // T911 slice 3: an unexpected exception must leave a terminal
+            //  slice 3: an unexpected exception must leave a terminal
             // snapshot with the reason, never a live nonterminal tracker. Safe
             // when the batch already finished: a late event is ignored.
             tracker?.abort(
@@ -926,7 +926,7 @@ class ChapterTranslator(
     }
 
     /**
-     * T911 slice 3: typed terminal exit for a batch that failed before the
+     *  slice 3: typed terminal exit for a batch that failed before the
      * pipeline could run (pre-registration rejected, chapter files missing).
      * Marks the queue entry ERROR and emits an aborted terminal tracker
      * snapshot carrying [reason] through the registry, so the UI shows the

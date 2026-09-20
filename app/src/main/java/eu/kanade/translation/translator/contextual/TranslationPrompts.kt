@@ -108,8 +108,8 @@ object TranslationPrompts {
     }
 
     // ------------------------------------------------------------------
-    // T924 Stage-6 slice B (design §7): profile-aware ENRICHED prompt
-    // assembly. Used ONLY by the FF-01 ProfileEnvelopeExecutor when a frozen
+    //  Stage-6 slice B (design §7): profile-aware ENRICHED prompt
+    // assembly. Used ONLY by the  ProfileEnvelopeExecutor when a frozen
     // chapter profile is present; the legacy Batch/Manual/Auto paths never
     // call these, and every function above stays byte-identical. Without a
     // profile the executor keeps the legacy shape unchanged

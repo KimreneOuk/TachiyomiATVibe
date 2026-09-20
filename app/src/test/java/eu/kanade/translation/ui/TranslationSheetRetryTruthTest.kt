@@ -8,7 +8,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T918 — batch retry affordance (field defect, Plan/active/2026-09-03_T918).
+ * batch retry affordance (field defect, Plan/active/2026-09-03_).
  *
  * RED defects named here:
  *
@@ -140,7 +140,7 @@ class TranslationSheetRetryTruthTest {
 
     @Test
     fun `durable reconstruction of an error chapter offers the retry control after restart`() {
-        // T924 restart-retry defect: after an app restart the sheet's snapshot
+        //  restart-retry defect: after an app restart the sheet's snapshot
         // comes from the durable reconstruction (compute with an ERROR chapter
         // state), which used to default batchPhase to IDLE — the truth rule
         // (ERROR + FINISHED) then never passed and the Retry button vanished.
@@ -165,7 +165,7 @@ class TranslationSheetRetryTruthTest {
 
     @Test
     fun `durable reconstruction of a warnings chapter with unresolved pages offers retry`() {
-        // T924 field defect (Chapter 21): a persistence-rejected run ended
+        //  field defect (Chapter 21): a persistence-rejected run ended
         // READY_WITH_WARNINGS — the badge read as completed and the sheet
         // offered nothing, because the truth rule only accepted ERROR.
         val defect =

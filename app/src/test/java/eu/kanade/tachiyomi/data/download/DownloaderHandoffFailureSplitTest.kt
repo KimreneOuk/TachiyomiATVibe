@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * T911 slice 3 (R8 / contract item 3): the downloader separates download
+ *  slice 3 (R8 / contract item 3): the downloader separates download
  * finalization from translation rekey/handoff. A failure AFTER the files
  * finalize must leave the download `DOWNLOADED` and give the translation
  * intent the real typed failure — while a finalize-stage failure keeps the

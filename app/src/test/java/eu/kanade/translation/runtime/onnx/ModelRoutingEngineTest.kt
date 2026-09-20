@@ -105,7 +105,7 @@ class ModelRoutingEngineTest {
         ModelRoutingEngine.getStatus(recPath, route) shouldBe ModelRoutingEngine.Status.UNKNOWN
     }
 
-    // ---- T922 Phase 5 (plan §3.3): SUPPORTED requires execution, coherent
+    // ----  Phase 5 (plan §3.3): SUPPORTED requires execution, coherent
     // temporary-retry gate, QNN graph execute 1100 classification. ----
 
     @Test

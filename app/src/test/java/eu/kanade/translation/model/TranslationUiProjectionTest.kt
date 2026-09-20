@@ -43,7 +43,7 @@ class TranslationUiProjectionTest {
         ) shouldBe false
     }
 
-    /** T918: stranded in-flight states reconcile to the restartable state. */
+    /**  stranded in-flight states reconcile to the restartable state. */
     @Test
     fun `aborted batch reconciles only stranded in-flight states`() {
         TranslationUiProjection.reconcileAbortedBatchState(Translation.State.QUEUE) shouldBe

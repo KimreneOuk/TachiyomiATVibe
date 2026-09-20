@@ -75,7 +75,7 @@ class ChapterTranslationStorePersistenceTest {
     }
 
     // ------------------------------------------------------------------
-    // T924 gate 1.5: user-edit authority across checkpoint transitions
+    //  gate 1.5: user-edit authority across checkpoint transitions
     // ------------------------------------------------------------------
 
     /** The user edit under test: a committed block the reader overrode. */
@@ -137,12 +137,12 @@ class ChapterTranslationStorePersistenceTest {
     }
 
     /**
-     * T924 gate 1.5 (contract stage0/feature-flags-stage-gates.md §2.1 row 1.5):
+     *  gate 1.5 (contract stage0/feature-flags-stage-gates.md §2.1 row 1.5):
      * a committed page carrying a user-edited block survives checkpointOcr in
-     * BOTH forms — the CLOSE branch (active BATCH candidate) and the TX-03.1
+     * BOTH forms — the CLOSE branch (active BATCH candidate) and the.1
      * adopt branch after a restart — with the committed bundle identity
      * (pointer) and the user edit intact. The OCR content fingerprint excludes
-     * user edits (T924-FP-01), so the adopt-side drift comparison must accept
+     * user edits, so the adopt-side drift comparison must accept
      * the user-modified committed bundle, never reject or overwrite it.
      */
     @Test
@@ -197,7 +197,7 @@ class ChapterTranslationStorePersistenceTest {
         afterClose.pages.getValue("p1").committed shouldBe committedBefore
         assertUserEditIntact(artifactStore(), committedBefore)
 
-        // ---- Adopt (TX-03.1) form: after a simulated restart the Batch
+        // ---- Adopt  form: after a simulated restart the Batch
         // checkpoint is adopted against the user-edited committed bundle; the
         // drift comparison accepts it (user edits are excluded from the OCR
         // content fingerprint) and the bundle identity stays intact. ----

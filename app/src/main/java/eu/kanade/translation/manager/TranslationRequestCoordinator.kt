@@ -31,14 +31,14 @@ internal fun acknowledgePendingTranslationState(
     }
 
 /**
- * Pending-request subsystem moved from `TranslationManager` (T909 Phase 9).
+ * Pending-request subsystem moved from `TranslationManager` ( Phase 9).
  * Owns the store + live state + write-versions + mutation-lock protocol
  * (version fence moves intact). Manager state arrives as providers and is
  * re-read on every access — the uninitialized-manager test fixtures
  * reflection-write these fields after construction and leave the rest null,
  * so reads must stay as lazy as they were before the move.
  *
- * T911 slice 2: records carry a monotonic per-chapter request generation,
+ *  slice 2: records carry a monotonic per-chapter request generation,
  * an optional group id, timestamps, and a typed last failure. Download-side
  * lifecycle events cancel/fail the attached request explicitly, and the
  * downloader completion callback is fenced by the generation captured when
@@ -84,7 +84,7 @@ internal class TranslationRequestCoordinator(
     }
 
     /**
-     * T911 slice 2 (R7): fenced WAITING write. The request must still exist
+     *  slice 2 (R7): fenced WAITING write. The request must still exist
      * with [expectedGeneration] when the write happens — a cancel that lands
      * before the write (under the same lock) wins and the write is dropped.
      */
@@ -101,7 +101,7 @@ internal class TranslationRequestCoordinator(
         }
     }
 
-    /** T911 slice 2 (R7): fenced PREPARING write, same protocol as above. */
+    /**  slice 2 (R7): fenced PREPARING write, same protocol as above. */
     fun markTranslationRequestPreparingIfCurrent(chapterId: Long, expectedGeneration: Long): Boolean {
         synchronized(pendingRequestMutationLock) {
             if (!isRequestCurrent(chapterId, expectedGeneration)) return false
@@ -209,7 +209,7 @@ internal class TranslationRequestCoordinator(
     }
 
     /**
-     * T911 slice 3 (R8): the chapter's files finalized successfully, but the
+     *  slice 3 (R8): the chapter's files finalized successfully, but the
      * translation start after the download failed (artifact rekey, handoff or
      * admission threw). The download stays `DOWNLOADED`; the request is failed
      * with the R10 admission-failure typing — never a download failure.
@@ -230,7 +230,7 @@ internal class TranslationRequestCoordinator(
         }
     }
 
-    // T911 slice 2 (R5): download-side lifecycle notifications. Each is a
+    //  slice 2 (R5): download-side lifecycle notifications. Each is a
     // no-op when no pending request exists for the chapter, so ordinary
     // downloads are unaffected.
 
@@ -454,7 +454,7 @@ internal class TranslationRequestCoordinator(
         pendingRequestWriteVersions.computeIfAbsent(chapterId) { AtomicLong() }.incrementAndGet()
 
     /**
-     * T911 slice 2: monotonically increasing per-chapter generation, seeded
+     *  slice 2: monotonically increasing per-chapter generation, seeded
      * from the durable counter so values never repeat across re-requests.
      */
     private fun allocateGeneration(chapterId: Long): Long =
@@ -512,7 +512,7 @@ internal class TranslationRequestCoordinator(
     }
 
     /**
-     * T911 slice 2: the downloader completion callback, fenced by the request
+     *  slice 2: the downloader completion callback, fenced by the request
      * generation captured when the request was attached to the download. A
      * stale callback (request cancelled, re-requested, or cleared) is dropped
      * with a log line — it never admits, and never recreates a request.
@@ -520,7 +520,7 @@ internal class TranslationRequestCoordinator(
     suspend fun startTranslationAfterDownloadIfRequested(
         manga: Manga,
         chapter: Chapter,
-        // T924 hotfix: false for a pending request the startup reconciler
+        //  hotfix: false for a pending request the startup reconciler
         // admitted — the handoff enqueues PAUSED instead of auto-starting.
         autoStart: Boolean = true,
     ) {

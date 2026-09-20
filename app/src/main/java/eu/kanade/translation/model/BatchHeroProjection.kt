@@ -3,7 +3,7 @@ package eu.kanade.translation.model
 import eu.kanade.tachiyomi.data.download.model.Download
 
 /**
- * T911 slice 1: phase-aware hero projection for the manga-screen batch drawer.
+ *  slice 1: phase-aware hero projection for the manga-screen batch drawer.
  *
  * The batch snapshot only knows translation pages; while the work is still
  * owned by the pending request / downloader (accepted, waiting for download,
@@ -45,14 +45,14 @@ enum class BatchHeroPhase {
     /** Terminal failure of a chapter that has no translation pages at all. */
     FAILED_NO_PAGES,
 
-    /** T911 slice 2: the download was cancelled/removed/cleared/stopped. */
+    /**  slice 2: the download was cancelled/removed/cleared/stopped. */
     CANCELLED,
 
-    /** T911 slice 2 (R10): the translation queue refused admission (not a download failure). */
+    /**  slice 2 (R10): the translation queue refused admission (not a download failure). */
     ADMISSION_FAILED,
 
     /**
-     * T917 Phase 5 (spec §2.1/D10): real committed pages exist, but the page
+ * Phase 5 (spec §2.1): real committed pages exist, but the page
      * set is not the trusted source total (partial download). The available
      * count must never render as a percentage or a complete chapter.
      */
@@ -112,7 +112,7 @@ sealed interface BatchHeroProjection {
             // Real translation totals stay numeric (terminal outcome included)
             // — but only when the page set is the trusted source total. A
             // partially downloaded chapter's available pages are documented
-            // absence, never a fabricated complete chapter (D10).
+            // absence, never a fabricated complete chapter.
             if (hasRealTotals) {
                 if (!snapshot.expectedPageCountTrusted) {
                     return Phase(
@@ -131,7 +131,7 @@ sealed interface BatchHeroProjection {
             // Terminal batch without page data and without failures: show the
             // completed phase, not a numeric 0/0.
             if (isTerminal) {
-                // T934 completion oracle (mirrors TranslationUiTruth
+                //  completion oracle (mirrors TranslationUiTruth
                 // .isCompletedOutcome; the model layer cannot import ui, so
                 // the finished-run facts are re-checked here): a FINISHED run
                 // that still carries failure/attention facts — failure

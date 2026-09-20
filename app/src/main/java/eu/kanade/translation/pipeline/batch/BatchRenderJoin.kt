@@ -48,15 +48,15 @@ import tachiyomi.domain.manga.model.Manga
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T909 Phase 20.4: the batch render join moved verbatim from
- * `TranslationPipeline.translateBatch` (T909 phase 20).
+ *  Phase 20.4: the batch render join moved verbatim from
+ * `TranslationPipeline.translateBatch` ( phase 20).
  *
  * Render join: per-page join of the translation result with its inpaint/render
  * prerequisites. tryRender is idempotent (READY short-circuit) so it is safe to
  * call both at chunk-completion (AI) and here; the per-page render mutex keeps
  * it serialized. Bitmap recycle sites stay with tryRender.
  *
- * T924 zero-legacy (D2): the legacy SBC render-join contract
+ *  zero-legacy: the legacy SBC render-join contract
  * (RenderJoinWorker: signal/await machinery, awaitAndRender, awaitAndSettle)
  * died with the sequential coordinator — only [tryRender] (the lane workers'
  * commit-time render) and [publishPersistedLayoutForCompletedPage] (the
@@ -209,7 +209,7 @@ internal class BatchRenderJoin(
                     )
                 }
                 val renderInput = store.snapshot(pageKey)
-                // T922 Phase 4: layout stage outcome for the page run. The
+                //  Phase 4: layout stage outcome for the page run. The
                 // span settles even when the estimator throws (layout failure
                 // path below keeps its existing handling).
                 val layoutSpan = TranslationTrace.beginStage(
@@ -259,7 +259,7 @@ internal class BatchRenderJoin(
                     )
                     throw t
                 }
-                // T922 Phase 4: store commit outcome for the render stage patch.
+                //  Phase 4: store commit outcome for the render stage patch.
                 // Phase 4 review N3: the span settles in try/catch so a throw
                 // from mergeRender (cancellation while suspended, store error)
                 // cannot leave stage_start(store_commit) dangling.
@@ -297,13 +297,13 @@ internal class BatchRenderJoin(
                     // A newer committed display bundle may have just
                     // promoted; the file it superseded is now deletable.
                     deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
-                    // T924 WP9 (T924-FF-02a(1)): with FF-02 ON the color-only
+                    //  WP9: with  ON the color-only
                     // render body becomes LAYOUT_PREPARE orchestration — the
                     // color preparation above is joined by the page geometry
                     // draw plan, both published as separately invalidatable
-                    // sub-results (T924-TX-23 CAS set). Every failure here is
+                    // sub-results ( CAS set). Every failure here is
                     // non-fatal: the committed render stays authoritative and
-                    // readers keep the async planner (T924-FF-02b/02c).
+                    // readers keep the async planner.
                     publishPersistedLayoutIfEnabled(pageKey, page, acceptedRender!!.snapshot)
                 }
                 tracker?.markRenderDone(pageKey)
@@ -346,14 +346,14 @@ internal class BatchRenderJoin(
     }
 
     // ------------------------------------------------------------------
-    // T924 WP9 (T924-FF-02a(1)): LAYOUT_PREPARE publication. FF-02 OFF keeps
+    //  WP9: LAYOUT_PREPARE publication.  OFF keeps
     // the legacy color-only render body byte-for-byte; ON adds the per-page
     // persisted draw plan + color preparation publication after the render
     // commit, through ChapterArtifactEngine.publishSidecarPointers with the
-    // full T924-TX-23 CAS precondition set. Plans are late, per-page, and
+    // full  CAS precondition set. Plans are late, per-page, and
     // additive: any precondition or publication failure keeps the committed
     // render authoritative and simply leaves "no plan" for the page
-    // (T924-FF-02c — readers fall back to the async planner).
+    // ( — readers fall back to the async planner).
     // ------------------------------------------------------------------
 
     /** Lazily resolved Android context for the font asset read; null on JVM. */
@@ -386,7 +386,7 @@ internal class BatchRenderJoin(
         val manifestSnapshot = store.artifactManifest ?: return
         val artifactPage = manifestSnapshot.pages[pageKey] ?: return
 
-        // T924-TX-23 precondition set, checked against the post-render-merge
+        // 23 precondition set, checked against the post-render-merge
         // snapshot; the whole-manifest CAS in publishSidecarPointers rejects
         // the commit if ANY durable state moved between this snapshot and the
         // manifest publication (fail-closed, prior manifest stays
@@ -604,13 +604,13 @@ internal class BatchRenderJoin(
     }
 
     // ------------------------------------------------------------------
-    // T924 Stage 7 (D2): per-page persisted-layout publication entry for the
+    //  Stage 7: per-page persisted-layout publication entry for the
     // flagged coordinator's NATIVE/RENDER path. Called after a page reached
     // committed-translation + committed-inpaint state (via the OverlapScheduler's
-    // commit hook and the FINALIZE sweep). Reuses the EXISTING T924-TX-23
+    // commit hook and the FINALIZE sweep). Reuses the EXISTING
     // publication transaction above — same CAS fences, same sidecars, same
     // fail-safe: any precondition/failure keeps the committed display and the
-    // async planner fallback authoritative (T924-FF-02b; reader display never
+    // async planner fallback authoritative ( reader display never
     // breaks, no rasterized output ever — R041, the published artifacts are
     // geometry/color DTOs only).
     // ------------------------------------------------------------------

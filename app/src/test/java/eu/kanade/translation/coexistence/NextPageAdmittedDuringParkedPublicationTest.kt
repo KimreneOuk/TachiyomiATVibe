@@ -16,7 +16,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 4 — D11 safe slice (phase4-design §4.4): release the native
+ *  Phase 4 —  safe slice (phase4-design §4.4): release the native
  * permit BEFORE storage publication.
  *
  * Drives the REAL manual single-page boundary over the REAL quarantine: a

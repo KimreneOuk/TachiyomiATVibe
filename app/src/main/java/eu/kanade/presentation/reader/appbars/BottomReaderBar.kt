@@ -67,7 +67,7 @@ fun BottomReaderBar(
         )
 
         translationBatchProgress?.let { snapshot ->
-            // T934 U.4: the bar renders the SAME chapter status truth as the
+            //  U.4: the bar renders the SAME chapter status truth as the
             // progress sheet (TranslationUiTruth.readerBarLine). During a
             // resume rebuild the rebuild/restore kinds resolve the shared
             // string resources — the line can never freeze on "Batch X/Y";

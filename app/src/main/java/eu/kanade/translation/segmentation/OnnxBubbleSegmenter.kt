@@ -19,13 +19,13 @@ import java.nio.FloatBuffer
 
 /** ONNX session owner for the AGPL-3.0 manga109 YOLO11 bubble segmenter. */
 class OnnxBubbleSegmenter(
-    // TachiyomiAT T922 §6.1: injectable session-creation seam so JVM tests can
+    // TachiyomiAT  §6.1: injectable session-creation seam so JVM tests can
     // drive the session-swap/recovery policy without the native ORT runtime.
     // Production callers keep using the no-arg constructor.
     private val sessionFactory: SessionFactory = ProductionSessionFactory,
 ) {
     /**
-     * TachiyomiAT T922 §6.1: minimal seam over one live ORT session. A handle
+     * TachiyomiAT  §6.1: minimal seam over one live ORT session. A handle
      * is single-attempt: [run] executes exactly one inference, validates the
      * output contract, and closes every intermediate ORT object it created
      * before returning (or throwing), so a failed partial result never
@@ -110,7 +110,7 @@ class OnnxBubbleSegmenter(
 
     private var session: SegmenterSessionHandle? = null
 
-    // TachiyomiAT T922 §3.1: normalized model path retained so a failed
+    // TachiyomiAT  §3.1: normalized model path retained so a failed
     // accelerated session can be rebuilt explicitly on default CPU.
     private var modelPath: String? = null
 
@@ -130,7 +130,7 @@ class OnnxBubbleSegmenter(
     )
 
     fun initialize(modelFile: File) {
-        // TachiyomiAT T922 §3.1: production segmentation is deliberately
+        // TachiyomiAT  §3.1: production segmentation is deliberately
         // CPU-primary (default CPU EP, no XNNPACK — the packaged QNN ORT
         // artifact has no working XNNPACK, and accelerated bubble sessions
         // hit QNN error 1100 at first execute). The path is retained so the
@@ -202,7 +202,7 @@ class OnnxBubbleSegmenter(
             }
             buffer.limit(3 * plane)
             buffer.position(0)
-            // TachiyomiAT T922 §3.2: inference plus one-shot accelerated→CPU
+            // TachiyomiAT  §3.2: inference plus one-shot accelerated→CPU
             // recovery. Each attempt's tensor/result is owned and closed inside
             // the session handle, so a failed partial result never survives into
             // a retry; this finally remains the single cleanup point for the
@@ -225,7 +225,7 @@ class OnnxBubbleSegmenter(
     }
 
     /**
-     * TachiyomiAT T922 §3.2: one-shot accelerated→CPU runtime recovery.
+     * TachiyomiAT  §3.2: one-shot accelerated→CPU runtime recovery.
      *
      * Only [OrtException] thrown by the session run is treated as a possible
      * provider failure — decoder/output-contract errors, invalid shapes,
@@ -243,7 +243,7 @@ class OnnxBubbleSegmenter(
         input: FloatBuffer,
     ): Pair<FloatArray, FloatArray> = try {
         current.run(input).also {
-            // T922 Phase 5 (plan §3.3, amendment §10.8): a completed
+            //  Phase 5 (plan §3.3, amendment §10.8): a completed
             // accelerated run is the execution proof — SUPPORTED now means
             // created AND executed. CPU/primary runs never touch the
             // accelerator route (CPU is the terminal route, never marked).
@@ -262,7 +262,7 @@ class OnnxBubbleSegmenter(
     }
 
     /**
-     * T922 Phase 5 (plan §3.3): provenance hook. Only an accelerated label
+     *  Phase 5 (plan §3.3): provenance hook. Only an accelerated label
      * maps to a routing-engine route; a successful run on that route records
      * the execution proof via [ModelRoutingEngine.recordSuccessfulInference].
      */
@@ -329,7 +329,7 @@ class OnnxBubbleSegmenter(
     }
 
     fun close() {
-        // TachiyomiAT T922 §6.1: serialized against the recovery session swap
+        // TachiyomiAT  §6.1: serialized against the recovery session swap
         // and idempotent — after this runs, session is null, so a second call
         // closes nothing and can never double-release a session.
         synchronized(sessionSwapLock) {

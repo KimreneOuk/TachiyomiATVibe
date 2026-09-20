@@ -199,7 +199,7 @@ class ChapterContextCrossFeedProbeTest {
         )
         val service = ChapterContextService(store)
 
-        // Target allocations per T933: terms 320 -> safeguards 96 -> pairs 288 -> scene 96
+        // Target allocations per  terms 320 -> safeguards 96 -> pairs 288 -> scene 96
         val allocation = service.computeBudgetAllocation(
             maxBudget = 512,
             termsUsed = 100,

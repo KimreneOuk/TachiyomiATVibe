@@ -23,13 +23,13 @@ data class ChapterArtifactManifest(
     /** True only when the baseline is the complete ordered batch page set. */
     val expectedPageCountTrusted: Boolean = false,
     /**
-     * T917 Phase 4 (D10, phase4-design §3.3): the documented delta of a subset
+     *  Phase 4 ( phase4-design §3.3): the documented delta of a subset
      * admission over a partially-downloaded chapter. Missing pages are NEVER
      * registered as page records — the durable record carries the absence
      * here instead of faking stages, failures, or attempt entries. Null when
      * the last admission's cross-check proved the chapter complete (or no
      * partial admission ever ran). Additive nullable: tolerated in both
-     * directions by `ignoreUnknownKeys` (D5 precedent).
+     * directions by `ignoreUnknownKeys` ( precedent).
      */
     val partialBatchInfo: PartialBatchInfo? = null,
     val activeCandidateGenerationIds: Set<String> = emptySet(),
@@ -46,8 +46,8 @@ data class ChapterArtifactManifest(
     val cutoverAtEpochMs: Long? = null,
     val migratedFromLegacyAtEpochMs: Long? = null,
     val updatedAtEpochMs: Long = 0L,
-    // T924-SC-04 additive pointer extensions: appended at the END of the
-    // declaration (T924-SC-06) with neutral defaults so schemaVersion 2
+    // 04 additive pointer extensions: appended at the END of the
+    // declaration  with neutral defaults so schemaVersion 2
     // manifests decode unchanged. A v3 rewrite stamps the current
     // [SCHEMA_VERSION] so a rolled-back build refuses the chapter read-only
     // instead of silently stripping these pointers on rewrite.
@@ -65,10 +65,10 @@ data class ChapterArtifactManifest(
     val layoutPlans: Map<String, SidecarPointer> = emptyMap(),
     /** Persisted per-page color/style preparations; key = pageKey. */
     val colorPreparations: Map<String, SidecarPointer> = emptyMap(),
-    /** T933 Increment 2: durable unified chapter context snapshot pointer. */
+    /**  Increment 2: durable unified chapter context snapshot pointer. */
     val context: SidecarPointer? = null,
     /**
-     * T934 R2a (write-time digests): the durable per-page source SHA-256
+     *  R2a (write-time digests): the durable per-page source SHA-256
      * (lowercase 64-hex), recorded AT FIRST ADMISSION — every OCR checkpoint
      * publication (CLOSE, REBASE, adopt) stamps the page's source identity in
      * the SAME atomic manifest transaction that moves the checkpoint pointer,
@@ -76,7 +76,7 @@ data class ChapterArtifactManifest(
      * consume this record without re-reading page bytes; a page with no
      * record falls back to the dispatch-time observation. Additive map with
      * a neutral default, tolerated in both decode directions by
-     * `ignoreUnknownKeys` (D5 precedent): a rolled-back build that strips it
+     * `ignoreUnknownKeys` ( precedent): a rolled-back build that strips it
      * only loses the optimization (the fallback re-observes), never
      * correctness — so no schema bump is owed. Bounded to one entry per
      * manifest page record.
@@ -85,7 +85,7 @@ data class ChapterArtifactManifest(
 ) {
     companion object {
         /**
-         * T933 Increment 2: bumped 3 → 4 with the context pointer. New code reads
+         *  Increment 2: bumped 3 → 4 with the context pointer. New code reads
          * v2, v3, and v4 and writes v4; the verified future-schema guard refuses
          * versions greater than this read-only.
          */
@@ -94,7 +94,7 @@ data class ChapterArtifactManifest(
 }
 
 /**
- * T917 Phase 4 (D10, phase4-design §3.3): how a subset admission's missing-page
+ *  Phase 4 ( phase4-design §3.3): how a subset admission's missing-page
  * delta was determined. `DOWNLOAD_CROSSCHECK` — the downloader's fetched page
  * list proved a known source total; `UNKNOWN` — no trustworthy source total
  * existed, so the recorded count is only what was found.
@@ -334,7 +334,7 @@ data class ChapterGlossary(
 }
 
 /**
- * T917 Phase 3 (D9, phase3-design §3): which lane started a paid provider
+ *  Phase 3 ( phase3-design §3): which lane started a paid provider
  * attempt. The crash-loop cap binds auto-retry loops only — never the user.
  */
 enum class AttemptOrigin { MANUAL, AUTO, BATCH }
@@ -381,15 +381,15 @@ data class ChapterAttemptLedgerDocument(
 }
 
 // ---------------------------------------------------------------------------
-// T924 Stage 1 (schemas contract §1.8): generalized manifest pointers.
+//  Stage 1 (schemas contract §1.8): generalized manifest pointers.
 // ---------------------------------------------------------------------------
 
 /**
- * T924-SC-03: generalization of the [GlossaryPointer] pattern — a pointer to
+ * 03: generalization of the [GlossaryPointer] pattern — a pointer to
  * one immutable, content-addressed sidecar document. [contentFingerprint] is
  * the semantic content identity of the pointed document (64 lowercase hex);
  * the file name is `f-<sha256(contentFingerprint)>.json` under its stage
- * directory (T924-SC-21).
+ * directory.
  */
 @Serializable
 data class SidecarPointer(
@@ -405,8 +405,8 @@ data class SidecarPointer(
 }
 
 /**
- * T924-SC-03: [SidecarPointer] extended with the profile's monotonic
- * [version] (operational ordering only, T924-FP-05) and its input identity.
+ * 03: [SidecarPointer] extended with the profile's monotonic
+ * [version] (operational ordering only, ) and its input identity.
  * Flat data class following the [GlossaryPointer] precedent.
  */
 @Serializable
@@ -414,9 +414,9 @@ data class ProfilePointer(
     val fileName: String,
     val schemaVersion: Int = 1,
     val contentFingerprint: String,
-    /** Monotonic per chapter; operational ordering ONLY (T924-FP-05). */
+    /** Monotonic per chapter; operational ordering ONLY. */
     val version: Int,
-    /** `ProfileInputFingerprint` (T924-FP-04). */
+    /** `ProfileInputFingerprint`. */
     val profileInputFingerprint: String,
 ) {
     fun isWellFormed(): Boolean =

@@ -25,11 +25,11 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
 
 /**
- * T924-TX-22 / ST-10: the ONE-transaction profile freeze publication.
+ * 22 /  the ONE-transaction profile freeze publication.
  * Pins: pointer + sidecar commit together; any rejection leaves the PRIOR
  * manifest authoritative; supersede = new pointer + old file untouched;
  * a recomputed-FP-05 mismatch is rejected; and a pointer without a valid
- * sidecar reads as UNFROZEN (T924-ST-30, never partially trusted).
+ * sidecar reads as UNFROZEN ( never partially trusted).
  */
 class ProfileFreezePublicationTest {
 
@@ -231,7 +231,7 @@ class ProfileFreezePublicationTest {
         io.files.containsKey(fileName) shouldBe true
     }
 
-    /** Encodes [profile] through the shared canonical Json (T924-SC-06). */
+    /** Encodes [profile] through the shared canonical Json. */
     private fun artifactBytes(profile: ChapterTranslationProfile): ByteArray =
         ArtifactDocumentJson
             .encodeToString(ChapterTranslationProfile.serializer(), profile)

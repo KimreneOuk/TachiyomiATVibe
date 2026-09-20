@@ -233,7 +233,7 @@ internal class ActiveChapterStoreRegistry {
         }
 
         /**
-         * T930 Slice A2: Registers an active writer process-wide.
+         *  Slice A2: Registers an active writer process-wide.
          *
          * Observability-only while flag OFF: registers and returns an AutoCloseable
          * token to unregister, but excludes nothing.

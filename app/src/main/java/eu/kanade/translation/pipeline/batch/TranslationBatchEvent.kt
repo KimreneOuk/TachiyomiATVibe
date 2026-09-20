@@ -33,7 +33,7 @@ sealed class TranslationBatchEvent {
         val reason: String? = null,
     ) : TranslationBatchEvent()
     /**
-     * T934 LI-4: the coordinator is rebuilding the envelope dispatch work
+     *   the coordinator is rebuilding the envelope dispatch work
      * (resume hydration). Flips the projection into the REBUILDING phase and
      * carries the per-page adoption counter, so the progress sheet shows the
      * indeterminate live window and store-derived counters keep moving during
@@ -45,7 +45,7 @@ sealed class TranslationBatchEvent {
         val total: Int,
     ) : TranslationBatchEvent()
 
-    /** T934 LI-4: the envelope plan committed (or was reused) — rebuild window ended. */
+    /**   the envelope plan committed (or was reused) — rebuild window ended. */
     data object EnvelopePlanCommitted : TranslationBatchEvent()
 
     data class BatchAborted(val reason: String, val failedPageKeys: Set<String>) : TranslationBatchEvent()
@@ -57,7 +57,7 @@ sealed class TranslationBatchEvent {
         val reason: String,
         val nextEligibleRetryAtEpochMs: Long? = null,
         val retryablePageKeys: Set<String> = emptySet(),
-        // T917 Phase 5 (spec §4.1): the pause is a guarded-publication
+        //  Phase 5 (spec §4.1): the pause is a guarded-publication
         // rejection — no durable result exists for the affected page.
         val nonDurableFailure: Boolean = false,
         val nonDurableFailureReason: String? = null,
@@ -68,7 +68,7 @@ sealed class TranslationBatchEvent {
         val failedPages: Int,
         val partialPages: Int,
         val totalPages: Int,
-        // T917 Phase 5 (spec §4.1): carried from ReconciliationResult so a
+        //  Phase 5 (spec §4.1): carried from ReconciliationResult so a
         // finished chapter keeps its non-durable warning visible.
         val nonDurableFailure: Boolean = false,
         val nonDurableFailureReason: String? = null,

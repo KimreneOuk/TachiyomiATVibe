@@ -95,7 +95,7 @@ class AiTranslationRetryControllerTest {
 
     @Test
     fun `clean targeted repair completes even after an earlier protocol violation`() = runTest {
-        // Device reproduction (T934): attempt 1 carried a protocol issue,
+        // Device reproduction: attempt 1 carried a protocol issue,
         // the whole repair and the targeted missing repair then returned
         // clean, fully covering the envelope. The accumulator must judge
         // the CURRENT merge, not latch the earlier violation — otherwise a

@@ -401,7 +401,7 @@ class ContextualResponseParserTest {
         assertFalse(failure.safeSummary().contains("private source"))
     }
 
-    // region T934 separator-salvage (corrupted `ID|text` frame on short emphatic last-page lines)
+    // region  separator-salvage (corrupted `ID|text` frame on short emphatic last-page lines)
 
     @Test
     fun `salvage accepts corrupted separator with exact requested id`() {

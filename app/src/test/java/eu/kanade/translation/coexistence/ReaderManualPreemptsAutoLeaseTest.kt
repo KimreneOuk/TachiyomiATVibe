@@ -13,8 +13,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 2 — D1 lease-priority contract (phase2-design note §1.2), GREEN
- * with the D1 origin change.
+ *  Phase 2 —  lease-priority contract (phase2-design note §1.2), GREEN
+ * with the  origin change.
  *
  * Pins the one new acquisition rule and its fencing consequences on the REAL
  * store the coexistence harness wires:
@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test
  *  (c) the evicted AUTO side's release/cancel is origin-checked and can NOT
  *      remove MANUAL's lease.
  *
- * Every call used here is exactly what the production paths issue after D1:
+ * Every call used here is exactly what the production paths issue after
  * `tryAcquirePageStageLease(AUTO)` is the rolling auto boundary's acquisition
  * (`TranslationPipeline.prepareSinglePage`), `tryAcquirePageStageLease(MANUAL)`
  * is the manual single-page boundary's acquisition
@@ -35,9 +35,9 @@ import org.junit.jupiter.api.Test
  * token is the guarded write every stage writer uses.
  *
  * Fixture note: store-level (same style as
- * [eu.kanade.translation.ChapterTranslationStorePhase3Test]) because the D1
+ * [eu.kanade.translation.ChapterTranslationStorePhase3Test]) because the
  * semantics live entirely in the lease table + token fencing; driving them
- * through the full harness would only re-test D2's choreography.
+ * through the full harness would only re-test 's choreography.
  */
 class ReaderManualPreemptsAutoLeaseTest {
 

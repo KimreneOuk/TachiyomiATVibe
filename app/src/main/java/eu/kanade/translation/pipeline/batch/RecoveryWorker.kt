@@ -148,7 +148,7 @@ internal class RecoveryWorker(
             }
             ?: return null
         if (resumable.state == ChapterRunState.COMPLETE) {
-            // T924 LI-2 (the mirror of the flag-OFF F-4 gate in
+            //   (the mirror of the flag-OFF F-4 gate in
             // deleted shell-level F-4 gate): a recorded
             // COMPLETE is NOT enough to retire the chapter — the zero-work
             // finished outcome is authorized only when every ordered page's
@@ -162,7 +162,7 @@ internal class RecoveryWorker(
             // translation-terminal page. Any page whose record and snapshot
             // carry no readable translated/textless result must behave the
             // same way: instead of short-circuiting, the run STARTS FRESH
-            // (ST-15-style supersession — the normal run-start path publishes
+            // (-style supersession — the normal run-start path publishes
             // a new RUN_SNAPSHOT and re-derives the missing page state).
             // Evidence is judged against the DURABLE manifest (same read the
             // pointer above came from), never the facade's mutable cache.
@@ -206,7 +206,7 @@ internal class RecoveryWorker(
     }
 
     /**
-     * T924 LI-2 helper for the COMPLETE resume gate: true when [pageKey]'s
+     *   helper for the COMPLETE resume gate: true when [pageKey]'s
      * translated result under the recorded COMPLETE run is still durably
      * addressable — a committed bundle, a committed/textless display state, or
      * a candidate snapshot whose CONTENT is still a translation-terminal page
@@ -257,10 +257,10 @@ internal class RecoveryWorker(
     fun t924PageTerminalAtFinalize(page: PageTranslation?, activeGeneration: Long): Boolean {
         if (page == null) return false
         if (page.hasRenderedResult || page.isTextlessTerminal) return true
-        // T924 zero-legacy (D1): a COMMITTED terminal stage is durable
+        //  zero-legacy: a COMMITTED terminal stage is durable
         // regardless of which generation wrote it — a restart after a cancel
         // or process death must never strand (and durable-fail) a prior
-        // run's committed work (ST-14/LI-2 reuse). Only OPEN states
+        // run's committed work (/ reuse). Only OPEN states
         // (PENDING/RUNNING/CANCELLED, below) are generation-owned: a page
         // still mid-write from a dead run is genuinely stranded.
         when (page.translationStatus) {
@@ -284,7 +284,7 @@ internal class RecoveryWorker(
     }
 
     /**
-     * TX-21.4 deterministic suffix re-plan: rebuilds the pending work from
+     *.4 deterministic suffix re-plan: rebuilds the pending work from
      * fresh store state with the SAME pure planner and publishes the
      * superseding plan (SC-20) before dispatch resumes. An unchanged
      * fingerprint reuses the published plan (identical content-addressed
@@ -299,7 +299,7 @@ internal class RecoveryWorker(
     }
 
     /**
-     * T934 display-tail drain: stamps [pageKey] render-terminal when it
+     *  display-tail drain: stamps [pageKey] render-terminal when it
      * carries the full display evidence (translation READY/PARTIAL, inpaint
      * READY, cleaned image, a translated block) and renderStatus is still
      * PENDING — the exact durable shape of an order-inverted page whose
@@ -395,7 +395,7 @@ internal class RecoveryWorker(
             page.blocks.any { it.translation.isNotBlank() }
 
     /**
-     * T934: drains the display/compose tail before the run may publish
+     *  drains the display/compose tail before the run may publish
      * COMPLETE — every page whose translate+inpaint work is DONE but whose
      * display commit (render-terminal stamp → committed promotion) has not
      * landed. The overlap scheduler's drain-side sweep
@@ -477,7 +477,7 @@ internal class RecoveryWorker(
     }
 
     /**
-     * T934 display-tail companion of [strandedPageReason]: the SPECIFIC reason
+     *  display-tail companion of [strandedPageReason]: the SPECIFIC reason
      * a translate+inpaint-complete page still lacks its display commit after
      * the bounded drain. Names the blocking evidence so the durable failure is
      * actionable instead of a bare stage status.
@@ -499,7 +499,7 @@ internal class RecoveryWorker(
     }
 
     /**
-     * T934: the typed terminal for a page whose display work genuinely cannot
+     *  the typed terminal for a page whose display work genuinely cannot
      * finish this run — a durable retryable LAYOUT-stage failure (the
      * render-terminal stamp's stage) plus the live renderStatus FAILED flip,
      * mirroring the stranded-page sweep's carrier/reason style. The run still
@@ -546,7 +546,7 @@ internal class RecoveryWorker(
                         updatedAt = nowEpochMs()
                     }
                 }
-            // T934 round 3: result-aware (the persistDurablePreflightFailure
+            //  round 3: result-aware (the persistDurablePreflightFailure
             // idiom) — a Rejected must surface its store reason, never vanish.
             // One fresh-snapshot retry heals a fence drifted between the
             // classification and this persist (the stamp attempts of the
@@ -595,7 +595,7 @@ internal class RecoveryWorker(
     }
 
     /**
-     * ST-11 terminal: a page that cannot fit any legal envelope takes a
+     *  terminal: a page that cannot fit any legal envelope takes a
      * durable structural failure (SOURCE category — the page content, not
      * the transport, cannot fit the policy) so later runs do not re-plan it
      * silently. Best-effort: a rejected record keeps the typed pause.

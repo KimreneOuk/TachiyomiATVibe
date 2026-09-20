@@ -4,7 +4,7 @@ import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanne
 import kotlin.math.ceil
 
 /**
- * T933: Accounting mode for final model request input tokens.
+ *  Accounting mode for final model request input tokens.
  */
 enum class AccountingMode {
     EXACT,
@@ -12,7 +12,7 @@ enum class AccountingMode {
 }
 
 /**
- * T933: Transport-layer input accounting contract required for all AI dispatches under 8,192 context limit.
+ *  Transport-layer input accounting contract required for all AI dispatches under 8,192 context limit.
  * Dispatches without a certified contract are refused before network calls.
  */
 interface InputAccountingContract {

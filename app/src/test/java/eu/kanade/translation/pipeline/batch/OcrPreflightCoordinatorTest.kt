@@ -36,10 +36,10 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T924 Stage 3 (WP4) coordinator-shell coverage: the FF-01 flagged
+ *  Stage 3 (WP4) coordinator-shell coverage: the  flagged
  * [ChapterProfileBatchCoordinator] runs the durable machine ONLY through
  * OCR_PREFLIGHT — serial per page (one decoded page at a time), checkpointOcr
- * CLOSE, lease release strictly after the checkpoint (T924-TX-06) — then
+ * CLOSE, lease release strictly after the checkpoint  — then
  * STOPS with a durable diagnostic instead of redefining completion.
  *
  * Harness idioms follow `OcrCheckpointRestartReuseTest` (M1): real
@@ -235,7 +235,7 @@ class OcrPreflightCoordinatorTest {
 
         // The durable diagnostic: preflight complete + counter summary +
         // corpus fingerprint; the analysis phase recorded its CONFIGURATION
-        // gate (no transport in this slice); flag frozen (FF-01d).
+        // gate (no transport in this slice); flag frozen.
         val record = runRecord(store).shouldNotBeNull()
         record.state shouldBe ChapterRunState.ANALYSIS_CHUNKS
         record.runId shouldMatch Regex("run-\\d+-[0-9a-f]{8}")
@@ -302,7 +302,7 @@ class OcrPreflightCoordinatorTest {
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // Only the remainder was OCR'd: the checkpointed page was skipped by
-        // content identity (ST-01.4/ST-06), never re-decoded. The analysis
+        // content identity, never re-decoded. The analysis
         // phase then pauses at the no-transport gate again (no chunks were
         // persisted — the slice-A shell never wires a transport).
         resumed.status shouldBe BatchPass1Status.PAUSED
@@ -317,7 +317,7 @@ class OcrPreflightCoordinatorTest {
         val record = runRecord(resumedStore).shouldNotBeNull()
         record.state shouldBe ChapterRunState.ANALYSIS_CHUNKS
         // Same frozen configuration: the interrupted run is CONTINUED (same
-        // run id), not silently restarted under a new snapshot (ST-03.1).
+        // run id), not silently restarted under a new snapshot (.1).
         record.runId shouldBe interruptedRecord.runId
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] shouldBe 3
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 1
@@ -336,7 +336,7 @@ class OcrPreflightCoordinatorTest {
 
         // The page file was replaced under the same key: the current source
         // digest no longer matches the durable checkpoint identity, so the
-        // page MUST re-run instead of reusing stale OCR (ST-06 skip rule).
+        // page MUST re-run instead of reusing stale OCR ( skip rule).
         val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
         val changedSources = sourcePairs(pages).map { (pageKey, _) ->
             pageKey to hex64("replaced-source-$pageKey")

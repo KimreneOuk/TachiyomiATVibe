@@ -58,7 +58,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T924-ST-14 resume (wave-7c review F-2): a re-dispatch over a durable record
+ * 14 resume (wave-7c review F-2): a re-dispatch over a durable record
  * already past TRANSLATE never steps the run record BACKWARD to RUN_SNAPSHOT.
  * A FINALIZE record resumes the idempotent finalize drain (zero re-OCR,
  * re-analysis, re-translation); a COMPLETE record is an idempotent finished
@@ -397,7 +397,7 @@ class Stage7FinalizeResumeCoordinatorTest {
             killLane.inpainted shouldBe emptyList()
 
             // ---- Pass 2: a SECOND coordinator over the SAME store. The ----
-            // ---- ST-14 resume must re-run ONLY the finalize drain.     ----
+            // ----  resume must re-run ONLY the finalize drain.     ----
             val resumeIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
             val resumeLane = FakeOverlapInpaintLane(store, resumeIdentities)
             val resumeOcrWorker = FakePreflightOcrWorker(store)
@@ -507,13 +507,13 @@ class Stage7FinalizeResumeCoordinatorTest {
             // Healthy flagged COMPLETE: the translated page snapshots stay
             // durably addressable through the OPEN candidate pointers — there
             // is no committed bundle yet (promotion requires a rendered
-            // result). This is the evidence the LI-2 COMPLETE gate accepts.
+            // result). This is the evidence the  COMPLETE gate accepts.
             val manifestAfterPass1 = artifactStore().readManifest().shouldNotBeNull()
             pageKeys.forEach { key ->
                 manifestAfterPass1.pages.getValue(key).candidate.shouldNotBeNull()
             }
 
-            // ---- The LI-2 hole: a user reset demotes the committed displays ----
+            // ---- The  hole: a user reset demotes the committed displays ----
             // ---- (the real reset primitives: live page + manifest pointer) ----
             // ---- while the COMPLETE run record keeps owning the chapter.   ----
             pageKeys.forEach { key ->
@@ -532,7 +532,7 @@ class Stage7FinalizeResumeCoordinatorTest {
                 // The reset keeps the candidate POINTER but persists the
                 // cleared PENDING page OVER its snapshot, so the recorded
                 // COMPLETE no longer has any page whose translated result is
-                // readable — the exact LI-2 divergence.
+                // readable — the exact  divergence.
                 val record = manifestAfterReset.pages.getValue(key)
                 record.committed shouldBe null
                 val snapshot = record.candidate?.pageSnapshotFileName

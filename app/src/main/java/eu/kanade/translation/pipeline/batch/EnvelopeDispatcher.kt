@@ -268,7 +268,7 @@ internal class EnvelopeDispatcher(
                 profilePointer = store.artifactManifest?.profile,
             )
 
-        // ST-11 entry: phase record, then plan (pure re-derivation).
+        //  entry: phase record, then plan (pure re-derivation).
         publishRecord(
             artifact,
             envelopeRecord(ChapterRunState.ENVELOPE_PLAN, envelopeCounters(emptyMap())),
@@ -287,7 +287,7 @@ internal class EnvelopeDispatcher(
         )
 
         // Stage-6 slice B (design §7): load the frozen profile DTO for prompt
-        // enrichment. The SAME ST-05/ST-30 reuse discipline applies — a
+        // enrichment. The SAME / reuse discipline applies — a
         // sidecar that does not read back fully valid and identity-matched is
         // treated as ABSENT and the executor keeps the LEGACY prompt shape
         // (degraded-but-correct, never partially trusted).
@@ -314,7 +314,7 @@ internal class EnvelopeDispatcher(
             }
         }
 
-        // ST-12 entry needs a typed AI transport; the plan still publishes so
+        //  entry needs a typed AI transport; the plan still publishes so
         // a later wired run resumes directly into TRANSLATE. Wave A: the
         // constructor widened to TextTranslator for the standard lane, so the
         // envelope path re-narrows here — a non-contextual translator on the
@@ -331,7 +331,7 @@ internal class EnvelopeDispatcher(
                 reason = build.reason,
             )
             is EnvelopeWorkBuild.NothingPending -> {
-                // Skip rule (ST-11): no translatable work — textless chapters
+                // Skip rule: no translatable work — textless chapters
                 // never reach TRANSLATE. Typed PAUSED no-work terminal.
                 publishRecord(
                     artifact,
@@ -355,7 +355,7 @@ internal class EnvelopeDispatcher(
                 )
             }
             is EnvelopeWorkBuild.PlannerRejected -> {
-                // ST-11 terminal: a page that cannot fit any legal envelope
+                //  terminal: a page that cannot fit any legal envelope
                 // is rejected whole (page atomicity); it takes a durable
                 // structural failure and the phase pauses at it.
                 build.namedPageKeys.forEach { pageKey ->
@@ -382,7 +382,7 @@ internal class EnvelopeDispatcher(
             }
             is EnvelopeWorkBuild.Ready -> {
                 val fresh = build.plan
-                // ST-11 resume rule: identical inputs re-derive an identical
+                //  resume rule: identical inputs re-derive an identical
                 // plan fingerprint — reuse the published plan, no write.
                 val reuse = manifest.envelopePlan != null &&
                     EnvelopePlanPublication.readValidatedPlan(store, manifest).let { read ->
@@ -414,11 +414,11 @@ internal class EnvelopeDispatcher(
                             )
                     }
                 }
-                // T934 LI-4: the plan is durable again (published, or an
+                //   the plan is durable again (published, or an
                 // identical fingerprint was reused) — end the rebuild window.
                 listener.envelopePlanCommitted()
 
-                // ---- ST-12 TRANSLATE. ----
+                // ----  TRANSLATE. ----
                 if (translator == null) {
                     publishRecord(
                         artifact,
@@ -457,15 +457,15 @@ internal class EnvelopeDispatcher(
                 )
 
                 val work = build.work
-                // T924 Stage 7 (D1): when the overlap scheduler is present,
+                //  Stage 7: when the overlap scheduler is present,
                 // every provider envelope dispatch opens a remote window that
-                // drives serial inpaint of committed pages (ST-13). Admission
+                // drives serial inpaint of committed pages. Admission
                 // semantics are unchanged — the wrapper delegates to the SAME
                 // process-wide sub-limit gate.
                 val dispatchGate = overlapScheduler?.let { scheduler ->
                     OverlapScheduler.WindowSignallingGate(translationSublimitGate, scheduler)
                 } ?: translationSublimitGate
-                // D2: publish the persisted layout right after each inpaint
+                //  publish the persisted layout right after each inpaint
                 // commits (per page, never blocking the envelope loop — the
                 // hook runs inside the overlap scheduler's coroutine).
                 overlapScheduler?.onInpaintCommitted = { pageKey ->
@@ -483,7 +483,7 @@ internal class EnvelopeDispatcher(
                     sublimitGate = dispatchGate,
                     providerProfile = providerChunkProfile(),
                     nowEpochMs = nowEpochMs,
-                    // T934 track V: freed write slots wake the overlap lane at
+                    //  track V: freed write slots wake the overlap lane at
                     // the commit settle — deferred inpaint candidates no longer
                     // wait a whole envelope cycle for the next window's open.
                     onCommitSettled = { overlapScheduler?.notifyCandidatesChanged() },
@@ -516,8 +516,8 @@ internal class EnvelopeDispatcher(
                                     ),
                                 ),
                             )
-                            // T924 Stage 7 (D4): TRANSLATE drained — the
-                            // ST-14 FINALIZE phase completes the run and
+                            //  Stage 7: TRANSLATE drained — the
+                            //  FINALIZE phase completes the run and
                             // publishes its single COMPLETE.
                             runFinalizeAndComplete(
                                 artifact = artifact,

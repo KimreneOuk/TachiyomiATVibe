@@ -13,7 +13,7 @@ import eu.kanade.translation.model.TranslationBlock
 import java.security.MessageDigest
 
 /**
- * Lease-layer provenance of a page write (T917 D1 three-origin model, lifecycle
+ * Lease-layer provenance of a page write (  three-origin model, lifecycle
  * contract §12). Priority on one page: MANUAL > AUTO > BATCH.
  *
  * - [MANUAL]: a reader tap / foreground single-page intent. Evicts an
@@ -39,7 +39,7 @@ enum class PageWriteOrigin {
 /**
  * Durable-provenance mapping for a lease origin (two-vocabulary rule above):
  * MANUAL and AUTO both keep the stable reader-adhoc provenance so planner
- * parsing and D5-adjacent reuse evidence stay unchanged.
+ * parsing and -adjacent reuse evidence stay unchanged.
  */
 fun PageWriteOrigin?.toArtifactOrigin(): ArtifactOrigin = when (this) {
     PageWriteOrigin.MANUAL, PageWriteOrigin.AUTO, null -> ArtifactOrigin.READER_ADHOC
@@ -105,16 +105,16 @@ data class TranslationStagePatch(
     val expectedDependencyFingerprint: String? = null,
     val expectedArtifactPageVersion: Long? = null,
     /**
-     * T924-TX-20 (Stage-6 slice A): the frozen profile content fingerprint
-     * (T924-FP-05) the translation request was built from. `null` keeps the
-     * pre-T924 merge behavior byte-identical (legacy callers); non-null makes
+     * 20 (Stage-6 slice A): the frozen profile content fingerprint
+     *  the translation request was built from. `null` keeps the
+     * pre- merge behavior byte-identical (legacy callers); non-null makes
      * the merge REJECT when the manifest's currently frozen profile carries a
      * different content fingerprint (stale-profile protection).
      */
     val profileContentFingerprint: String? = null,
     /**
-     * T924-TX-20: the envelope-plan fingerprint (T924-SC-10) the dispatch was
-     * planned under. `null` keeps the pre-T924 merge behavior byte-identical;
+     * 20: the envelope-plan fingerprint  the dispatch was
+     * planned under. `null` keeps the pre- merge behavior byte-identical;
      * non-null makes the merge REJECT when the manifest's `envelopePlan`
      * pointer carries a different content fingerprint (stale-plan commit
      * protection; rejected commits never advance any frontier).

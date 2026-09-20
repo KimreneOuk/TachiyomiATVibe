@@ -13,7 +13,7 @@ import tachiyomi.domain.translation.pools.BitmapPool
 
 /**
  * Memory-budget governance helpers moved from `TranslationPipeline`
- * (T909 Phase 1). The pipeline's engine read is injected as a getter.
+ * ( Phase 1). The pipeline's engine read is injected as a getter.
  */
 internal object MemoryGovernance {
 

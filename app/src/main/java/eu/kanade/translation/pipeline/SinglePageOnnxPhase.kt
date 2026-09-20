@@ -47,7 +47,7 @@ import java.io.InputStream
 
 /**
  * Permit-held ONNX phase of the reader single-page path moved from
- * `TranslationPipeline` (T909 Phase 14), with [OnnxPhaseResult], the resume
+ * `TranslationPipeline` ( Phase 14), with [OnnxPhaseResult], the resume
  * paths (`renderResumedPage`, `resumeInpaintAndRender`), the downscaled-inpaint
  * retry, and the batch native stages (`analyzePage`, `inpaintPage`,
  * `processSinglePage`). Bitmap recycle/ownership points moved verbatim:
@@ -170,7 +170,7 @@ internal class SinglePageOnnxPhase(
         PageDecode.decodePageBitmapAtSize(fileName, sampleSize, streams)
 
     /**
-     * T922 Phase 3: correlated `source_decode` stage boundary. The run arrives
+     *  Phase 3: correlated `source_decode` stage boundary. The run arrives
      * through the installed [TranslationTrace] element; outside a traced
      * coroutine this is a fail-open NO_OP span. Both call sites (fresh decode
      * and inpaint-resume re-decode) are measured; repeated intervals accumulate
@@ -223,13 +223,13 @@ internal class SinglePageOnnxPhase(
      * handled (no further work needed). The caller releases the permit after this
      * returns regardless of the result.
      *
-     * T917 D11 (phase4-design §4.4): when the caller supplies
+     *   (phase4-design §4.4): when the caller supplies
      * [deferredPublications], the resume paths' storage publication
      * ([resumeInpaintAndRender]'s cleaned-image persist + render tail, the
      * [renderResumedPage]-only resume, and the `finally` store flush + stream
      * clear) is ENQUEUED there instead of running under the permit — the
      * boundary drains it after the permit is released. Null (legacy callers)
-     * keeps the pre-D11 inline behavior.
+     * keeps the pre- inline behavior.
      */
     suspend fun translateSinglePageOnnx(
         manga: Manga,
@@ -278,7 +278,7 @@ internal class SinglePageOnnxPhase(
 
             val workPlan = eu.kanade.translation.model.PageWorkPlanner.plan(adjustedResume, force)
 
-            // T922 Phase 3: resolve the resume plan onto the run trace (run_end
+            //  Phase 3: resolve the resume plan onto the run trace (run_end
             // carries the resolved plan; run_start held the initial default).
             val traceRun = TranslationTrace.currentRun()
             if (traceRun != null) {
@@ -306,7 +306,7 @@ internal class SinglePageOnnxPhase(
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT single-page resume: render from cleaned image pageKey=$pageKey cleaned=${adjustedResume.cleanedImageName}"
                         }
-                        // T917 D11 (§4.4): the render tail persists the page —
+                        //   (§4.4): the render tail persists the page —
                         // defer it OUTSIDE the native permit when the boundary
                         // supplied a deferral queue (the cleaned bitmap already
                         // crosses the permit boundary by design).
@@ -556,7 +556,7 @@ internal class SinglePageOnnxPhase(
             )
         } finally {
             if (!needsHttpRender) {
-                // T917 D11 (§4.4): the store flush + stream-registry clear are
+                //   (§4.4): the store flush + stream-registry clear are
                 // storage publication — defer them OUTSIDE the native permit
                 // (enqueued AFTER the resume tails, so publication order is
                 // identical to the inline sequence). The engine-pool reclaim
@@ -683,7 +683,7 @@ internal class SinglePageOnnxPhase(
             chapter.name,
             chapter.scanlator,
         )
-        // T917 D11 (§4.4): cleaned-image persistence and the render tail are
+        //   (§4.4): cleaned-image persistence and the render tail are
         // storage publication — defer them OUTSIDE the native permit when the
         // boundary supplied a deferral queue. The tail stays fail-closed: a
         // persist failure still recycles the bitmap, marks render FAILED and
@@ -1133,7 +1133,7 @@ internal class SinglePageOnnxPhase(
         pageTranslation.originalImgHeight = decoded.originalHeight.toFloat()
         pageTranslation.sourceFileName = fileName
         pageTranslation.updatedAt = System.currentTimeMillis()
-        // T922 Phase 3: when the page runs inside a correlated trace, the
+        //  Phase 3: when the page runs inside a correlated trace, the
         // ambiguous local pageStart total is replaced by the correlated run
         // total (parity: both are wall-clock ms for the page work). Outside a
         // trace the legacy local total is kept.
@@ -1157,7 +1157,7 @@ internal class SinglePageOnnxPhase(
     }
 
     /**
-     * T917 Phase 3 (D9, design §3.2): an explicit user force clears the
+     *  Phase 3 ( design §3.2): an explicit user force clears the
      * crash-loop cap bookkeeping (consecutive counter + INTERRUPTED durable
      * failure) so the user's retry is admitted — the cap binds auto-retry
      * loops, never the user. Fail-open: a failed clear never blocks the retry.

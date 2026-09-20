@@ -73,9 +73,9 @@ object SettingsTranslationScreen : SearchableSettings {
     }
 
     /**
-     * T924 debug-build-only experiment switches. The remaining flag is read at
+     *  debug-build-only experiment switches. The remaining flag is read at
      * each translation commit/render (never mid-run), so flipping between
-     * commits is the supported flow. Never shown in release builds. (FF-01
+     * commits is the supported flow. Never shown in release builds. (
      * completed its A/B lifecycle: the profile pipeline is now the only
      * pipeline and the switch was removed with the flag.)
      */

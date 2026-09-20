@@ -9,19 +9,19 @@ import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.model.TranslationBlock
 
 /**
- * T924 WP9 (T924-FF-02a(1)): pure assembly of the two separately invalidatable
+ *  WP9: pure assembly of the two separately invalidatable
  * LAYOUT_PREPARE sub-results — the geometry [PageLayoutDrawPlan] (schemas
  * contract §1.6) and the [ColorStylePreparation] (schemas contract §1.7) —
  * from the state the Batch render join already has when a page's translation
- * completes. The caller (BatchRenderJoin, FF-02 ON) owns the transaction; this
+ * completes. The caller (BatchRenderJoin,  ON) owns the transaction; this
  * object owns NO store, NO Android types beyond the injected [TextMeasurer],
  * and never mutates the planner (TextLayoutPlanner stays byte-identical).
  *
- * Content fingerprints (T924-SC-10) are SHA-256 over the canonical re-encoded
+ * Content fingerprints  are SHA-256 over the canonical re-encoded
  * JSON of each DTO, through the same byte-level core the envelope plan uses
  * ([StageFingerprints.envelopePlanContentFingerprint]).
  *
- * The compatibility fingerprint (T924-FP-07,
+ * The compatibility fingerprint (
  * [DrawPlanFingerprint.layoutCompatibilityFingerprint]) is stored by the caller
  * on the page's durable LAYOUT stage record; the hydrator recomputes it from
  * reader-side inputs via [compatibilityFingerprint] and rejects stale plans
@@ -67,7 +67,7 @@ object LayoutPlanPublication {
      * preparation, and fingerprints both. Returns null when the page is
      * unpublishable (no blocks, DTO validation failure such as a blank
      * `stableBlockId`, or more blocks than the schema cap) — the caller then
-     * simply skips publication and readers keep the async planner (T924-FF-02b);
+     * simply skips publication and readers keep the async planner;
      * a plan that would fail validation must never reach the store.
      */
     fun prepare(
@@ -146,7 +146,7 @@ object LayoutPlanPublication {
     }
 
     /**
-     * The T924-FP-07 layout compatibility fingerprint, computed from the same
+     * The  layout compatibility fingerprint, computed from the same
      * inputs on both sides (publication stores it; hydration recomputes and
      * compares). Private publisher-side constants
      * ([LAYOUT_ENGINE_VERSION], [NO_PREFERENCE_INPUT],
@@ -176,14 +176,14 @@ object LayoutPlanPublication {
         platformShapingKey = platformShapingKey,
     )
 
-    /** Canonical encode of the color sub-result (T924-SC-06, shared Json only). */
+    /** Canonical encode of the color sub-result ( shared Json only). */
     fun encodeColorPreparation(preparation: ColorStylePreparation): String =
         eu.kanade.translation.artifact.ArtifactDocumentJson.encodeToString(
             ColorStylePreparation.serializer(),
             preparation,
         )
 
-    /** Canonical decode of the color sub-result (T924-SC-06). */
+    /** Canonical decode of the color sub-result. */
     fun decodeColorPreparation(json: String): ColorStylePreparation =
         eu.kanade.translation.artifact.ArtifactDocumentJson.decodeFromString(
             ColorStylePreparation.serializer(),

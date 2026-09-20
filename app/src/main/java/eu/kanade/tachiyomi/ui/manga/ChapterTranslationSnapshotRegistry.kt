@@ -4,7 +4,7 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T911 slice 1: screen-scoped keyed store of the last live/terminal batch
+ *  slice 1: screen-scoped keyed store of the last live/terminal batch
  * translation snapshot per chapter id.
  *
  * Full chapter-list rebuilds (manga DB, download cache, download queue,

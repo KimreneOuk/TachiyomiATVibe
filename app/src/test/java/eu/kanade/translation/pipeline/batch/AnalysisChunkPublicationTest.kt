@@ -30,7 +30,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 /**
- * T924 Stage 5 slice A (T924-SC-19/20/22, ST-08): crash-safe analysis chunk
+ *  Stage 5 slice A (/22, ): crash-safe analysis chunk
  * persistence. One validated chunk is ONE sidecar-then-pointer transaction
  * appended in chunk-ordinal order; any rejection leaves the PRIOR manifest
  * authoritative and the failed chunk unpersisted (resume re-executes it).
@@ -155,7 +155,7 @@ class AnalysisChunkPublicationTest {
         rejected.reason shouldStartWith AnalysisChunkPublication.ORDINAL_REJECTION
         artifact.readManifest().shouldNotBeNull().analysisChunks.shouldHaveSize(1)
 
-        // The accepted append keeps list order == ordinal order (ST-08 prefix rule).
+        // The accepted append keeps list order == ordinal order ( prefix rule).
         manifest = AnalysisChunkPublication.publish(artifact, manifest, validResult(1), 3_000L)
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest
         manifest.analysisChunks.shouldHaveSize(2)
@@ -170,7 +170,7 @@ class AnalysisChunkPublicationTest {
         val artifact = artifactStore()
         val manifest = baseManifest()
 
-        // INVALID status: never a durable chunk (ST-08).
+        // INVALID status: never a durable chunk.
         val invalidStatus = validResult(0).copy(
             status = AnalysisChunkStatus.INVALID,
             validationFailureReason = "V8 excerpt hash mismatch",

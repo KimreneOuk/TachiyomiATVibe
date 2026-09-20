@@ -14,7 +14,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * T924 LI-4: a one-shot stale-manifest retry inside [ChapterArtifactEngine] for
+ *   a one-shot stale-manifest retry inside [ChapterArtifactEngine] for
  * the first-publication seams the flagged Batch lane hits. When a chapter
  * with more than 8 pages opens, the ARTIFACTS path launches the background
  * background artifact-health republisher, which republishes a VERIFIED manifest AFTER the
@@ -24,12 +24,12 @@ import java.security.MessageDigest
  * spurious CHECKPOINT_REJECTED preflight failure or a PAUSED run on a healthy
  * chapter.
  *
- * T934: the same race aborted the whole batch RESUME at the remaining
+ *  the same race aborted the whole batch RESUME at the remaining
  * first-publication seams — `openCandidate` (the "artifact candidate open
  * rejected" log), the stage-patch candidate transactions (`persistLiveCandidate`
  * / `promoteLiveCandidate`, the "stage patch rejected …
  * ARTIFACT_PUBLICATION_FAILED" façade mapping), and the run-pointer teardown
- * (`retireActiveRun`). The tests below extend the LI-4 contract to each of
+ * (`retireActiveRun`). The tests below extend the  contract to each of
  * them: a stale-manifest rejection triggers exactly ONE fresh-read retry that
  * commits; a fresh state that drifted further rejects with its REAL reason
  * (no second retry); every non-stale rejection reason is returned as-is.
@@ -50,7 +50,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
             .joinToString("") { byte -> "%02x".format(byte) }
 
     /**
-     * Mirrors the real LI-4 writer: the artifact-health republisher republishes
+     * Mirrors the real  writer: the artifact-health republisher republishes
      * the manifest with the VERIFIED health marker and a bumped timestamp,
      * behind the caller's back.
      */
@@ -346,7 +346,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     }
 
     // ------------------------------------------------------------------
-    // T934: the batch-resume seams join the same one-shot retry.
+    //  the batch-resume seams join the same one-shot retry.
     // ------------------------------------------------------------------
 
     /** Authority-flip fixture: ARTIFACTS manifest, no candidate yet. */

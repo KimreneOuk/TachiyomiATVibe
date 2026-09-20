@@ -93,7 +93,7 @@ fun MangaScreen(
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     // TachiyomiAT
     onTranslationChapter: ((ChapterList.Item, ChapterTranslationAction) -> Unit)?,
-    // T911 slice 2 (R6): list API for multi-select — one batch, one confirmation.
+    //  slice 2 (R6): list API for multi-select — one batch, one confirmation.
     onTranslationChapters: ((List<ChapterList.Item>, ChapterTranslationAction) -> Unit)?,
     onAddToLibraryClicked: () -> Unit,
     onWebViewClicked: (() -> Unit)?,
@@ -228,7 +228,7 @@ private fun MangaScreenSmallImpl(
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     // TachiyomiAT
     onTranslationChapter: ((ChapterList.Item, ChapterTranslationAction) -> Unit)?,
-    // T911 slice 2 (R6): list API for multi-select — one batch, one confirmation.
+    //  slice 2 (R6): list API for multi-select — one batch, one confirmation.
     onTranslationChapters: ((List<ChapterList.Item>, ChapterTranslationAction) -> Unit)?,
     onAddToLibraryClicked: () -> Unit,
     onWebViewClicked: (() -> Unit)?,
@@ -335,7 +335,7 @@ private fun MangaScreenSmallImpl(
                 onDownloadChapter = onDownloadChapter,
                 onTranslateChapter = onTranslationChapters?.let { handler ->
                     { items: List<ChapterList.Item> ->
-                        // T911 slice 2 (R6): one call for the whole selection —
+                        //  slice 2 (R6): one call for the whole selection —
                         // the single-item loop used to overwrite the dialog per
                         // chapter so only the last selection survived.
                         handler(items, ChapterTranslationAction.START)
@@ -485,7 +485,7 @@ fun MangaScreenLargeImpl(
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     // TachiyomiAT
     onTranslationChapter: ((ChapterList.Item, ChapterTranslationAction) -> Unit)?,
-    // T911 slice 2 (R6): list API for multi-select — one batch, one confirmation.
+    //  slice 2 (R6): list API for multi-select — one batch, one confirmation.
     onTranslationChapters: ((List<ChapterList.Item>, ChapterTranslationAction) -> Unit)?,
     onAddToLibraryClicked: () -> Unit,
     onWebViewClicked: (() -> Unit)?,
@@ -589,7 +589,7 @@ fun MangaScreenLargeImpl(
                     onDownloadChapter = onDownloadChapter,
                     onTranslateChapter = onTranslationChapters?.let { handler ->
                         { items: List<ChapterList.Item> ->
-                            // T911 slice 2 (R6): one call for the whole selection —
+                            //  slice 2 (R6): one call for the whole selection —
                             // the single-item loop used to overwrite the dialog per
                             // chapter so only the last selection survived.
                             handler(items, ChapterTranslationAction.START)

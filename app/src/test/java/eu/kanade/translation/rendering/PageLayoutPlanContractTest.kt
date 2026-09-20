@@ -8,7 +8,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T912 slice 3: the explicit [PageLayoutPlan] planner contract — identity
+ *  slice 3: the explicit [PageLayoutPlan] planner contract — identity
  * multiset over nonblank inputs in input order, planning/render ordinals,
  * blank absence, explicit non-draw reasons, and equivalence of the legacy
  * [TextLayoutPlanner.plan] wrapper with the plan's drawable list.
@@ -101,7 +101,7 @@ class PageLayoutPlanContractTest {
 
     @Test
     fun `empty shared cell falls back to the legacy region and still draws (R1 repair)`() {
-        // T912 REPAIR (R1, documented deviation): this fixture previously
+        //  REPAIR (R1, documented deviation): this fixture previously
         // asserted `NonDraw(EMPTY_SHARED_CELL)` for the middle member of three
         // near-equal centers (cuts 100/101 with gap 2 make its slab [101,100)
         // degenerate). The Director's visibility override abolishes the drop:

@@ -66,7 +66,7 @@ abstract class OpenAiCompatibleTranslator(
         .build()
 
     // ------------------------------------------------------------------
-    // T924 wave-7c: the typed structured-analysis transport (AiTranslator
+    //  wave-7c: the typed structured-analysis transport (AiTranslator
     // hooks). The OpenAI-compatible family shares ONE completion shape —
     // only the endpoint URL and auth headers differ per backend, so the
     // subclass supplies those two and the base builds the payload.

@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * T907: DOWNLOAD_FAILED pending requests must be self-clearing. The fixture
+ *  DOWNLOAD_FAILED pending requests must be self-clearing. The fixture
  * injects only the manager runtime fields these methods own because
  * constructing TranslationManager normally also boots Android/DI translation
  * engines; every assertion calls the real manager mutation methods and the
@@ -159,7 +159,7 @@ class TranslationManagerDownloadFailureRecoveryTest {
         mockkObject(TranslationForegroundService.Companion)
         every { TranslationForegroundService.start(any()) } just runs
         try {
-            // T911 slice 2: the completion callback is generation-fenced, so the
+            //  slice 2: the completion callback is generation-fenced, so the
             // recovery first re-attaches the request to the download (the same
             // WAITING write the retry path performs).
             manager.queueTranslationAfterDownload(manga, chapter)
@@ -229,7 +229,7 @@ class TranslationManagerDownloadFailureRecoveryTest {
         setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
         setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "pendingRequestMutationLock", Any())
-        // T911 slice 2: generation/attach/group state the coordinator resolves.
+        //  slice 2: generation/attach/group state the coordinator resolves.
         setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
         setField(manager, "pendingGroupIdSequence", AtomicLong(0))

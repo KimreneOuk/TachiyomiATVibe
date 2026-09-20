@@ -1,19 +1,19 @@
 package eu.kanade.translation.translator.analysis
 
 /**
- * T924 WP5 slice A (T924-AP-01..06): the typed structured-analysis wire
+ *  WP5 slice A: the typed structured-analysis wire
  * contract. This file defines the RUN IDENTITY inputs and the response-side
  * parsed values that survive validation; the request document itself is built
  * by [AnalysisRequestBuilder] and the response is walked by
  * [AnalysisResponseValidator].
  *
  * Wire JSON is EPHEMERAL (never persisted), so it does not go through the
- * durable `ArtifactDocumentJson` rules (T924-SC-06 scopes durable documents
+ * durable `ArtifactDocumentJson` rules ( scopes durable documents
  * only). The persisted subset is the `AnalysisChunkResult` DTO.
  */
 
 /**
- * Run-scoped identity for one analysis request tree (T924-AP-03 envelope
+ * Run-scoped identity for one analysis request tree ( envelope
  * `run` + `policy` blocks). Hashes are privacy-safe scope hashes — never raw
  * titles or keys. A scope the coordinator cannot prove (e.g. the manga-level
  * scope, absent from the chapter-local machine) is carried as an explicit
@@ -28,9 +28,9 @@ data class AnalysisRunIdentity(
     val chapterKeyHash: String,
     val sourceLanguage: String,
     val targetLanguage: String,
-    /** Prompt + schema + limits identity (T924-AP-03 `analysisPolicyFingerprint`). */
+    /** Prompt + schema + limits identity ( `analysisPolicyFingerprint`). */
     val analysisPolicyFingerprint: String,
-    /** Whole-corpus identity (T924-AP-03 `ocrCorpusFingerprint`). */
+    /** Whole-corpus identity ( `ocrCorpusFingerprint`). */
     val ocrCorpusFingerprint: String,
     val maxOutputTokens: Int,
 ) {
@@ -43,10 +43,10 @@ data class AnalysisRunIdentity(
 /**
  * The contributing-set text evidence for one chunk: the request is the sole
  * authority for what the response's evidence references may resolve into
- * (T924-AP-05). Keys are WIRE identities (`p<N>` pages, `p<N>_b<M>` blocks);
+ *. Keys are WIRE identities (`p<N>` pages, `p<N>_b<M>` blocks);
  * [wirePageKeyByStorageKey] translates the planner's persisted page keys onto
  * the wire identities (the request reuses the `p<N>` stable identity scheme,
- * T924-AP-03).
+ * 03).
  */
 data class AnalysisEvidenceTexts(
     /** Wire page key (`p<N>`) -> ordered stable block ids. */
@@ -58,7 +58,7 @@ data class AnalysisEvidenceTexts(
 )
 
 /**
- * One validated term record — the persistable subset of the T924-AP-04
+ * One validated term record — the persistable subset of the
  * response term (schemas contract §1.3 [eu.kanade.translation.artifact.ExtractedTerm]).
  */
 data class ValidatedTerm(
@@ -70,7 +70,7 @@ data class ValidatedTerm(
 )
 
 /**
- * One validated entity record — the persistable subset of the T924-AP-04
+ * One validated entity record — the persistable subset of the
  * response entity ([eu.kanade.translation.artifact.ExtractedEntity]). Gender,
  * pronoun and conflict facts are VALIDATED here (V1..V9) but deliberately not
  * persisted on the chunk: the frozen-profile reconcile stage (slice B) is

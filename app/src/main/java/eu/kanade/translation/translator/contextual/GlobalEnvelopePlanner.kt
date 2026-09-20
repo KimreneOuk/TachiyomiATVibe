@@ -7,7 +7,7 @@ import eu.kanade.translation.artifact.PlannedEnvelope
 import eu.kanade.translation.artifact.StageFingerprints
 
 /**
- * T924 WP3 (pure planner, S4): global multi-budget whole-page envelope
+ *  WP3 (pure planner, S4): global multi-budget whole-page envelope
  * planning (design §8, schemas contract §1.5).
  *
  * Deterministic, native-free and provider-free. Operates on lightweight
@@ -31,13 +31,13 @@ import eu.kanade.translation.artifact.StageFingerprints
  *   pageKey), blocks in reading order — input iteration order never matters.
  *
  * No IO, no coroutines; serialization is touched only to compute the content
- * fingerprint (T924-SC-10) and the bounded-size sanity check.
+ * fingerprint  and the bounded-size sanity check.
  */
 
 /**
  * Envelope policy constants (design §8). All numbers are MEASURED-EXPERIMENT
  * constants (PROPOSED-GATE), never product constants and never feature flags
- * (T924-SC-02 split; invalidation matrix row 7: envelope-policy-only changes
+ * ( split; invalidation matrix row 7: envelope-policy-only changes
  * must not invalidate compatible translations).
  */
 data class EnvelopePlannerPolicy(
@@ -96,7 +96,7 @@ data class EnvelopePlannerPage(
     /**
      * The page's semantic content fingerprint
      * ([eu.kanade.translation.artifact.StageFingerprints.pageOcrContentFingerprint],
-     * T924-FP-02); feeds the per-envelope contributing corpus fingerprint.
+     * 02); feeds the per-envelope contributing corpus fingerprint.
      */
     val contentFingerprint: String,
     /** Ordered (reading-order) blocks of this page; never reordered by the planner. */
@@ -120,7 +120,7 @@ sealed class EnvelopePlanResult {
 
 object GlobalEnvelopePlanner {
 
-    /** Pure-planner algorithm version (T924-SC §1.5 `plannerVersion`). */
+    /** Pure-planner algorithm version ( §1.5 `plannerVersion`). */
     const val PLANNER_VERSION = 2
 
     /**
@@ -171,10 +171,10 @@ object GlobalEnvelopePlanner {
      * @param pages pending pages with their OCR planning payloads; any input
      *   order is accepted (canonicalized internally).
      * @param corpusFingerprint whole-corpus identity
-     *   (T924-FP-03 `OcrCorpusFingerprint`); a [EnvelopePlan.planInputFingerprint] input.
+     *   ( `OcrCorpusFingerprint`); a [EnvelopePlan.planInputFingerprint] input.
      * @param policy measured experiment constants (never flags).
      * @param createdAtEpochMs operational timestamp; never a fingerprint input
-     *   (T924-FP-01).
+     *
      */
     fun plan(
         pages: List<EnvelopePlannerPage>,
@@ -293,7 +293,7 @@ object GlobalEnvelopePlanner {
             envelopes = envelopes,
             createdAtEpochMs = createdAtEpochMs,
         )
-        // T924-SC-10: content fingerprint = SHA-256 over canonical re-encoded
+        // 10: content fingerprint = SHA-256 over canonical re-encoded
         // JSON of the DTO with operational fields excluded (createdAtEpochMs
         // zeroed; planFingerprint blanked — a value cannot contain its own hash).
         val hashingView = plan.copy(planFingerprint = "", createdAtEpochMs = 0L)
@@ -370,7 +370,7 @@ object GlobalEnvelopePlanner {
     }
 
     /**
-     * T924-SC-08 composite input fingerprint: corpus slice + pending-block
+     * 08 composite input fingerprint: corpus slice + pending-block
      * set + envelope policy. Encoding lives in the single consolidated
      * [StageFingerprints] core (wave-2 review F2 — the former planner-local
      * `PlannerFingerprints` hasher was byte-identical and is retired).

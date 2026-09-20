@@ -13,7 +13,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * T911 slice 3 (contract item 1): the batch's ordered work keys define the
+ *  slice 3 (contract item 1): the batch's ordered work keys define the
  * tracker total — even when store placeholder writes are rejected or delayed.
  * Completed counts still come only from the store intersection.
  */
@@ -154,7 +154,7 @@ class TranslationBatchProgressTrackerTotalsTest {
     }
 
     /**
-     * T924 zero-legacy (D2): no lane renders in-pass, so without the shell's
+     *  zero-legacy: no lane renders in-pass, so without the shell's
      * COMPLETED-path settle the tracker's RENDER arm stays unprocessed forever
      * and the processed/total fraction tops out at 4/5 per display-ready page.
      * The shell emits [TranslationBatchProgressTracker.markRenderSkipped] per
@@ -178,7 +178,7 @@ class TranslationBatchProgressTrackerTotalsTest {
         val tracker = TranslationBatchProgressTracker(1, store, listOf("p0"), this)
         runCurrent()
 
-        // Pre-settle (the D1-observed gap): OCR/INPAINT/TRANSLATE/DISPLAY are
+        // Pre-settle (the -observed gap): OCR/INPAINT/TRANSLATE/DISPLAY are
         // processed, RENDER is the only arm left — the fraction tops out at 4/5.
         tracker.snapshot.value.perStage.getValue(BatchPhase.RENDER).processed shouldBe 0
         tracker.snapshot.value.doneStages shouldBe 4

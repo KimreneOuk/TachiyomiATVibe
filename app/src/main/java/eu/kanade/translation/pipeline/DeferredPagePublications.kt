@@ -3,7 +3,7 @@ package eu.kanade.translation.pipeline
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
- * T917 Phase 4 (D11, phase4-design §4.4): storage-tail actions that must run
+ *  Phase 4 ( phase4-design §4.4): storage-tail actions that must run
  * OUTSIDE the native permit.
  *
  * The resume paths' cleaned-image persistence, their render tails, and the
@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * Orphan safety: when the native phase times out, the boundary sets
  * [orphaned] BEFORE publishing the timeout — it no longer owns the queue (a
  * residual block invocation may still be running and exits later), so any
- * subsequent enqueuer runs its tail INLINE (pre-D11 behavior). Nothing is
+ * subsequent enqueuer runs its tail INLINE (pre- behavior). Nothing is
  * ever silently dropped: every enqueued action runs exactly once — either
  * drained by the boundary on the accepted path, or inline on the orphaned
  * path. The [NativeRunQuarantine] awaits the residual invocation's real exit

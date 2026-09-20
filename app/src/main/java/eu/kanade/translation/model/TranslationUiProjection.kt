@@ -30,7 +30,7 @@ object TranslationUiProjection {
         queuedState == Translation.State.PAUSED
 
     /**
-     * T918 stranded-state reconciliation. A batch cancelled mid-run removes its
+     *  stranded-state reconciliation. A batch cancelled mid-run removes its
      * queue entry; `statusFlow()` then drops the entry WITHOUT a terminal
      * emission, so the chapter's projected [Translation.State] stays at its
      * last in-flight value (QUEUE/TRANSLATING/PAUSED) forever — the indicator

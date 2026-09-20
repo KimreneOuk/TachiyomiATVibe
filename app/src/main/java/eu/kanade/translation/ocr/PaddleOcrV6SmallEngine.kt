@@ -90,7 +90,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
                     )
                 }
                 providerResolution != null -> {
-                    // T935 Paddle-v6 provider selector path.
+                    //  Paddle-v6 provider selector path.
                     PaddleOcrSessionFactory.createSession(
                         modelPath = modelFile.absolutePath,
                         resolution = providerResolution,

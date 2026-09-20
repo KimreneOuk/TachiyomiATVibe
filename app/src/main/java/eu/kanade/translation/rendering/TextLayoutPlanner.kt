@@ -72,7 +72,7 @@ data class FloatRect(
 enum class TextAlign { CENTER, LEFT, RIGHT }
 
 /**
- * TachiyomiAT T912 slice 5: one pre-positioned, prewrapped horizontal line.
+ * TachiyomiAT  slice 5: one pre-positioned, prewrapped horizontal line.
  * `leftPx`/`topPx` are integer `floor()` placement results;
  * `layoutWidthPx = max(1, ceil(advance + 2*SHAPING_GUARD))` is the EXACT width
  * the renderer must shape the line at (one `StaticLayout` line, left-aligned
@@ -90,7 +90,7 @@ data class PositionedLine(
 )
 
 /**
- * TachiyomiAT T912 slice 5: the structural render boundary of a layout —
+ * TachiyomiAT  slice 5: the structural render boundary of a layout —
  * component path (via the `(planGeometryId, componentId)` pair) then the
  * cell/safety rectangle. Only these clips justify pixel-containment claims;
  * planning occupancies stay conservative and un-clipped.
@@ -159,7 +159,7 @@ data class BlockLayout(
      */
     val hardClip: HardClip = HardClip(null, null, null),
     /**
-     * T912 contained-fit: false ONLY for the mask-unusable fallback — no
+     *  contained-fit: false ONLY for the mask-unusable fallback — no
      * fully contained fit exists at the render floor, so the planner fails
      * open to the unshifted OCR-region draw and metadata wiring must not
      * attach the exact component clip (visibility wins over the mask).
@@ -225,7 +225,7 @@ data class PageLayoutPlan(
 )
 
 /**
- * TachiyomiAT T912 slice 7: [PageLayoutPlan] plus the deterministic count of
+ * TachiyomiAT  slice 7: [PageLayoutPlan] plus the deterministic count of
  * evaluated final post-anchor placement candidates, summed over every colliding
  * block. Internal test seam — [TextLayoutPlanner.planPage] wraps this and
  * returns only the plan.
@@ -233,7 +233,7 @@ data class PageLayoutPlan(
 internal data class PagePlanWithAttempts(val plan: PageLayoutPlan, val finalPlacementAttempts: Int)
 
 /**
- * TachiyomiAT T912 slice 7: collision footprint of one accepted Draw layout —
+ * TachiyomiAT  slice 7: collision footprint of one accepted Draw layout —
  * the single conservative (stroke/AA/half-gap inflated, un-clipped) occupancy
  * rectangle plus the layout's hard cell rectangle ([BlockLayout.cellRect];
  * null for unmasked/legacy layouts). A pair whose hard cells are BOTH present
@@ -243,7 +243,7 @@ internal data class PagePlanWithAttempts(val plan: PageLayoutPlan, val finalPlac
 internal data class PlacedFootprint(val cellRect: FloatRect?, val occupancy: FloatRect)
 
 /**
- * TachiyomiAT T912 slice 5: the isolated adaptive-layout tuning envelope (task
+ * TachiyomiAT  slice 5: the isolated adaptive-layout tuning envelope (task
  * contract: thresholds are isolated constants backed by focused tests).
  * Collision gap itself stays in [MaskTextRegionPlanner.collisionGapPx].
  */
@@ -291,7 +291,7 @@ internal object TextLayoutTuning {
     /** Band-interval explosion guard: more intervals ⇒ treat as no valid band. */
     const val MAX_BAND_INTERVALS = 64
 
-    // ---- T912 slice 6: bounded long `text_free` widening envelope ---------
+    // ----  slice 6: bounded long `text_free` widening envelope ---------
 
     /** Min non-whitespace graphemes before a `text_free` widening trial may run. */
     const val FREE_TEXT_MIN_GRAPHEMES = 24
@@ -312,7 +312,7 @@ internal object TextLayoutTuning {
     /** Width-equality epsilon (px) for candidate dedup after clamping. */
     const val FREE_TEXT_WIDTH_EPSILON = 0.01f
 
-    // ---- T912 slice 7: finite final post-anchor safety ---------------------
+    // ----  slice 7: finite final post-anchor safety ---------------------
 
     /** Hard guard: evaluated post-anchor candidates per colliding block. */
     const val MAX_FINAL_PLACEMENT_ATTEMPTS = 8
@@ -327,7 +327,7 @@ internal object TextLayoutTuning {
     /** Masked-only relocation cap, relative to the page short side. */
     const val MAX_MASK_SHIFT_PAGE_FRACTION = 0.04f
 
-    // ---- T912 contained-fit rescue: OCR-box-first tiered ladder -------------
+    // ----  contained-fit rescue: OCR-box-first tiered ladder -------------
 
     /**
      * Vertical-only growth factors of the OCR fit-region ladder (Director
@@ -372,7 +372,7 @@ internal object TextLayoutTuning {
      */
     const val MAX_RESCUE_FIT_CALLS_PER_PAGE = 96
 
-    // ---- T912 quality repair: band acceptance and sibling font harmony -----
+    // ----  quality repair: band acceptance and sibling font harmony -----
 
     /**
      * Documented tunable: adaptive bands are accepted only when their fitted
@@ -464,7 +464,7 @@ object TextLayoutPlanner {
         .drawableInRenderOrder
 
     /**
-     * Full planner contract (T912): exactly one explicit [LayoutResult] for
+     * Full planner contract: exactly one explicit [LayoutResult] for
      * every nonblank input — [LayoutOutcome.Draw] with its finalized layout, or
      * [LayoutOutcome.NonDraw] with a reason. Blank chosen texts remain the only
      * intentional absence. Blocks are placed highest-[TranslationBlock.score]
@@ -481,7 +481,7 @@ object TextLayoutPlanner {
         renderSourceText: Boolean,
         measurer: TextMeasurer,
     ): PageLayoutPlan {
-        // T924 gate 7.5: observation only — every async planner entry counts;
+        //  gate 7.5: observation only — every async planner entry counts;
         // hydrated binds never reach this (TextLayoutCoordinator consults the
         // persisted-plan hydrate hook first).
         TextLayoutPlannerProbe.recordInvocation()
@@ -496,7 +496,7 @@ object TextLayoutPlanner {
     }
 
     /**
-     * T912 slice 7 test seam: [planPage] plus the deterministic count of
+     *  slice 7 test seam: [planPage] plus the deterministic count of
      * EVALUATED final post-anchor candidates, summed over every colliding
      * block. A plan with a single colliding block reports that block's exact
      * evaluated candidate count (e.g. 8 when every finite candidate failed,
@@ -861,7 +861,7 @@ object TextLayoutPlanner {
     )
 
     /**
-     * T912 quality repair (Fix 2): the beats-the-rectangle rule. Adaptive
+     *  quality repair (Fix 2): the beats-the-rectangle rule. Adaptive
      * bands are accepted only when they MEANINGFULLY beat the conservative
      * rectangle layout of the same cell:
      *
@@ -896,7 +896,7 @@ object TextLayoutPlanner {
     }
 
     /**
-     * T912 quality repair (Fix 3): font harmony for same-component siblings.
+     *  quality repair (Fix 3): font harmony for same-component siblings.
      * For every `(group, componentId)` cell group with at least two accepted
      * Draw layouts, members whose fitted font exceeds
      * [TextLayoutTuning.FONT_HARMONY_MEDIAN_CAP] × the group's median font
@@ -970,7 +970,7 @@ object TextLayoutPlanner {
     }
 
     /**
-     * T912 quality repair (Fix 3): the replacement layout for one member
+     *  quality repair (Fix 3): the replacement layout for one member
      * capped DOWN to [cap]. Fonts are never inflated. Legacy members are
      * re-wrapped at the capped font (vertical members keep their empty line
      * list — columns derive from the font at draw time) in their unchanged
@@ -1051,12 +1051,12 @@ object TextLayoutPlanner {
         )
     }
 
-    // ---- T912 slice 7: finite final post-anchor safety ---------------------
+    // ----  slice 7: finite final post-anchor safety ---------------------
 
     /** Outcome of the bounded final post-anchor resolution for one colliding block. */
     internal class FinalResolution(
         /**
-         * The accepted layout — never null since the T912 repair (R2): a
+         * The accepted layout — never null since the  repair (R2): a
          * ladder that exhausts every candidate accepts a clipped draw instead.
          */
         val layout: BlockLayout,
@@ -1212,7 +1212,7 @@ object TextLayoutPlanner {
     }
 
     /**
-     * T912: ceiling spans dilated by [margin] px per row (merged when dilated
+     *  ceiling spans dilated by [margin] px per row (merged when dilated
      * spans touch). The mask is a segmentation estimate, not ground truth — a
      * small dilation stops the exact containment predicate from punishing
      * edge-hugging text for segmentation tightness.
@@ -1263,7 +1263,7 @@ object TextLayoutPlanner {
     internal class RescueBudget(var remaining: Int = TextLayoutTuning.MAX_RESCUE_FIT_CALLS_PER_PAGE)
 
     /**
-     * T912 containment-first ceiling: the row spans a masked block's text must
+     *  containment-first ceiling: the row spans a masked block's text must
      * stay inside, resolvable for EVERY masked block — not only shared-cell
      * members. Priority:
      *  1. the block's own optimized cell spans (span-mode shared cell);
@@ -1313,7 +1313,7 @@ object TextLayoutPlanner {
     }
 
     /**
-     * T912 contained-fit rescue (Director-validated iteration 9 model): the
+     *  contained-fit rescue (Director-validated iteration 9 model): the
      * OCR bounding box is the home position. The text column keeps the OCR
      * box's x-range while tiers grow it VERTICALLY only; the font is capped
      * at the LARGER of the OCR box's natural reflow fit and the legacy
@@ -1371,7 +1371,7 @@ object TextLayoutPlanner {
         }
         val fitMinFont = FIT_MIN_FONT_PX * scale
         val regions = ArrayList<FloatRect>(TextLayoutTuning.OCR_GROW_FACTORS.size + 1)
-        // T912 multi-block fix: when the assigned cell's fitRegion is wider than
+        //  multi-block fix: when the assigned cell's fitRegion is wider than
         // the raw OCR column (common for multi-block bubbles where OCR detects a
         // narrow vertical Japanese column), use that wider x-range as the base for
         // the vertical-growth tiers. This prevents English text from being trapped
@@ -1539,7 +1539,7 @@ object TextLayoutPlanner {
      * toward an obstacle) and re-fit; (3) if a residual overlap remains, clip this
      * block to its own side of the obstacle boundary (the no-overlap guarantee).
      *
-     * T912 slice 7: [allowGrowth] = false suppresses ONLY step 2's growth (the
+     *  slice 7: [allowGrowth] = false suppresses ONLY step 2's growth (the
      * baseline candidate re-places the pre-growth base rect through the exact
      * same fit/anchor/clip path). Every existing call defaults to true.
      */
@@ -1887,14 +1887,14 @@ object TextLayoutPlanner {
     )
 
     /**
-     * T912 slice 6: the bounded long-`text_free` placement decision for one
+     *  slice 6: the bounded long-`text_free` placement decision for one
      * eligible block — the [rect] to place and the [regionOverride] to place
      * it with (null keeps the block's own legacy containment/anchor behavior).
      */
     internal class FreeTextWideningPlan(val rect: RectResult, val regionOverride: FloatRect?)
 
     /**
-     * T912 slice 6: the bounded long-`text_free` widening trial, or null when
+     *  slice 6: the bounded long-`text_free` widening trial, or null when
      * the block must take the exact legacy path.
      *
      * Eligibility (architecture "Slice 6", evaluated in order):
@@ -2438,7 +2438,7 @@ object TextLayoutPlanner {
         inputIndex: Int,
         componentAssignments: MutableSet<Long>,
     ): BlockLayout {
-        // T912 contained-fit: the mask-unusable fallback must stay fully
+        //  contained-fit: the mask-unusable fallback must stay fully
         // visible — attach no exact component clip (visibility wins over a
         // mask that cannot host the text).
         if (!layout.maskUsable) {
@@ -2498,7 +2498,7 @@ object TextLayoutPlanner {
     }
 
     /**
-     * T912 repair (R3): DETERMINISTIC component assignment for a block's OCR
+     *  repair (R3): DETERMINISTIC component assignment for a block's OCR
      * rectangle (same clamped-rectangle resolution as slice 2, now over
      * [MaskGeometry.componentForRectangleDeterministic]). A tie across
      * components or a zero-overlap rectangle no longer leaves the block

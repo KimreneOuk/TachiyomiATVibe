@@ -25,7 +25,7 @@ class TranslationBatchEventContractTest {
             "BatchAborted",
             "BatchFinished",
             "BatchPaused",
-            // T934 LI-4: the coordinator's rebuild-window events (envelope
+            //   the coordinator's rebuild-window events (envelope
             // plan build / commit).
             "EnvelopePlanProgress",
             "EnvelopePlanCommitted",

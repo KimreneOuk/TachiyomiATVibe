@@ -12,7 +12,7 @@ import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 3 — D6 §2.1 interactive token reserve (phase3-design §2.1).
+ *  Phase 3 —  §2.1 interactive token reserve (phase3-design §2.1).
  *
  * Pure unit tests over the real [ProviderRequestGovernor] with a virtual
  * clock. The reserve: while a bucket holds at least one INTERACTIVE waiter, a

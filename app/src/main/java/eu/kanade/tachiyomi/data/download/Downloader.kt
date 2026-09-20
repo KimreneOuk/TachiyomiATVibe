@@ -142,7 +142,7 @@ class Downloader(
             val chapters = async { store.restore() }
             addAllToQueue(chapters.await())
             DownloadJob.stop(context)
-            // T911 slice 2 (R9): downloader side of the startup reconciliation
+            //  slice 2 (R9): downloader side of the startup reconciliation
             // readiness barrier. No-op for the downloader; the translation
             // manager runs its one-shot pending-request pass once both queues
             // have restored.
@@ -184,7 +184,7 @@ class Downloader(
         cancelDownloaderJob()
         val interrupted = queueState.value.filter { it.status == Download.State.DOWNLOADING }
         interrupted.forEach { it.status = Download.State.ERROR }
-        // T911 slice 2 (R5): a stop that kills in-flight downloads (offline,
+        //  slice 2 (R5): a stop that kills in-flight downloads (offline,
         // Wi-Fi policy, generic stop) must reach the pending-request owner, or
         // the batch drawer waits forever. No-op without a pending request.
         interrupted.forEach { download ->
@@ -231,7 +231,7 @@ class Downloader(
             .filter { it.status == Download.State.DOWNLOADING || it.status == Download.State.QUEUE }
             .mapNotNull { it.chapter.id }
         internalClearQueue()
-        // T911 slice 2 (R5): clearing the queue cancels any pending
+        //  slice 2 (R5): clearing the queue cancels any pending
         // translation waiting on those downloads. No-op without a request.
         clearedChapterIds.forEach { chapterId ->
             translationManager.onDownloadQueueClearedForTranslation(chapterId)
@@ -301,7 +301,7 @@ class Downloader(
             }
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
-            // T911 slice 2 (R5): failures before the protected try (manga dir,
+            //  slice 2 (R5): failures before the protected try (manga dir,
             // storage probing, tmp-dir creation) reach this outer catch, which
             // previously stopped the downloader without telling the
             // pending-request owner. Existence-checked, so it is a no-op for
@@ -338,7 +338,7 @@ class Downloader(
         }
 
         val source = sourceManager.get(manga.source) as? HttpSource ?: run {
-            // T911 slice 2 (R5): a silent rejection used to strand a pending
+            //  slice 2 (R5): a silent rejection used to strand a pending
             // translation request in WAITING forever. Fail it explicitly;
             // no-op for chapters without a pending request.
             chapters.forEach { chapter ->
@@ -425,7 +425,7 @@ class Downloader(
     /**
      * Downloads a chapter.
      *
-     * T911 slice 3: internal so fault-injection tests can drive the
+     *  slice 3: internal so fault-injection tests can drive the
      * finalize-stage failure boundary directly.
      *
      * @param download the chapter to be downloaded.
@@ -464,7 +464,7 @@ class Downloader(
         val chapterDirname = provider.getChapterDirName(download.chapter.name, download.chapter.scanlator)
         val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
 
-        // T911 slice 3 (R8): the finalize boundary (page validation, metadata
+        //  slice 3 (R8): the finalize boundary (page validation, metadata
         // write, archive/rename) ends at `DOWNLOADED`. Rekey and translation
         // handoff run AFTER it, so a failure there can never flip the already
         // finalized download back to ERROR.
@@ -753,7 +753,7 @@ class Downloader(
             download.status = Download.State.ERROR
             translationManager.markTranslationDownloadFailed(download.chapter.id, "Chapter download failed")
             notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
-            // T911 slice 3 (R8): the finalize boundary settled the download's
+            //  slice 3 (R8): the finalize boundary settled the download's
             // terminal status; the post-finalization handoff runs below and is
             // NOT covered by this catch. (Behavior-neutral `return`: the catch
             // previously fell through to the end of the function.)
@@ -764,7 +764,7 @@ class Downloader(
     }
 
     /**
-     * T911 slice 3 (R8): post-finalization translation boundary. The chapter's
+     *  slice 3 (R8): post-finalization translation boundary. The chapter's
      * files are final and the download's terminal status is settled
      * (`DOWNLOADED`); a failure in translation artifact rekeying or in the
      * handoff/admission must NOT flip the download back to `ERROR` — the
@@ -1624,7 +1624,7 @@ class Downloader(
             }
             it - download
         }
-        // T911 slice 2 (R5): removing/cancelling the download must reach the
+        //  slice 2 (R5): removing/cancelling the download must reach the
         // pending-request owner. No-op without a pending request.
         if (wasActive) {
             translationManager.onDownloadCancelledForTranslation(download.chapter.id)
@@ -1644,7 +1644,7 @@ class Downloader(
             }
             queue - downloads
         }
-        // T911 slice 2 (R5): bulk removal (chapter delete, manga delete, user
+        //  slice 2 (R5): bulk removal (chapter delete, manga delete, user
         // cancel) fails the attached translation requests explicitly.
         removedChapterIds.forEach { chapterId ->
             translationManager.onDownloadCancelledForTranslation(chapterId)

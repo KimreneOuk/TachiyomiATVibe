@@ -8,7 +8,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * T924 DR-C/DR-D Stage 5: the nested Batch sub-limit bucket. ONE credential
+ *  DR-C/DR-D Stage 5: the nested Batch sub-limit bucket. ONE credential
  * wide 15-RPM allowance under the shared provider bucket (bucket 1 is NOT the
  * sub-limit — its interactive reserve, starvation guard and cooldowns are
  * untouched); pacing comes from the rolling window, never a forced sleep.

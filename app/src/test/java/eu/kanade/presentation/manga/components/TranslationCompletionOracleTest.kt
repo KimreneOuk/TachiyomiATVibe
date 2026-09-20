@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * T934 completion oracle: a run with failure/attention pages — or a
+ *  completion oracle: a run with failure/attention pages — or a
  * failed/paused/aborted/unsaved outcome — must NEVER render the celebratory
  * "Completed / All pages translated" state. The device trace showed the
  * sheet's green "Completed" pill and "All pages translated" subtitle while

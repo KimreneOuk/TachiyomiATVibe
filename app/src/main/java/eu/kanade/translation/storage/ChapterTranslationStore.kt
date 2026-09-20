@@ -159,7 +159,7 @@ private fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
 class ChapterTranslationStore(
     // Retained as a source-compatible test seam; artifact-only persistence never
     // invokes this legacy flat-file creator.
-    // T909 Phase 17b: internal — the moved StorePersistenceScheduler reads the
+    //  Phase 17b: internal — the moved StorePersistenceScheduler reads the
     // memory-only persistence probes (schedulePersist's early return) from them.
     internal var translationFile: UniFile?,
     internal val fileCreator: (() -> UniFile)?,
@@ -249,7 +249,7 @@ class ChapterTranslationStore(
 
     private val _display = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
-    // T909 Phase 17a: the lease-table state + lease bodies moved to
+    //  Phase 17a: the lease-table state + lease bodies moved to
     // store/PageStageLeaseTable.kt; the map is shared through the table
     // (never copied) and the same-name accessor below keeps every store-side
     // reader unchanged. The public lease members stay as delegating stubs.
@@ -286,7 +286,7 @@ class ChapterTranslationStore(
         val promotedAtEpochMs: Long,
     )
 
-    // T909 Phase 17a: PageLeaseRecord moved to store/PageStageLeaseTable.kt.
+    //  Phase 17a: PageLeaseRecord moved to store/PageStageLeaseTable.kt.
 
     fun resetPreflight(): ChapterResetPreflight = chapterResetPreflight(state.value.values)
 
@@ -331,16 +331,16 @@ class ChapterTranslationStore(
         companion object Key : CoroutineContext.Key<GenerationContext>
     }
 
-    // T909 Phase 8: glossary state + bodies moved to store/ChapterGlossaryStore.kt
+    //  Phase 8: glossary state + bodies moved to store/ChapterGlossaryStore.kt
     // (delegates under the store mutex; legacy read fallback kept). The public
     // glossary API stays at the old qualified names as delegating stubs.
-    // T909 Phase 17b: internal so the moved StorePersistenceScheduler's
+    //  Phase 17b: internal so the moved StorePersistenceScheduler's
     // flushDirtyLocked can reach the glossary dirty flag through it.
     internal val glossaryStore = ChapterGlossaryStore(this)
-    // T917 Phase 3 (D9): durable attempt ledger collaborator (delegates under
+    //  Phase 3: durable attempt ledger collaborator (delegates under
     // the store mutex; fail-open persistence; memory-only no-op writes).
     private val attemptLedger = ChapterAttemptLedger(this)
-    // T909 Phase 17b: the flush/close/debounce/retention machinery moved to
+    //  Phase 17b: the flush/close/debounce/retention machinery moved to
     // store/StorePersistenceScheduler.kt; the scheduler owns persistScope and
     // is constructed eagerly (its ctor resolves no store state). `dirty` and
     // `persistJob` stay here — non-moved bodies (replaceAll/rekeyPages/
@@ -350,7 +350,7 @@ class ChapterTranslationStore(
     internal var persistJob: Job? = null
     private val persistenceScheduler = StorePersistenceScheduler(this)
 
-    // T930 Slice B1: Staged mutations buffer + debounce.
+    //  Slice B1: Staged mutations buffer + debounce.
     private val stagedPageKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var stagedDebounceJob: Job? = null
 
@@ -458,7 +458,7 @@ class ChapterTranslationStore(
     val isDefunct: Boolean
         get() = defunct
 
-    // T909 Phase 17b: persistCount is incremented by the moved
+    //  Phase 17b: persistCount is incremented by the moved
     // StorePersistenceScheduler, so the setter is no longer private.
     internal var persistCount = 0
 
@@ -518,7 +518,7 @@ class ChapterTranslationStore(
         snapshotLocked(pageKey)
     }
 
-    // T909 Phase 15: durable status projection (artifactStatus + the
+    //  Phase 15: durable status projection (artifactStatus + the
     // durable-failure read API) moved to store/StoreStatusProjector.kt; these
     // same-signature stubs keep the old qualified names (ChapterTranslator,
     // DurableChapterStatusResolver, and the migration/artifact-read tests
@@ -546,7 +546,7 @@ class ChapterTranslationStore(
         statusProjector.durableFailuresSnapshot()
 
     // ------------------------------------------------------------------
-    // T917 Phase 3 (D9): durable attempt ledger (phase3-design §3).
+    //  Phase 3: durable attempt ledger (phase3-design §3).
     // All methods delegate to store/ChapterAttemptLedger.kt under the store
     // mutex. Ledger writes are fail-open; only AUTO origins can be refused
     // (the crash-loop cap binds auto-retry loops, never the user).
@@ -700,7 +700,7 @@ class ChapterTranslationStore(
         generation
     }
 
-    // T909 Phase 17a: lease bodies (and the Phase 3 lifecycle-contract comment
+    //  Phase 17a: lease bodies (and the Phase 3 lifecycle-contract comment
     // block) moved to store/PageStageLeaseTable.kt; these same-signature stubs
     // keep the old qualified names (the pipeline, ReaderViewModel, and the
     // lease tests resolve them here). The DUAL locking (store mutex in the
@@ -717,7 +717,7 @@ class ChapterTranslationStore(
         pageStageLeaseTable.releasePageStageLease(pageKey, origin)
 
     /**
-     * T934 R1.2: envelope-completion release — removes the page's BATCH lease
+     *   envelope-completion release — removes the page's BATCH lease
      * only while no sibling batch component has attached to the same token
      * (see `PageStageLeaseTable.releasePageStageLeaseIfUnattached`); returns
      * true when this call removed the record.
@@ -729,7 +729,7 @@ class ChapterTranslationStore(
     ): Boolean = pageStageLeaseTable.releasePageStageLeaseIfUnattached(pageKey, origin, expectedToken)
 
     /**
-     * T934 track V: undoes a same-origin sibling attach (see
+     *  track V: undoes a same-origin sibling attach (see
      * `PageStageLeaseTable.detachPageStageLeaseIfAttached`); returns true when
      * an attach was undone.
      */
@@ -750,7 +750,7 @@ class ChapterTranslationStore(
     fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = pageStageLeaseTable.pageLeaseOwner(pageKey)
 
     /**
-     * T924 LI-3: true while [pageKey] holds an ACTIVE page-stage lease acquired
+     *   true while [pageKey] holds an ACTIVE page-stage lease acquired
      * by [PageWriteOrigin.BATCH] — i.e. a batch run currently owns the page's
      * stage state and will release the lease itself at the owning stage step or
      * run teardown. Lock-free reader over the lease table's
@@ -799,7 +799,7 @@ class ChapterTranslationStore(
                 expected.candidateGenerationId != null &&
                     expected.candidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
                     "candidate generation changed"
-                // T917 Phase 3 backlog fold-in (phase3-design §4): same
+                //  Phase 3 backlog fold-in (phase3-design §4): same
                 // `candidate != null` grace persistArtifactMutationLocked
                 // applies — a dependency fingerprint expected against a
                 // candidate-LESS record (candidate never opened, cleared by an
@@ -962,7 +962,7 @@ class ChapterTranslationStore(
      * frame (<16ms) without blocking the Main thread. Durable persistence can follow
      * asynchronously.
      *
-     * T924 LI-3: pages holding an ACTIVE BATCH-origin stage lease are SKIPPED —
+     *   pages holding an ACTIVE BATCH-origin stage lease are SKIPPED —
      * this method mutates in-memory state outside the mutex with no lease
      * check, and flipping a batch-owned page desyncs the run's version
      * expectations mid-stage (the flagged lane then fails `checkpointOcr`/
@@ -1191,13 +1191,13 @@ class ChapterTranslationStore(
     ): StagePatchResult = applyStagePatch(StagePatch.Render(patch), description)
 
     // ------------------------------------------------------------------
-    // T924 Stage 1 Phase 2a: checkpointOcr façade (T924-TX-01..TX-06).
+    //  Stage 1 Phase 2a: checkpointOcr façade.
     //
-    // Validates the store-level fencing identity (TX-02 inputs 1-3:
+    // Validates the store-level fencing identity ( inputs 1-3:
     // generation, pageVersion, lease token — the lease MUST be held), then
     // delegates the durable publication to
     // [ChapterArtifactEngine.checkpointOcr] (inputs 4-6 against the durable
-    // manifest). Ordering rule T924-TX-06: validate → publish → install
+    // manifest). Ordering rule  validate → publish → install
     // checkpoint pointer + close/rebase candidate; the caller releases the
     // page lease ONLY after a Committed outcome — never before.
     // ------------------------------------------------------------------
@@ -1206,7 +1206,7 @@ class ChapterTranslationStore(
      * Checkpoints the page's current (already merged) OCR state while the
      * caller still owns its writer lease. [expectedCandidateGenerationId]
      * non-null selects the standard CLOSE/REBASE branch against the active
-     * BATCH candidate; null selects the T924-TX-03.1 adopt-committed branch
+     * BATCH candidate; null selects the.1 adopt-committed branch
      * (no active candidate; the committed bundle's OCR content fingerprint
      * must equal the live OCR state's). [sourceOrientation] and
      * [sourceSha256] complete the checkpoint's [SourceIdentity] — the sha
@@ -1249,7 +1249,7 @@ class ChapterTranslationStore(
                 current == null -> "page missing"
                 expectedPageVersion != current.pageVersion ->
                     "pageVersion expected=$expectedPageVersion actual=${current.pageVersion}"
-                // T924-TX-02.1: the lease token is mandatory and must still
+                // 02.1: the lease token is mandatory and must still
                 // fence this page — a released or stolen lease rejects.
                 pageLeases[pageKey] == null -> "page lease required for checkpoint"
                 pageLeases[pageKey]?.token != expectedLeaseToken -> "page lease token changed"
@@ -1259,7 +1259,7 @@ class ChapterTranslationStore(
                 expectedCandidateGenerationId != null &&
                     expectedCandidateGenerationId != artifactPage?.candidate?.generationId ->
                     "candidate generation changed"
-                // T924-TX-02.1 / C2: no grace clause on the checkpoint path —
+                // 02.1 / C2: no grace clause on the checkpoint path —
                 // a missing dependency fingerprint is a programmer error.
                 expectedCandidateGenerationId != null && expectedDependencyFingerprint == null ->
                     "dependency fingerprint required for checkpoint"
@@ -1279,7 +1279,7 @@ class ChapterTranslationStore(
             // preflight never inpaints), but the checkpoint gate requires
             // CURRENT_INPAINT_REVISION. The stamp must precede the snapshot
             // fingerprint, the content fingerprint, and the DTO build so the
-            // published sidecar, the checkpoint claim, and the TX-03.1
+            // published sidecar, the checkpoint claim, and the.1
             // committed-side comparison canonicalize on one value
             // (CleanedPublication stamps the same field at inpaint publication).
             if (live.inpaintRevision < PageTranslation.CURRENT_INPAINT_REVISION) {
@@ -1348,12 +1348,12 @@ class ChapterTranslationStore(
 
     /**
      * The semantic `PageOcrContentFingerprint` of the page's current OCR
-     * state (T924-FP-02, T924-SC-08 encoding). Transaction identities
+     * state (  encoding). Transaction identities
      * (versions, generations, timestamps, file names) are excluded by the
-     * builder (T924-FP-01).
+     * builder.
      *
-     * T924-F-1: [pageKey] MUST be the transaction pageKey, never
-     * [PageTranslation.sourceFileName] — the TX-03.1 adopt side
+     * 1: [pageKey] MUST be the transaction pageKey, never
+     * [PageTranslation.sourceFileName] — the.1 adopt side
      * ([ChapterArtifactEngine.committedOcrContentFingerprint]) canonicalizes
      * with `checkpoint.sourceIdentity.pageKey` (the transaction pageKey), so
      * both sides of the drift comparison must share one pageKey source.
@@ -1402,7 +1402,7 @@ class ChapterTranslationStore(
             patch.expectedArtifactPageVersion,
         )
             ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, patch.expectedSourceTexts)
-            // T924-TX-20 (Stage-6 slice A): provenance preconditions. BOTH new
+            // 20 (Stage-6 slice A): provenance preconditions. BOTH new
             // patch fields default to null — a legacy patch short-circuits
             // with byte-identical behavior (no extra manifest reads, no new
             // rejection class). Non-null fields are validated against the
@@ -1457,20 +1457,20 @@ class ChapterTranslationStore(
     }
 
     /**
-     * T924-TX-20 provenance preconditions (Stage-6 slice A). Active ONLY when
+     * 20 provenance preconditions (Stage-6 slice A). Active ONLY when
      * the patch carries at least one of the new nullable provenance fields;
      * a fully-null patch returns `null` before touching the manifest, so
      * every legacy caller keeps byte-identical merge behavior.
      *
      *  - `profileContentFingerprint` must equal the manifest's currently
-     *    frozen `profile` pointer content fingerprint (T924-FP-05) — a
+     *    frozen `profile` pointer content fingerprint  — a
      *    commit built from a superseded/absent frozen profile is rejected.
      *  - `envelopePlanFingerprint` must equal the manifest's current
-     *    `envelopePlan` pointer content fingerprint (T924-SC-10) — a commit
+     *    `envelopePlan` pointer content fingerprint  — a commit
      *    built from a superseded plan is rejected.
      *
      * A rejected patch never mutates page state and never advances any
-     * frontier (T924-TX-20 tail clause).
+     * frontier ( tail clause).
      */
     private fun translationProvenanceRejection(patch: TranslationStagePatch): String? {
         if (patch.profileContentFingerprint == null && patch.envelopePlanFingerprint == null) {
@@ -1861,7 +1861,7 @@ class ChapterTranslationStore(
     }
 
     /**
-     * T911 slice 3: outcome of [preRegisterPages]. A rejection is observable so
+     *  slice 3: outcome of [preRegisterPages]. A rejection is observable so
      * the caller can fail the batch explicitly instead of running a tracker
      * whose totals silently stay zero.
      */
@@ -1879,12 +1879,12 @@ class ChapterTranslationStore(
      * the chapter total immediately, while the expected-page count is captured
      * in the artifact manifest when an artifact parent is already available.
      *
-     * T911 slice 3: returns [PagePreRegistration.Rejected] instead of silently
+     *  slice 3: returns [PagePreRegistration.Rejected] instead of silently
      * returning Unit when the store refuses the registration (defunct store,
      * artifact-authority failure), so the caller can surface a typed terminal
      * error rather than a live zero tracker.
      *
-     * T917 Phase 4 (D10, phase4-design §3.3): the trigger may attach its
+     *  Phase 4 ( phase4-design §3.3): the trigger may attach its
      * admission-probe cross-check. When [sourceCountKnown] is true the
      * registered truth is honest about partiality:
      *  - a known SOURCE total ([probedSourcePageCount] != null) makes the
@@ -1896,7 +1896,7 @@ class ChapterTranslationStore(
      *    record stops claiming trust it does not have.
      * Missing pages are never registered as page records; the manifest carries
      * the absence. Without context (both defaults) the legacy self-derived
-     * stamp below is byte-identical to pre-D10 behavior.
+     * stamp below is byte-identical to pre- behavior.
      */
     suspend fun preRegisterPages(
         pageKeys: List<String>,
@@ -2086,7 +2086,7 @@ class ChapterTranslationStore(
     ): Boolean {
         val pageKey = updated.sourceFileName ?: ""
         val isDurable = shouldPersistUpdate(previous, updated)
-        // T930 R2 restricted UI-before-persist: transient non-durable updates publish StateFlows
+        //  R2 restricted UI-before-persist: transient non-durable updates publish StateFlows
         // before staging into memory; durable results keep persist-first.
         if (GroupCommitConfiguration.enabled && !isDurable) {
             _state.value = snapshotPages()
@@ -2163,7 +2163,7 @@ class ChapterTranslationStore(
         val expectedCountChanged = expectedPageCount != manifest.expectedPageCount ||
             expectedPageCountTrusted != manifest.expectedPageCountTrusted
         if (registrationKeys.isNotEmpty() || expectedCountChanged) {
-            // T934 LI-x: this publication used to blind-publish
+            //  LI-x: this publication used to blind-publish
             // (`publishManifest`) a manifest rebuilt from the FAÇADE snapshot,
             // silently reverting any newer durable field: the >8-page open
             // path's background manifest publication can race without
@@ -2258,7 +2258,7 @@ class ChapterTranslationStore(
         // READER_ADHOC candidate would be misclassified as BATCH and its next
         // snapshot could never be persisted.
         //
-        // T934 round 3: a durable-FAILURE publication is a page-level ledger
+        //  round 3: a durable-FAILURE publication is a page-level ledger
         // write, not work product — keep the live candidate's own provenance
         // when one exists. Deriving the origin from the CURRENT lease holder
         // routed the failure persist through cancelLiveCandidate +
@@ -2330,7 +2330,7 @@ class ChapterTranslationStore(
             }
             artifactManifest = manifest
         } else if (GroupCommitConfiguration.enabled && (updated.hasRenderedResult || updated.isTextlessTerminal)) {
-            // T930 Slice B2: Candidate-promotion merge at PAGE_TERMINAL_PROMOTION commit point.
+            //  Slice B2: Candidate-promotion merge at PAGE_TERMINAL_PROMOTION commit point.
             flushStagedMutationsLocked(CommitPoint.PAGE_TERMINAL_PROMOTION)
             val current = artifactManifest ?: manifest
             val currentCand = current.pages[pageKey]?.candidate ?: currentCandidate
@@ -2381,7 +2381,7 @@ class ChapterTranslationStore(
             artifactManifest = manifest
             return true
         } else if (GroupCommitConfiguration.enabled) {
-            // T930 Slice B1: Staged mutations + debounce for intermediate non-terminal stage writes.
+            //  Slice B1: Staged mutations + debounce for intermediate non-terminal stage writes.
             stagePageMutationLocked(pageKey, updated)
             return true
         } else {
@@ -2455,7 +2455,7 @@ class ChapterTranslationStore(
         return true
     }
 
-    // T917 D1: the lease-origin -> durable-provenance mapping moved to the
+    //   the lease-origin -> durable-provenance mapping moved to the
     // shared top-level `PageWriteOrigin?.toArtifactOrigin()` in
     // TranslationStageContracts.kt (same two-value ArtifactOrigin result).
 
@@ -2630,7 +2630,7 @@ class ChapterTranslationStore(
     }
 
     /**
-     * T924 LI-2: retires the artifact manifest's `activeRun` pointer under the
+     *   retires the artifact manifest's `activeRun` pointer under the
      * store mutex (the store-side façade over
      * [ChapterArtifactEngine.retireActiveRun], mirroring the
      * [demoteCommittedDisplay] transaction idiom: CAS against the durable
@@ -2769,7 +2769,7 @@ class ChapterTranslationStore(
 
     fun glossarySnapshot(): Map<String, String> = glossaryStore.glossarySnapshot()
 
-    // T909 Phase 15: body moved to store/StoreStatusProjector.kt.
+    //  Phase 15: body moved to store/StoreStatusProjector.kt.
     // Same-signature stub keeps the call sites.
     fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
 
@@ -2826,7 +2826,7 @@ class ChapterTranslationStore(
     }
 
     /**
-     * TachiyomiAT T917 D5: live glossary version for the reuse gate and
+     * TachiyomiAT   live glossary version for the reuse gate and
      * provenance stamps; `null` = gate off (legacy authority / no glossary
      * ever published). Delegates to [ChapterGlossaryStore]; a pure in-memory
      * read, safe under the store mutex (the batch provenance stamp consumes it
@@ -2866,7 +2866,7 @@ class ChapterTranslationStore(
         glossaryStore.loadGlossary()
     }
 
-    // T909 Phase 17b: internal — the moved StorePersistenceScheduler reaches
+    //  Phase 17b: internal — the moved StorePersistenceScheduler reaches
     // it from flushDirtyLocked.
     internal fun persistGlossaryLocked(): Boolean = glossaryStore.persistGlossaryLocked()
 
@@ -2916,7 +2916,7 @@ class ChapterTranslationStore(
         return false
     }
 
-    // T909 Phase 17b: flush/close/debounce/retention bodies moved to
+    //  Phase 17b: flush/close/debounce/retention bodies moved to
     // store/StorePersistenceScheduler.kt; these same-signature stubs keep the
     // old qualified names (the manager reset flows, the durable resolver's
     // probe release, the glossary delegate, and the persistence/defunct tests
@@ -2948,7 +2948,7 @@ class ChapterTranslationStore(
         /** Artifact cleaned-image probe retained for artifact validation tests. */
         internal var artifactImageProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe
 
-        // T909 Phase 17b: the persistence constants moved to
+        //  Phase 17b: the persistence constants moved to
         // StorePersistenceScheduler; this delegating val keeps markDefunct's
         // bounded persist-join read unchanged.
         private val PERSIST_JOIN_TIMEOUT_MS get() = StorePersistenceScheduler.PERSIST_JOIN_TIMEOUT_MS

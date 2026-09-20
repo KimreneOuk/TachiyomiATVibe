@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.translation.pools.BitmapPool
 
 /**
- * T917 Phase 4 — D7 engine-epoch stop race + drain-not-close (phase4-design §1).
+ *  Phase 4 —  engine-epoch stop race + drain-not-close (phase4-design §1).
  *
  * The only production `pipeline.closeEngines()` caller is `ChapterTranslator.stop`
  * (ACTION_STOP via `TranslationManager.clearQueue`, the reader Stop button, and the
@@ -56,7 +56,7 @@ import tachiyomi.domain.translation.pools.BitmapPool
  *    fails the page honestly with no loop (c);
  *  - a parked NATIVE call still blocks the close (tryRunExclusive — idle-lane contract,
  *    unchanged) (d);
- *  - the D6 provider drain grace can never be shorter than the chain's own legitimate
+ *  - the  provider drain grace can never be shorter than the chain's own legitimate
  *    budget (P3-finding-4 bound, §1.6) (e).
  *
  * RED (committed first, phase4-design §6 step 1): (a) fails because the parked call
@@ -71,7 +71,7 @@ import tachiyomi.domain.translation.pools.BitmapPool
  * (`pipeline.prepareSinglePage` + `pipeline.translatePreparedPage` — the two calls the
  * RollingAutoCoordinator makes, driven directly for determinism; the coordinator's own
  * drain/cancel semantics are already covered by AutoProviderCallDrainsNotCancelsTest) on an
- * ARTIFACT-authority store (D9 fresh-chapter recipe) so the D9 ledger is observable.
+ * ARTIFACT-authority store ( fresh-chapter recipe) so the  ledger is observable.
  * The stop analogue is the REAL `manager.clearQueue()` → `translator.stop()` →
  * `pipeline.closeEngines()` chain.
  */
@@ -106,7 +106,7 @@ class EngineEpochStopRaceTest {
     // fixtures
     // ------------------------------------------------------------------
 
-    /** Production fresh-chapter recipe over the shared IO (D9/D6 precedent), empty-start. */
+    /** Production fresh-chapter recipe over the shared IO (/ precedent), empty-start. */
     private fun freshStore(): ChapterTranslationStore {
         // The AUTO prepared page names "$pageKey.cleaned.jpg" but the harness's
         // publish shim (note §1.2.3) performs the guarded store write WITHOUT
@@ -164,7 +164,7 @@ class EngineEpochStopRaceTest {
     /**
      * Drives the REAL AUTO boundary pair the rolling coordinator issues:
      * prepareSinglePage (native, under the permit) then translatePreparedPage
-     * (HTTP+render, OUTSIDE the permit — the phase D7 targets). The outcome
+     * (HTTP+render, OUTSIDE the permit — the phase  targets). The outcome
      * deferred converts every failure into a named assertion, never a timeout.
      */
     private fun launchAutoPage(pageKey: String): AutoRun {
@@ -211,7 +211,7 @@ class EngineEpochStopRaceTest {
     }
 
     // ------------------------------------------------------------------
-    // ledger-file observation (D9 schema mirror)
+    // ledger-file observation ( schema mirror)
     // ------------------------------------------------------------------
 
     @Serializable

@@ -51,11 +51,11 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     private val generationDirectoryName = "$artifactRootDirectoryName/generations"
     private val glossaryDirectoryName = "$artifactRootDirectoryName/glossary"
 
-    // T917 Phase 3 (D9): durable attempt-ledger sidecar directory. One bounded
+    //  Phase 3: durable attempt-ledger sidecar directory. One bounded
     // document per chapter — not versioned sidecars — so a single fixed name.
     private val attemptsDirectoryName = "$artifactRootDirectoryName/attempts"
 
-    // T924 Stage 1 (T924-SC-21): versioned sidecar directories. File names are
+    //  Stage 1: versioned sidecar directories. File names are
     // content-addressed `f-<sha256(contentFingerprint)>.json`; page-scoped
     // kinds (OCR checkpoints, layout plans, color preparations) nest under the
     // injective pageSegment(pageKey). All are managed so retention bounds them.
@@ -101,10 +101,10 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     fun glossaryFile(version: Int): String = "$glossaryDirectoryName/chapter.glossary.$version.json"
 
-    /** T917 Phase 3 (D9): the chapter's single durable attempt-ledger document. */
+    /**  Phase 3: the chapter's single durable attempt-ledger document. */
     val attemptLedgerFileName: String get() = "$attemptsDirectoryName/ledger.json"
 
-    // T924 Stage 1 (T924-SC-21): content-addressed sidecar names per kind.
+    //  Stage 1: content-addressed sidecar names per kind.
     // Equal content maps to an equal name, so re-publication is idempotent and
     // first admission can use renameNoReplace. The caller supplies the
     // semantic content fingerprint; the name hashes it (fingerprint functions

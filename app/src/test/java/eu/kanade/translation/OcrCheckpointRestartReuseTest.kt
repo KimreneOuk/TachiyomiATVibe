@@ -32,8 +32,8 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * T924 Stage 1 M1 milestone proof (contracts-state-transactions.md §2,
- * T924-TX-06/TX-10): OCR page → [ChapterTranslationStore.checkpointOcr] →
+ *  Stage 1 M1 milestone proof (contracts-state-transactions.md §2,
+ * OCR page → [ChapterTranslationStore.checkpointOcr] →
  * lease release → simulated process restart (fresh stores over the same
  * document set) → the checkpointed OCR is reusable by Manual/Auto
  * (READER_ADHOC) AND Batch origins alike, and a fingerprint-mismatched
@@ -94,7 +94,7 @@ class OcrCheckpointRestartReuseTest {
 
     /**
      * Batch lane: acquire the lease, run the OCR merge under the lease token,
-     * checkpoint, and only then release the lease (T924-TX-06 order).
+     * checkpoint, and only then release the lease ( order).
      */
     private suspend fun mergeAndCheckpoint(
         store: ChapterTranslationStore,
@@ -223,7 +223,7 @@ class OcrCheckpointRestartReuseTest {
 
         // ---- Origin-neutral reuse: a fresh READER_ADHOC (Manual/Auto) candidate
         // opens from the checkpoint — impossible while a BATCH candidate held the
-        // page before T924-TX-03. ----
+        // page before. ----
         val pageVersion = manifest.pageRecord("p1").pageVersion
         val readerOpen = artifact.openCandidate(
             manifest,
@@ -256,7 +256,7 @@ class OcrCheckpointRestartReuseTest {
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         readerPromoted.manifest.pageRecord("p1").candidate shouldBe null
 
-        // ---- T924-TX-03.1 adopt-committed after restart: Batch checkpoints the
+        // ----.1 adopt-committed after restart: Batch checkpoints the
         // reader-committed page WITHOUT any active candidate; the committed
         // display is untouched. ----
         val reopened = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
@@ -353,7 +353,7 @@ class OcrCheckpointRestartReuseTest {
         val after = store.snapshot("p1")
         val manifestBefore = artifactStore().readManifest().shouldNotBeNull()
 
-        // No lease is held: the checkpoint is refused outright (TX-02.1).
+        // No lease is held: the checkpoint is refused outright.
         val result = store.checkpointOcr(
             pageKey = "p1",
             generation = after.generation,

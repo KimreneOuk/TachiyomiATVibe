@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * Pins [ReaderTextLayoutCache] — the strict bounded LRU that lets the overlay
- * apply prepared layouts synchronously on a rebind (T920 3.1). The bound must
+ * apply prepared layouts synchronously on a rebind ( 3.1). The bound must
  * hold absolutely, and keys must discriminate on blocks content AND page
  * dimensions.
  */

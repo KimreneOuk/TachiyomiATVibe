@@ -25,8 +25,8 @@ object ContextualResponseParser {
     private val canonicalBatchIdRegex = Regex("p\\d+_b\\d+")
 
     /**
-     * T934 separator-salvage rule (see
-     * `Plan/active/2026-09-16_T934_resume-rebuild-and-parallelism/team/diagnosis-omitted-blocks.md`):
+     *  separator-salvage rule (see
+     * `Plan/active/2026-09-16__resume-rebuild-and-parallelism/team/diagnosis-omitted-blocks.md`):
      * the deployed 7B model deterministically corrupts the `ID|text` frame on
      * short emphatic lines concentrated on the envelope's LAST page, substituting
      * another glyph for the required `|` separator (`>` for `|` observed 7/7 on
@@ -234,7 +234,7 @@ object ContextualResponseParser {
     }
 
     /**
-     * T934: salvage candidate for a no-`|` line. The greedy digit run in
+     *  salvage candidate for a no-`|` line. The greedy digit run in
      * [corruptedSeparatorLineRegex] rejects digit-extended ids (`p12_b67` stays
      * `p12_b67`, never a corrupted `p12_b6`), the separator must be a single
      * non-word, non-`|` character, and only ids the envelope actually requested

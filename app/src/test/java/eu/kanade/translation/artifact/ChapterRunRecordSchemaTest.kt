@@ -9,7 +9,7 @@ import kotlinx.serialization.encodeToString
 import org.junit.jupiter.api.Test
 
 /**
- * T924 Stage 1 gate 1.2 (schemas contract T924-SC-01/02/06/12/13/17):
+ *  Stage 1 gate 1.2 (schemas contract /06/12/13/17):
  * run-record schema validation, unknown-version preservation, and
  * byte-identical canonical round-trips through the shared artifact Json
  * instance.
@@ -70,7 +70,7 @@ class ChapterRunRecordSchemaTest {
     fun `v1 contract example round-trips byte-identically through the shared Json`() {
         val record = contractExampleRecord()
         val first = ArtifactDocumentJson.encodeToString(record)
-        // Declaration-order fields first (T924-SC-06).
+        // Declaration-order fields first.
         first shouldStartWith "{\"schemaVersion\":1,\"kind\":\"CHAPTER_RUN_RECORD\",\"runId\":"
         val decoded = ArtifactDocumentJson.decodeFromString<ChapterRunRecord>(first)
         ArtifactDocumentJson.encodeToString(decoded) shouldBe first
@@ -136,7 +136,7 @@ class ChapterRunRecordSchemaTest {
         store.publishManifest(manifestWithPointer) shouldBe true
 
         store.readRunRecord(manifestWithPointer.activeRun!!) shouldBe ChapterArtifactEngine.RunRecordRead.Absent
-        // The unparseable payload was quarantined, not silently consumed (T924-SC-17).
+        // The unparseable payload was quarantined, not silently consumed.
         io.files.containsKey("$fileName.corrupt") shouldBe true
     }
 
@@ -151,7 +151,7 @@ class ChapterRunRecordSchemaTest {
         rejected.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
 
-        // A wrong-kind document already on disk is corrupt (T924-SC-17), never consumed.
+        // A wrong-kind document already on disk is corrupt, never consumed.
         val fileName = layout.runRecordFile(hex64)
         io.write(fileName, ArtifactDocumentJson.encodeToString(wrongKind).toByteArray())
         store.readRunRecord(
@@ -177,7 +177,7 @@ class ChapterRunRecordSchemaTest {
 
         val read = store.readRunRecord(withPointer.activeRun!!)
         read shouldBe ChapterArtifactEngine.RunRecordRead.UnsupportedVersion(2)
-        // Bytes preserved untouched: never deleted, overwritten, or quarantined (T924-SC-13).
+        // Bytes preserved untouched: never deleted, overwritten, or quarantined.
         String(io.read(fileName)!!) shouldBe futureJson
         io.files.containsKey("$fileName.corrupt") shouldBe false
         io.deletedNames.none { it == fileName } shouldBe true

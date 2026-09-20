@@ -3,7 +3,7 @@ package eu.kanade.translation.artifact
 import kotlinx.serialization.Serializable
 
 /**
- * T924 Stage 1 (schemas contract §1.4): the frozen canonical chapter
+ *  Stage 1 (schemas contract §1.4): the frozen canonical chapter
  * translation profile and its structured facts. Immutable after publication;
  * monotonic [ChapterTranslationProfile.version]; corrections never mutate the
  * frozen content (design §4.4) — they are recorded as separate candidates.
@@ -11,13 +11,13 @@ import kotlinx.serialization.Serializable
  * Shared sub-types ([EvidenceRef], [ProfileFact], [ProfileScene],
  * [AnalyzerProvenance]) are reused by `AnalysisChunkResult` (schemas contract
  * §1.3). Serialized only through the shared [ArtifactDocumentJson] instance
- * (T924-SC-06).
+ *
  */
 
 /**
  * Evidence anchor (schemas contract §1.4). [stableBlockId] is the OCR
  * canonical block id (e.g. `p3_b12`); [sourceExcerptHash] is the SHA-256 of
- * the NFC/LF-normalized source excerpt (T924-SC-09).
+ * the NFC/LF-normalized source excerpt.
  */
 @Serializable
 data class EvidenceRef(
@@ -78,7 +78,7 @@ data class AnalyzerProvenance(
     val modelId: String,
     val promptVersion: Int,
     val analysisSchemaVersion: Int,
-    /** Opaque credential signature; never a raw credential (T924-FP-04). */
+    /** Opaque credential signature; never a raw credential. */
     val credentialFingerprint: String? = null,
 ) {
     fun validationError(): String? = when {
@@ -117,7 +117,7 @@ enum class SceneRegister { CASUAL, FORMAL, ARCHAIC, ROUGH, POLITE, OTHER }
 /**
  * The fact representation (schemas contract §1.4); entities/terms/gender
  * facts are typed instances of this shape. Strings that carry names are
- * NFC-normalized before storage (T924-SC-09).
+ * NFC-normalized before storage.
  */
 @Serializable
 data class ProfileFact(
@@ -130,7 +130,7 @@ data class ProfileFact(
     val canonicalTargetForm: String? = null,
     /** Titles/honorific variants; NFC-normalized. */
     val aliases: List<String> = emptyList(),
-    /** Model confidence; never a validity key by itself (T924-FP-05). */
+    /** Model confidence; never a validity key by itself. */
     val confidence: Float? = null,
     val evidenceStrength: EvidenceStrength,
     /** Required unless [evidenceStrength] is WEAK (weak cues stay notes). */
@@ -180,7 +180,7 @@ data class ProfileFact(
     private fun String?.length(): Int = this?.length ?: 0
 
     companion object {
-        /** T924-SC-02 schema bounds (T, tunable). */
+        /** 02 schema bounds (T, tunable). */
         const val MAX_NAME_CHARS = 128
         const val MAX_ALIASES = 32
         const val MAX_EVIDENCE_REFS = 32
@@ -217,7 +217,7 @@ data class ProfileScene(
     private fun String?.length(): Int = this?.length ?: 0
 
     companion object {
-        /** T924-SC-02 schema bounds (T, tunable). */
+        /** 02 schema bounds (T, tunable). */
         const val MAX_BLOCK_RANGES = 64
         const val MAX_PARTICIPANTS = 16
         const val MAX_NARRATIVE_CHARS = 1000
@@ -234,19 +234,19 @@ typealias ProfileTerm = ProfileFact
 /**
  * The frozen canonical chapter translation profile (schemas contract §1.4).
  * Immutable after publication; [version] is operational ordering ONLY and
- * never the sole validity key (T924-FP-05). Field declaration order is the
- * canonical byte order (T924-SC-06).
+ * never the sole validity key. Field declaration order is the
+ * canonical byte order.
  */
 @Serializable
 data class ChapterTranslationProfile(
     val schemaVersion: Int = SCHEMA_VERSION,
     val kind: String = KIND,
     val version: Int,
-    /** `ProfileContentFingerprint` (T924-FP-05). */
+    /** `ProfileContentFingerprint`. */
     val contentFingerprint: String,
-    /** `ProfileInputFingerprint` (T924-FP-04). */
+    /** `ProfileInputFingerprint`. */
     val profileInputFingerprint: String,
-    /** Operational provenance; never fingerprinted (T924-FP-01). */
+    /** Operational provenance; never fingerprinted. */
     val sourceRunId: String,
     val analyzerProvenance: AnalyzerProvenance,
     val entities: List<ProfileEntity> = emptyList(),
@@ -261,7 +261,7 @@ data class ChapterTranslationProfile(
     /** Operational only. */
     val frozenAtEpochMs: Long,
 ) {
-    /** T924-SC-01/SC-02 semantic validation; null when the document is usable. */
+    /** 01/SC-02 semantic validation; null when the document is usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"
@@ -300,7 +300,7 @@ data class ChapterTranslationProfile(
         const val SCHEMA_VERSION = 1
         const val KIND = "CHAPTER_TRANSLATION_PROFILE"
 
-        /** T924-SC-02 schema bounds (T, tunable). */
+        /** 02 schema bounds (T, tunable). */
         const val MAX_FACTS_PER_LIST = 512
         const val MAX_SCENES = 256
         const val MAX_CANDIDATES = 128

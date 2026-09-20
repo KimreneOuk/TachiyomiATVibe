@@ -8,7 +8,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T912 slice 3: pure [MaskTextRegionPlanner] partitioning contract — disjoint
+ *  slice 3: pure [MaskTextRegionPlanner] partitioning contract — disjoint
  * half-open cells, exact dead zones, parent-bias rules, equal-width fallback,
  * per-component independence, explicit empty cells, the 8-block optimization
  * cap, the page cell-span budget fallback, and [collisionGapPx] clamping.

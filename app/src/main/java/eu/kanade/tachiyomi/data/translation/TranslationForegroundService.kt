@@ -215,7 +215,7 @@ class TranslationForegroundService : Service() {
                 return
             }
             if (!BatchTranslationForegroundPolicy.shouldKeepServiceRunning(queued.map { it.status })) {
-                // T917 Phase 5 (spec §3.1): a stop here often means the batch
+                //  Phase 5 (spec §3.1): a stop here often means the batch
                 // reached a terminal state. A cancellation of paid work or a
                 // publication rejection must stay VISIBLE — the default stop
                 // path removes the notification, which would silence exactly
@@ -243,7 +243,7 @@ class TranslationForegroundService : Service() {
     private var lastPublished: Triple<Long?, String, Boolean>? = null
 
     /**
-     * T917 Phase 5 (spec §3.1): the notification body is the pure
+     *  Phase 5 (spec §3.1): the notification body is the pure
      * [TranslationNotificationCopy] projection; the service only renders it
      * and attaches intents for actions it can actually deliver. Identical
      * consecutive bodies are coalesced (ordinary progress is not re-posted),
@@ -288,7 +288,7 @@ class TranslationForegroundService : Service() {
     }
 
     /**
-     * T917 Phase 5 (spec §3.1): before the service stops, surface a cancelled
+     *  Phase 5 (spec §3.1): before the service stops, surface a cancelled
      * batch or a publication rejection as a retained, non-ongoing
      * notification. The pure [TranslationUiTruth.chapterSurfaceDecision] gate
      * decides visibility; the copy comes from [TranslationNotificationCopy].
@@ -328,7 +328,7 @@ class TranslationForegroundService : Service() {
 
         /**
          * Posts a non-ongoing pause reminder without advertising active work.
-         * T917 Phase 5: text and actions come from the pure
+         *  Phase 5: text and actions come from the pure
          * [TranslationNotificationCopy] projection; the service appends the
          * locale-formatted retry time when the copy carries a retry epoch.
          */

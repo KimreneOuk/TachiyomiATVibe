@@ -15,7 +15,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * T924-TX-20 (Stage-6 slice A): the ADDITIVE NULLABLE provenance fields on
+ * 20 (Stage-6 slice A): the ADDITIVE NULLABLE provenance fields on
  * [TranslationStagePatch]. Pins:
  *
  *  - a patch constructed WITHOUT the new fields keeps byte-identical legacy
@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test
  *    `envelopePlan` pointer REJECTS the same way.
  *
  * The in-memory store has NO artifact authority here — exactly the condition
- * under which the pre-T924 merge path already worked, which makes the
+ * under which the pre- merge path already worked, which makes the
  * null-vs-non-null contrast direct.
  */
 class TranslationProvenanceMergeTest {

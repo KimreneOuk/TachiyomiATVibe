@@ -22,7 +22,7 @@ import io.kotest.matchers.string.shouldContain
 import org.junit.jupiter.api.Test
 
 /**
- * T924 Stage-6 slice B (design §7.1/§7.2): the pure frozen-profile subset
+ *  Stage-6 slice B (design §7.1/§7.2): the pure frozen-profile subset
  * matcher — matching, alias/title linking, entity-id inclusion, caps,
  * determinism, and RANGE SAFETY of the scene context.
  */
@@ -112,7 +112,7 @@ class ProfileSubsetMatcherTest {
         pages.map { ProfileSubsetMatcher.EnvelopeSource(it.first, it.second) }
 
     // ------------------------------------------------------------------
-    // D1: matching, aliases/titles, entity ids, cap, determinism.
+    //  matching, aliases/titles, entity ids, cap, determinism.
     // ------------------------------------------------------------------
 
     @Test
@@ -161,7 +161,7 @@ class ProfileSubsetMatcherTest {
     }
 
     // ------------------------------------------------------------------
-    // D2: range-safe scene context.
+    //  range-safe scene context.
     // ------------------------------------------------------------------
 
     @Test
@@ -247,7 +247,7 @@ class ProfileSubsetMatcherTest {
     }
 
     // ------------------------------------------------------------------
-    // D3 helpers: resolved entity lines + compact unresolved state.
+    //  helpers: resolved entity lines + compact unresolved state.
     // ------------------------------------------------------------------
 
     @Test

@@ -6,8 +6,8 @@ import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
 
 /**
- * T924 S4 pure-planner gates for the global OCR corpus manifest
- * (T924-FP-03; WP3): deterministic assembly, permutation invariance,
+ *  S4 pure-planner gates for the global OCR corpus manifest
+ * ( WP3): deterministic assembly, permutation invariance,
  * never-guess ordering, and the pure gap/missing-page detector matrix.
  */
 class OcrCorpusManifestTest {

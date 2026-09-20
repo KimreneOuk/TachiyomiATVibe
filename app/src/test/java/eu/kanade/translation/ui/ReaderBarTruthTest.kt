@@ -11,7 +11,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T934 U.4/U.7: the reader bottom bar's copy mapping consumes the SAME
+ *  U.4/U.7: the reader bottom bar's copy mapping consumes the SAME
  * phase truth as the progress sheet. During a resume rebuild the bar shows
  * rebuild/restore copy — never a frozen "Batch X/Y" — and every legacy bar
  * behavior (wording, visibility) is preserved byte-identically.

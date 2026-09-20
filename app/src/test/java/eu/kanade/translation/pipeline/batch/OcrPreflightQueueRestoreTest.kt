@@ -30,17 +30,17 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * T924 zero-legacy (D1) — surviving coverage from the former
+ *  zero-legacy  — surviving coverage from the former
  * `OcrPreflightFlagOffMidRunTest`.
  *
- * The FF-01 flag completed its A/B lifecycle and was removed: there is no
+ * The  flag completed its A/B lifecycle and was removed: there is no
  * flag-OFF state, no DropToLegacy/TreatAsFinished decision tree, and no
  * legacy SequentialBatchCoordinator — those tests pinned deleted behavior
  * and were deleted with it. What survives here:
  *
  *  - the dispatch mapping anchor: engine category alone picks the lane
  *    (STANDARD → STANDARD_PIPELINE; everything else → PROFILE_PIPELINE);
- *  - the FF-10 queue-restore obligation, which was ALWAYS orthogonal to the
+ *  - the  queue-restore obligation, which was ALWAYS orthogonal to the
  *    flag: constructing the coordinator (the restore-level lookup) never
  *    auto-starts a run — no OCR, no durable run pointer, no checkpoints, no
  *    lease held. The restored chapter waits for explicit user admission.
@@ -161,7 +161,7 @@ class OcrPreflightQueueRestoreTest {
         store.preRegisterPages(listOf("p1"))
         val worker = RecordingOcrWorker(store)
         // Construction + decision only: the restore path builds the
-        // coordinator, it never runs a pass (FF-10: no auto-start).
+        // coordinator, it never runs a pass ( no auto-start).
         ChapterProfileBatchCoordinator(
             store = store,
             nativeWorker = worker,

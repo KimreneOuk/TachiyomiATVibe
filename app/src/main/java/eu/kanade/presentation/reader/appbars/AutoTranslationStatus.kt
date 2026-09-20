@@ -101,7 +101,7 @@ fun AutoTranslationStatus(
     for (index in state.orderedSlots.indices) {
         val slot = state.orderedSlots[index]
         if (index > 0) slotLabelsBuilder.append(", ")
-        // T917 P5: the shared forAutoSlot mapper owns the slot copy — the
+        //  P5: the shared forAutoSlot mapper owns the slot copy — the
         // status surface projects the truth record verbatim (spec §6.2.8).
         slotLabelsBuilder
             .append(slot.pageIndex + 1)

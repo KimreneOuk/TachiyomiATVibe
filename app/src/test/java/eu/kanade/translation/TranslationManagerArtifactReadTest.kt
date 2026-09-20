@@ -167,7 +167,7 @@ class TranslationManagerArtifactReadTest {
 
     @Test
     fun `in-flight artifact page leaves the chapter retryable, not warnings`() = runTest {
-        // T924 field fix (Chapter 21): the old softener reported a store
+        //  field fix (Chapter 21): the old softener reported a store
         // interrupted mid-run (real page left in-flight/cancelled) as
         // READY_WITH_WARNINGS — a "completed" badge with an unrendered page
         // and no Retry affordance. An unresolved REAL page must resolve the

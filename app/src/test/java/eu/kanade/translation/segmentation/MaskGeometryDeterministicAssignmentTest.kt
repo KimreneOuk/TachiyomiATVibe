@@ -5,10 +5,10 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T912 repair (R3): DETERMINISTIC component assignment —
+ *  repair (R3): DETERMINISTIC component assignment —
  * [MaskGeometry.componentForRectangleDeterministic]. A block whose OCR
  * rectangle ties across components (or overlaps none of them) must never go
- * cell-less in the T912 layout path. Resolution:
+ * cell-less in the  layout path. Resolution:
  *  1. unique positive max overlap wins;
  *  2. exact overlap tie -> among the TIED components, the nearest integer
  *     bounds center to the rectangle center;

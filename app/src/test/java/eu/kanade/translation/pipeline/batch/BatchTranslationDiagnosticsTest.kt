@@ -12,7 +12,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 
 /**
- * T922 Phase 4: the legacy TachiyomiAT.Batch timing/status surface is now a
+ *  Phase 4: the legacy TachiyomiAT.Batch timing/status surface is now a
  * compatibility facade over `translation_trace_v1` (tag TachiyomiAT.Translation).
  * These tests verify the migrated behavior contract:
  *

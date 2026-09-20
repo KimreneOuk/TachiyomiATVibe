@@ -39,7 +39,7 @@ import tachiyomi.domain.translation.TranslationReadingOrder
 import java.io.ByteArrayInputStream
 
 /**
- * T917 Phase 3 — D5 glossary-aware translation reuse gate (phase3-design §1, §5.1).
+ *  Phase 3 —  glossary-aware translation reuse gate (phase3-design §1, §5.1).
  *
  * Drives the REAL production planning seam: a real [ChapterTranslationStore]
  * with a real ARTIFACTS-authority manifest (production fresh-chapter recipe),
@@ -168,7 +168,7 @@ class GlossaryAwareZeroPaidReuseTest {
         // The guarded writer (pageWriteRejection) — NOT patchPage, whose
         // dependency-fingerprint clause still lacks the candidate-grace until
         // the §4 alignment lands. Keeping this suite on the graceful writer
-        // isolates D5 from the §4 fix, which has its own regression test
+        // isolates  from the §4 fix, which has its own regression test
         // (ChapterTranslationStorePatchPageGraceTest).
         val result = store.updatePageGuarded(
             pageKey = key,
@@ -298,7 +298,7 @@ class GlossaryAwareZeroPaidReuseTest {
     }
 
     // ------------------------------------------------------------------
-    // (b2) T924 gate 1.5: glossary-repair reuse survives a manifest v3 rewrite
+    // (b2)  gate 1.5: glossary-repair reuse survives a manifest v3 rewrite
     // ------------------------------------------------------------------
 
     @Test
@@ -314,7 +314,7 @@ class GlossaryAwareZeroPaidReuseTest {
         store.updateGlossary(mapOf("太郎" to "Taro"))
 
         // The manifest v3 rewrite cycle: every publication rewrites the
-        // manifest as current-version bytes (T924-SC-04), and a restart
+        // manifest as current-version bytes, and a restart
         // reloads them through a fresh artifact store. Republish the loaded
         // manifest (a real publication primitive) and reload it.
         val reloadedArtifactStore = ChapterArtifactEngine(d5Documents, d5Layout)

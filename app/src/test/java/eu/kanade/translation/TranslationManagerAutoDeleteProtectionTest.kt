@@ -25,7 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Manager-level auto-delete protection coverage (T906 area-3 finding F6).
+ * Manager-level auto-delete protection coverage ( area-3 finding F6).
  * `TranslationUiProjectionTest` covers the pure predicate; here the real
  * manager entry points that gate reader auto-delete are exercised over all
  * three protection unions: the live queue (incl. PAUSED), the in-memory /

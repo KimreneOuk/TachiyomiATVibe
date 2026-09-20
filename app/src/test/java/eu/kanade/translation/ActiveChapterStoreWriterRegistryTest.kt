@@ -13,7 +13,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * T930 Slice A2: Writer registry (N2) tests.
+ *  Slice A2: Writer registry (N2) tests.
  *
  * Asserts:
  * 1. Process-wide writer registry records writer origins.

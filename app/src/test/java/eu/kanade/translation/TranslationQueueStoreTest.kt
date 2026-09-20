@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * Characterization tests for the durable batch-queue membership store
- * (T906 area-3 finding F3: no direct unit coverage). Pins the
+ * ( area-3 finding F3: no direct unit coverage). Pins the
  * SharedPreferences round-trip, ordering, and the `load()` parse contract:
  * the positional scan stops at the first missing or unparseable index.
  */

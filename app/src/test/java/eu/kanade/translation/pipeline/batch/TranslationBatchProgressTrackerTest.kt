@@ -50,7 +50,7 @@ class TranslationBatchProgressTrackerTest {
         )
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg"), this)
 
-        // T911 slice 3: the total is nonzero immediately — it derives from the
+        //  slice 3: the total is nonzero immediately — it derives from the
         // ordered work keys at construction, never from an empty store read.
         tracker.snapshot.value.totalPages shouldBe 1
 
@@ -141,7 +141,7 @@ class TranslationBatchProgressTrackerTest {
 
         tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.FIRST_PASS
 
-        // T934 LI-4: the plan-build window is live work — the projection must
+        //   the plan-build window is live work — the projection must
         // leave FIRST_PASS while the coordinator re-adopts pages, and the
         // adoption counter must track each event (the sheet recomputes its
         // store-derived counters on every emission).

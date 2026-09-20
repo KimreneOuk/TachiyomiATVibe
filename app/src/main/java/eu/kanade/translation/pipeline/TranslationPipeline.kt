@@ -86,7 +86,7 @@ class LayoutFailureException(val blockIds: List<String>, message: String) : Exce
 
 private class NativePageAlreadyInFlightException : Exception()
 
-// T909 Phase 20.2: ProviderFailure.toFailureCategory moved to
+//  Phase 20.2: ProviderFailure.toFailureCategory moved to
 // pipeline/batch/BatchWriteGate.kt (its only caller, persistAiFailure).
 
 class TranslationPipeline(
@@ -95,11 +95,11 @@ class TranslationPipeline(
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
     private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
-    /** D8 test seam; production defaults preserve the result timer contract. */
+    /**  test seam; production defaults preserve the result timer contract. */
     private val stallThresholdMs: Long = NATIVE_STALL_THRESHOLD_MS,
     private val nativeTimeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
     /**
-     * T917 Phase 5 (condition B test seam): the HTTP+render result timer.
+     *  Phase 5 (condition B test seam): the HTTP+render result timer.
      * Production defaults preserve the [SINGLE_PAGE_TIMEOUT_MS] contract; tests
      * inject a short value to exercise the typed timeout path deterministically.
      */
@@ -142,16 +142,16 @@ class TranslationPipeline(
          */
         const val ONNX_PHASE_TIMEOUT_MS = 90_000L
 
-        /** D8 occupancy threshold; aligned with the native result timer. */
+        /**  occupancy threshold; aligned with the native result timer. */
         const val NATIVE_STALL_THRESHOLD_MS = ONNX_PHASE_TIMEOUT_MS
 
-        // T909 Phase 20.1: HELD_BITMAP_MAX_COUNT / HELD_BITMAP_BYTE_CEILING moved to
+        //  Phase 20.1: HELD_BITMAP_MAX_COUNT / HELD_BITMAP_BYTE_CEILING moved to
         // pipeline/batch/HeldBitmapRegistry.kt with the held-bitmap registry.
 
         const val UNKNOWN_SOURCE_FINGERPRINT = "source-fingerprint-unavailable"
 
         /**
-         * T917 Phase 5 (condition C, spec §4.1.3): stable reason for the typed
+         *  Phase 5 (condition C, spec §4.1.3): stable reason for the typed
          * non-success outcome of a page whose translation could not be saved.
          * The pure UI mapper selects the "Translation not saved — retry
          * required" copy from this exact value, so it must not drift.
@@ -159,19 +159,19 @@ class TranslationPipeline(
         const val REASON_TRANSLATION_NOT_SAVED = "Translation could not be saved; retry required"
 
         /**
-         * T917 Phase 5 (condition B / D8-1, D12 §3.2): truthful name for the
+         *  Phase 5 (condition B / -1,  §3.2): truthful name for the
          * HTTP+render result timer. Timeout copy must name the timer that
          * fired, never an unrelated duration.
          */
         const val REASON_HTTP_RENDER_TIMER_EXPIRED = "HTTP+render result timer expired; translation failed"
     }
 
-    // T909 Phase 20.3: BatchResumeGate enum + resume planning moved to
+    //  Phase 20.3: BatchResumeGate enum + resume planning moved to
     // pipeline/batch/BatchResumePlanner.kt.
 
     /** Native admission is owned by [nativeRunQuarantine]. */
 
-    // T909 Phase 10: PermitHolder/native-permit bookkeeping moved into pipeline/EngineLane.kt.
+    //  Phase 10: PermitHolder/native-permit bookkeeping moved into pipeline/EngineLane.kt.
     internal fun permitHolderPageKeySnapshot(): String? = engines.permitHolderPageKeySnapshot()
 
     private val engineRebuildMutex = kotlinx.coroutines.sync.Mutex()
@@ -226,10 +226,10 @@ class TranslationPipeline(
     @Volatile
     var batchTrackerFactory: ((chapterId: Long, store: ChapterTranslationStore, orderedPageKeys: List<String>) -> TranslationBatchProgressTracker?)? = null
 
-    // T909 Phase 10: engine cache + native lane moved to pipeline/EngineLane.kt
+    //  Phase 10: engine cache + native lane moved to pipeline/EngineLane.kt
     // (defensive init semantics preserved: EngineLane's init builds the engines
     // defensively at construction). Same-signature stubs keep call sites.
-    // T917 Phase 4 (D7 §1.2): the drain grace is the SHORT engine grace (its
+    //  Phase 4 ( §1.2): the drain grace is the SHORT engine grace (its
     // expiry is recovered by the epoch retry — see EngineLane.ENGINE_DRAIN_GRACE_MS)
     // and the drain runs on nativeRunScope so the stop path (main thread) never
     // blocks on it.
@@ -259,7 +259,7 @@ class TranslationPipeline(
         block: suspend () -> T,
     ): T? = engines.withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
 
-    // T909 Phase 10: engine-cache fields live in [engines]; the staying paths
+    //  Phase 10: engine-cache fields live in [engines]; the staying paths
     // keep reading them through these same-name getters.
     private val currentOcrModel get() = engines.currentOcrModel
 
@@ -292,7 +292,7 @@ class TranslationPipeline(
     @Volatile
     var onBatchClosed: (suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit)? = null
 
-    // T909 Phase 6: stream peek + canonical FAILED placeholder + store-patch/failure-write
+    //  Phase 6: stream peek + canonical FAILED placeholder + store-patch/failure-write
     // bodies moved to translation/pipeline/PageStoreWriter.kt (stateless over the injected
     // resolver + store guarded-write API). Same-signature private stubs keep call sites.
     private val pageStoreWriter = PageStoreWriter(
@@ -346,12 +346,12 @@ class TranslationPipeline(
         timeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
         nativeTimer: Boolean = true,
     ) {
-        // T917 Phase 5 D12: the store placeholder names the timer that actually
+        //  Phase 5  the store placeholder names the timer that actually
         // fired — native (`withNativeLane`) vs HTTP+render (`withTimeoutOrNull`).
         pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey, timeoutMs, nativeTimer)
     }
 
-    // T909 Phase 6: PageSnapshot.toPrecondition moved to pipeline/PageStoreWriter.kt
+    //  Phase 6: PageSnapshot.toPrecondition moved to pipeline/PageStoreWriter.kt
     // (imported top-level extension — all call sites below resolve through it).
 
     private suspend fun updatePageFromCurrentSnapshot(
@@ -400,7 +400,7 @@ class TranslationPipeline(
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
     ): SinglePageOutcome {
-        // D8 refuses a new promise while the native lane is visibly stalled.
+        //  refuses a new promise while the native lane is visibly stalled.
         // Check before lease admission so this tap performs no writer/native work.
         nativeStall.value?.let { stalled ->
             return SinglePageOutcome.Stalled(stalled.pageKey, stalled.stalledAtEpochMs)
@@ -457,7 +457,7 @@ class TranslationPipeline(
      * page boundary methods below. [streamFn] is null for the reader-stream
      * peek path.
      *
-     * T917 D1: the whole boundary runs under an origin-typed page lease
+     *   the whole boundary runs under an origin-typed page lease
      * ([PageWriteOrigin.MANUAL] for reader taps, [PageWriteOrigin.AUTO] for the
      * legacy auto window's resume-render path). Session admission prevents
      * reader and batch sessions from entering concurrently; a low-level lease
@@ -511,12 +511,12 @@ class TranslationPipeline(
         // resolution; declared at boundary scope so the post-finally mapping
         // can see them while the `finally` still owns the lease release.
         var httpOutcome: ChunkCompletionOutcome? = null
-        // T917 Phase 5 (condition B): set when the HTTP+render timer fired
+        //  Phase 5 (condition B): set when the HTTP+render timer fired
         // while the phase had ALREADY committed a durable terminal result —
         // store truth outranks the timer there, and no timeout placeholder
         // may overwrite terminal truth.
         var httpTimeoutLandedDurableResult = false
-        // T922 Phase 3 (plan §4.4 Manual): boundary-level trace wiring. The
+        //  Phase 3 (plan §4.4 Manual): boundary-level trace wiring. The
         // run arrives via the TranslationTraceElement installed by the caller
         // (scheduler launch / rolling-coordinator wrap); outside a trace every
         // helper is a NO_OP. Emission is non-suspending and fail-open.
@@ -525,7 +525,7 @@ class TranslationPipeline(
         val nativeQueueSpan = traceRun?.beginStage(TranslationTraceStage.NATIVE_QUEUE)
         val nativeLaneToken = traceSchedule?.enterLane(TranslationTraceLane.NATIVE)
         try {
-            // T917 D8: a same-page request whose predecessor still owns the
+            //   a same-page request whose predecessor still owns the
             // stove (e.g. a timed-out-but-parked native call) is rejected
             // BEFORE queueing behind the quarantine. Membership here is the
             // honest occupancy truth: the entry is cleared only when the
@@ -540,7 +540,7 @@ class TranslationPipeline(
                 nativeLaneToken?.close()
                 return SinglePageOutcome.Rejected(null, "page already translating")
             }
-            // T917 D11 (phase4-design §4.4): storage-tail deferral holder. The
+            //   (phase4-design §4.4): storage-tail deferral holder. The
             // ONNX phase enqueues its resume-path cleaned-image persistence,
             // render tails, and the store flush here instead of running them
             // under the native permit; this boundary drains the queue AFTER
@@ -618,9 +618,9 @@ class TranslationPipeline(
                 markPageFailed(manga, chapter, source, pageKey, t)
                 throw t
             }
-            // T917 Phase 5 (condition A, phase4 review §5 Deviation #7): the
+            //  Phase 5 (condition A, phase4 review §5 Deviation #7): the
             // resume paths of [translateSinglePageOnnx] return null on SUCCESS
-            // (render-only resume, inpaint+render resume, resume-skip). D8's
+            // (render-only resume, inpaint+render resume, resume-skip). 's
             // honest-timeout flip mapped that null to Failed — a NEW
             // wrong-outcome case introduced by the flip, not a pre-existing
             // one. The deferred storage tails were drained above, so durable
@@ -636,8 +636,8 @@ class TranslationPipeline(
                 return SinglePageOutcome.Failed(pageKey, "native phase timed out")
             }
 
-            // T922 Phase 3: cleaned-image persistence boundary (storage lane).
-            // T922 Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
+            //  Phase 3: cleaned-image persistence boundary (storage lane).
+            //  Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
             // including a throw from persistOnnxCleanedImage (cancellation or a
             // store exception on paths that historically propagate) — no
             // stage_start is left dangling.
@@ -663,7 +663,7 @@ class TranslationPipeline(
                 return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
             }
 
-            // T917 Phase 3 (D6 §2.2a): capture the phase's typed completion so a
+            //  Phase 3 ( §2.2a): capture the phase's typed completion so a
             // governor deferral surfaces as a typed pause instead of a silent
             // Completed.
             val providerLaneToken = traceSchedule?.enterLane(TranslationTraceLane.PROVIDER)
@@ -697,7 +697,7 @@ class TranslationPipeline(
         } finally {
             releaseReaderPageLease(leaseStore, pageKey, origin)
         }
-        // T917 Phase 5 (conditions B + C, spec §4.1): exhaustive typed-value
+        //  Phase 5 (conditions B + C, spec §4.1): exhaustive typed-value
         // mapping. Only a genuinely completed durable commit may type
         // Completed; a timeout, a guarded-commit rejection, or a typed value
         // failure is a visible non-success — never a fall-through Completed.
@@ -745,7 +745,7 @@ class TranslationPipeline(
         store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
     }
 
-    // T909 Phase 7: cleaned-image publication bodies moved to
+    //  Phase 7: cleaned-image publication bodies moved to
     // translation/pipeline/CleanedPublication.kt (wraps CleanedImagePublisher;
     // currentInpaintingMode injected as a getter). Same-signature stubs keep call sites.
     private val cleanedPublication = CleanedPublication(
@@ -753,7 +753,7 @@ class TranslationPipeline(
         streamRegistry = streamRegistry,
         currentInpaintingMode = { currentInpaintingMode },
     )
-    // T909 Phase 12: single-page HTTP+render phase moved to
+    //  Phase 12: single-page HTTP+render phase moved to
     // translation/pipeline/SinglePageHttpRenderPhase.kt. Engine reads are taken
     // through [engines] at call time so in-flight calls observe engine rebuilds
     // exactly as the pre-move in-class getters did.
@@ -768,7 +768,7 @@ class TranslationPipeline(
             retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
         },
     )
-    // T909 Phase 14: permit-held ONNX phase + resume/native-stage helpers moved
+    //  Phase 14: permit-held ONNX phase + resume/native-stage helpers moved
     // to translation/pipeline/SinglePageOnnxPhase.kt (OnnxPhaseResult moves with
     // it; bitmap recycle/ownership points moved verbatim). Engine reads go
     // through [engines]; the engine-rebuild mutex is shared so rebuild ordering
@@ -826,7 +826,7 @@ class TranslationPipeline(
         stageListener: TranslationStageListener?,
     ): PreparedPage? {
         val leaseStore = resolveActiveStore(manga, chapter, source)
-        // T917 D1: only the rolling auto coordinator calls the prepared
+        //   only the rolling auto coordinator calls the prepared
         // boundary — its leases are AUTO (never preemptive; MANUAL evicts it).
         // Denied is a "try again" for the coordinator (§1.3): no attach wait.
         if (leaseStore != null &&
@@ -835,12 +835,12 @@ class TranslationPipeline(
             return null
         }
         try {
-            // T917 D11 (phase4-design §4.4): same storage-tail deferral as
+            //   (phase4-design §4.4): same storage-tail deferral as
             // [runGrantedSinglePageBoundary] — the permit is released before
             // the resume paths' storage publication runs; orphaned tails run
             // inline; the normal-path drain is fail-closed.
             val deferredPublications = DeferredPagePublications()
-            // T922 Phase 3: correlated trace for the rolling-Auto prepared
+            //  Phase 3: correlated trace for the rolling-Auto prepared
             // boundary. The coordinator installs the run through
             // TranslationTraceElement; outside that context every trace call
             // here is a fail-open no-op.
@@ -917,8 +917,8 @@ class TranslationPipeline(
 
             // Durability gate: persist the cleaned image BEFORE publishing the
             // prepared reference. If publication fails the page is not prepared.
-            // T922 Phase 3: persistence boundary stage (storage lane).
-            // T922 Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
+            //  Phase 3: persistence boundary stage (storage lane).
+            //  Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
             // including a throw from persistOnnxCleanedImage.
             val persistSpan = traceRun?.beginStage(
                 TranslationTraceStage.CLEANED_PERSIST,
@@ -1035,7 +1035,7 @@ class TranslationPipeline(
         }
         val store = resolveActiveStore(manga, chapter, source) ?: return null
         // prepareSinglePage owns the auto lease only through the native
-        // handoff. Re-admit the translate/render half here (AUTO per T917 D1 —
+        // handoff. Re-admit the translate/render half here (AUTO per   —
         // only the rolling auto coordinator calls this boundary) so a batch
         // cannot acquire the page in the handoff gap and then race the
         // prepared reference's writes. Denied is a stale/race "try again" for
@@ -1113,7 +1113,7 @@ class TranslationPipeline(
                 decoded = decoded,
                 commitPrecondition = snapshot.toPrecondition(),
             )
-            // T922 Phase 3: the provider lane is active for the whole HTTP
+            //  Phase 3: the provider lane is active for the whole HTTP
             // translate + render section of the prepared path so the schedule
             // accumulator measures it overlapping the next page's native prep.
             val providerLaneToken =
@@ -1128,7 +1128,7 @@ class TranslationPipeline(
                             "pageKey=${prepared.pageKey} chapter=${chapter.name}"
                     }
                     // The prepared path runs the HTTP+render phase, so its
-                    // timeout placeholder names THAT timer (D12).
+                    // timeout placeholder names THAT timer.
                     markPageTimedOut(manga, chapter, source, prepared.pageKey, nativeTimer = false)
                     throw java.io.IOException("translatePreparedPage timed out for ${prepared.pageKey}")
                 } else {
@@ -1158,7 +1158,7 @@ class TranslationPipeline(
         }
     }
 
-    // T909 Phase 20.6: the staged batch translation (translateBatch shell +
+    //  Phase 20.6: the staged batch translation (translateBatch shell +
     // persistUnexpectedBatchStageFailure) moved verbatim to
     // translation/pipeline/batch/BatchChapterTranslator.kt. The thin delegator
     // keeps the ChapterTranslator call site; engine/native collaborators are
@@ -1235,10 +1235,10 @@ class TranslationPipeline(
     }
 
 
-    // T909 Phase 20.2: BatchWriteIdentity moved to pipeline/batch/BatchWriteGate.kt
+    //  Phase 20.2: BatchWriteIdentity moved to pipeline/batch/BatchWriteGate.kt
     // (internal top-level, same module reachability).
 
-    // T909 Phase 10: rebuild gate body moved to pipeline/EngineLane.kt.
+    //  Phase 10: rebuild gate body moved to pipeline/EngineLane.kt.
     private suspend fun ensureEnginesBuiltFor(
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
@@ -1246,7 +1246,7 @@ class TranslationPipeline(
         engines.ensureEnginesBuiltFor(fromLang, toLang)
     }
 
-    // T909 Phase 14: permit-held ONNX phase body moved to
+    //  Phase 14: permit-held ONNX phase body moved to
     // translation/pipeline/SinglePageOnnxPhase.kt (OnnxPhaseResult, the resume
     // paths, and the batch native stages moved with it). Same-signature stub
     // keeps the call sites; bitmap recycle/ownership points moved verbatim.
@@ -1271,7 +1271,7 @@ class TranslationPipeline(
             deferredPublications,
         )
 
-    // T909 Phase 12: single-page HTTP+render phase body moved to
+    //  Phase 12: single-page HTTP+render phase body moved to
     // translation/pipeline/SinglePageHttpRenderPhase.kt (outcome typing stays
     // ChunkCompletionOutcome; the PARTIAL retry predicate moved with it).
     // Same-signature stub keeps the call sites.
@@ -1286,7 +1286,7 @@ class TranslationPipeline(
     ): ChunkCompletionOutcome =
         singlePageHttpRenderPhase.translateSinglePageHttpRender(manga, chapter, source, pageKey, ctx, stageListener, origin)
 
-    // T909 Phase 7: PageTranslation.copyForResume moved to pipeline/CleanedPublication.kt
+    //  Phase 7: PageTranslation.copyForResume moved to pipeline/CleanedPublication.kt
     // (imported top-level extension — call sites below resolve through it).
 
     private suspend fun loadPersistedCleanedBitmap(
@@ -1357,7 +1357,7 @@ class TranslationPipeline(
     ): PageTranslation =
         singlePageOnnxPhase.inpaintPage(fileName, bitmap, pageTranslation, batchFingerprint, guardedWrite)
 
-    // T909 Phase 1: memory governance bodies moved to translation/pipeline/MemoryGovernance.kt.
+    //  Phase 1: memory governance bodies moved to translation/pipeline/MemoryGovernance.kt.
     fun forceReleaseNativeBuffers() {
         MemoryGovernance.forceReleaseNativeBuffers { recognitionEngine }
     }
@@ -1396,7 +1396,7 @@ class TranslationPipeline(
     ): ChapterTranslationStore.PatchResult =
         pageStoreWriter.persistPageWithOomRecovery(store, fileName, pageTranslation, expectedPrecondition)
 
-    // T909 Phase 1: decode/fingerprint bodies moved to translation/pipeline/PageDecode.kt.
+    //  Phase 1: decode/fingerprint bodies moved to translation/pipeline/PageDecode.kt.
     private fun decodePageBitmapAtSize(fileName: String, sampleSize: Int, streams: List<Pair<String, () -> InputStream>>): Bitmap? =
         PageDecode.decodePageBitmapAtSize(fileName, sampleSize, streams)
 

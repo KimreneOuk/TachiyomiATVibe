@@ -8,7 +8,7 @@ import java.util.ArrayDeque
 import java.util.concurrent.Executor
 
 /**
- * Pins [TextLayoutCoordinator] — the T920 3.1 guarantee that overlay bind never
+ * Pins [TextLayoutCoordinator] — the  3.1 guarantee that overlay bind never
  * performs planning work on the calling thread, applies only generation-current
  * results, and keeps identical rebinds / cache hits off the planner entirely.
  *

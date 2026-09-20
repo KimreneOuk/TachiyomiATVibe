@@ -29,10 +29,10 @@ import org.junit.jupiter.api.Test
 import kotlin.coroutines.EmptyCoroutineContext
 
 /**
- * T917 Phase 3 — D9 durable attempt ledger + crash-loop cap (phase3-design §3, §5.3).
+ *  Phase 3 —  durable attempt ledger + crash-loop cap (phase3-design §3, §5.3).
  *
  * Drives the REAL production graph over an ARTIFACT-authority store
- * (FakeChapterDocumentIo + the production fresh-chapter recipe, D5 harness
+ * (FakeChapterDocumentIo + the production fresh-chapter recipe,  harness
  * precedent) so the ledger sidecar is observable across a simulated process
  * death: a batch page parked at PROVIDER_START, then its scope killed WITHOUT
  * releasing the barrier — exactly the state a process death leaves behind (the
@@ -68,7 +68,7 @@ class BatchAttemptLedgerDeathCycleTest {
     // fixtures
     // ------------------------------------------------------------------
 
-    /** Production fresh-chapter recipe over the shared IO (D5 harness precedent). */
+    /** Production fresh-chapter recipe over the shared IO ( harness precedent). */
     private fun freshStore(pageKeys: List<String>): ChapterTranslationStore {
         val artifactStore = ChapterArtifactEngine(
             AtomicChapterDocuments(io),

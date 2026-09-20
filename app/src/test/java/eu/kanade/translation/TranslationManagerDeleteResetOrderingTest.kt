@@ -31,7 +31,7 @@ import java.lang.reflect.Field
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T909 Phase 19 prerequisite: characterization test for the
+ *  Phase 19 prerequisite: characterization test for the
  * deleteTranslation / reset-flow region of `TranslationManager`.
  *
  * These tests pin the CURRENT call ordering of the region — cancellation,

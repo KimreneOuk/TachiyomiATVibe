@@ -18,7 +18,7 @@ import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureKind
 import java.util.concurrent.ConcurrentHashMap
 
-// T934 R1.1: ChapterTranslationStore's lease-fence rejection reason (emitted by
+//   ChapterTranslationStore's lease-fence rejection reason (emitted by
 // pageWriteRejection for every guarded write). The only string that proves the
 // cached token no longer matches the lease table; absent-lease rejects carry
 // different reasons ("page lease required") and are never healed.
@@ -31,7 +31,7 @@ private fun leaseStageFor(stage: BatchStage?): PageStage = when (stage) {
     BatchStage.LAYOUT -> PageStage.Render
 }
 
-// T909 Phase 20.2: moved verbatim from TranslationPipeline.kt with the batch
+//  Phase 20.2: moved verbatim from TranslationPipeline.kt with the batch
 // write gate (its only caller, `persistAiFailure`).
 private fun ProviderFailure.toFailureCategory(): FailureCategory = when (kind) {
     ProviderFailureKind.NETWORK,
@@ -47,7 +47,7 @@ private fun ProviderFailure.toFailureCategory(): FailureCategory = when (kind) {
     ProviderFailureKind.PROTOCOL -> FailureCategory.PROTOCOL
 }
 
-// T909 Phase 20.2: moved verbatim from TranslationPipeline (was a private nested
+//  Phase 20.2: moved verbatim from TranslationPipeline (was a private nested
 // data class; `internal` top-level keeps the same module-scoped reachability).
 internal data class BatchWriteIdentity(
     val generation: Long,
@@ -59,8 +59,8 @@ internal data class BatchWriteIdentity(
 )
 
 /**
- * T909 Phase 20.2: the batch write gate moved verbatim from
- * `TranslationPipeline.translateBatch` (T909 phase 20). Owns the per-page
+ *  Phase 20.2: the batch write gate moved verbatim from
+ * `TranslationPipeline.translateBatch` ( phase 20). Owns the per-page
  * lease/identity bookkeeping (`batchWriteIdentities`) and every guarded durable
  * write the batch path performs. The identity map and the durable-failure page
  * set are the SAME instances the batch shell holds (shared state, injected);
@@ -121,14 +121,14 @@ internal class BatchWriteGate(
             update = { current -> stampBatchProvenance(update(current), stage) },
         )
         if (result is ChapterTranslationStore.PatchResult.Rejected) {
-            // T924 device fix (Chapter-21 batch failure): the cached identity
+            //  device fix (Chapter-21 batch failure): the cached identity
             // can drift behind ungated store writes (reader stranded sweep,
             // OOM-recovery retries, reuse paths that skip the post-write
             // refresh). A precondition miss while the batch STILL HOLDS the
             // page lease is our own cache being stale, not a foreign writer:
             // re-sync from the live snapshot and retry ONCE. A lease-token or
             // generation mismatch keeps the rejection — the manual lane's
-            // ownership fence (T917) must never be preempted here.
+            // ownership fence  must never be preempted here.
             val live = store.snapshot(pageKey)
             if (live.generation == identity.generation && live.leaseToken == identity.leaseToken) {
                 refreshBatchIdentity(pageKey, live)
@@ -139,8 +139,8 @@ internal class BatchWriteGate(
                     update = { current -> stampBatchProvenance(update(current), stage) },
                 )
             } else if (result.reason == LEASE_TOKEN_CHANGED) {
-                // T934 R1.1 owner-proof heal: the cached token no longer
-                // matches the lease table (the T934 R1.2 residual flip — a
+                //   owner-proof heal: the cached token no longer
+                // matches the lease table (the   residual flip — a
                 // sibling batch component re-minted the slot while this write
                 // identity was in flight). Only the TABLE can prove who owns
                 // the page now: a denied BATCH re-acquire is real contention
@@ -325,7 +325,7 @@ internal class BatchWriteGate(
             pageTranslation,
             expectedPrecondition = expected,
         )
-        // T924 device fix: every accepted gate write must refresh the cached
+        //  device fix: every accepted gate write must refresh the cached
         // identity — the OOM-recovery retry inside persistPageWithOomRecovery
         // can commit under a rewritten precondition, which would otherwise
         // leave this identity stale for the next guarded write.

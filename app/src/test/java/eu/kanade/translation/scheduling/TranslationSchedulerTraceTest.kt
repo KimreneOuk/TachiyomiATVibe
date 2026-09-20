@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T922 Phase 3 (plan §6.3 case 1 + amendment §10.2): correlated trace wiring
+ *  Phase 3 (plan §6.3 case 1 + amendment §10.2): correlated trace wiring
  * of the MANUAL scheduler path — exactly one schedule + one run per
  * [TranslationScheduler.translatePage] intent, the measured lease_wait
  * scheduler queue, and exactly-one-terminal ownership for success, mid-flight

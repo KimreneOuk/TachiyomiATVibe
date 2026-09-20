@@ -11,11 +11,11 @@ import tachiyomi.core.common.util.system.logcat
 import java.io.IOException
 
 /**
- * T924 wave-7c: adapts an AI engine's raw text completion
- * ([AiTranslator.postStructuredAnalysisRaw]) to the T924-AP-02
+ *  wave-7c: adapts an AI engine's raw text completion
+ * ([AiTranslator.postStructuredAnalysisRaw]) to the
  * [AnalysisTextTransport] seam. ONE raw attempt per call — admission and
  * retry live in [AnalysisChunkExecutor] (shared 15-RPM Batch sub-limit gate +
- * shared provider bucket, T924-AP-08); this class only frames the prompt and
+ * shared provider bucket, ); this class only frames the prompt and
  * guarantees typed failures.
  *
  * The identity triple (providerId/modelId/credentialSignature) comes from the
@@ -25,7 +25,7 @@ import java.io.IOException
  *
  * Director decision (summary-glossary redesign): the per-chunk stage asks for
  * a FREE-FORM bounded summary — no response schema, no id patterns, no
- * hash-echo discipline (the strict T924-AP-04 contract failed against real
+ * hash-echo discipline (the strict  contract failed against real
  * providers twice and paused every run). The structured glossary is produced
  * ONCE per chapter by [postGlossarySynthesis] over the stored summaries.
  */
@@ -58,7 +58,7 @@ class AnalysisEngineTransport(
         } catch (e: ProviderFailureException) {
             throw e
         } catch (e: IOException) {
-            // A raw network failure must stay typed (T924-AP-08): the
+            // A raw network failure must stay typed: the
             // executor's attempt policy classifies on [ProviderFailure].
             logcat(LogPriority.WARN) {
                 "TachiyomiAT t924 analysis transport IO failure chunk=$chunkId " +
@@ -197,7 +197,7 @@ class AnalysisEngineTransport(
 
         /**
          * The per-chunk framing prompt: free-form, bounded, no response
-         * schema. The strict structured-extraction contract (T924-AP-04)
+         * schema. The strict structured-extraction contract
          * was model-hostile — two real providers failed it on shape and
          * id-pattern violations, each failure costing a paid reissue and a
          * run pause — so the extraction now happens once, at synthesis.

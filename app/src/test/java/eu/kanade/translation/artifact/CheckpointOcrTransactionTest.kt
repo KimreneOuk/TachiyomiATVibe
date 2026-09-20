@@ -17,11 +17,11 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * T924 Stage 1 Phase 2a: the `checkpointOcr` transaction fault-injection and
- * CAS gate (contracts-state-transactions.md T924-TX-01..TX-12, §2). Every
+ *  Stage 1 Phase 2a: the `checkpointOcr` transaction fault-injection and
+ * CAS gate (contracts-state-transactions.md  §2). Every
  * crash boundary B1-B3 and every stale-identity rejection (BX) must leave the
  * prior manifest authoritative, at most an orphan sidecar, and never a
- * dangling pointer; the committed display pointer is never touched (TX-07).
+ * dangling pointer; the committed display pointer is never touched.
  */
 class CheckpointOcrTransactionTest {
 
@@ -89,7 +89,7 @@ class CheckpointOcrTransactionTest {
 
     /**
      * Standard branch fixture: legacy committed bundle + an active BATCH
-     * candidate holding the post-OCR snapshot (the B0 state of TX-11).
+     * candidate holding the post-OCR snapshot (the B0 state of ).
      * Returns the store, the manifest carrying the active candidate, and the
      * candidate generation id.
      */
@@ -185,7 +185,7 @@ class CheckpointOcrTransactionTest {
     )
 
     // ------------------------------------------------------------------
-    // Happy paths: CLOSE (TX-03 default) and REBASE.
+    // Happy paths: CLOSE ( default) and REBASE.
     // ------------------------------------------------------------------
 
     @Test
@@ -205,7 +205,7 @@ class CheckpointOcrTransactionTest {
         record.candidate shouldBe null
         outcome.manifest.activeCandidateGenerationIds shouldBe emptySet()
         record.pageVersion shouldBe fx.manifest.pages.getValue("page.jpg").pageVersion + 1
-        // T924-TX-07: committed display untouched.
+        // 07: committed display untouched.
         record.committed shouldBe committedBefore
         record.displayState shouldBe PageDisplayState.DISPLAY_READY
         // The page's OCR stage record now points at the checkpoint snapshot.
@@ -249,7 +249,7 @@ class CheckpointOcrTransactionTest {
         val successor = record.candidate.shouldNotBeNull()
         successor.generationId shouldBe successorId
         successor.origin shouldBe ArtifactOrigin.BATCH
-        // T924-TX-03(c): the successor's fingerprint equals the checkpoint's.
+        // 03(c): the successor's fingerprint equals the checkpoint's.
         successor.dependencyFingerprint shouldBe checkpoint.ocrContentFingerprint
         outcome.manifest.activeCandidateGenerationIds shouldBe setOf(successorId)
         // The closed generation's CANCELLED record was published and then
@@ -289,7 +289,7 @@ class CheckpointOcrTransactionTest {
     }
 
     // ------------------------------------------------------------------
-    // T924-TX-03.1: the adopt-committed branch (no active candidate).
+    // 03.1: the adopt-committed branch (no active candidate).
     // ------------------------------------------------------------------
 
     /** Committed-only fixture: candidate promoted, so no candidate remains. */
@@ -341,7 +341,7 @@ class CheckpointOcrTransactionTest {
         val record = outcome.manifest.pages.getValue("page.jpg")
         outcome.manifest.ocrCheckpoints.keys shouldBe setOf("page.jpg")
         record.candidate shouldBe null
-        // T924-TX-07/TX-03.1: committed display untouched by construction.
+        // 07/ committed display untouched by construction.
         record.committed shouldBe committedBefore
         record.displayState shouldBe PageDisplayState.DISPLAY_READY
     }
@@ -401,7 +401,7 @@ class CheckpointOcrTransactionTest {
     }
 
     // ------------------------------------------------------------------
-    // TX-11/BX fault injection: every publication boundary.
+    // /BX fault injection: every publication boundary.
     // ------------------------------------------------------------------
 
     @Test
@@ -487,7 +487,7 @@ class CheckpointOcrTransactionTest {
 
         val outcome = checkpointTransaction(fx.store, stale, fx.ocrSnapshot, checkpoint)
 
-        // T924 LI-4: a stale caller snapshot (the façade cached the
+        //   a stale caller snapshot (the façade cached the
         // pre-verify manifest while the background health verify republished)
         // is retried ONCE against the freshly re-read durable manifest — the
         // CLOSE rebuilds from the FRESH manifest, so nothing the concurrent
@@ -515,7 +515,7 @@ class CheckpointOcrTransactionTest {
         // Wrong candidate generation.
         checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, staleGeneration)
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
-        // Changed dependency fingerprint (no grace clause, T924-TX-02.1/C2).
+        // Changed dependency fingerprint (no grace clause,.1/C2).
         val staleDependencyOutcome = fx.store.checkpointOcr(
             manifest = fx.manifest,
             pageKey = "page.jpg",

@@ -3,13 +3,13 @@ package eu.kanade.translation.artifact
 import kotlinx.serialization.Serializable
 
 /**
- * T924 Stage 1 (schemas contract §1.3): one validated structured-extraction
+ *  Stage 1 (schemas contract §1.3): one validated structured-extraction
  * response over a bounded page set. This is the persisted artifact only — the
- * response schema/prompt contract is owned by T924-AP-*, and the stored record
+ * response schema/prompt contract is owned by  and the stored record
  * fields are a subset of the validated response schema.
  *
  * Serialized only through the shared [ArtifactDocumentJson] instance
- * (T924-SC-06).
+ *
  */
 
 /** Persisted validation outcome of one chunk (schemas contract §1.3). */
@@ -22,10 +22,10 @@ enum class AnalysisChunkStatus { VALID, INVALID }
  */
 enum class AnalysisChunkCoverage { COMPLETE, MISSING_ONLY }
 
-/** Term kind of an extracted term (closed enum v1, T924-AP-04). */
+/** Term kind of an extracted term (closed enum v1, ). */
 enum class ExtractedTermKind { NAME, PLACE, TERM, TITLE, ORG }
 
-/** Persisted validated term record (subset of the T924-AP-04 response schema). */
+/** Persisted validated term record (subset of the  response schema). */
 @Serializable
 data class ExtractedTerm(
     val termId: String,
@@ -35,7 +35,7 @@ data class ExtractedTerm(
     val kind: ExtractedTermKind = ExtractedTermKind.TERM,
 )
 
-/** Persisted validated entity record (subset of the T924-AP-04 response schema). */
+/** Persisted validated entity record (subset of the  response schema). */
 @Serializable
 data class ExtractedEntity(
     val entityId: String,
@@ -55,7 +55,7 @@ data class ExtractedRelationship(
 
 /**
  * The per-chunk analysis result sidecar document (schemas contract §1.3).
- * Field declaration order is the canonical byte order (T924-SC-06).
+ * Field declaration order is the canonical byte order.
  */
 @Serializable
 data class AnalysisChunkResult(
@@ -65,13 +65,13 @@ data class AnalysisChunkResult(
     val chunkId: String,
     /** >= 0, unique per run. */
     val chunkOrdinal: Int,
-    /** Structured-response schema used (T924-AP-* owns values). */
+    /** Structured-response schema used ( owns values). */
     val analysisSchemaVersion: Int,
     /** Ordered, natural order; 1..[MAX_CORE_PAGES] pages. */
     val corePageKeys: List<String>,
     /** <= [MAX_OVERLAP_PAGES] adjacent pages; core ∪ overlap = contributing set. */
     val contextOverlapPageKeys: List<String> = emptyList(),
-    /** `OcrCorpusFingerprint` over the contributing page set in order (T924-FP-03). */
+    /** `OcrCorpusFingerprint` over the contributing page set in order. */
     val contributingCorpusFingerprint: String,
     /** One per contributing page, in contributing order. */
     val ocrArtifactRefs: List<SidecarPointer>,
@@ -94,7 +94,7 @@ data class AnalysisChunkResult(
     /** Operational only. */
     val createdAtEpochMs: Long,
 ) {
-    /** T924-SC-01/SC-02 semantic validation; null when the document is usable. */
+    /** 01/SC-02 semantic validation; null when the document is usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"
@@ -149,7 +149,7 @@ data class AnalysisChunkResult(
         const val SCHEMA_VERSION = 1
         const val KIND = "ANALYSIS_CHUNK_RESULT"
 
-        /** T924-SC-02 schema bounds (T, tunable). */
+        /** 02 schema bounds (T, tunable). */
         const val MAX_CORE_PAGES = 16
         const val MAX_OVERLAP_PAGES = 2
         const val MAX_RECORDS_PER_KIND = 128

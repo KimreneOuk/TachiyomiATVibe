@@ -6,13 +6,13 @@ import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
 
 /**
- * T924 WP8 (T924-FP-07 at the rendering boundary):
+ *  WP8 ( at the rendering boundary):
  *  - [DrawPlanFingerprint.layoutCompatibilityFingerprint] is a THIN wrapper —
  *    byte-identical to a direct [StageFingerprints.layoutCompatibilityFingerprint]
  *    call with the rendering-owned constants filled in;
  *  - every FP-07 field flip changes the fingerprint (invalidation matrix
  *    row 9);
- *  - repeated computation over equal inputs is identical (T924-FP-09a);
+ *  - repeated computation over equal inputs is identical;
  *  - SSIV pan/zoom/holder-size/orientation can never be inputs — neither the
  *    wrapped builder nor this wrapper declares a parameter for them (the
  *    delegation assertion below proves no hidden input is added).

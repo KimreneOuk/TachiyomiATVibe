@@ -126,20 +126,20 @@ interface TranslationExecutor {
 }
 
 /**
- * T917 D2 (design note §2.4): typed outcome of one single-page intent. Replaces
+ *   (design note §2.4): typed outcome of one single-page intent. Replaces
  * the previous silent `Unit` return so a denied lease can never again look like
  * a completed intent (audit C-01): the scheduler records the outcome and its
  * cancel path can tell "owned the page" from "only observed the owner".
  */
 sealed interface SinglePageOutcome {
-    /** T930 R1: the page intent was admitted and is queued in-memory awaiting pipeline execution. */
+    /**  R1: the page intent was admitted and is queued in-memory awaiting pipeline execution. */
     data object Admitted : SinglePageOutcome
 
     /** The executor ran the page itself (including resume-skip soft exits). */
     data object Completed : SinglePageOutcome
 
     /**
-     * T917 Phase 3 (D6 §2.2a): the paid call was typed-deferred by the provider
+     *  Phase 3 ( §2.2a): the paid call was typed-deferred by the provider
      * request governor (window/foreground budget) instead of completing, so the
      * intent neither failed nor finished. [nextEligibleRetryAtEpochMs] is the
      * epoch ms after which a retry may be admitted, when the governor knows it.

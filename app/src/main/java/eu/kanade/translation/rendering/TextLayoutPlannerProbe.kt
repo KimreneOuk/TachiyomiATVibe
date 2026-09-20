@@ -3,7 +3,7 @@ package eu.kanade.translation.rendering
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * T924 gate 7.5 instrumentation: process-wide counter of ASYNC planner
+ *  gate 7.5 instrumentation: process-wide counter of ASYNC planner
  * invocations. A hydrated bind (valid persisted plan) must keep this counter
  * untouched — restart/LRU rehydration with zero planner calls is the gate-7.5
  * pass condition (Pager AND Webtoon device rows). Purely observational: the

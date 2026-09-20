@@ -11,7 +11,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T911 slice 2: truthful queue position for queued chapters ("Queued (2nd of
+ *  slice 2: truthful queue position for queued chapters ("Queued (2nd of
  * 3)") and the explicit terminal/admission phases added for R5/R10 — never
  * rendered as a download failure or as 0/0.
  */

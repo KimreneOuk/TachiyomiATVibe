@@ -31,7 +31,7 @@ internal class StoreStatusInputs(
     val display: StateFlow<Map<String, PageTranslation>>,
 )
 
-// T909 Phase 15: durable status projection moved from `ChapterTranslationStore`
+//  Phase 15: durable status projection moved from `ChapterTranslationStore`
 // (artifactStatus + the durable-failure read API). The projector reads the
 // store's projection inputs through the same-name accessors below; the store
 // keeps same-signature delegating stubs at the old qualified names
@@ -60,12 +60,12 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
     /**
      * Derives durable artifact status without consulting the legacy summary sidecar.
      *
-     * T924 LI-1 (durable half): when the manifest authority is ARTIFACTS and a
+     *   (durable half): when the manifest authority is ARTIFACTS and a
      * durably COMPLETE run record owns the chapter ([ChapterArtifactManifest.activeRun]
      * readable at [ChapterRunState.COMPLETE]), the MANIFEST PAGE RECORDS are the
      * completion authority and the legacy live-page reconcile is skipped — that
      * reconcile's done-predicate is the legacy display-committed shape, while a
-     * flagged-lane (FF-01 ON) run commits translations WITHOUT an in-pass
+     * flagged-lane ( ON) run commits translations WITHOUT an in-pass
      * render, so every healthy page misprojected as stranded → chapter ERROR.
      * Done evidence per page: a committed display bundle, a TEXTLESS_COMPLETE
      * display state, or an open candidate snapshot (the flagged lane keeps the
@@ -139,7 +139,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
         }
         val activeGeneration = pagesSnapshot.values.maxOfOrNull { it.runGeneration } ?: 0L
         val reconciliation = BatchProgressReconciler.reconcile(pagesSnapshot, expectedKeys, activeGeneration)
-        // T924 field fix (Chapter 21): the softener exists for stores whose
+        //  field fix (Chapter 21): the softener exists for stores whose
         // trusted expected total exceeds the registered pages with no recorded
         // failure (upgrade residue) — reconcile synthesizes placeholder keys
         // for the shortfall. A REAL page stranded cancelled/non-terminal is
@@ -159,7 +159,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
     }
 
     /**
-     * T924 LI-1: projects the chapter status from the MANIFEST PAGE RECORDS
+     *   projects the chapter status from the MANIFEST PAGE RECORDS
      * under a durably COMPLETE active run; null whenever the run-record
      * authority is not provable (pointer missing/unreadable, non-COMPLETE
      * state, or no page records to project) so the caller keeps the existing

@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test
 
 class AotReportBubbleFillTest {
 
-    // T906 policy: inpainting tests assert only that the fill runs and produces
+    //  policy: inpainting tests assert only that the fill runs and produces
     // a flat cleaned fill inside the masked components — never WHICH color, and
     // never pixel-exact geometric invariants (those are not acceptance criteria).
 

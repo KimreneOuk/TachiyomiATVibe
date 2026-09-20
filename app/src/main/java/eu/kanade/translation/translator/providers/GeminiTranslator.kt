@@ -129,7 +129,7 @@ open class GeminiTranslator(
     }
 
     // ------------------------------------------------------------------
-    // T924 wave-7c: the typed structured-analysis transport (AiTranslator
+    //  wave-7c: the typed structured-analysis transport (AiTranslator
     // hooks). generateContent already throws typed failures
     // (GeminiApiException : ProviderFailureException) and makes ONE raw
     // attempt — exactly the transport contract.

@@ -26,7 +26,7 @@ import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream
 
 /**
- * T924 LI-3: reader/manual cancel writes must not punch through BATCH-held
+ *   reader/manual cancel writes must not punch through BATCH-held
  * page-stage leases. While a batch run (legacy OR flagged) holds a page's
  * lease, the batch owns that page's stage state; a durable cancel write built
  * from the CURRENT snapshot (`updatePageFromCurrentSnapshot`) carries the

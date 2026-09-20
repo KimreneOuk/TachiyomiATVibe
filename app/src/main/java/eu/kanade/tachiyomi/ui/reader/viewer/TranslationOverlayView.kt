@@ -52,7 +52,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
     }
 
-    // T920 3.1: measurement state for the BACKGROUND planner. Uses its own Paint
+    //  3.1: measurement state for the BACKGROUND planner. Uses its own Paint
     // (a copy of [fill], so font and flags — and therefore every measurement —
     // are identical to the inline path) because `fill` is mutated by the Main
     // draw path and must never race with planning. Confined to
@@ -71,7 +71,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         }
     }
 
-    // T924 WP9 (wave-2 review gap 6): production font digest — read the exact
+    //  WP9 (wave-2 review gap 6): production font digest — read the exact
     // bundled font bytes ONCE at this Android entry point and pin their
     // SHA-256 process-wide, so the Batch-side LAYOUT_PREPARE publisher and
     // every reader-side hydration verify the same font identity
@@ -88,7 +88,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         }
     }
 
-    // T920 3.1: bind identity + background planning. bind() never runs the
+    //  3.1: bind identity + background planning. bind() never runs the
     // planner synchronously on the calling thread; identical rebinds stay the
     // cheap early-return and cache hits apply prepared layouts synchronously with zero planner
     // work (see [TextLayoutCoordinator]).
@@ -101,12 +101,12 @@ internal class TranslationOverlayView @JvmOverloads constructor(
             buildPreparedLayouts(layouts, width, height)
         },
         onPrepared = ::applyPreparedLayouts,
-        // T924 WP9 (T924-FF-02a(2)): consult the persisted-layout hydration
-        // source BEFORE the async planner. Null (FF-02 off, no source
+        //  WP9: consult the persisted-layout hydration
+        // source BEFORE the async planner. Null (feature flag off, no source
         // installed, missing/corrupt/incompatible/lossy plan) falls back to
-        // the planner above — the fallback is mandatory (T924-FF-02b).
-        // Stage 7 (D3): the pageKeyed chapter source is consulted first; a
-        // null page key (legacy bind path, FF-02 OFF, no installation) keeps
+        // the planner above — the fallback is mandatory.
+        // Stage 7: the pageKeyed chapter source is consulted first; a
+        // null page key (legacy bind path,  OFF, no installation) keeps
         // the byte-identical legacy behavior.
         hydrate = { blocks, width, height ->
             val hydrated = PersistedLayoutReaderBridge.hydrate(boundPageKey, blocks, width, height)
@@ -124,7 +124,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     private var blocks: List<TranslationBlock> = emptyList()
     private var pageWidth = 0
     private var pageHeight = 0
-    // T924 Stage 7 (D3): the translation page key of the current binding, set
+    //  Stage 7: the translation page key of the current binding, set
     // by the pageKeyed [bind] overload. The background hydrate lambda reads it
     // to resolve the chapter's persisted plan. Null (legacy 4-arg bind path)
     // keeps the byte-identical planner-only behavior.
@@ -138,7 +138,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * T920 3.1: never runs the layout planner on the calling (Main) thread.
+     *  3.1: never runs the layout planner on the calling (Main) thread.
      * Identical rebinds are the same cheap early-return as before; a bounded
      * cache hit applies prepared layouts synchronously; a miss schedules
      * planning on a background thread and applies the result on Main when it
@@ -153,9 +153,9 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * T924 Stage 7 (D3): pageKeyed bind — enables the persisted-layout
+     *  Stage 7: pageKeyed bind — enables the persisted-layout
      * hydration consult for this binding ([PersistedLayoutReaderBridge]
-     * chapter source, FF-02-gated at the install site). A null [pageKey]
+     * chapter source,  at the install site). A null [pageKey]
      * behaves exactly like the legacy bind.
      */
     fun bind(
@@ -242,7 +242,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         Choreographer.getInstance().removeFrameCallback(frameCallback)
         framePending = false
-        // T920 3.1: a detached view must never receive a background planning
+        //  3.1: a detached view must never receive a background planning
         // result; bumping the generation drops any in-flight delivery.
         layoutCoordinator.cancelPending()
         super.onDetachedFromWindow()
@@ -338,7 +338,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * T912 quality repair: draws the planner's positioned lines with the same
+     *  quality repair: draws the planner's positioned lines with the same
      * direct-draw convention: each planned line is placed independently. Clips are
      * applied by [drawLayout] once per layout, then each line is translated to
      * its integer placement and drawn stroke-then-fill
@@ -386,7 +386,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         private const val VERTICAL_COL_STEP = 1.25f
 
         /**
-         * T920 3.1: strict global bound on cached prepared page layouts. Covers
+         *  3.1: strict global bound on cached prepared page layouts. Covers
          * the reader's warm window (attach 2 / evict 5 pager, attach 4 / evict
          * 10 webtoon) plus a little scroll-back, shared across all overlay
          * instances so total memory stays bounded regardless of holder count.

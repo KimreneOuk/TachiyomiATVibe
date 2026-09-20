@@ -8,7 +8,7 @@ import io.kotest.matchers.string.shouldContain
 import org.junit.jupiter.api.Test
 
 /**
- * T924 S4 pure-planner gates for the global whole-page envelope planner
+ *  S4 pure-planner gates for the global whole-page envelope planner
  * (design §8, schemas contract §1.5, WP3): block/page budgets (32/8
  * experiment constants), gap-free ordered coverage, page atomicity,
  * deterministic tie-breaks, scene preference, oversized-page rejection, and
@@ -298,7 +298,7 @@ class GlobalEnvelopePlannerGoldenTest {
         changedCorpus.plan.planInputFingerprint shouldNotBe baseInput
         changedBlocks.plan.planInputFingerprint shouldNotBe baseInput
         same.plan.planInputFingerprint shouldBe baseInput
-        // Operational fields are never fingerprint inputs (T924-FP-01).
+        // Operational fields are never fingerprint inputs.
         same.plan.planFingerprint shouldBe base.plan.planFingerprint
     }
 

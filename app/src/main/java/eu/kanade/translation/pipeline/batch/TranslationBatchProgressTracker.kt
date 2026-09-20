@@ -49,7 +49,7 @@ class TranslationBatchProgressTracker(
     private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
     private var projection = Projection()
 
-    // T911 slice 3: the ordered work keys define the batch's real total, so the
+    //  slice 3: the ordered work keys define the batch's real total, so the
     // first snapshot is derived from them at construction — never from an empty
     // store (a delayed/rejected pre-registration must not project 0/0).
     private val _snapshot = MutableStateFlow(snapshotFor(Projection()))
@@ -112,7 +112,7 @@ class TranslationBatchProgressTracker(
     ) = phase(pageKey, BatchPhase.RENDER, PhaseStatus.FAILED, reason)
     fun markRenderSkipped(pageKey: String) = phase(pageKey, BatchPhase.RENDER, PhaseStatus.SKIPPED)
 
-    // T934 LI-4: rebuild-window progress. The coordinator's envelope plan
+    //   rebuild-window progress. The coordinator's envelope plan
     // build (resume hydration) fires these through the schedule listener so
     // the projection flips to REBUILDING while the window runs and returns to
     // FIRST_PASS when the plan commits — the sheet's indeterminate bar and
@@ -144,7 +144,7 @@ class TranslationBatchProgressTracker(
                 result.failedCount,
                 result.partialCount,
                 orderedPageKeys.size,
-                // T917 Phase 5 (spec §4.1): the reconciler's non-durable
+                //  Phase 5 (spec §4.1): the reconciler's non-durable
                 // rejection fact must survive into the terminal snapshot.
                 nonDurableFailure = result.nonDurableFailure,
                 nonDurableFailureReason = result.nonDurableFailure.takeIf { it }?.let {
@@ -165,7 +165,7 @@ class TranslationBatchProgressTracker(
                 reason = outcome.reason ?: "Translation paused; retryable provider work remains",
                 nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
                 retryablePageKeys = outcome.retryablePageKeys,
-                // T917 Phase 5 (spec §4.1): PERSISTENCE_REJECTED is not a
+                //  Phase 5 (spec §4.1): PERSISTENCE_REJECTED is not a
                 // durable pause — the snapshot must carry the not-saved warning.
                 nonDurableFailure = outcome.isPersistenceRejected,
                 nonDurableFailureReason = outcome.reason.takeIf { outcome.isPersistenceRejected },
@@ -189,7 +189,7 @@ class TranslationBatchProgressTracker(
     private fun snapshotFor(state: Projection): TranslationProgressSnapshot {
         val storePages = store.state.value
         return computeSnapshot(
-            // T911 slice 3: the batch's ordered keys define its work set AND its
+            //  slice 3: the batch's ordered keys define its work set AND its
             // total. A known key whose store placeholder was rejected/delayed is
             // projected as a fresh pending placeholder so the total is never
             // silently zero; completed counts still come only from the store
@@ -221,7 +221,7 @@ class TranslationBatchProgressTracker(
             batchPhase = state.batchPhase,
             chapterId = chapterId,
             aiPageStates = state.aiPageStates,
-            // T917 Phase 5 (spec §2.1): the batch's registered work set IS its
+            //  Phase 5 (spec §2.1): the batch's registered work set IS its
             // trusted total; its aborted remainder is cancelled terminal work.
             cancelledPageKeys = state.cancelledPageKeys,
             expectedPageCountTrusted = true,
@@ -231,10 +231,10 @@ class TranslationBatchProgressTracker(
             pauseAnchorPageKey = state.pauseAnchorPageKey,
             pauseReason = state.pauseReason,
             nextEligibleRetryAtEpochMs = state.nextEligibleRetryAtEpochMs,
-            // T917 Phase 5 (spec §4.1): bounded non-durable publication warning.
+            //  Phase 5 (spec §4.1): bounded non-durable publication warning.
             nonDurableFailure = state.nonDurableFailure,
             nonDurableFailureReason = state.nonDurableFailureReason,
-            // T934 LI-4: the tracker-driven rebuild window carries its own
+            //   the tracker-driven rebuild window carries its own
             // adoption counter alongside the REBUILDING phase.
             rebuildProgress = state.rebuildProgress,
         )
@@ -252,10 +252,10 @@ class TranslationBatchProgressTracker(
         val nextEligibleRetryAtEpochMs: Long? = null,
         val nonDurableFailure: Boolean = false,
         val nonDurableFailureReason: String? = null,
-        // T934 LI-4: live envelope-plan rebuild counter while batchPhase is
+        //   live envelope-plan rebuild counter while batchPhase is
         // REBUILDING; cleared when the plan commits.
         val rebuildProgress: BatchRebuildProgress? = null,
-        /** T917 Phase 5: keys settled as cancelled by a batch abort. */
+        /**  Phase 5: keys settled as cancelled by a batch abort. */
         val cancelledPageKeys: Set<String> = emptySet(),
     )
 
@@ -294,14 +294,14 @@ class TranslationBatchProgressTracker(
                 batchPhase = TranslationBatchPhase.FINISHED,
                 aborted = true,
                 abortReason = event.reason,
-                // T917 Phase 5 (spec §2.1 CANCELLED): the unfinished keys are
+                //  Phase 5 (spec §2.1 CANCELLED): the unfinished keys are
                 // settled as cancelled terminal work, never fake failures.
                 // Historical event field name: the keys the batch could NOT settle are
                 // exactly the aborted remainder this projection settles as cancelled.
                 cancelledPageKeys = event.failedPageKeys,
             )
             is TranslationBatchEvent.EnvelopePlanProgress -> previous.copy(
-                // T934 LI-4: the plan-build window is live work — REBUILDING
+                //   the plan-build window is live work — REBUILDING
                 // keeps the sheet's indeterminate bar and its store-derived
                 // counters moving while the coordinator re-adopts pages.
                 batchPhase = TranslationBatchPhase.REBUILDING,
@@ -311,12 +311,12 @@ class TranslationBatchProgressTracker(
                 ),
             )
             is TranslationBatchEvent.EnvelopePlanCommitted -> previous.copy(
-                // T934 LI-4: the plan is durable again — the rebuild window
+                //   the plan is durable again — the rebuild window
                 // ends and ordinary first-pass projection resumes.
                 batchPhase = TranslationBatchPhase.FIRST_PASS,
                 rebuildProgress = null,
             )
-            // T934 LI-4: the when is exhaustive over the sealed event surface
+            //   the when is exhaustive over the sealed event surface
             // again — a future event type must be reduced explicitly here.
         }
 
@@ -338,11 +338,11 @@ class TranslationBatchProgressTracker(
             indexResolver: Map<String, Int>? = null,
             permitHolderPageKey: String? = null,
             aiPageStates: Map<String, AiPageProgressState> = emptyMap(),
-            // T924 restart-retry fix: a durable ERROR chapter is a run that
+            //  restart-retry fix: a durable ERROR chapter is a run that
             // ENDED. Defaulting it to IDLE is why the progress sheet's Retry
             // affordance vanished after an app restart — the truth rule needs
             // ERROR+FINISHED, and only the live tracker used to emit FINISHED.
-            // T924 field fix: a durable READY_WITH_WARNINGS chapter that ended
+            //  field fix: a durable READY_WITH_WARNINGS chapter that ended
             // with unresolved pages is the same terminal shape (Chapter 21).
             batchPhase: TranslationBatchPhase = when (chapterState) {
                 Translation.State.TRANSLATING -> TranslationBatchPhase.FIRST_PASS
@@ -355,13 +355,13 @@ class TranslationBatchProgressTracker(
             /** Reader-facing committed pages; defaults to the live map for pure callers. */
             displayPageMap: Map<String, PageTranslation>? = null,
             /**
-             * T917 Phase 5 (spec §2.1 CANCELLED): keys the batch settled as
+             *  Phase 5 (spec §2.1 CANCELLED): keys the batch settled as
              * cancelled — counted as cancelled terminal work unless the page
              * already reached a real terminal stage.
              */
             cancelledPageKeys: Set<String> = emptySet(),
             /**
-             * T917 Phase 5 (spec §2.1/D10): whether [TranslationProgressSnapshot.totalPages]
+ * Phase 5 (spec §2.1): whether [TranslationProgressSnapshot.totalPages]
              * is the trusted source total. Defaults to false — trust must be
              * earned from a registered batch work set or a trusted manifest.
              */
@@ -427,7 +427,7 @@ class TranslationBatchProgressTracker(
                 failed = rows.count { it.aiState == AiPageProgressState.FAILED },
                 paused = rows.count { it.aiState == AiPageProgressState.PAUSED },
             )
-            // T917 Phase 5 (spec §2.1 CANCELLED): only unfinished pages count as
+            //  Phase 5 (spec §2.1 CANCELLED): only unfinished pages count as
             // cancelled — a page that already reached DONE/FAILED keeps its own
             // terminal category and is never double-counted.
             val cancelled = rows.count {
@@ -453,7 +453,7 @@ class TranslationBatchProgressTracker(
                 } else {
                     pageMap.values.count { it.translationStatus == StageStatus.PARTIAL }
                 },
-                // T934 stranded-page fix: the group key is the page's best
+                //  stranded-page fix: the group key is the page's best
                 // available reason ([activeError] = per-stage errors, then the
                 // generic errorMessage), not errorMessage alone — a failed
                 // page whose reason lives in a stage field used to fall into
@@ -526,7 +526,7 @@ class TranslationBatchProgressTracker(
         private fun progressStage(page: PageTranslation, committed: PageTranslation? = null): TranslationProgressStage = when {
             page.toPageDisplayProjection(committed).displayReady || page.isTextlessTerminal -> TranslationProgressStage.DONE
             page.isStageFailed -> TranslationProgressStage.FAILED
-            // T924 zero-legacy (D1): both surviving lanes commit translations
+            //  zero-legacy: both surviving lanes commit translations
             // WITHOUT an in-pass render — a page whose translation reached a
             // committed terminal state is this run's DONE even though its
             // display stays ORIGINAL_ONLY until the reader re-derives it.

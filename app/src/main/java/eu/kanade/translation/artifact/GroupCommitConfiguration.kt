@@ -1,7 +1,7 @@
 package eu.kanade.translation.artifact
 
 /**
- * T930 Slice B: Group commit configuration and feature flag.
+ *  Slice B: Group commit configuration and feature flag.
  * Default is FALSE (OFF) during Phase 2.1 - 2.3; flipped to TRUE in 2.4 after soak.
  */
 object GroupCommitConfiguration {

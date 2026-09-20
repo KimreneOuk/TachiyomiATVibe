@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test
 import java.lang.reflect.Method
 
 /**
- * T917 Phase 5 (spec §5.1.1, §6.2 commit 3) — RED tests for the pure
+ *  Phase 5 (spec §5.1.1, §6.2 commit 3) — RED tests for the pure
  * Appendix-A state → surface mapper and the bounded manual-outcome exposure.
  *
  * The production mapper does not exist yet, so every assertion resolves it

@@ -13,7 +13,7 @@ import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Test
 
 /**
- * T924 S4 pure-planner gates for deterministic analysis chunking (design
+ *  S4 pure-planner gates for deterministic analysis chunking (design
  * §6.1, schemas contract §1.3, WP3): whole-page core/overlap windows, block
  * arithmetic, edge cases (fewer pages than core cap, overlap 0 and 2),
  * deterministic ids/fingerprints, and the evidence-universe predicate.
@@ -182,7 +182,7 @@ class AnalysisChunkPlannerGoldenTest {
         val chunk = success(AnalysisChunkPlanner.plan(pages, AnalysisChunkPolicy(maxCorePages = 2, overlapPages = 1)))
             .chunks[1]
         // Contributing order = core pages first, then context overlap pages
-        // (the T924-AP-03 request payload order).
+        // (the  request payload order).
         val oracle = StageFingerprints.ocrCorpusFingerprint(
             pages = listOf(
                 "p2" to pages[2].contentFingerprint,

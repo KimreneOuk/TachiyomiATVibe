@@ -17,7 +17,7 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Test
 
 /**
- * Characterization tests for the manager's paused-affordance glue (T906
+ * Characterization tests for the manager's paused-affordance glue (
  * area-3 finding F5). `projectQueueStatus` and `withDurablePause` are the
  * private pure projections behind observeBatchProgress — the sheet and
  * notification "paused affordance" the UI renders. They are invoked

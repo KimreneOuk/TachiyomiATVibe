@@ -6,7 +6,7 @@ import io.kotest.matchers.nulls.shouldBeNull
 import org.junit.jupiter.api.Test
 
 /**
- * T924-FP-05 / T924-SC-10 golden freeze fixture (Stage-5 slice B, gate
+ * 05 /  golden freeze fixture (Stage-5 slice B, gate
  * "golden freeze fixtures hash-stable across processes"). The fixture under
  * `test/resources/t924/golden/` pins:
  *
@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test
  *  2. the contract-mandated rule: a VERSION-ONLY bump yields the SAME
  *     content fingerprint (version is operational ordering only);
  *  3. any hashed content change yields a DIFFERENT fingerprint;
- *  4. the canonical re-encode round trip is byte-stable (T924-SC-06).
+ *  4. the canonical re-encode round trip is byte-stable.
  */
 class ProfileContentFingerprintGoldenTest {
 

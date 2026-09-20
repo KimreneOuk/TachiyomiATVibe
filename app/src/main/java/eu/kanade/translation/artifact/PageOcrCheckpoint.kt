@@ -4,19 +4,19 @@ import eu.kanade.translation.model.PageTranslation
 import kotlinx.serialization.Serializable
 
 /**
- * T924 Stage 1 (schemas contract §1.2, DTO only): origin-neutral durable
+ *  Stage 1 (schemas contract §1.2, DTO only): origin-neutral durable
  * evidence that one page's OCR stage completed, publishable by any lane. The
  * `checkpointOcr` transaction semantics (CAS ordering, close-vs-rebase, lease
- * release order) belong to the state/transactions contract (T924-TX-*) and are
+ * release order) belong to the state/transactions contract  and are
  * deliberately NOT implemented here.
  *
  * Serialized only through the shared [ArtifactDocumentJson] instance
- * (T924-SC-06).
+ *
  */
 
 /**
  * The committed display that must stay visible through the checkpoint
- * (preserve rule; semantics T924-TX-*). Pure identity reference.
+ * (preserve rule; semantics ). Pure identity reference.
  */
 @Serializable
 data class CommittedDisplayRef(
@@ -27,7 +27,7 @@ data class CommittedDisplayRef(
 
 /**
  * The per-page OCR checkpoint sidecar document (schemas contract §1.2). Field
- * declaration order is the canonical byte order (T924-SC-06).
+ * declaration order is the canonical byte order.
  */
 @Serializable
 data class PageOcrCheckpoint(
@@ -47,22 +47,22 @@ data class PageOcrCheckpoint(
     val detectionFingerprint: String? = null,
     /** Existing `StageFingerprints.ocr(...)` value. */
     val ocrFingerprint: String,
-    /** The semantic `PageOcrContentFingerprint` (T924-FP-02). */
+    /** The semantic `PageOcrContentFingerprint`. */
     val ocrContentFingerprint: String,
     /** Immutable OCR-complete `PageTranslation` snapshot sidecar. */
     val ocrPageSnapshotPointer: SidecarPointer,
     /** Revision gate precedent (`PageTranslation.CURRENT_INPAINT_REVISION`). */
     val inpaintMaskRevision: Int = PageTranslation.CURRENT_INPAINT_REVISION,
-    /** The committed display preserved through the checkpoint (T924-TX-*). */
+    /** The committed display preserved through the checkpoint. */
     val priorCommittedDisplay: CommittedDisplayRef? = null,
     /** Origin-neutral consumption with origin-recorded provenance. */
     val producedByOrigin: ArtifactOrigin,
-    /** Transaction identity; never fingerprinted (T924-FP-01). */
+    /** Transaction identity; never fingerprinted. */
     val producerGenerationId: String? = null,
     /** Operational only. */
     val checkpointedAtEpochMs: Long,
 ) {
-    /** T924-SC-01/SC-02 semantic validation; null when the document is usable. */
+    /** 01/SC-02 semantic validation; null when the document is usable. */
     fun validationError(): String? = when {
         schemaVersion != SCHEMA_VERSION -> "unsupported schemaVersion: $schemaVersion"
         kind != KIND -> "wrong kind: $kind"

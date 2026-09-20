@@ -9,7 +9,7 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
 
 /**
- * T924 LI-2: the CAS'd `activeRun` retirement transaction. A user reset means
+ *   the CAS'd `activeRun` retirement transaction. A user reset means
  * the recorded run must never short-circuit a future dispatch, so the reset
  * paths retire the manifest's `activeRun` pointer through this transaction.
  * The retired run-record SIDECAR stays on disk (retention owns deletion: the
@@ -88,10 +88,10 @@ class ChapterArtifactEngineRetireActiveRunTest {
     @Test
     fun `retireActiveRun with a stale manifest snapshot recovers through the one-shot retry`() {
         val (artifact, _, _, _) = artifactWithCompleteRun()
-        // T934: the retirement seam joined the T924 LI-4 one-shot stale-manifest
+        //  the retirement seam joined the   one-shot stale-manifest
         // retry (the batch resume teardown hit the same spurious stale-CAS
         // rejection the publish/checkpoint seams did — same contract, same
-        // adaptation this test made when LI-4 wrapped checkpointOcr). A stale
+        // adaptation this test made when  wrapped checkpointOcr). A stale
         // snapshot now triggers exactly ONE fresh-read retry that retires the
         // pointer; a retry that also fails still returns Rejected.
         val stale = artifact.readManifest().shouldNotBeNull().copy(updatedAtEpochMs = 99L)

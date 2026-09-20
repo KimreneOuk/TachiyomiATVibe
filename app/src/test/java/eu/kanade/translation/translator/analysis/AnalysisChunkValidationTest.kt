@@ -18,8 +18,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * T924 WP5 slice A: fake-analyzer coverage for the typed analysis client —
- * the V1..V9 hard-fail matrix (T924-AP-05, all response-fatal), the
+ *  WP5 slice A: fake-analyzer coverage for the typed analysis client —
+ * the V1..V9 hard-fail matrix ( all response-fatal), the
  * response taxonomy (MISSING_ONLY / AMBIGUOUS_PROTOCOL / TERMINAL_REFUSAL),
  * the summary-mode rule (Director redesign: any non-refusal body commits as
  * a free-form summary on the FIRST attempt — no reissue loop), and the

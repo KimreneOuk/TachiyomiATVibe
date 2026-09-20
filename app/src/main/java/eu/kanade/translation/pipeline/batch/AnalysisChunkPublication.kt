@@ -17,7 +17,7 @@ import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import java.security.MessageDigest
 
 /**
- * T924 WP5 slice A — crash-safe chunk persistence (T924-SC-19/20/22, ST-08).
+ *  WP5 slice A — crash-safe chunk persistence (/22, ).
  *
  * One validated [AnalysisChunkResult] is ONE `publishSidecarPointers`
  * transaction: the immutable content-addressed sidecar under `analysis/` is
@@ -26,12 +26,12 @@ import java.security.MessageDigest
  * at most an orphan sidecar — never a pointer at a missing file — and any
  * precondition or publication failure leaves the PRIOR manifest authoritative
  * (the failed chunk stays unpersisted; resume re-executes the first missing
- * chunk, ST-08).
+ * chunk, ).
  *
  * WP1 deviation note (chunk-ordinal order): the pointer list is append-only
  * in chunk-ordinal order. The transaction REJECTS an out-of-order append
  * (`chunkOrdinal != analysisChunks.size`), so the list order always equals
- * the ordinal order and the ST-08 resume scan ("skip the persisted prefix")
+ * the ordinal order and the  resume scan ("skip the persisted prefix")
  * is an O(size) index read.
  */
 internal object AnalysisChunkPublication {
@@ -53,7 +53,7 @@ internal object AnalysisChunkPublication {
             return ChapterArtifactEngine.TransactionOutcome.Rejected("analysis chunk invalid: $reason")
         }
         if (result.status != AnalysisChunkStatus.VALID) {
-            // ST-08: invalid chunks are never persisted.
+            //  invalid chunks are never persisted.
             return ChapterArtifactEngine.TransactionOutcome.Rejected(
                 "refusing to persist a non-VALID analysis chunk: ${result.chunkId}",
             )
@@ -92,7 +92,7 @@ internal object AnalysisChunkPublication {
     }
 
     /**
-     * T924-SC-10-style semantic content fingerprint: SHA-256 over the
+     * style semantic content fingerprint: SHA-256 over the
      * canonical re-encoded JSON with the operational timestamp zeroed, so
      * re-publication of an equal chunk maps to the equal (idempotent)
      * content-addressed name.

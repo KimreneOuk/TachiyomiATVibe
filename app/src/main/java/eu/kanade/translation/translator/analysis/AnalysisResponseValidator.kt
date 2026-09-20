@@ -7,7 +7,7 @@ import eu.kanade.translation.translator.providers.OcrArtifactSanitizer
 import kotlinx.serialization.json.Json
 
 /**
- * T924 WP5 slice A (T924-AP-04..05, DR-A): classifies one raw analysis
+ *  WP5 slice A ( DR-A): classifies one raw analysis
  * response against the request's evidence universe.
  *
  * Malformed-response taxonomy (design §9.2 + provider-analysis contract §6):
@@ -29,7 +29,7 @@ import kotlinx.serialization.json.Json
  */
 object AnalysisResponseValidator {
 
-    /** T924-AP-06 field caps (v1 defaults). */
+    /** 06 field caps (v1 defaults). */
     private const val MAX_TEXT_FIELD_CHARS = 120
     private const val MAX_ALIAS_ITEMS = 8
     private const val MAX_ENTITIES = 48
@@ -44,10 +44,10 @@ object AnalysisResponseValidator {
     private const val MAX_TOTAL_EVIDENCE_REFS =
         eu.kanade.translation.artifact.AnalysisChunkResult.MAX_EVIDENCE_REFS
 
-    /** Record id pattern, scoped per chunk (T924-AP-06). */
+    /** Record id pattern, scoped per chunk. */
     private val RECORD_ID_REGEX = Regex("^[tesuc]\\d{3,4}$")
 
-    /** T924-AP-05 wire form is `e:` + 16 hex, nothing else (wave-4 F-W4-4). */
+    /** 05 wire form is `e:` + 16 hex, nothing else (wave-4 F-W4-4). */
     private val EXCERPT_HASH_REGEX = Regex("^e:([0-9a-f]{16})$")
 
     private val GENDER_VALUES = setOf("MALE", "FEMALE", "UNKNOWN", "CONFLICTING")
@@ -127,7 +127,7 @@ object AnalysisResponseValidator {
         val root = parseRootObject(stripped, violations)
             ?: return AnalysisResponseOutcome.Malformed(violations = violations)
 
-        // V7: strict-on-version, never forward-interpreted (T924-AP-01.2).
+        // V7: strict-on-version, never forward-interpreted.
         val schemaVersion = root.long("schemaVersion")
         if (schemaVersion == null || schemaVersion != AnalysisRequestBuilder.SCHEMA_VERSION.toLong()) {
             violations += "V7 schemaVersion must be ${AnalysisRequestBuilder.SCHEMA_VERSION}, " +

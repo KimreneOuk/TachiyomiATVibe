@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 import java.security.MessageDigest
 
 /**
- * T933 Increment 2 (schemas contract): reference to a committed page's
+ *  Increment 2 (schemas contract): reference to a committed page's
  * contribution to chapter context.
  */
 @Serializable
@@ -16,7 +16,7 @@ data class PageContextReference(
 )
 
 /**
- * T933 Increment 2: Durable unified chapter context snapshot sidecar document.
+ *  Increment 2: Durable unified chapter context snapshot sidecar document.
  * Represents the immutable snapshot of context facts, character sheets,
  * and recent pairs used or committed for a chapter.
  */

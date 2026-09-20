@@ -42,7 +42,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T924 Phase 4 Wave A — the STANDARD-engine lane inside the flagged
+ *  Phase 4 Wave A — the STANDARD-engine lane inside the flagged
  * coordinator (STANDARD_PIPELINE). The Director design: both AI and standard
  * engines do the same OCR; the standard engine continues with per-page batch
  * translation exactly like the AI lane minus everything AI-specific (no
@@ -241,7 +241,7 @@ class StandardPipelineCoordinatorTest {
     }
 
     /**
-     * T924 Phase 4 Wave A: a plain per-page [TextTranslator] fake (the
+     *  Phase 4 Wave A: a plain per-page [TextTranslator] fake (the
      * standard-engine shape — no contextual protocol). Stamps every non-blank
      * block `tr-<text>`; [onTranslate] observes each page call (test latch).
      */
@@ -424,7 +424,7 @@ class StandardPipelineCoordinatorTest {
             },
         )
         val inpaintLane = FakeOverlapInpaintLane(store, identities, onFirstInpaint = {
-            // T934 track V continuous admission: the first inpaint now drains
+            //  track V continuous admission: the first inpaint now drains
             // DURING the TRANSLATE phase (a translated page's slot is free
             // while a later page's translate window is open), so TRANSLATE is
             // the expected state here — FINALIZE stays legal for a page that
@@ -466,7 +466,7 @@ class StandardPipelineCoordinatorTest {
         // Record sequence: the first durable state observable at OCR time is
         // OCR_PLAN (RUN_SNAPSHOT is published before the OCR loop begins and
         // is pinned by the preflight-completion assertions) → TRANSLATE (the
-        // first provider call) → TRANSLATE (the T934 track V
+        // first provider call) → TRANSLATE (the  track V
         // continuous-admission first inpaint, drained mid-translate — see the
         // onFirstInpaint hook above). No hook samples FINALIZE anymore: the
         // continuous drain completes every inpaint during TRANSLATE, so the
@@ -509,13 +509,13 @@ class StandardPipelineCoordinatorTest {
         store.glossarySnapshot() shouldBe glossaryBefore
         store.glossarySnapshot() shouldBe emptyMap()
 
-        // LI-2 evidence: every page's translated snapshot stays durably
+        //  evidence: every page's translated snapshot stays durably
         // addressable through its open candidate pointer.
         pageKeys.forEach { key ->
             manifest.pages.getValue(key).candidate.shouldNotBeNull()
         }
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist + fire-and-forget retention sweep)
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
@@ -556,7 +556,7 @@ class StandardPipelineCoordinatorTest {
             null,
         ).runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
 
-        // Zero-work COMPLETE via the LI-2 evidence gate: no re-OCR, no
+        // Zero-work COMPLETE via the  evidence gate: no re-OCR, no
         // re-translation, no new record publication.
         resumeOutcome.status shouldBe BatchPass1Status.COMPLETED
         resumeOutcome.reason shouldBe ChapterProfileBatchCoordinator.RESUME_COMPLETE_REASON
@@ -566,7 +566,7 @@ class StandardPipelineCoordinatorTest {
         activeRunPointer(store) shouldBe pointerAfterRun1
         durableRunRecord(store).shouldNotBeNull().state shouldBe ChapterRunState.COMPLETE
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist + fire-and-forget retention sweep)
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
@@ -635,7 +635,7 @@ class StandardPipelineCoordinatorTest {
         googleFingerprint shouldNotBe
             ChapterProfileBatchCoordinator.runConfigFingerprint(google.copy(flagProfilePipeline = false))
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist + fire-and-forget retention sweep)
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
@@ -711,7 +711,7 @@ class StandardPipelineCoordinatorTest {
             page.inpaintStatus shouldBe StageStatus.READY
         }
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist + fire-and-forget retention sweep)
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
@@ -756,7 +756,7 @@ class StandardPipelineCoordinatorTest {
         p2.renderStatus shouldBe StageStatus.SKIPPED
 
         // The blank page's OCR evidence is durably checkpointed like any other
-        // page — the ST-05/ST-06 reuse shape.
+        // page — the / reuse shape.
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         manifest.ocrCheckpoints.keys shouldBe pageKeys.toSet()
 
@@ -770,7 +770,7 @@ class StandardPipelineCoordinatorTest {
         resumeOcrWorker.ocrPages shouldBe emptyList()
         resumeSeam.invoked shouldBe emptyList()
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist + fire-and-forget retention sweep)
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
@@ -780,7 +780,7 @@ class StandardPipelineCoordinatorTest {
     // T7 — flag-ON re-dispatch over a stale non-FINALIZE standard record
     // (Wave B Task 2c, investigator risk 7): `resumeFinalizeOrComplete`
     // returns null, the SAME run id continues with a fresh RUN_SNAPSHOT
-    // (ST-15 fingerprint match), the preflight reuses its checkpoints, and
+    // ( fingerprint match), the preflight reuses its checkpoints, and
     // the run closes with exactly ONE COMPLETE. No crash, no double closure.
     // ------------------------------------------------------------------
 
@@ -831,7 +831,7 @@ class StandardPipelineCoordinatorTest {
             store.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
         }
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist + fire-and-forget retention sweep)
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
@@ -840,7 +840,7 @@ class StandardPipelineCoordinatorTest {
     // ------------------------------------------------------------------
     // T8 — flag-ON zero-work resume over the SKIPPED no-text evidence shape
     // (Wave B Task 2d): a masked blank-text page ends translation SKIPPED
-    // with inpaint PENDING — NOT a full `isTextlessTerminal` — so the LI-2
+    // with inpaint PENDING — NOT a full `isTextlessTerminal` — so the
     // gate must accept it through the `isNoTextTerminal` extension
     // (translationStatus SKIPPED alone), exactly like the unmasked twin.
     // ------------------------------------------------------------------
@@ -880,7 +880,7 @@ class StandardPipelineCoordinatorTest {
         val pointerAfterRun1 = activeRunPointer(store)
 
         // Flag-ON re-dispatch through `resumeFinalizeOrComplete`: the
-        // COMPLETE record's per-page LI-2 evidence gate accepts p3 through
+        // COMPLETE record's per-page  evidence gate accepts p3 through
         // the isNoTextTerminal extension (and p2 through the textless
         // terminal) — zero-work COMPLETE.
         val resumeOcrWorker = FakePreflightOcrWorker(store)
@@ -894,7 +894,7 @@ class StandardPipelineCoordinatorTest {
         resumeSeam.invoked shouldBe emptyList()
         activeRunPointer(store) shouldBe pointerAfterRun1
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist + fire-and-forget retention sweep)
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()

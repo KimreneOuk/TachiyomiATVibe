@@ -54,7 +54,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T934 stranded-page fix: a page that is not envelope-done yet yields NO
+ *  stranded-page fix: a page that is not envelope-done yet yields NO
  * dispatchable blocks used to be silently skipped EVERY planning round — the
  * dispatch-work build's `dispatchBlocks.isEmpty()` guard dropped it without a
  * trace, and FINALIZE then stamped a generic "translation left non-terminal"

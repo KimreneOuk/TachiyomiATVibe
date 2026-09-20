@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T917 Phase 1 fakes — installed ONLY at the sanctioned externals of the
+ *  Phase 1 fakes — installed ONLY at the sanctioned externals of the
  * design note §1.2 (ONNX recognition/decode, provider HTTP transport, disk
  * render IO). Everything between the barriers is the real production graph.
  * The barriers suspend inside these fakes, so the harness never sleeps and
@@ -123,7 +123,7 @@ internal class FakeRecognitionEngine(
 }
 
 /**
- * T917 Phase 4 (D7) — cross-instance observation state shared by the primary
+ *  Phase 4  — cross-instance observation state shared by the primary
  * fake transport and every translator the epoch retry's REBUILD produces.
  * The §1.4.1a oracle "any second call landed on the REBUILT translator
  * instance" is only observable if call/serving evidence survives across
@@ -162,7 +162,7 @@ internal class SharedTransportState {
  *   identity check → [signalTransportStarted] → native inpaint → cleaned
  *   publication ([waitForNativeStage] returns) → paid call → commit → render.
  *
- * T917 Phase 4 (D7) additions (test-infra only, per phase4-design §1.4):
+ *  Phase 4  additions (test-infra only, per phase4-design §1.4):
  *  - [instanceId] — every instance exposes an id so the epoch retry can prove
  *    the second paid call landed on the REBUILT translator;
  *  - [closedFlag]/[closedSignal] — models the production close defect the

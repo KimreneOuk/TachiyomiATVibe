@@ -25,7 +25,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * T912 ANR regression guard: the chapter translation status chain
+ *  ANR regression guard: the chapter translation status chain
  * (`TranslationManager.getChapterTranslationStatus` →
  * `TranslationProgressProjection.getChapterTranslationStatus` →
  * `DurableChapterStatusResolver.persistedChapterStatus`) used
@@ -73,7 +73,7 @@ class ChapterTranslationStatusOffMainThreadTest {
 
         // With the old runBlocking implementation the calling thread was
         // parked inside the query until the lookup finished, so this probe
-        // could not run — that is exactly the T912 reader-launch ANR.
+        // could not run — that is exactly the  reader-launch ANR.
         val probeRan = CountDownLatch(1)
         mainExecutor.execute { probeRan.countDown() }
         check(probeRan.await(5, TimeUnit.SECONDS)) {

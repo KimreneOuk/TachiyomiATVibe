@@ -26,7 +26,7 @@ internal data class RecognizedAnalyzeResult(
 
 /**
  * OCR block deduplication + parent-bubble geometry moved verbatim from
- * `RoiPageRecognitionEngine` (T909 Phase 5b). Pure over detection/bbox data;
+ * `RoiPageRecognitionEngine` ( Phase 5b). Pure over detection/bbox data;
  * also the shared geometry home for the duplicated logic in
  * `OnnxPageTextDetector` (see BoxGeometryTest's header).
  */

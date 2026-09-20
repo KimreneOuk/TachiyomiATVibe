@@ -14,10 +14,10 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T934 U.1/U.7: the run record → rebuild/restore phase truth and its
+ *  U.1/U.7: the run record → rebuild/restore phase truth and its
  * transitions across a resumed run's lifecycle
  * (rebuild → restoring → running → finished). The derivation is pure: a
- * record in the preflight preamble (or the T934 LI-4 ENVELOPE_PLAN
+ * record in the preflight preamble (or the   ENVELOPE_PLAN
  * plan-build window) projects the rebuild/restore phases with the
  * restored/remaining payload; every other post-preflight or terminal state
  * projects NO rebuild phase, so ordinary running and finished work is never
@@ -106,7 +106,7 @@ class RebuildTruthTransitionsTest {
 
     @Test
     fun `envelope plan record projects the rebuilding phase`() {
-        // T934 LI-4: the run record parks in ENVELOPE_PLAN while the
+        //   the run record parks in ENVELOPE_PLAN while the
         // coordinator rebuilds the dispatch work (resume hydration). It used
         // to project null, freezing the sheet on a stale numeric hero for the
         // whole window; it is a rebuild phase now.

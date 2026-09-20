@@ -15,14 +15,14 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 6 on-device finding (phase6-multipage-strand-investigation.md):
+ *  Phase 6 on-device finding (phase6-multipage-strand-investigation.md):
  * a multi-page FRESH standard-lane batch translated only its first page.
  * `PageWorkPlanner.planChapter` bakes `WAIT_FOR_DEPENDENCY/PRIOR_PAGE_INCOMPLETE`
  * into the immutable batch-start plan for every page after the first
  * needs-translation page, and the standard lane's skip treated that static
  * reason as permanent, so pages 2..N never translated and were stranded.
  *
- * The D10 fixture note had already documented the behavior ("a later page's
+ * The  fixture note had already documented the behavior ("a later page's
  * translation is statically dependency-skipped (PRIOR_PAGE_INCOMPLETE)") while
  * attributing it to harness lane serialization — this test pins it as the
  * production defect it is.
@@ -43,7 +43,7 @@ class StandardLaneMultiPageCompletionTest {
     @Test
     fun `fresh standard batch translates every page of a multi-page chapter`() = runBlocking<Unit> {
         val pageKeys = listOf("p0", "p1", "p2")
-        // T924 zero-legacy (D1): the batch requires artifact authority.
+        //  zero-legacy: the batch requires artifact authority.
         val harness = TranslationCoexistenceHarness.create(
             pageKeys,
             storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(pageKeys),
@@ -60,7 +60,7 @@ class StandardLaneMultiPageCompletionTest {
             // pass is still running. RED: it never does (static dependency
             // skip), so this bounded probe raises the named assertion instead
             // of a choreography timeout.
-            // T922 flake stabilization: this is a POSITIVE probe (p1 must
+            //  flake stabilization: this is a POSITIVE probe (p1 must
             // start), not a negative oracle — the 2s NEGATIVE_PROBE_MS budget
             // was marginally tight for a fresh 3-page pipeline under full-suite
             // load (observed 2 misses in 6 runs). The full harness await budget
@@ -83,14 +83,14 @@ class StandardLaneMultiPageCompletionTest {
             pageKeys.forEach { pageKey ->
                 harness.transportCallsFor(pageKey) shouldBe 1
                 val page = harness.store.state.value.getValue(pageKey)
-                // T924 zero-legacy (D1) + 2026-09-16 E-fix: no in-pass render
+                //  zero-legacy  + 2026-09-16 E-fix: no in-pass render
                 // WORK, but every page's durable record is stamped
                 // render-terminal at inpaint-completion (BatchLaneWorkers
                 // render terminal stamp) so the display bundle commits.
                 page.translationStatus shouldBe StageStatus.READY
                 page.renderStatus shouldBe StageStatus.READY
             }
-            // T924 zero-legacy (D2): the shell's COMPLETED path settles every
+            //  zero-legacy: the shell's COMPLETED path settles every
             // expected page's RENDER phase as skipped terminal work
             // (markRenderSkipped per expected page before the terminal finish),
             // so the terminal snapshot's render arm is processed even though no
@@ -110,7 +110,7 @@ class StandardLaneMultiPageCompletionTest {
 
     @Test
     fun `failed predecessor keeps successors honestly stranded`() = runBlocking<Unit> {
-        // T924 zero-legacy (D1): the batch requires artifact authority; the
+        //  zero-legacy: the batch requires artifact authority; the
         // FAILED predecessor is seeded into the durable store post-build.
         val store = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0", "p1"))
         kotlinx.coroutines.runBlocking {
@@ -138,7 +138,7 @@ class StandardLaneMultiPageCompletionTest {
                 false
             }
             p1Started shouldBe false
-            // T924 zero-legacy (D1): the successor's ordered-context skip is
+            //  zero-legacy: the successor's ordered-context skip is
             // a TYPED durable failure (predecessor terminally failed), never
             // a paid call and never a fake success.
             harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.FAILED

@@ -11,7 +11,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 /**
- * T917 Phase 4 D8 — pure occupancy watchdog contract.
+ *  Phase 4  — pure occupancy watchdog contract.
  *
  * The RED version deliberately uses a reflection bridge so this commit stays
  * compile-green before the production seam exists. Its fake clock resumes

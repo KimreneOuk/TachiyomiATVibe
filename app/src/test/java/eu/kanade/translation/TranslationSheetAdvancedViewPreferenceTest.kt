@@ -7,7 +7,7 @@ import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.translation.TranslationPreferences
 
 /**
- * T934 U.2/U.7: the batch progress sheet's Simple/Advanced depth toggle is a
+ *  U.2/U.7: the batch progress sheet's Simple/Advanced depth toggle is a
  * persisted translation preference — default OFF (the simplified default
  * view) and settable so the chosen depth survives sheet reopenings (a fresh
  * preferences facade over the same store must read the toggled value back).

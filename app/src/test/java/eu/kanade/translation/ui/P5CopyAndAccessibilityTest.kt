@@ -15,12 +15,12 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 5 (spec §3.2 D12, §5.1, §6.2 commit 7) — RED tests for exact
+ *  Phase 5 (spec §3.2  §5.1, §6.2 commit 7) — RED tests for exact
  * semantic copy and accessibility truth.
  *
  * Named defects pinned here:
  *
- *  1. D12 timer names: the timeout placeholder written into the store
+ *  1.  timer names: the timeout placeholder written into the store
  *     ("Translation timed out after 90s", `PageStoreWriter.markPageTimedOut`)
  *     names NO timer — and the same copy is reused for the HTTP+render timer,
  *     which is a DIFFERENT timer. Native and HTTP+render timeouts must each
@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test
 class P5CopyAndAccessibilityTest {
 
     // ------------------------------------------------------------------
-    // D12: timeout copy must name the actual timer
+    //  timeout copy must name the actual timer
     // ------------------------------------------------------------------
 
     private fun callTruth(method: String, arity: Int, defect: String, vararg args: Any?): Any? {
@@ -235,7 +235,7 @@ class P5CopyAndAccessibilityTest {
             )
         val copy = notificationCopyOf("Chapter A", snapshot)
         withClue("the not-saved warning must be visible, never completion copy") {
-            // T934 LI-5: the typed rejection reason rides along (bounded) so
+            //   the typed rejection reason rides along (bounded) so
             // the notification names WHICH seam rejected the publication.
             prop(copy, "text").toString() shouldBe
                 "Translation not saved — retry required: " +
@@ -267,7 +267,7 @@ class P5CopyAndAccessibilityTest {
             )
         val copy = notificationCopyOf("Chapter A", snapshot)
         val text = prop(copy, "text").toString()
-        // T934 LI-5: bounded reason — 120 chars after the fixed prefix.
+        //   bounded reason — 120 chars after the fixed prefix.
         text shouldBe "Translation not saved — retry required: " + "x".repeat(120)
     }
 

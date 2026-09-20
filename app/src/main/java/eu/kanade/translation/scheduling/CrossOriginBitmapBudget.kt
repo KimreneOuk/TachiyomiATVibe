@@ -4,7 +4,7 @@ import kotlinx.coroutines.sync.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Milestone M4 / T929 N3: Process-wide cross-origin decoded-bitmap budget.
+ * Milestone M4 /  N3: Process-wide cross-origin decoded-bitmap budget.
  *
  * Preserves the 6 GB bounded memory invariant across concurrent lookahead decode,
  * inpaint re-decode, manual reader taps, and chapter wave preflights.

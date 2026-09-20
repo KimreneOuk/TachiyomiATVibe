@@ -56,13 +56,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T924 Stage 7 (D4, ST-14): the drained TRANSLATE tail — FINALIZE (serial
+ *  Stage 7: the drained TRANSLATE tail — FINALIZE (serial
  * inpaint drain through the overlap scheduler, stranded-page reconciliation,
  * flush, retention) and the run's FIRST/ONLY COMPLETE publication.
  *
- * T924 zero-legacy (D1): the wave-2 F1 flag-off resume decision tests
+ *  zero-legacy: the wave-2 F1 flag-off resume decision tests
  * (decideResume/resumeCompletedOutcome, OFF+COMPLETE ⇒ TreatAsFinished) were
- * deleted with the FF-01 flag; the ST-14 COMPLETE resume is covered by
+ * deleted with the  flag; the  COMPLETE resume is covered by
  * Stage7FinalizeResumeCoordinatorTest and the dispatch-level wiring test.
  */
 class Stage7FinalizeCoordinatorTest {
@@ -374,11 +374,11 @@ class Stage7FinalizeCoordinatorTest {
         )
         // p2's block never comes back (wire id `p1_b1` = natural page index
         // 1): after the full repair budget the page is still partially
-        // covered — an UNRESOLVED GAP (ST-12). T934 (Director decision
-        // 2026-09-17) relaxed the old ST-12 pause: the covered pages COMMIT,
+        // covered — an UNRESOLVED GAP.  (Director decision
+        // 2026-09-17) relaxed the old  pause: the covered pages COMMIT,
         // the gap page is PARKED durably FAILED (retryable, omitted-block
         // evidence) instead of pausing the batch, and the run DRAINS into
-        // FINALIZE. ST-12's surviving guarantee: the gap page is never
+        // FINALIZE. 's surviving guarantee: the gap page is never
         // stranded and never silently lost — it surfaces in the
         // pages-need-attention UI and re-plans on the next retry.
         val translator = FakeTranslator { _, chunk -> responseFor(chunk, omit = setOf("p1_b1")) }

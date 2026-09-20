@@ -87,7 +87,7 @@ object BatchProgressReconciler {
             when {
                 page.isStageFailed -> failedCount++
                 page.hasRenderedResult || page.isTextlessTerminal -> doneCount++
-                // T924 field fix (Chapter 21): this branch is only reachable
+                //  field fix (Chapter 21): this branch is only reachable
                 // when the page is NOT display-ready — a partial candidate with
                 // no rendered result shows nothing readable, so it is
                 // unresolved work (ERROR, retryable), never a usable warning.
@@ -128,7 +128,7 @@ object BatchProgressReconciler {
     }
 
     /**
-     * T924 LI-1: the completion projection for a COMPLETED batch outcome
+     *   the completion projection for a COMPLETED batch outcome
      * (both engine lanes since the zero-legacy wave). [ChapterProfileBatchCoordinator]
      * commits translations WITHOUT an in-pass render — a healthy page ends
      * translation-terminal (READY/PARTIAL, committed bundle in the artifact
@@ -171,7 +171,7 @@ object BatchProgressReconciler {
                 page?.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL -> {
                     partialCount++
                 }
-                // T934 display-tail drain: a page whose translate+inpaint work
+                //  display-tail drain: a page whose translate+inpaint work
                 // is terminal but whose committed display never landed takes
                 // the FINALIZE typed terminal (render FAILED, durable retryable
                 // LAYOUT failure). The run still completes — as a warning, not
@@ -265,7 +265,7 @@ object BatchProgressReconciler {
 
         return ReconciliationResult(
             chapterStatus = when {
-                // T924 field fix (Chapter 21): a persistence-rejected run
+                //  field fix (Chapter 21): a persistence-rejected run
                 // stopped with unresolved work (tail pages cancelled). It must
                 // surface as a retryable ERROR — the old in-memory
                 // READY_WITH_WARNINGS rendered as a completed chapter with no

@@ -18,9 +18,9 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * T924 WP5 slice A (T924-AP-02/07/08): the typed structured-analysis client.
+ *  WP5 slice A (/08): the typed structured-analysis client.
  *
- * `promptText` is EXPLICITLY FORBIDDEN as the analysis transport (T924-AP-01/08
+ * `promptText` is EXPLICITLY FORBIDDEN as the analysis transport (
  * — it swallows every failure into an empty string). Analysis goes through
  * this typed interface whose single operation returns the provider's raw text
  * and whose failures stay typed ([ProviderFailureException] subclasses flow
@@ -33,7 +33,7 @@ interface AnalysisTextTransport {
     /** Model identity, e.g. `gemini-2.5` (AnalyzerProvenance.modelId). */
     val modelId: String
 
-    /** Opaque credential signature; never a raw credential (T924-FP-04). */
+    /** Opaque credential signature; never a raw credential. */
     val credentialSignature: String?
 
     /**
@@ -57,7 +57,7 @@ sealed interface AnalysisChunkAttempt {
     ) : AnalysisChunkAttempt
 
     /**
-     * AMBIGUOUS_PROTOCOL after exactly one identical reissue (T924-AP-05): the
+     * AMBIGUOUS_PROTOCOL after exactly one identical reissue: the
      * run pauses at this chunk with a typed PROTOCOL failure — model-state,
      * not user-state, so never TERMINAL, never silently skipped.
      */
@@ -81,7 +81,7 @@ sealed interface AnalysisChunkAttempt {
 /**
  * Executes the per-chunk attempt policy: transport retries under
  * `withTranslationRetry` (3 transport attempts inside the shared root budget
- * mechanism, T924-AP-08.3), admission through the nested 15-RPM Batch
+ * mechanism,.3), admission through the nested 15-RPM Batch
  * sub-limit bucket and then exactly ONE shared-provider-bucket admission
  * made by the transport itself (DR-D; mirrors the translation envelope,
  * ProfileEnvelopeExecutor), semantic policy = 0-1 identical reissues on
@@ -144,7 +144,7 @@ class AnalysisChunkExecutor(
      * sub-limit, then transport-retried — the transport makes the ONE
      * shared-provider-bucket admission per HTTP attempt — and validated.
      * Malformed responses get EXACTLY ONE identical reissue
-     * (T924-AP-05); refusals get none (typed terminal for the request).
+     *; refusals get none (typed terminal for the request).
      */
     suspend fun execute(
         request: AnalysisRequestBuilder.AnalysisChunkRequest,
@@ -250,7 +250,7 @@ class AnalysisChunkExecutor(
 
     /**
      * Summary-mode classification (Director decision): free-form text in,
-     * bounded summary out. The strict T924-AP-04 validator (shape, id
+     * bounded summary out. The strict  validator (shape, id
      * patterns, verbatim hash echo) failed against real providers twice and
      * paused every run — a free-form answer cannot be structurally
      * malformed, so the only terminal outcomes are an explicit refusal and

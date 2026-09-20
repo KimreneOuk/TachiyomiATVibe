@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * T930 Slice B comprehensive test suite.
+ *  Slice B comprehensive test suite.
  * Covers:
  * - B1: Staged mutations + combined publish at commit points (or 250ms debounce)
  * - B2: Candidate-promotion merge (skips redundant intermediate candidate publish)

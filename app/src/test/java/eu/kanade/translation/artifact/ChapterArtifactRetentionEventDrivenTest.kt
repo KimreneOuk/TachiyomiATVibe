@@ -6,7 +6,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T930 Slice A4 (Amendment D): event-driven retention tests.
+ *  Slice A4 (Amendment D): event-driven retention tests.
  * Verifies known-orphan deletion, staged-reachable protection (Race register #6),
  * and trigger parity (close() sweeps, closeAndFlush() remains sweep-free).
  */

@@ -58,7 +58,7 @@ import tachiyomi.domain.translation.TranslationPreferences
 import java.io.InputStream
 
 /**
- * Single-page HTTP+render phase moved from `TranslationPipeline` (T909 Phase 12).
+ * Single-page HTTP+render phase moved from `TranslationPipeline` ( Phase 12).
  * Runs OUTSIDE the native permit: HTTP translate (contextual or plain, with the
  * bounded PARTIAL retry loop), color recompute, Canvas render, and guarded commit.
  * `OnnxPhaseResult` crosses this phase's entry with the cleaned bitmap alive;
@@ -73,7 +73,7 @@ internal class SinglePageHttpRenderPhase(
     // Engine-cache reads (translator signature/model/mode change on rebuild),
     // resolved through the pipeline's own helper at each call.
     private val expectedBatchFingerprints: (TextRecognizerLanguage, TextTranslatorLanguage) -> BatchExpectedFingerprints,
-    // The downscaled-inpaint retry is an ONNX-phase collaborator (T909 Phase 14
+    // The downscaled-inpaint retry is an ONNX-phase collaborator ( Phase 14
     // region); until then the pipeline injects its own implementation.
     private val retryInpaintDownscaledFn: suspend (
         Manga,
@@ -148,7 +148,7 @@ internal class SinglePageHttpRenderPhase(
      * alive on [PageTranslation]), translates text blocks via HTTP, renders
      * translated text onto the cleaned bitmap via Canvas, and persists the result.
      *
-     * T917 Phase 4 (D7, phase4-design §1.2) — epoch/drain contract: this is the
+     *  Phase 4 ( phase4-design §1.2) — epoch/drain contract: this is the
      * SINGLE translator borrow site. The phase registers the borrow on
      * [engines] (`beginTranslatorUse`, released in `finally`) so a concurrent
      * [EngineLane.closeEngines] (stop / toggle-off / queue emptied) can DRAIN it
@@ -157,7 +157,7 @@ internal class SinglePageHttpRenderPhase(
      * engine epoch has moved, the close DID race this call — the phase rebuilds
      * the closed translator once (`ensureTranslatorRebuiltForEpochRetry`), re-reads
      * the chapter glossary, and retries INSIDE the same ledger-wrapped call (one
-     * D9 entry). A second epoch mismatch fails the page honestly; there is no
+     *  entry). A second epoch mismatch fails the page honestly; there is no
      * retry loop, and the close path itself never touches the ledger.
      */
     suspend fun translateSinglePageHttpRender(
@@ -171,7 +171,7 @@ internal class SinglePageHttpRenderPhase(
     ): ChunkCompletionOutcome {
         val pageTranslation = ctx.pageTranslation
         // Reader-ad-hoc output is displayable; a later batch reuses it when
-        // its fingerprints still match. T917 D1 two-vocabulary rule: the lease
+        // its fingerprints still match.   two-vocabulary rule: the lease
         // origin (MANUAL/AUTO) maps back onto the stable durable vocabulary —
         // never stamp the lease-layer string itself.
         pageTranslation.translationOrigin = origin.toArtifactOrigin().name
@@ -202,7 +202,7 @@ internal class SinglePageHttpRenderPhase(
         pageTranslation.translationFingerprint = batchFingerprints.translation
         pageTranslation.layoutFingerprint = batchFingerprints.layout
 
-        // T917 Phase 4 (D7 §1.2): the borrow + epoch capture. `activeTranslator`
+        //  Phase 4 ( §1.2): the borrow + epoch capture. `activeTranslator`
         // is the page's working reference; the epoch-guard retry re-captures it
         // from the lane after a targeted rebuild.
         var activeTranslator = textTranslator
@@ -213,7 +213,7 @@ internal class SinglePageHttpRenderPhase(
         // transport retries and is shared by the contextual call plus any
         // bounded partial retries below.
         val retryBudget = RequestRetryBudget()
-        // T922 Phase 3: provider-governor wait — opened at phase entry (the
+        //  Phase 3: provider-governor wait — opened at phase entry (the
         // translator borrow above is the admission gate) and settled by the
         // first translator invocation; when no translation runs, the outer
         // finally settles it. Queue-class stage: feeds schedule maxQueueMs.
@@ -253,7 +253,7 @@ internal class SinglePageHttpRenderPhase(
                 TranslationContextChunkPlanner.Profile.DEFAULT
             }
 
-        // T917 Phase 3 (D9, design §3.2): the manual paid call is wrapped by
+        //  Phase 3 ( design §3.2): the manual paid call is wrapped by
         // the durable attempt ledger — entry written BEFORE the call, resolved
         // on any completed call (success or typed provider failure); only
         // cancellation (process death / scope kill) leaves the entry for the
@@ -287,7 +287,7 @@ internal class SinglePageHttpRenderPhase(
         // round, so an epoch retry naturally picks up a fresh glossary) or makes
         // the plain translatePage call.
         suspend fun translateOnce(targetPage: PageTranslation) {
-            // T922 Phase 3: the first translator invocation is the moment the
+            //  Phase 3: the first translator invocation is the moment the
             // governor/admission wait ends.
             if (!governorSpanSettled) {
                 governorSpanSettled = true
@@ -348,7 +348,7 @@ internal class SinglePageHttpRenderPhase(
             }
         }
 
-        // T917 Phase 4 (D7 §1.2/§1.3): ONE ledger wrap covers the original call
+        //  Phase 4 ( §1.2/§1.3): ONE ledger wrap covers the original call
         // AND the epoch retry (a close that raced the call is not a second
         // attempt; `resolveAttempt` fires once on the final outcome). The retry
         // is gated on the engine epoch moving + at-most-once; a second mismatch
@@ -391,7 +391,7 @@ internal class SinglePageHttpRenderPhase(
                         "translator=${activeTranslator::class.simpleName} " +
                         "blocks=${pageTranslation.blocks.size} nonEmptyText=$nonEmptyBlocks"
                 }
-                // T922 Phase 3: correlated translate stage. `provider` is the
+                //  Phase 3: correlated translate stage. `provider` is the
                 // remote/local execution fact from the shared compute
                 // classification; model stays none (plan §4.2).
                 val translateSpan = TranslationTrace.beginStage(
@@ -471,7 +471,7 @@ internal class SinglePageHttpRenderPhase(
                         }
                         store.foldPageContribution(pageKey, pairs)
                     }
-                    // T917 D5 (phase3-design §1.3): stamp the live glossary version AFTER
+                    //   (phase3-design §1.3): stamp the live glossary version AFTER
                     // this page's own pairs folded, before the durable write — a pre-fold
                     // stamp would record the version BELOW the one this page's own fold
                     // creates, guaranteeing one wasted batch repair per manually translated
@@ -568,7 +568,7 @@ internal class SinglePageHttpRenderPhase(
                 val hasCleanedOnDisk = pageTranslation.cleanedImageName != null && pageTranslation.inpaintStatus == StageStatus.READY
                 if (hasCleanedBitmap || hasCleanedOnDisk) {
                     val cleanedBitmap = pageTranslation.cleanedBitmap
-                    // T922 Phase 3: layout (color estimation) is a sub-interval
+                    //  Phase 3: layout (color estimation) is a sub-interval
                     // of the render attempt; the render stage sum therefore
                     // includes it (noted in the phase report).
                     val layoutSpan = TranslationTrace.beginStage(
@@ -643,7 +643,7 @@ internal class SinglePageHttpRenderPhase(
                         if (published != null) {
                             commitPrecondition = published.toPrecondition()
                         }
-                        // T922 Phase 3: spans hoisted above the try so every
+                        //  Phase 3: spans hoisted above the try so every
                         // outcome (skip/failure/cancel/success) settles them.
                         val retryLayoutSpan = TranslationTrace.beginStage(
                             TranslationTraceStage.LAYOUT,
@@ -705,7 +705,7 @@ internal class SinglePageHttpRenderPhase(
             }
             pageTranslation.cleanedBitmap = null
             pageTranslation.updatedAt = System.currentTimeMillis()
-            // T917 D3: a batch that STARTED while this boundary was parked
+            //   a batch that STARTED while this boundary was parked
             // mid-flight (e.g. a reader tap held across the batch's engine
             // setup) advances the store generation AND legitimately re-plans
             // the chapter candidates (page identity + dependency fingerprints)
@@ -717,15 +717,15 @@ internal class SinglePageHttpRenderPhase(
             // precondition from a fresh snapshot, keeping the writer fences
             // (generation, pageVersion, lease token, block fingerprints) but
             // dropping the batch-run plan identity (candidate generation /
-            // dependency fingerprint / artifact page version) — per D1 the
+            // dependency fingerprint / artifact page version) — per  the
             // lease holder is the page's exclusive writer, so plan-level
             // identity re-planning must not invalidate its in-flight result.
             if (store.pageLeaseOwner(pageKey) == origin) {
                 val fresh = store.snapshot(pageKey)
-                // T934 (D7 flake): refresh on ANY store drift under our own
+                //  ( flake): refresh on ANY store drift under our own
                 // lease, not only a generation change — a deferred group-commit
                 // publication can bump pageVersion at the SAME generation
-                // between the entry capture and this commit, and per D1 the
+                // between the entry capture and this commit, and per  the
                 // lease holder is the page's exclusive writer, so its own
                 // side-effect must not reject its commit (the same
                 // refresh-before-persist idiom as guardedBatchUpdate).
@@ -739,8 +739,8 @@ internal class SinglePageHttpRenderPhase(
                     )
                 }
             }
-            // T922 Phase 3: guarded commit boundary (storage lane).
-            // T922 Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
+            //  Phase 3: guarded commit boundary (storage lane).
+            //  Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
             // including a throw from patchPage — no dangling stage_start.
             val commitSpan = TranslationTrace.beginStage(
                 TranslationTraceStage.STORE_COMMIT,
@@ -780,7 +780,7 @@ internal class SinglePageHttpRenderPhase(
                 deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
             }
         } finally {
-            // T922 Phase 3: settle the governor wait when no translation ran,
+            //  Phase 3: settle the governor wait when no translation ran,
             // and measure the durable flush (storage lane). All non-suspending.
             if (!governorSpanSettled) {
                 governorSpanSettled = true
@@ -790,7 +790,7 @@ internal class SinglePageHttpRenderPhase(
                 TranslationTraceStage.STORE_FLUSH,
                 lane = TranslationTraceLane.STORAGE,
             )
-            // T922 Phase 4 (Phase 3 review F2): try/finally so the flush span
+            //  Phase 4 (Phase 3 review F2): try/finally so the flush span
             // settles even when store.flush() itself throws. The throw still
             // propagates unchanged (pre-existing finally semantics).
             try {
@@ -812,7 +812,7 @@ internal class SinglePageHttpRenderPhase(
             try {
                 recognitionEngine.reclaimPooledMemory()
             } catch (_: Exception) {}
-            // T917 Phase 4 (D7 §1.2): the borrow ends here — this release is the
+            //  Phase 4 ( §1.2): the borrow ends here — this release is the
             // event a pending engine close DRAINS on before tearing the (snapshot
             // of the) engines down.
             engines.endTranslatorUse()

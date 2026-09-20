@@ -3,10 +3,10 @@ package eu.kanade.translation.translator.contextual
 import eu.kanade.translation.artifact.StageFingerprints
 
 /**
- * T924 WP3 (pure planner, S4): global OCR corpus manifest assembly.
+ *  WP3 (pure planner, S4): global OCR corpus manifest assembly.
  *
  * Deterministic, native-free and provider-free assembly of the chapter-wide
- * OCR corpus summary (T924-FP-03) from per-page OCR fingerprints, plus a pure
+ * OCR corpus summary  from per-page OCR fingerprints, plus a pure
  * gap/missing-page detector over the expected page set. No IO, no coroutines;
  * the same input collection in any iteration order produces the identical
  * manifest (sorted canonical order, never input order).
@@ -28,7 +28,7 @@ data class OcrCorpusPageEntry(
     val naturalPageIndex: Int?,
     /**
      * The page's semantic content fingerprint
-     * ([StageFingerprints.pageOcrContentFingerprint], T924-FP-02).
+     * ([StageFingerprints.pageOcrContentFingerprint], ).
      */
     val contentFingerprint: String,
     /**
@@ -81,7 +81,7 @@ data class OcrCorpusGaps(
  * consume [orderedPages], [corpusFingerprint] and [gaps].
  */
 data class OcrCorpusManifest(
-    /** Whole-corpus identity (T924-FP-03 [StageFingerprints.ocrCorpusFingerprint]). */
+    /** Whole-corpus identity ( [StageFingerprints.ocrCorpusFingerprint]). */
     val corpusFingerprint: String,
     /**
      * Canonical page order: natural page order when proven, otherwise sorted

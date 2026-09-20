@@ -222,7 +222,7 @@ internal class AnalysisWorker(
         fun analysisCounters(extra: Map<String, Int>): Map<String, Int> =
             baseCounters + mapOf(ChapterProfileBatchCoordinator.COUNTER_ANALYSIS_PLAN to 1) + extra
 
-        // ST-07: phase transition only — the corpus manifest is recomputed
+        //  phase transition only — the corpus manifest is recomputed
         // from the checkpoints below (pure planner output, never stale).
         publishRecord(
             artifact,
@@ -237,7 +237,7 @@ internal class AnalysisWorker(
         )
 
         // Rebuild the corpus entries from the DURABLE checkpoints (never from
-        // the in-memory pass): idempotent against the ST-07 postcondition.
+        // the in-memory pass): idempotent against the  postcondition.
         val corpus = corpusEntriesFromCheckpoints(artifact, orderedPages, total)
         if (corpus == null) {
             // A checkpoint vanished between the preflight barrier and here
@@ -357,7 +357,7 @@ internal class AnalysisWorker(
             )
         }
 
-        // ST-08 resume rule: the persisted pointer prefix (chunk-ordinal
+        //  resume rule: the persisted pointer prefix (chunk-ordinal
         // order, identity-validated above) is never re-sent; execution
         // restarts at the first missing chunk.
         val manifestNow = store.artifactManifest
@@ -531,7 +531,7 @@ internal class AnalysisWorker(
         }
 
         // ---- Stage-5 slice B: the validated chunk set is durable; run the ----
-        // ---- ST-09 reconcile over the DURABLE chunk list, then ST-10 freeze.
+        // ----  reconcile over the DURABLE chunk list, then  freeze.
         return runProfileReconcileAndFreeze(
             artifact = artifact,
             runId = runId,

@@ -22,12 +22,12 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
 
 /**
- * T924 WP9 — Stage-7 exit oracle `DrawPlanDtoRoundTripTest` (gate rows
+ *  WP9 — Stage-7 exit oracle `DrawPlanDtoRoundTripTest` (gate rows
  * 7.3/7.4 JVM-testable substance): the FULL persisted-layout round trip
  * THROUGH THE STORE — plan + color preparation assembly
  * ([LayoutPlanPublication.prepare]), sidecar-then-pointer publication
  * ([ChapterArtifactEngine.publishSidecarPointers], exactly the transaction
- * BatchRenderJoin performs behind FF-02), store-backed hydration through the
+ * BatchRenderJoin performs behind ), store-backed hydration through the
  * `readOcrCheckpoint`-idiom generic reader, and
  * [LayoutDrawPlanProjection.rehydrate] — reproduces the planner geometry
  * EXACTLY (floats bit-for-bit via `toRawBits`), or reports a typed loss
@@ -109,7 +109,7 @@ class DrawPlanDtoRoundTripTest {
     }
 
     /**
-     * The exact transaction BatchRenderJoin performs behind FF-02a(1):
+     * The exact transaction BatchRenderJoin performs behind (1):
      * sidecars first, then pointers + the LAYOUT stage record carrying the
      * compatibility fingerprint, in ONE manifest publication.
      */
@@ -284,7 +284,7 @@ class DrawPlanDtoRoundTripTest {
             isValid = { it.validationError() == null },
         )
         val plan = read.shouldBeInstanceOf<SidecarRead.Usable<PageLayoutDrawPlan>>().document
-        // T924-SC-06: encode → decode → encode is byte-identical.
+        // 06: encode → decode → encode is byte-identical.
         LayoutDrawPlanProjection.encodeToCanonicalJson(plan) shouldBe prepared.planJson
 
         val colorRead = store.readSidecarDocument(

@@ -27,7 +27,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * T934 U.1/U.7: the live batch projection stamps the durable run record's
+ *  U.1/U.7: the live batch projection stamps the durable run record's
  * rebuild/restore truth onto the FIRST_PASS snapshot — an adopted-page
  * OCR_PLAN record projects RESTORING with the restored/remaining payload, a
  * post-preflight record projects the plain live phase, and a chapter without
@@ -155,7 +155,7 @@ class ProjectorRebuildTruthTest {
 
     @Test
     fun `envelope plan record projects rebuilding on the live snapshot`() = runTest {
-        // T934 LI-4: the run record parks in ENVELOPE_PLAN while the
+        //   the run record parks in ENVELOPE_PLAN while the
         // coordinator rebuilds the dispatch work (resume hydration). Without a
         // branch this window projected null and the sheet froze on a stale
         // numeric hero; it must project the rebuild phase instead.

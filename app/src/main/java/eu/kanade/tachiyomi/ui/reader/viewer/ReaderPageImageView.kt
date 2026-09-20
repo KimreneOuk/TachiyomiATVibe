@@ -266,7 +266,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var pendingTranslationBlocks: List<eu.kanade.translation.model.TranslationBlock> = emptyList()
     private var pendingPageWidth = 0
     private var pendingPageHeight = 0
-    // T924 Stage 7 (D3): page key of the pending binding (see setTranslationBlocks).
+    //  Stage 7: page key of the pending binding (see setTranslationBlocks).
     private var pendingPageKey: String? = null
 
     // Keep the previous decoded view underneath a replacement until the new
@@ -302,8 +302,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
         blocks: List<eu.kanade.translation.model.TranslationBlock>,
         pageWidth: Int,
         pageHeight: Int,
-        // T924 Stage 7 (D3): the translation page key, propagated to the
-        // overlay so the FF-02-gated chapter hydration source can resolve the
+        //  Stage 7: the translation page key, propagated to the
+        // overlay so the  chapter hydration source can resolve the
         // page's persisted plan. Null keeps the legacy planner-only path.
         pageKey: String? = null,
     ) {
@@ -677,7 +677,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             return
         }
 
-        // T917 P5: only progress-severity truth (attached-to-owner) is a
+        //  P5: only progress-severity truth (attached-to-owner) is a
         // running state; paused/stalled/failed/rejected truths are terminal
         // outcomes and must not re-dim the page.
         val isRunningState = when (state) {
@@ -706,7 +706,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             accessibilityLiveRegion = when (state) {
                 ReaderPageFeedbackState.Translated,
                 is ReaderPageFeedbackState.Failed,
-                // T917 P5: a typed non-progress outcome (pause/stall/failure/
+                //  P5: a typed non-progress outcome (pause/stall/failure/
                 // rejection) is a user-relevant terminal truth worth announcing.
                 is ReaderPageFeedbackState.ManualTruth,
                 -> ACCESSIBILITY_LIVE_REGION_POLITE
@@ -734,7 +734,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             state !is ReaderPageFeedbackState.Failed &&
                 state !is ReaderPageFeedbackState.Translated &&
                 state !is ReaderPageFeedbackState.Deferred &&
-                // T917 P5: the ready-ahead suffix is rolling-auto context and
+                //  P5: the ready-ahead suffix is rolling-auto context and
                 // must not ride on a typed manual outcome pill.
                 state !is ReaderPageFeedbackState.ManualTruth
         } ?: return label

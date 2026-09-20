@@ -12,7 +12,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * T930 Slice A3 (Amendment A): tests that the schema-guard cache applies
+ *  Slice A3 (Amendment A): tests that the schema-guard cache applies
  * to the schema-normalization decision only, while future-schema guard reads
  * remain fresh from disk.
  */

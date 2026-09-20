@@ -20,7 +20,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
 /**
- * Cleaned-image publication moved from `TranslationPipeline` (T909 Phase 7).
+ * Cleaned-image publication moved from `TranslationPipeline` ( Phase 7).
  * Wraps the already-extracted [CleanedImagePublisher]; the pipeline's
  * `currentInpaintingMode` is injected as a getter (it is re-wired by engine
  * rebuilds).
@@ -244,7 +244,7 @@ internal class CleanedPublication(
 }
 
 /**
- * Resume copy hygiene moved with the cleaned-publication region (T909 Phase 7;
+ * Resume copy hygiene moved with the cleaned-publication region ( Phase 7;
  * original position: between the pipeline's HTTP/render body and
  * [CleanedPublication.loadPersistedCleanedBitmap]). Top-level so the pipeline's
  * remaining resume-path call sites resolve the same declaration.

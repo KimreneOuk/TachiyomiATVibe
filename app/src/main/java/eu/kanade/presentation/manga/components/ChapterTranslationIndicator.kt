@@ -51,7 +51,7 @@ enum class ChapterTranslationAction {
 }
 
 /**
- * T911 slice 1: tap routing table for the chapter translation indicator.
+ *  slice 1: tap routing table for the chapter translation indicator.
  * Every state with observable translation work (pending, queued, downloading,
  * translating, paused, translated, warning, error) routes a tap to the
  * progress drawer (DETAILS) so progress and diagnostics are always
@@ -262,7 +262,7 @@ private fun TranslatingIndicator(
         )
 
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
-            // T924 hotfix: a PAUSED queue entry has no work to cancel — offer
+            //  hotfix: a PAUSED queue entry has no work to cancel — offer
             // the explicit resume instead.
             if (translationState == Translation.State.PAUSED) {
                 DropdownMenuItem(
@@ -332,7 +332,7 @@ private fun TranslatedIndicator(
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
-                // T911 slice 1: tap routes to the progress drawer so completed
+                //  slice 1: tap routes to the progress drawer so completed
                 // progress/warning detail stays discoverable; the retranslate
                 // and delete actions remain on long-press.
                 onLongClick = { isMenuExpanded = true },
@@ -349,7 +349,7 @@ private fun TranslatedIndicator(
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_translate_circle_filled),
-            // T917 Phase 5: READY_WITH_WARNINGS is conveyed by LABEL, not by
+            //  Phase 5: READY_WITH_WARNINGS is conveyed by LABEL, not by
             // tint alone (this icon previously had no description at all).
             contentDescription = TranslationUiTruth
                 .forChapterIndicator(translationState, null)
@@ -390,9 +390,9 @@ private fun ErrorIndicator(
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
-                // T911 slice 1: tap opens the progress drawer with the failure
+                //  slice 1: tap opens the progress drawer with the failure
                 // detail; retry and delete live in the long-press menu
-                // (T924 hotfix: documented affordances instead of a bare
+                // ( hotfix: documented affordances instead of a bare
                 // long-press that silently routed START).
                 onLongClick = { isMenuExpanded = true },
                 onClick = {
@@ -408,7 +408,7 @@ private fun ErrorIndicator(
     ) {
         Icon(
             imageVector = Icons.Outlined.ErrorOutline,
-            // T917 Phase 5: the failure truth names the translation state and
+            //  Phase 5: the failure truth names the translation state and
             // the available retry, instead of the generic chapter error copy.
             contentDescription = TranslationUiTruth
                 .forChapterIndicator(translationState, null)

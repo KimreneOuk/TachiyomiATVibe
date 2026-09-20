@@ -8,25 +8,25 @@ import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
 
 /**
- * T924 Stage 5 slice B — profile freeze publication (T924-TX-22, ST-10).
+ *  Stage 5 slice B — profile freeze publication.
  *
  * ONE atomic publication: the immutable [ChapterTranslationProfile] sidecar
  * is published into the content-addressed `profiles/` directory FIRST, then
  * the manifest `profile` pointer ([ProfilePointer]) moves in ONE
- * `publishSidecarPointers` transaction. The T924-TX-22 rules hold by
+ * `publishSidecarPointers` transaction. The  rules hold by
  * construction:
  *
  *  - the sidecar bytes are immutable; a SUPERSEDING profile is a NEW
  *    content-addressed file + a NEW pointer (the prior file stays untouched
  *    on disk until retention reachability sweeps it);
- *  - a byte-identical re-publication (e.g. the ST-10 crash case (b) orphan
+ *  - a byte-identical re-publication (e.g. the  crash case (b) orphan
  *    heal) maps to the SAME content-addressed name and is idempotent;
  *  - any rejection (validation, fingerprint mismatch, version non-monotonic,
  *    stale manifest, sidecar write fault, manifest publication fault) leaves
  *    the PRIOR manifest authoritative — never a partially frozen state;
  *  - resume treats a pointer without a valid sidecar as UNFROZEN
  *    ([readReusableFrozenProfile] — wave-4 pattern: an unreadable/invalid
- *    target is treated as absent, never partially trusted, T924-ST-30).
+ *    target is treated as absent, never partially trusted, ).
  *
  * Before any byte is written the FP-05 content fingerprint is RECOMPUTED from
  * the DTO ([StageFingerprints.profileContentFingerprint]) and verified equal
@@ -101,21 +101,21 @@ internal object ProfileFreezePublication {
         /**
          * A frozen profile whose sidecar loads, validates, matches its
          * pointer (content fingerprint + version + input fingerprint), and
-         * whose FP-05 hash recomputes equal — the ST-05/ST-10 reuse basis.
+         * whose FP-05 hash recomputes equal — the / reuse basis.
          */
         data class Reusable(val profile: ChapterTranslationProfile) : FrozenProfileRead
 
         /**
          * No frozen profile usable for reuse: absent pointer, unreadable /
          * invalid / future-version sidecar, or ANY identity mismatch
-         * (T924-ST-30: treated as absent — never partially trusted, never
+         * ( treated as absent — never partially trusted, never
          * mutated here; the normal reconcile path re-freezes).
          */
         data object NotReusable : FrozenProfileRead
     }
 
     /**
-     * ST-05/OCR_PLAN skip rule read path (:114): a frozen profile is
+ * OCR_PLAN skip rule read path (:114): a frozen profile is
      * reusable only when ALL of
      *
      *  1. the manifest pointer is well-formed,

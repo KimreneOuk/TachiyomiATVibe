@@ -12,8 +12,8 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- * T924 Phase 4 Wave B — the STANDARD_PIPELINE lane through the REAL shell
- * (Director contract for the coexistence harness, FF-01 ON + STANDARD engine).
+ *  Phase 4 Wave B — the STANDARD_PIPELINE lane through the REAL shell
+ * (Director contract for the coexistence harness,  ON + STANDARD engine).
  *
  * [TranslationCoexistenceHarness.createStandard] drives
  * ChapterTranslator → TranslationPipeline → BatchChapterTranslator → the
@@ -57,7 +57,7 @@ class StandardPipelineCoexistenceTest {
             val firstProviderStart =
                 arrivals.indexOfFirst { it.first == CoexistenceBarrier.BarrierPoint.PROVIDER_START }
             (firstProviderStart >= 0) shouldBe true
-            // T934 authorized assertion conversion (diagnosis §3): per-page
+            //  authorized assertion conversion (diagnosis §3): per-page
             // decode MULTIPLICITY is not a schedule property; DISTINCT-page
             // coverage before the first paid call IS.
             // The flagged preflight still decodes EVERY page before any

@@ -10,7 +10,7 @@ import java.util.Locale
 import java.util.concurrent.CancellationException
 
 /*
- * T922 Phase 2 trace foundation: `translation_trace_v1` schema formatter,
+ *  Phase 2 trace foundation: `translation_trace_v1` schema formatter,
  * privacy sanitizer, injectable log sink, stage budgets, and schedule/run
  * start/end APIs (plan §4, amendments §10.2–10.5).
  *
@@ -76,7 +76,7 @@ object TranslationTraceBudgets {
     const val QUEUE_WAIT_MS = 1_000L
     const val SOURCE_DECODE_MS = 750L
 
-    /** T922 Phase 4 (batch): source-fingerprint preflight (I/O-only hash). */
+    /**  Phase 4 (batch): source-fingerprint preflight (I/O-only hash). */
     const val SOURCE_FINGERPRINT_MS = 750L
     const val DETECT_MS = 750L
     const val SEGMENT_MS = 750L
@@ -581,7 +581,7 @@ object TranslationPipelineDiagnostics {
     }
 
     // ------------------------------------------------------------------
-    // T922 Phase 4: batch facade helpers. Standalone, already-measured
+    //  Phase 4: batch facade helpers. Standalone, already-measured
     // emissions for the legacy BatchTranslationDiagnostics compatibility
     // surface. They correlate with the resolved identity but record into no
     // run/schedule state machine (no stage map, no accumulator), so legacy
@@ -814,7 +814,7 @@ object TranslationPipelineDiagnostics {
     }
 
     /**
-     * Optional trailing envelope field (T922 Phase 4 batch): the existing
+     * Optional trailing envelope field ( Phase 4 batch): the existing
      * opaque provider-envelope ID, charset-sanitized, appended only when the
      * caller supplies one — pre-existing schema lines stay byte-identical.
      */

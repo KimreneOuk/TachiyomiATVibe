@@ -4,14 +4,14 @@ import android.graphics.Paint
 import android.graphics.Typeface
 
 /**
- * T924 WP9: the production [TextMeasurer] used by the Batch-side
+ *  WP9: the production [TextMeasurer] used by the Batch-side
  * LAYOUT_PREPARE publication. Its measurement must be IDENTICAL to the
  * overlay's planning measurer (`TranslationOverlayView.planningMeasurer`):
  * same typeface (the bundled animeace forced to bold — see
  * [DrawPlanFingerprint.TYPEFACE_STYLE]), same paint flags
  * ([DrawPlanFingerprint.PAINT_MEASUREMENT_FLAGS]), same mutation-confined
  * single-Paint pattern. Any drift here changes produced geometry, which is
- * exactly what the persisted-layout compatibility fingerprint (T924-FP-07)
+ * exactly what the persisted-layout compatibility fingerprint
  * is supposed to catch — so both sides construct this object over the same
  * typeface and flags, and the constants in [DrawPlanFingerprint] pin the
  * identity.

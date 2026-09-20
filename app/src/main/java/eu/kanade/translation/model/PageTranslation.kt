@@ -58,7 +58,7 @@ data class PageTranslation(
     var translationFingerprint: String? = null,
     var layoutFingerprint: String? = null,
     /**
-     * TachiyomiAT T917 D5: the chapter glossary version ([eu.kanade.translation.artifact.GlossaryPointer])
+     * TachiyomiAT   the chapter glossary version ([eu.kanade.translation.artifact.GlossaryPointer])
      * live in the store when this page's translation was durably committed
      * (stamped at commit-provenance time, phase3-design §1.3). Comparable, NOT
      * hashed into [translationFingerprint]: hash-embedding would blanket-stale
@@ -68,7 +68,7 @@ data class PageTranslation(
      * GREATER than this recorded value (`null` absence compares as 0), so a
      * page translated before the glossary matured is repaired exactly once and
      * the pass converges (re-folding identical pairs does not bump the
-     * version). Additive nullable default keeps pre-D5 translation JSON
+     * version). Additive nullable default keeps pre- translation JSON
      * compatible in both directions.
      */
     var translationGlossaryVersion: Int? = null,

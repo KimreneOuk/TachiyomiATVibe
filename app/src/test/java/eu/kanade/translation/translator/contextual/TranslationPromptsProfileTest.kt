@@ -6,7 +6,7 @@ import io.kotest.matchers.string.shouldContain
 import org.junit.jupiter.api.Test
 
 /**
- * T924 Stage-6 slice B (design §7.4): the ENRICHED prompt assembly —
+ *  Stage-6 slice B (design §7.4): the ENRICHED prompt assembly —
  * identity-before-gender rule ordering pinned textually, entity-id and
  * scene rendering, and the pronoun-marking rule for the rolling history.
  * The legacy prompt functions are NOT touched (pinned by

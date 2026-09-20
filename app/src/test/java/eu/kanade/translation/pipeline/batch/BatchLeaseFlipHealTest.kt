@@ -31,17 +31,17 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T934 R1 (lease abort/re-work fix): the T1→T2 token flip observed on device
+ *  R1 (lease abort/re-work fix): the T1→T2 token flip observed on device
  * (pages 047/052). The envelope executor's `finally` released the shared BATCH
  * slot while the overlap inpaint still held its write identity on the SAME
  * token; the next acquire minted a fresh token and every admission write
  * fenced on the old one rejected ("page lease token changed") into a full
  * candidate abort + re-work. Pins both halves of the fix:
- *  - R1.2 the attach-aware envelope release: a release with a sibling
+ *  -  the attach-aware envelope release: a release with a sibling
  *    same-origin attach keeps the record + token for the surviving writer;
- *  - R1.1 the owner-proof heal in [BatchWriteGate.guardedBatchUpdate]: a flip
+ *  -  the owner-proof heal in [BatchWriteGate.guardedBatchUpdate]: a flip
  *    that still slips through re-acquires the BATCH lease and retries ONCE,
- *    never across a MANUAL/AUTO owner (the T917 fence) and never across a
+ *    never across a MANUAL/AUTO owner (the  fence) and never across a
  *    resumed-run identity change (candidateGenerationId mismatch).
  */
 class BatchLeaseFlipHealTest {
@@ -153,7 +153,7 @@ class BatchLeaseFlipHealTest {
     }
 
     // ------------------------------------------------------------------
-    // R1.2 — the flip source: envelope completion must not invalidate a live
+    // the flip source: envelope completion must not invalidate a live
     // overlap identity.
     // ------------------------------------------------------------------
 
@@ -206,14 +206,14 @@ class BatchLeaseFlipHealTest {
         store.snapshot(pageKey).leaseToken shouldBe freshToken
         store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist) so @TempDir's recursive delete
         // cannot race it on Windows.
         store.closeAndFlush()
     }
 
     // ------------------------------------------------------------------
-    // R1.1 — the owner-proof heal for a flip that slipped through.
+    // the owner-proof heal for a flip that slipped through.
     // ------------------------------------------------------------------
 
     @Test
@@ -243,7 +243,7 @@ class BatchLeaseFlipHealTest {
         identities[pageKey]!!.leaseToken shouldBe siblingToken
         store.snapshot(pageKey).leaseToken shouldBe siblingToken
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist) so @TempDir's recursive delete
         // cannot race it on Windows.
         store.closeAndFlush()
@@ -258,7 +258,7 @@ class BatchLeaseFlipHealTest {
         val gate = newGate(store, identities)
 
         val staleToken = registerBatchIdentity(store, identities, pageKey, PageStage.Translation)
-        // The batch slot was released and a MANUAL owner took the page (T917).
+        // The batch slot was released and a MANUAL owner took the page.
         store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
         store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.MANUAL)
             .shouldBeInstanceOf<LeaseAcquisition.Granted>()
@@ -293,7 +293,7 @@ class BatchLeaseFlipHealTest {
         typed.shouldNotBeNull()
         typed.pageKey shouldBe pageKey
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist) so @TempDir's recursive delete
         // cannot race it on Windows.
         store.closeAndFlush()
@@ -343,7 +343,7 @@ class BatchLeaseFlipHealTest {
         store.pageLeaseOwner(pageKey) shouldBe PageWriteOrigin.BATCH
         store.snapshot(pageKey).leaseToken shouldBe siblingToken
 
-        // T934 flake hardening (diagnosis §4): flush and cancel the store's
+        //  flake hardening (diagnosis §4): flush and cancel the store's
         // persistScope (debounced persist) so @TempDir's recursive delete
         // cannot race it on Windows.
         store.closeAndFlush()

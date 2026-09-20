@@ -1,7 +1,7 @@
 package eu.kanade.translation.rendering
 
 /**
- * TachiyomiAT T912 slice 5: pure, deterministic line breaker for adaptive
+ * TachiyomiAT  slice 5: pure, deterministic line breaker for adaptive
  * positioned lines (architecture revision 2, "Line breaking contract").
  *
  * Contract:

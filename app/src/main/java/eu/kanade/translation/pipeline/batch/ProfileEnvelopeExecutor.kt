@@ -53,19 +53,19 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * T924 Stage-6 slice A (WP6, T924-ST-12 + T924-TX-21/TX-20 + DR-A Option 1):
+ *  Stage-6 slice A (WP6,  + / + DR-A Option 1):
  * the serial per-envelope translation executor of the AI profile lane.
  *
  * Invariants enforced here (gates 5.1-5.8 basis):
  *  - ONE provider envelope in flight, chapter-wide (hard serial loop — there
  *    is no concurrency construct anywhere in this class);
- *  - TX-21: BEFORE each envelope dispatch every affected page is revalidated
+ *  -  BEFORE each envelope dispatch every affected page is revalidated
  *    under a freshly reacquired BATCH lease (BATCH attaches/never preempts a
  *    MANUAL owner) against the plan-time inputs: page version, candidate
  *    generation, dependency fingerprint, artifact page version, live OCR
  *    block identity, checkpoint content fingerprint, and the currently
  *    frozen profile. User-edited blocks and manual-authoritative pages are
- *    skipped, never overwritten (TX-20 `userEditedAt` fence holds at the
+ *    skipped, never overwritten ( `userEditedAt` fence holds at the
  *    merge regardless);
  *  - any identity drift triggers a DETERMINISTIC suffix re-plan through the
  *    injected [replan] callback (same pure planner over fresh store state);
@@ -78,14 +78,14 @@ import tachiyomi.core.common.util.system.logcat
  *  - DR-A Option 1 retention: per-page COMPLETE subsets of a paused response
  *    commit and advance (page atomicity — a page commits only when EVERY
  *    planned block of that page was accepted); REFUSAL discards and pauses
- *    terminal. T934 (Director decision 2026-09-17): a PROTOCOL-class verdict
+ *    terminal.  (Director decision 2026-09-17): a PROTOCOL-class verdict
  *    (blocks still missing after the controller's retry budget) no longer
  *    discards the whole response — its fully-covered pages COMMIT, its
  *    stubborn pages are PARKED as durable retryable TRANSLATION failures
  *    (omitted block ids + per-block source char lengths recorded) and the
  *    batch CONTINUES with the next envelope, guarded by a
  *    consecutive-zero-commit circuit breaker ([MAX_CONSECUTIVE_ZERO_COMMIT_ENVELOPES]);
- *  - TX-20: every commit carries `profileContentFingerprint` +
+ *  -  every commit carries `profileContentFingerprint` +
  *    `envelopePlanFingerprint` and the full M4 CAS ladder; a rejected commit
  *    never advances the rolling-context frontier and never counts as
  *    progress;
@@ -99,7 +99,7 @@ internal class ProfileEnvelopeExecutor(
     /** The frozen profile content fingerprint this run dispatches under (FP-05). */
     private val profileContentFingerprint: String,
     /**
-     * T924 Stage-6 slice B (design §7): the LOADED frozen profile DTO. When
+     *  Stage-6 slice B (design §7): the LOADED frozen profile DTO. When
      * present, every envelope prompt is ENRICHED with the profile subset
      * matcher's capped subset, range-safe scene context, and the gap-free
      * rolling history (pronoun-marking rule), and the execution-time token
@@ -123,7 +123,7 @@ internal class ProfileEnvelopeExecutor(
     private val clock: ProviderRequestClock = SystemProviderRequestClock,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     /**
-     * T934 track V: invoked after an envelope's commit settled with at least
+     *  track V: invoked after an envelope's commit settled with at least
      * one accepted page ([commitPages]) — the post-commit-settle nudge
      * (OverlapScheduler.notifyCandidatesChanged) that runs a drain pass at
      * every envelope commit boundary, so candidates deferred on write-slot
@@ -147,18 +147,18 @@ internal class ProfileEnvelopeExecutor(
         var envelopesPending: Int = 0,
         var envelopeFailures: Int = 0,
         var pagesTranslated: Int = 0,
-        /** T934 protocol parking: pages durably FAILED for omitted blocks. */
+        /**  protocol parking: pages durably FAILED for omitted blocks. */
         var pagesParked: Int = 0,
         var replans: Int = 0,
-        /** Slice B (D6): whole-page execution-time splits actually dispatched. */
+        /** Slice B: whole-page execution-time splits actually dispatched. */
         var envelopeSplits: Int = 0,
-        /** Slice B (D6): envelopes sent in the ENRICHED prompt shape. */
+        /** Slice B: envelopes sent in the ENRICHED prompt shape. */
         var promptShapeEnriched: Int = 0,
-        /** Slice B (D6): envelopes sent in the LEGACY prompt shape. */
+        /** Slice B: envelopes sent in the LEGACY prompt shape. */
         var promptShapeLegacy: Int = 0,
-        /** Slice B (D6): largest profile-subset fact count sent in ONE envelope. */
+        /** Slice B: largest profile-subset fact count sent in ONE envelope. */
         var profileSubsetFactsMax: Int = 0,
-        /** Slice B (D6): largest gap-free rolling-context page count carried. */
+        /** Slice B: largest gap-free rolling-context page count carried. */
         var rollingContextPagesMax: Int = 0,
     ) {
         fun toMap(): Map<String, Int> = mapOf(
@@ -178,7 +178,7 @@ internal class ProfileEnvelopeExecutor(
         )
     }
 
-    /** Typed terminal of the envelope phase (T924-ST-12; never COMPLETE). */
+    /** Typed terminal of the envelope phase ( never COMPLETE). */
     sealed interface PhaseOutcome {
         /** Every planned envelope dispatched, committed, or skipped. */
         data class Drained(val counters: Counters) : PhaseOutcome
@@ -204,7 +204,7 @@ internal class ProfileEnvelopeExecutor(
         var current = work
         var index = 0
         var replansSinceProgress = 0
-        // T934 protocol-parking circuit breaker: consecutive envelopes that
+        //  protocol-parking circuit breaker: consecutive envelopes that
         // committed ZERO fully-covered pages under a PROTOCOL verdict. A
         // systematically broken provider must pause the batch (old behavior)
         // instead of parking an entire chapter page by page.
@@ -228,7 +228,7 @@ internal class ProfileEnvelopeExecutor(
                     onProgress(counters.toMap())
                 }
                 is EnvelopeDispatchResult.PartiallyParked -> {
-                    // T934 protocol parking: the envelope finished with a
+                    //  protocol parking: the envelope finished with a
                     // PROTOCOL verdict but is NOT a batch pause — fully-covered
                     // pages committed, stubborn pages are parked durably. The
                     // breaker only trips after
@@ -321,7 +321,7 @@ internal class ProfileEnvelopeExecutor(
     private fun countersSnapshot(): Counters = counters.copy()
 
     // ------------------------------------------------------------------
-    // TX-21: per-envelope revalidation + dispatch
+    //  per-envelope revalidation + dispatch
     // ------------------------------------------------------------------
 
     private sealed interface EnvelopeDispatchResult {
@@ -332,7 +332,7 @@ internal class ProfileEnvelopeExecutor(
         data object Skipped : EnvelopeDispatchResult
 
         /**
-         * T934 protocol parking: the envelope ended under a PROTOCOL-class
+         *  protocol parking: the envelope ended under a PROTOCOL-class
          * verdict; its fully-covered pages committed, its stubborn pages were
          * parked as durable retryable failures, and the batch CONTINUES.
          * [fullyCoveredCommitted] feeds the consecutive-zero-commit circuit
@@ -382,7 +382,7 @@ internal class ProfileEnvelopeExecutor(
                 val leaseToken = when (lease) {
                     is LeaseAcquisition.Granted -> lease.lease.token
                     is LeaseAcquisition.Denied -> {
-                        // BATCH attaches/never preempts (TX-21.1). A MANUAL
+                        // BATCH attaches/never preempts. A MANUAL
                         // owner wins this page; the run pauses (no preempt,
                         // no partial envelope) and resume revalidates.
                         return EnvelopeDispatchResult.Paused(
@@ -404,13 +404,13 @@ internal class ProfileEnvelopeExecutor(
                     store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     return replanOrPause("page $pageKey lost its live state", pageKey)
                 }
-                // TX-21.3 skip re-check: the page became committed /
+                //.3 skip re-check: the page became committed /
                 // manual-authoritative between plan and dispatch.
                 if (pageAuthoritativelyDone(pageKey, live)) {
                     store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     continue
                 }
-                // TX-21.2 live-revalidate the plan-time identities.
+                //.2 live-revalidate the plan-time identities.
                 val drift = revalidationDrift(pageWork, snapshot, live)
                 if (drift != null) {
                     // Wave-6 F-W6-1: same release-before-early-return as the
@@ -421,7 +421,7 @@ internal class ProfileEnvelopeExecutor(
                         anchorPageKey = pageKey,
                     )
                 }
-                // TX-21.3 block-level skip: a block edited by the user since
+                //.3 block-level skip: a block edited by the user since
                 // the plan is authoritative — dropped from THIS dispatch
                 // (never overwritten); the rest of the page still dispatches.
                 val dispatchBlocks = pageWork.blocks.filter { planned ->
@@ -445,13 +445,13 @@ internal class ProfileEnvelopeExecutor(
                 return EnvelopeDispatchResult.Skipped
             }
 
-            // D6: the gap-free rolling-context page count carried into prompts
+            //  the gap-free rolling-context page count carried into prompts
             // (contiguous committed prefix only — the frontier never moves on
             // a rejected commit).
             counters.rollingContextPagesMax =
                 maxOf(counters.rollingContextPagesMax, frontier.frontierIndex + 1)
 
-            // ---- Slice B D5 (design §8 tail): execution-time token ----
+            // ---- Slice B  (design §8 tail): execution-time token ----
             // ---- recompute; split at WHOLE-PAGE boundaries before sending.
             val batches = splitForTokenFit(held, frontier.rollingContext)
             counters.envelopeSplits += (batches.fitted.size - 1).coerceAtLeast(0)
@@ -488,7 +488,7 @@ internal class ProfileEnvelopeExecutor(
             return last
         } finally {
             // Any page still held (paused/replan paths) releases its lease.
-            // T934 R1.2: the release is attach-aware — a page the overlap
+            //   the release is attach-aware — a page the overlap
             // inpaint re-attached to (same token, mid-lane) KEEPS its record
             // so no sibling acquire can mint a fresh token and fail-close the
             // sibling's write identity; the sibling's own release clears it.
@@ -499,7 +499,7 @@ internal class ProfileEnvelopeExecutor(
     }
 
     /**
-     * Slice B D5: splits the held pages into deterministic whole-page
+     * Slice B  splits the held pages into deterministic whole-page
      * sub-batches whose ACTUAL enriched payload (source lines + profile
      * subset + scene context + rolling history) AND estimated translation
      * response fit the provider context window. Greedy prefix packing in
@@ -634,7 +634,7 @@ internal class ProfileEnvelopeExecutor(
      * Dispatches ONE provider request over ONE (sub-)batch of held pages —
      * the hard one-envelope-in-flight unit. Chunk assembly enriches per
      * [frozenProfile] (slice B) or keeps the slice-A legacy shape; DR-A
-     * Option 1 classification and TX-20 provenance commits are unchanged.
+     * Option 1 classification and  provenance commits are unchanged.
      * Page leases stay held; [dispatchEnvelope]'s `finally` releases them.
      */
     private suspend fun dispatchSingleHeldBatch(
@@ -752,7 +752,7 @@ internal class ProfileEnvelopeExecutor(
                     reason = "T924 envelope ${envelope.envelopeId} refused; response discarded",
                 )
 
-            // AMBIGUOUS_PROTOCOL (T934 Director decision 2026-09-17): the
+            // AMBIGUOUS_PROTOCOL ( Director decision 2026-09-17): the
             // PROGRESS policy is relaxed under the unchanged COMMIT policy —
             // independently complete pages still commit (page atomicity),
             // stubborn pages are parked as durable retryable failures with
@@ -814,7 +814,7 @@ internal class ProfileEnvelopeExecutor(
     )
 
     /**
-     * T934 (Director decision 2026-09-17): relaxed PROGRESS policy for a
+     *  (Director decision 2026-09-17): relaxed PROGRESS policy for a
      * PROTOCOL-class verdict (blocks still missing after the controller's
      * whole → whole → missing-only → missing-only retry budget — the exact
      * on-device shape where a model silently omits specific blocks regardless
@@ -824,7 +824,7 @@ internal class ProfileEnvelopeExecutor(
      *
      * COMMIT policy stays strict — page atomicity is untouched:
      *  1. every fully-covered page commits through the SAME [commitPages]
-     *     TX-20 provenance ladder the MISSING_ONLY retention uses;
+     *      provenance ladder the MISSING_ONLY retention uses;
      *  2. every partially-covered page is PARKED — a durable, RETRYABLE
      *     TRANSLATION failure (protocol category) carrying the omitted block
      *     ids + per-block source char lengths — so it surfaces in the
@@ -834,7 +834,7 @@ internal class ProfileEnvelopeExecutor(
      *     so the next envelope dispatches; [run]'s breaker restores the old
      *     pause when consecutive envelopes commit zero fully-covered pages.
      *
-     * A rejected commit (store drift under the TX-20 ladder) still pauses
+     * A rejected commit (store drift under the  ladder) still pauses
      * WITHOUT parking — drift may have invalidated the held identities too.
      */
     private suspend fun commitAndParkProtocolOutcome(
@@ -974,7 +974,7 @@ internal class ProfileEnvelopeExecutor(
         EnvelopeDispatchResult.ReplanNeeded(reason = reason, anchorPageKey = pageKey)
 
     /**
-     * TX-21.2: compares the fresh snapshot against the plan-time inputs.
+     *  compares the fresh snapshot against the plan-time inputs.
      * Returns the typed drift description, or null when the page is exactly
      * as planned.
      */
@@ -1011,7 +1011,7 @@ internal class ProfileEnvelopeExecutor(
     }
 
     /**
-     * TX-20 provenance commit for one page: the full M4 CAS ladder captured
+     *  provenance commit for one page: the full M4 CAS ladder captured
      * at revalidation time + `profileContentFingerprint`/`envelopePlanFingerprint`.
      * A rejected commit never advances the frontier (the frontier records
      * ONLY accepted snapshots) and pauses the phase.
@@ -1083,7 +1083,7 @@ internal class ProfileEnvelopeExecutor(
                 }
             }
         }
-        // T934 track V: the commit settled — free write slots wake the overlap
+        //  track V: the commit settled — free write slots wake the overlap
         // lane immediately (no waiting for the next window's open).
         if (committedAnyPage) onCommitSettled()
         return when {
@@ -1169,7 +1169,7 @@ internal class ProfileEnvelopeExecutor(
         var contextTokens = TranslationContextChunkPlanner.estimateTokens(glossary) +
             TranslationContextChunkPlanner.estimateTokens(rolling)
 
-        // Deterministic bounded trim per T933 allocator order (terms 320 ->
+        // Deterministic bounded trim per  allocator order (terms 320 ->
         // safeguards 96 -> pairs 288 -> scene/style 96):
         // 1. Drop scene narratives
         // 2. Halve recent pairs, then drop pairs entirely
@@ -1256,7 +1256,7 @@ internal class ProfileEnvelopeExecutor(
     private fun pairLineCountIf(pairLines: String): Int =
         pairLines.lineSequence().count { it.isNotBlank() }
 
-    /** Whole-page authoritativeness re-check (TX-21.3, fresh reads). */
+    /** Whole-page authoritativeness re-check ( fresh reads). */
     private fun pageAuthoritativelyDone(pageKey: String, live: PageTranslation): Boolean {
         if (live.translationStatus == StageStatus.READY ||
             live.translationStatus == StageStatus.SKIPPED ||
@@ -1286,7 +1286,7 @@ internal class ProfileEnvelopeExecutor(
         const val MAX_CONSECUTIVE_REPLANS = 8
 
         /**
-         * T934 protocol-parking breaker: after this many CONSECUTIVE
+         *  protocol-parking breaker: after this many CONSECUTIVE
          * PROTOCOL envelopes with ZERO fully-covered pages, the batch falls
          * back to the old pause behavior instead of parking an entire
          * chapter one envelope at a time.
@@ -1295,7 +1295,7 @@ internal class ProfileEnvelopeExecutor(
     }
 }
 
-/** Typed result of a deterministic suffix re-plan (TX-21.4). */
+/** Typed result of a deterministic suffix re-plan. */
 internal sealed interface ReplanResult {
     data class Ready(val work: EnvelopeDispatchWork) : ReplanResult
 
@@ -1308,12 +1308,12 @@ internal sealed interface ReplanResult {
 
 /**
  * Plan-time dispatch inputs for the envelope phase: the validated
- * [EnvelopePlan] plus, per DISPATCHABLE page, the exact identities TX-21
+ * [EnvelopePlan] plus, per DISPATCHABLE page, the exact identities
  * revalidates against. Rebuilt from fresh store state on every re-plan.
  */
 internal class EnvelopeDispatchWork(
     val plan: EnvelopePlan,
-    /** The SC-10 content fingerprint TX-20 commits carry. */
+    /** The SC-10 content fingerprint  commits carry. */
     val planFingerprint: String,
     /** pageKey to plan-time work; ONLY dispatchable (pending) pages appear. */
     val pages: Map<String, PageDispatchWork>,

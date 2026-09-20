@@ -11,7 +11,7 @@ import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.SidecarPointer
 
 /**
- * T924 WP5 handoff (wave-2 review gap 4 / deviation 8): pure mapping from the
+ *  WP5 handoff (wave-2 review gap 4 / deviation 8): pure mapping from the
  * planner-shaped [PlannedAnalysisChunk] (S4, pure planner output — not
  * persisted) onto the durable [AnalysisChunkResult] DTO (S1, schemas contract
  * §1.3). No IO, no coroutines; identity fields, contributing sets and
@@ -32,7 +32,7 @@ import eu.kanade.translation.artifact.SidecarPointer
  * to [AnalysisChunkStatus.INVALID] carrying it.
  *
  * @param ocrArtifactRefs one pointer per contributing page, in contributing
- *   order (core pages first, then context overlap — the T924-AP-03 request
+ *   order (core pages first, then context overlap — the  request
  *   payload convention, wave-2 F4). The DTO enforces
  *   `size == corePageKeys.size + contextOverlapPageKeys.size`.
  */
@@ -75,7 +75,7 @@ fun PlannedAnalysisChunk.toAnalysisChunkResult(
 )
 
 /**
- * The mapping-side evidence boundary (pure subset of V1/V9, T924-AP-05):
+ * The mapping-side evidence boundary (pure subset of V1/V9, ):
  * every evidence reference must resolve into this chunk's contributing set —
  * contributing page, block id belonging to that page, block id prefixed by
  * its page key. Excerpt-hash shape and recomputation (V8) stay with the DTO

@@ -35,7 +35,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T924 wave-3 slice B (wave-2 review R2 + gap 9): a checkpoint-REJECTED page
+ *  wave-3 slice B (wave-2 review R2 + gap 9): a checkpoint-REJECTED page
  * mid-run must leave the chapter DURABLY restartable —
  *
  *  (a) prior pages' checkpoints survive a simulated restart and stay reusable

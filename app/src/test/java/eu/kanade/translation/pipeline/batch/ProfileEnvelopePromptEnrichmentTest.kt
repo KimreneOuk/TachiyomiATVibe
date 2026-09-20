@@ -59,7 +59,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T924 Stage-6 slice B (design §7 + §8 tail; gates 5.6/5.8 in-repo portion):
+ *  Stage-6 slice B (design §7 + §8 tail; gates 5.6/5.8 in-repo portion):
  * profile-aware PROMPT ENRICHMENT of the serial envelope executor —
  * enriched chunk shape (profile subset sheet + scene fence + gap-free
  * rolling history with the pronoun-marking rule), execution-time token
@@ -747,7 +747,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             createdAtEpochMs = 1L,
         )
 
-        // Durable TX-20 anchors: a frozen profile pointer + the envelope-plan
+        // Durable  anchors: a frozen profile pointer + the envelope-plan
         // pointer, published through the STORE's own artifact store and
         // pushed into the store's manifest view, exactly as the coordinator
         // does in production.

@@ -68,11 +68,11 @@ class ChapterTranslatorQueueRestoreTest {
     }
 
     // -------------------------------------------------------------------------
-    // T924 wave-2 review gap 2 (queue-restore obligation, zero-legacy form):
+    //  wave-2 review gap 2 (queue-restore obligation, zero-legacy form):
     // a chapter with an interrupted pipeline run restored from the persisted
     // queue. The harness mirrors the interrupted-run idiom (real store, real
     // interrupted pass) so the run record below is a genuine durable record
-    // with checkpoints, not a synthetic one. (D1: the FF-01 flag and its
+    // with checkpoints, not a synthetic one. ( the  flag and its
     // decideResume decision tree are gone — restore never auto-starts a run,
     // and the durable state stays byte-untouched until explicit admission.)
     // -------------------------------------------------------------------------
@@ -218,15 +218,15 @@ class ChapterTranslatorQueueRestoreTest {
         ) shouldContainExactly listOf("restored-flagged-10")
 
         // The restore path decides from the durable record + current
-        // settings only (T924-FF-10, no queue input) and — with the flag
-        // gone (D1) — that is the coordinator's own resume machinery, which
+        // settings only ( no queue input) and — with the flag
+        // gone  — that is the coordinator's own resume machinery, which
         // only ever fires inside a dispatched run. Restore itself starts
         // nothing: byte-equal manifest, untouched checkpoints, no lease held.
         artifactStore().readManifest().shouldNotBeNull() shouldBe manifestBefore
         manifestBefore.ocrCheckpoints.keys shouldBe checkpointedKeys
         store.pageLeaseOwner("p1").shouldBeNull()
         store.pageLeaseOwner("p2").shouldBeNull()
-        // D1 zero-legacy: the surviving record IS the resume evidence — the
+        //  zero-legacy: the surviving record IS the resume evidence — the
         // phase pointer advanced past RUN_SNAPSHOT with p1's checkpointed OCR
         // (OCR_PLAN, done=1) and p2's mid-preflight death left it there. The
         // next explicit run resumes from this pointer; restore starts nothing.

@@ -4,7 +4,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 
 /**
- * T917 Phase 5 (spec §2, §3.3): the batch translation notification's text is
+ *  Phase 5 (spec §2, §3.3): the batch translation notification's text is
  * a pure projection of the progress snapshot, so truthful terminal,
  * unknown-total, not-saved, paused, and cancelled copy is unit-testable. The
  * foreground service renders this record and attaches intents only for the
@@ -50,7 +50,7 @@ object TranslationNotificationCopy {
             )
 
             // A guarded publication was rejected: no completion copy, retry is
-            // required (spec §4, condition C). T934 LI-5: the typed rejection
+            // required (spec §4, condition C).   the typed rejection
             // reason rides along (bounded) — the bare "not saved" copy hid
             // which seam rejected the publication.
             snapshot.nonDurableFailure -> {

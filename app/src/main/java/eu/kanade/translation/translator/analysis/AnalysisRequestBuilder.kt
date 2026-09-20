@@ -3,9 +3,9 @@ package eu.kanade.translation.translator.analysis
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 
 /**
- * T924 WP5 slice A (T924-AP-03): builds the versioned analysis chunk request
+ *  WP5 slice A: builds the versioned analysis chunk request
  * document. Provider-independent — one JSON document in the model's text
- * channel, identical for every backend (T924-AP-01.1).
+ * channel, identical for every backend.
  *
  * WAVE-2 REVIEW F4 / GAP-3 (BINDING): the `pages` array is emitted in
  * CORE-THEN-CONTEXT order — the contributing set order of
@@ -18,11 +18,11 @@ import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
  * Blocks inside a page keep the page's persisted OCR order (stable block ids
  * `p<N>_b<M>`); the request text is the persisted OCR text exactly as sent —
  * the request is the sole authority for what response evidence may reference
- * (T924-AP-05).
+ *
  */
 object AnalysisRequestBuilder {
 
-    /** Wire protocol identity (T924-AP-01.2 / T924-AP-03). */
+    /** Wire protocol identity. */
     const val PROTOCOL = "tachiyomiat-analysis"
 
     /**
@@ -40,10 +40,10 @@ object AnalysisRequestBuilder {
     /** Planning-side token overhead of one wire page entry (key/role/brackets ≈ 12 tokens). */
     const val PER_PAGE_ENVELOPE_TOKENS = 12
 
-    /** The only accepted wire schema version in the first release (T924-AP-01.2). */
+    /** The only accepted wire schema version in the first release. */
     const val SCHEMA_VERSION = 1
 
-    /** Request kind discriminator: whole-page extraction chunks (T924-AP-03). */
+    /** Request kind discriminator: whole-page extraction chunks. */
     const val REQUEST_KIND_CHUNK = "CHUNK"
 
     /** Page roles: CORE pages owe primary records; CONTEXT pages are citation-only. */
@@ -104,7 +104,7 @@ object AnalysisRequestBuilder {
         }
         val document = buildString {
             append("{")
-            // ---- envelope (T924-AP-03) ----
+            // ---- envelope  ----
             append("\"envelope\":{")
             append("\"protocol\":\"$PROTOCOL\",")
             append("\"schemaVersion\":$SCHEMA_VERSION,")
@@ -137,7 +137,7 @@ object AnalysisRequestBuilder {
                 append("]}")
             }
             append("],")
-            // ---- existingCanon: never model-invented facts (T924-AP-03) ----
+            // ---- existingCanon: never model-invented facts  ----
             append("\"existingCanon\":{")
             append("\"userAuthority\":null,")
             append("\"seriesAuthority\":null,")

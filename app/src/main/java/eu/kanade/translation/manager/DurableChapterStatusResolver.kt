@@ -12,7 +12,7 @@ import kotlinx.coroutines.withContext
 import tachiyomi.domain.source.service.SourceManager
 import java.util.concurrent.ConcurrentHashMap
 
-// T909 Phase 13: durable-status resolution moved from `TranslationManager`
+//  Phase 13: durable-status resolution moved from `TranslationManager`
 // (cache read/write + probe + document lookup + probe-store adoption). The
 // cache map itself stays a `TranslationManager` field — the durable tests
 // reflection-write that exact field — so the resolver reads it through a
@@ -80,14 +80,14 @@ internal class DurableChapterStatusResolver(
      * protocol, not detail: opens, rescues, and deletes change durable truth,
      * and a missed clear resurrects stale TRANSLATED states. All manager-side
      * invalidations route through this method (see the durableStatusCache
-     * audit in the T909 Phase 13 delivery report).
+     * audit in the  Phase 13 delivery report).
      */
     fun clearDurableStatusCache() {
         durableStatusCache.clear()
         durableDocumentCache.clear()
     }
 
-    // T912 ANR fix: suspend. This resolution reopens the durable artifact
+    //  ANR fix: suspend. This resolution reopens the durable artifact
     // store over SAF/UniFile and reads page snapshots — O(pages) FUSE/binder
     // round-trips (60-130 ms per page observed on a 68-page chapter). The
     // previous `runBlocking(Dispatchers.IO)` here parked the calling thread
@@ -165,7 +165,7 @@ internal class DurableChapterStatusResolver(
     }
 
     /**
-     * T911 slice 3: read-through durable store access for terminal snapshot
+     *  slice 3: read-through durable store access for terminal snapshot
      * reconstruction (registry miss after process death / eviction). Prefers
      * the active store; otherwise opens the durable document through the
      * bounded probe registry and releases it afterwards. No result is cached

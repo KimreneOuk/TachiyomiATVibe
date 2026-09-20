@@ -13,7 +13,7 @@ class MaskGeometry private constructor(
     data class RowSpan(val y: Int, val start: Int, val endExclusive: Int)
 
     /**
-     * TachiyomiAT: one connected component. [stableKey] is LAZY so the T912 layout
+     * TachiyomiAT: one connected component. [stableKey] is LAZY so the  layout
      * path never materializes a coordinate string — renderer identity uses the
      * compact `(planGeometryId, componentId)` pair instead. Legacy callers/tests
      * that read [stableKey] observe exactly the same value as before.
@@ -138,7 +138,7 @@ class MaskGeometry private constructor(
     }
 
     /**
-     * TachiyomiAT T912 repair (R3): DETERMINISTIC component assignment for the
+     * TachiyomiAT  repair (R3): DETERMINISTIC component assignment for the
      * layout path — a block is never left cell-less by ambiguity. Resolution:
      *  1. the max-overlap component when the maximum is unique and positive;
      *  2. on an exact overlap tie: among the TIED components, the one whose
@@ -148,7 +148,7 @@ class MaskGeometry private constructor(
      *     all components (rules 2/3 apply).
      *
      * [componentForRectangle] keeps its existing null-on-tie contract for its
-     * other callers; only the T912 assignment path uses this variant.
+     * other callers; only the  assignment path uses this variant.
      */
     fun componentForRectangleDeterministic(left: Int, top: Int, right: Int, bottom: Int): Int? {
         if (right <= left || bottom <= top || components.isEmpty()) return null
@@ -246,7 +246,7 @@ class MaskGeometry private constructor(
         }
 
         /**
-         * TachiyomiAT: budgeted ordered RLE → geometry conversion for the T912
+         * TachiyomiAT: budgeted ordered RLE → geometry conversion for the
          * layout path. Two-pass, no sorting, never [BubbleMaskRle.decode], never a
          * `width*height` allocation, and no coordinate-string key before caps.
          * Internal (not public) because [MaskConversionBudgets] is a module type;
@@ -612,7 +612,7 @@ sealed interface OrderedMaskResult {
 
 /**
  * TachiyomiAT: page-scoped budgets and counters for ordered RLE → geometry
- * conversion (T912). ONE instance is shared by every mask on a page so
+ * conversion. ONE instance is shared by every mask on a page so
  * per-page work stays bounded:
  *  - [rleIntsScanned]: RLE integers fingerprinted or conversion-scanned;
  *  - [derivedSpans]: row spans derived across all conversions this page;

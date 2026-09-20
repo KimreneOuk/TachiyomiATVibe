@@ -138,7 +138,7 @@ class MangaScreen(
             onTranslationChapter = { item, action ->
                 screenModel.runChapterTranslationActions(item, action)
             },
-            // T911 slice 2 (R6): multi-select bottom bar reaches the model's
+            //  slice 2 (R6): multi-select bottom bar reaches the model's
             // list API so ONE confirmation represents the whole selection.
             onTranslationChapters = { items, action ->
                 screenModel.runChapterTranslationActions(items, action)
@@ -296,7 +296,7 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.TranslationProgress -> {
                 val item = successState.chapters.firstOrNull { it.id == dialog.chapterId }
-                // TachiyomiAT T911 slice 1: read-only download join from the same
+                // TachiyomiAT  slice 1: read-only download join from the same
                 // chapter-row download state; the downloader never owns
                 // translation state, the drawer only displays it.
                 val activeDownload = screenModel.activeDownloadFor(dialog.chapterId)
@@ -332,7 +332,7 @@ class MangaScreen(
                         screenModel.dismissDialog()
                     },
                     onPauseResume = screenModel::setTranslationQueuePaused,
-                    // TachiyomiAT T918: a cancelled/terminal-failed batch gets a
+                    // TachiyomiAT  a cancelled/terminal-failed batch gets a
                     // working restart from the sheet (the aborted banner alone
                     // dead-ended; the indicator routed every tap here).
                     onRetry = {
@@ -409,7 +409,7 @@ class MangaScreen(
             }
 
             is MangaScreenModel.Dialog.PartialDownloadTranslation -> {
-                // T917 Phase 5 N2: the decision body describes EVERY chapter in
+                //  Phase 5 N2: the decision body describes EVERY chapter in
                 // the group via the pure partialDownloadBody mapper (the
                 // phase-4 dialog showed only the first chapter's counts).
                 val body = eu.kanade.translation.ui.TranslationUiTruth.partialDownloadBody(

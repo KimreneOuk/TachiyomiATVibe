@@ -6,8 +6,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * T909 Phase 20.1: bounded in-memory cleaned-bitmap registry moved verbatim
- * from `TranslationPipeline.translateBatch` (T909 phase 20).
+ *  Phase 20.1: bounded in-memory cleaned-bitmap registry moved verbatim
+ * from `TranslationPipeline.translateBatch` ( phase 20).
  *
  * Held-cleaned-bitmap registry: render reuses the in-memory bitmap instead of
  * reloading from disk. Bounded by BOTH a byte ceiling and a count cap; a page

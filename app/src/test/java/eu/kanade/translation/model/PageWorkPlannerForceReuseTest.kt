@@ -5,7 +5,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T924-R012: forced translation must independently reuse valid detection/OCR
+ * R012: forced translation must independently reuse valid detection/OCR
  * evidence based on current source + configuration evidence, decoupled from
  * inpaint readiness.
  *

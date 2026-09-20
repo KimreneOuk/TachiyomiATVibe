@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
 /**
- * T924 LI-2: a user reset must retire the recorded run — the reset paths
+ *   a user reset must retire the recorded run — the reset paths
  * demote committed displays and clear pages, but a left-behind COMPLETE run
  * record let a flag-ON re-dispatch return the zero-work finished outcome
  * (RESUME_COMPLETE_REASON) over pages with nothing to show. Drives the REAL

@@ -65,8 +65,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * T909 Phase 20.6: the staged batch translation shell moved verbatim from
- * `TranslationPipeline.translateBatch` (T909 phase 20). Owns the batch
+ *  Phase 20.6: the staged batch translation shell moved verbatim from
+ * `TranslationPipeline.translateBatch` ( phase 20). Owns the batch
  * preamble/generation protocol, engine-setup admission, component wiring
  * (write gate, resume planner, held-bitmap registry, render join, lane
  * workers, coordinator), pass-1 reconciliation, and the outer teardown
@@ -209,7 +209,7 @@ internal class BatchChapterTranslator(
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
     ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
-        // T922 Phase 4 (plan §4.4 batch): ONE schedule trace per batch
+        //  Phase 4 (plan §4.4 batch): ONE schedule trace per batch
         // invocation, created before engine setup and closed in the OUTER
         // finally on EVERY exit (empty batch, setup timeout, OOM, pause,
         // failure, cancellation, success). The closure is exception-safe even
@@ -224,7 +224,7 @@ internal class BatchChapterTranslator(
         var scheduleOutcome = TranslationTraceOutcome.TEARDOWN_EXCEPTION
         try {
             if (orderedStreams.isEmpty()) {
-                // T911 slice 3 (R4): a zero-page chapter must terminate its tracker.
+                //  slice 3 (R4): a zero-page chapter must terminate its tracker.
                 // The empty ordered set keeps this a DISTINCT zero-page failure
                 // (0 total pages, aborted with a reason) — the sheet's hero renders
                 // it as FAILED_NO_PAGES, never as a numeric 0/0 or a generic error.
@@ -263,7 +263,7 @@ internal class BatchChapterTranslator(
     }
 
     /**
-     * T922 Phase 4: the traced batch body (verbatim pre-existing shell) plus
+     *  Phase 4: the traced batch body (verbatim pre-existing shell) plus
      * schedule-scoped stage measurement. [setScheduleOutcome] publishes the
      * typed terminal for every planned exit; unplanned throwaways keep the
      * [TranslationTraceOutcome.TEARDOWN_EXCEPTION] default set by the caller.
@@ -300,7 +300,7 @@ internal class BatchChapterTranslator(
             // the candidate that explains the durable state.
             val durableFailurePageKeys = ConcurrentHashMap.newKeySet<String>()
             try {
-                // T922 Phase 4: schedule-scoped engine_setup stage; the span
+                //  Phase 4: schedule-scoped engine_setup stage; the span
                 // settles on every exit, including a teardown-lane throw.
                 val engineSetupSpan = scheduleTrace.beginStage(
                     TranslationTraceStage.ENGINE_SETUP,
@@ -335,7 +335,7 @@ internal class BatchChapterTranslator(
                         if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.FAILURE,
                     )
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                    // T911 slice 3: an engine-setup failure is an exceptional
+                    //  slice 3: an engine-setup failure is an exceptional
                     // exit — terminate the tracker with the typed reason instead
                     // of leaving a live nonterminal tracker behind.
                     tracker?.abort(
@@ -366,7 +366,7 @@ internal class BatchChapterTranslator(
                     TranslationContextChunkPlanner.Profile.DEFAULT
                 }
 
-                // T909 Phase 20.1: held-cleaned-bitmap registry moved to
+                //  Phase 20.1: held-cleaned-bitmap registry moved to
                 // pipeline/batch/HeldBitmapRegistry.kt. The same-name aliases below
                 // keep the not-yet-moved closures reading the same registry state.
                 val heldBitmapRegistry = HeldBitmapRegistry()
@@ -388,7 +388,7 @@ internal class BatchChapterTranslator(
                 // page under the same natural key cannot reuse old artifacts.
                 // This is an I/O-only preflight; no detector/OCR/inpaint or
                 // translator work is invoked for a matching completed page.
-                // T922 Phase 4: schedule-scoped source_fingerprint stage.
+                //  Phase 4: schedule-scoped source_fingerprint stage.
                 // M3: Lazy per-page source fingerprinting eliminates the whole-chapter
                 // I/O barrier before planning and starting page 1.
                 val fingerprintSpan = scheduleTrace.beginStage(
@@ -401,7 +401,7 @@ internal class BatchChapterTranslator(
                     items = sourceFingerprints.size,
                 )
 
-                // T909 Phase 20.3: resume planning (page plans, provenance stamping,
+                //  Phase 20.3: resume planning (page plans, provenance stamping,
                 // translation failure fence, context-frontier bookkeeping, resume gate)
                 // moved to pipeline/batch/BatchResumePlanner.kt. The frontier is the SAME
                 // instance the shell and the lane workers hold.
@@ -419,7 +419,7 @@ internal class BatchChapterTranslator(
                     inpaintingModeFromPref = inpaintingModeFromPref,
                 )
 
-                // T909 Phase 20.2: the batch write gate moved to
+                //  Phase 20.2: the batch write gate moved to
                 // pipeline/batch/BatchWriteGate.kt. It receives the SAME identity-map
                 // and durable-failure-set instances the shell holds; the same-name
                 // local delegates below keep the not-yet-moved closures' call sites.
@@ -455,7 +455,7 @@ internal class BatchChapterTranslator(
 
                 suspend fun resumeGate(page: PageTranslation?) = resumePlanner.resumeGate(page)
 
-                // T909 Phase 20.2: guardedBatchUpdate / refreshBatchIdentity /
+                //  Phase 20.2: guardedBatchUpdate / refreshBatchIdentity /
                 // batchWritePrecondition / persistAiFailure(OrThrow) / releaseBatchLease /
                 // persistBatchPageWithOomRecovery moved to pipeline/batch/BatchWriteGate.kt.
                 suspend fun guardedBatchUpdate(
@@ -497,7 +497,7 @@ internal class BatchChapterTranslator(
                     pageTranslation: PageTranslation,
                 ) = batchWriteGate.persistBatchPageWithOomRecovery(pageKey, pageTranslation)
 
-                // T909 Phase 20.3: the resumeGate body moved verbatim to
+                //  Phase 20.3: the resumeGate body moved verbatim to
                 // pipeline/batch/BatchResumePlanner.kt (delegate above keeps call sites).
 
                 suspend fun abortBatchCandidate(pageKey: String, reason: String) {
@@ -518,10 +518,10 @@ internal class BatchChapterTranslator(
                     }
                 }
 
-                // T909 Phase 20.4: the render join lives in
+                //  Phase 20.4: the render join lives in
                 // pipeline/batch/BatchRenderJoin.kt — the lane workers call its
                 // tryRender at commit boundaries, and the flagged coordinator
-                // drives its per-page persisted-layout publication (T924-TX-23).
+                // drives its per-page persisted-layout publication.
                 val renderJoin = BatchRenderJoin(
                     store = store,
                     manga = manga,
@@ -540,7 +540,7 @@ internal class BatchChapterTranslator(
 
                 val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
 
-                // T909 Phase 20.5: the lane workers moved to
+                //  Phase 20.5: the lane workers moved to
                 // pipeline/batch/BatchLaneWorkers.kt (nativeWorker,
                 // translatorWorker). The closure web became class
                 // state; the SAME registry/identity/frontier instances are injected.
@@ -558,7 +558,7 @@ internal class BatchChapterTranslator(
                         tracker?.markOcrDone(pageKey)
                     }
 
-                    // T934 LI-4: the envelope plan-build window (resume
+                    //   the envelope plan-build window (resume
                     // hydration) used to emit NOTHING — the sheet sat frozen
                     // for minutes. Map the coordinator's rebuild events to
                     // tracker emissions; each is a Channel trySend plus one
@@ -625,9 +625,9 @@ internal class BatchChapterTranslator(
 
 
                 /**
-                 * T924 zero-legacy (D1): THE single dispatch point. The FF-01
+                 *  zero-legacy: THE single dispatch point. The
                  * A/B flag completed its lifecycle and is gone — the engine
-                 * category alone picks the lane (FF-01a semantics, minus the
+                 * category alone picks the lane ( semantics, minus the
                  * flag):
                  *  - STANDARD engine → STANDARD_PIPELINE (the same
                  *    [ChapterProfileBatchCoordinator] with its per-page
@@ -639,7 +639,7 @@ internal class BatchChapterTranslator(
                  *    the envelope-path cast + pause).
                  *
                  * Resume goes through the coordinator's
-                 * `resumeFinalizeOrComplete` (ST-14/LI-2) for BOTH lanes;
+                 * `resumeFinalizeOrComplete`  for BOTH lanes;
                  * the shell-level flag-OFF consultation
                  * (shell-level OFF+COMPLETE outcome) was deleted with
                  * the flag — there is no flag-OFF state anymore.
@@ -654,7 +654,7 @@ internal class BatchChapterTranslator(
                     val dispatchKind = profilePipelineDispatchKind(
                         engineCategoryIsStandard = engineCategoryIsStandard,
                     )
-                    // T924 Phase 4 Wave A: the injected standard translate seam —
+                    //  Phase 4 Wave A: the injected standard translate seam —
                     // the coordinator's per-page tail calls THIS, and it
                     // delegates verbatim to `TranslatorLaneWorker.translateOutcome`
                     // (the per-page standard translate path, exactly the
@@ -666,10 +666,10 @@ internal class BatchChapterTranslator(
                     // guarded commit fences against a live BATCH identity. The
                     // wrapper therefore acquires a fresh BATCH page lease,
                     // registers the write identity, arms the ref with it, and
-                    // releases the lease in `finally` (TX-06: strictly after
+                    // releases the lease in `finally` ( strictly after
                     // the page's translate settled). A denied lease (a MANUAL
                     // owner owns the page) is a SKIP — that origin's outcome
-                    // is authoritative, never preempted (T917 D1).
+                    // is authoritative, never preempted ( ).
                     suspend fun standardTranslateOutcome(
                         ref: OcrReadyPageRef,
                     ): ChunkCompletionOutcome {
@@ -690,7 +690,7 @@ internal class BatchChapterTranslator(
                             }
                             is LeaseAcquisition.Granted -> {
                                 val lease = acquisition.lease
-                                // T917 exactly-once (T924 zero-legacy D1): the
+                                //  exactly-once ( zero-legacy ): the
                                 // tail's terminal pre-check ran BEFORE this
                                 // lease acquisition. A concurrent owner (the
                                 // manual/reader lane) can commit its terminal
@@ -739,11 +739,11 @@ internal class BatchChapterTranslator(
                     }
                     return when (dispatchKind) {
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE -> {
-                            // T924-D4 (wave-3 owed): the run snapshot freezes
+                            //  (wave-3 owed): the run snapshot freezes
                             // the REAL provider/model identity from the active
                             // translator configuration, not a class name. The
                             // credential freezes as a one-way signature, never
-                            // a raw key (T924-FP-04). Wave-7c: the engine part
+                            // a raw key. Wave-7c: the engine part
                             // of the key uses the TRANSLATOR'S governor backend
                             // spelling (e.g. `lm_studio`, not the enum's
                             // `lmstudio`) so the envelope work builder's
@@ -762,7 +762,7 @@ internal class BatchChapterTranslator(
                             } else {
                                 translationPreferences.translationAiApiKey(aiEnginePref).get()
                             }
-                            // T924 wave-7c: the typed analysis transport rides
+                            //  wave-7c: the typed analysis transport rides
                             // the SAME engine instance — the runner seam is
                             // now production-wired for every engine that
                             // exposes a raw completion (Gemini +
@@ -783,11 +783,11 @@ internal class BatchChapterTranslator(
                                 ?.let { engine ->
                                     AnalysisEngineGlossarySynthesizer(engine)
                                 }
-                            // T924 Stage 7 (D1/D2): the overlap scheduler runs
+                            //  Stage 7: the overlap scheduler runs
                             // the EXISTING native inpaint lane inside each
-                            // remote envelope window (ST-13) and the render
+                            // remote envelope window  and the render
                             // join publishes persisted layouts per page
-                            // (T924-TX-23). Both ride the shared identity map
+                            //. Both ride the shared identity map
                             // + lease release idiom; the legacy OFF branch
                             // below stays byte-identical.
                             val overlapScheduler = OverlapScheduler(
@@ -815,14 +815,14 @@ internal class BatchChapterTranslator(
                                     pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
                                 },
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
-                                // T924 Stage-6 slice A: the resolved AI text
+                                //  Stage-6 slice A: the resolved AI text
                                 // translator rides the profile lane; a
                                 // non-contextual translator on this lane is
                                 // the typed CONFIGURATION pause inside the
                                 // coordinator (the envelope path's local
                                 // cast).
                                 textTranslator = contextualTranslator,
-                                // T924 wave-7c: production analysis transport
+                                //  wave-7c: production analysis transport
                                 // (engine-backed raw completions) feeds the
                                 // Stage 3-5 profile chunk runner; null keeps
                                 // the typed CONFIGURATION pause.
@@ -834,7 +834,7 @@ internal class BatchChapterTranslator(
                             ).runPass1(orderedPages, computeClass)
                         }
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
-                            // T924 Phase 4: a STANDARD engine rides the SAME
+                            //  Phase 4: a STANDARD engine rides the SAME
                             // coordinator with its per-page translate tail.
                             // The provider identity freezes as
                             // `standard:<engine>`; DeepL is the only credentialed
@@ -919,7 +919,7 @@ internal class BatchChapterTranslator(
                         "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
                     }
                     setScheduleOutcome(TranslationTraceOutcome.FAILURE)
-                    // T911 slice 3: the OOM abort is a terminal exit — emit the
+                    //  slice 3: the OOM abort is a terminal exit — emit the
                     // aborted snapshot with the still-untranslated pages instead
                     // of leaving a live nonterminal tracker behind.
                     tracker?.abort(
@@ -989,7 +989,7 @@ internal class BatchChapterTranslator(
                     "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
                 }
 
-                // T924 LI-1 / zero-legacy (D1): BOTH surviving lanes end
+                //   / zero-legacy: BOTH surviving lanes end
                 // COMPLETED runs translation-terminal WITHOUT an in-pass
                 // render, so the post-pass completion projection is ALWAYS
                 // the flagged projection — the legacy done-predicate would
@@ -1016,7 +1016,7 @@ internal class BatchChapterTranslator(
                     }
                 }
                 store.flush()
-                // T924 zero-legacy (D2): no surviving lane emits render events
+                //  zero-legacy: no surviving lane emits render events
                 // for translatable pages, so the tracker's RENDER phase would
                 // stay processed=0 forever and the processed/total fraction
                 // would top out at 4/5 per display-ready page even at terminal.
@@ -1047,7 +1047,7 @@ internal class BatchChapterTranslator(
                 batchWriteIdentities.clear()
                 store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                 withContext(NonCancellable) {
-                    // T922 Phase 4: schedule-scoped store_flush; try/finally so
+                    //  Phase 4: schedule-scoped store_flush; try/finally so
                     // the span settles even when the flush itself throws.
                     val flushSpan = scheduleTrace.beginStage(
                         TranslationTraceStage.STORE_FLUSH,
@@ -1066,7 +1066,7 @@ internal class BatchChapterTranslator(
     }
     }
 
-    /** T922 Phase 4: typed schedule terminal per pass-1 stop status. */
+    /**  Phase 4: typed schedule terminal per pass-1 stop status. */
     private fun BatchPass1Status.toScheduleOutcome(): TranslationTraceOutcome = when (this) {
         BatchPass1Status.PAUSED -> TranslationTraceOutcome.PAUSE
         BatchPass1Status.PERSISTENCE_REJECTED -> TranslationTraceOutcome.PERSISTENCE_REJECTED
@@ -1128,8 +1128,8 @@ internal class BatchChapterTranslator(
 
     internal companion object {
         /**
-         * T924 zero-legacy (D1): the dispatch decision is ENGINE-CATEGORY
-         * only — the FF-01 flag completed its A/B lifecycle and was removed.
+         *  zero-legacy: the dispatch decision is ENGINE-CATEGORY
+         * only — the  flag completed its A/B lifecycle and was removed.
          *  - STANDARD engine → STANDARD_PIPELINE (the same coordinator's
          *    standard tail — pure FULL OCR preflight, then per-page legacy
          *    batch translation without the glossary);
@@ -1137,7 +1137,7 @@ internal class BatchChapterTranslator(
          *    the degenerate non-contextual AI config takes the coordinator's
          *    typed CONFIGURATION pause at the envelope seam.
          * Pure and unit-testable; the single dispatch site in `runBatchPass1`
-         * consults this and nothing else (T924-FF-01a, minus the flag).
+         * consults this and nothing else ( minus the flag).
          */
         internal fun profilePipelineDispatchKind(
             engineCategoryIsStandard: Boolean,
@@ -1147,7 +1147,7 @@ internal class BatchChapterTranslator(
             )
 
         /**
-         * T911 slice 3: pages that are NOT durably terminal when the batch
+         *  slice 3: pages that are NOT durably terminal when the batch
          * aborts (OOM / engine-setup failure). Rendered, textless, and already
          * failed pages carry their outcome in the store; everything else in the
          * ordered work set is "remaining" and is reported by the aborted

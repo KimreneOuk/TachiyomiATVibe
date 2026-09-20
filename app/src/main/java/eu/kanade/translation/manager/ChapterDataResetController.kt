@@ -19,7 +19,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
-// T909 Phase 19: the delete + reset flow region moved from
+//  Phase 19: the delete + reset flow region moved from
 // `TranslationManager` as a PURE move (the copy-paste dedupe between the
 // active-store and open-store branches stays explicitly out of scope). The
 // ordering inside [deleteTranslation] is load-bearing and strictly sequenced
@@ -255,7 +255,7 @@ internal class ChapterDataResetController(
                 activeStore.demoteCommittedDisplay(pageKey, "chapter data reset")
             }
             activeStore.flush()
-            // T924 LI-2: the reset must also retire the recorded run so a
+            //   the reset must also retire the recorded run so a
             // future dispatch can never short-circuit on its COMPLETE record.
             activeStore.retireActiveRun("chapter data reset")
         } else {
@@ -271,7 +271,7 @@ internal class ChapterDataResetController(
                     store.demoteCommittedDisplay(pageKey, "chapter data reset")
                 }
                 store.flush()
-                // T924 LI-2: same retirement for the persisted-only store.
+                //   same retirement for the persisted-only store.
                 store.retireActiveRun("chapter data reset")
             }
         }

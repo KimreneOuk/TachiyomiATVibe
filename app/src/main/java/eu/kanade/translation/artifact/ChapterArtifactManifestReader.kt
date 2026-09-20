@@ -9,7 +9,7 @@ internal data class ArtifactManifestProbe(
 )
 
 /**
- * Reads only the chapter artifact manifest header (T909 Phase 3b), moved
+ * Reads only the chapter artifact manifest header ( Phase 3b), moved
  * verbatim from the `ChapterTranslationStore` companion. The
  * `ChapterTranslationStore.probeArtifactManifest` seams stay in place for
  * callers and tests.

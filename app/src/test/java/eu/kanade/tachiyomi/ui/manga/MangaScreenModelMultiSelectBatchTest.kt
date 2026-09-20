@@ -66,7 +66,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * T911 slice 2 (R6): the bottom-bar batch action must reach the model's LIST
+ *  slice 2 (R6): the bottom-bar batch action must reach the model's LIST
  * API end-to-end — ONE acknowledgement for all N selected chapters, one
  * confirmation dialog representing all of them, one mixed
  * downloaded/undownloaded partition (list translate + list enqueue), and the
@@ -175,7 +175,7 @@ class MangaScreenModelMultiSelectBatchTest {
         every { translationManager.statusFlow() } returns translationStatusFlow
         every { translationManager.pendingTranslationRequests } returns pendingRequestsState
         every { translationManager.getQueuedTranslationOrNull(any()) } returns null
-        // T912 ANR fix: getChapterTranslationStatus is now suspend.
+        //  ANR fix: getChapterTranslationStatus is now suspend.
         coEvery {
             translationManager.getChapterTranslationStatus(any(), any(), any(), any(), any())
         } returns Translation.State.NOT_TRANSLATED
@@ -203,7 +203,7 @@ class MangaScreenModelMultiSelectBatchTest {
         every { trackPreferences.autoUpdateTrackOnMarkRead() } returns autoTrackPref
         every { readerPreferences.skipFiltered() } returns skipFilteredPref
 
-        // T911 slice 2 test-infra note: voyager caches `screenModelScope` in a
+        //  slice 2 test-infra note: voyager caches `screenModelScope` in a
         // JVM-global ScreenModelStore under a shared key for unregistered
         // models, so a scope cancelled by a previously-run fixture in this JVM
         // (e.g. MangaScreenModelTranslationDrawerTest) would silently kill this
@@ -286,7 +286,7 @@ class MangaScreenModelMultiSelectBatchTest {
             // uncaught exception in whichever test class runs next. Destroying
             // the lifecycle and JOINING the cancelled scope while the delegate
             // is still installed pins the unwind inside this teardown.
-            // T934: the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
+            //  the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
             model.screenModelScope.cancel()
             runBlocking {
@@ -352,7 +352,7 @@ class MangaScreenModelMultiSelectBatchTest {
         }
         acknowledged.captured.map { it.id } shouldContainExactly listOf(5L, 6L, 7L)
 
-        // Undownloaded chapters are enqueued together via the T907 bridge.
+        // Undownloaded chapters are enqueued together via the  bridge.
         val enqueued = slot<List<Chapter>>()
         verify(exactly = 1) { downloadManager.downloadChapters(eq(manga), capture(enqueued), any()) }
         enqueued.captured.map { it.id } shouldContainExactly listOf(6L, 7L)

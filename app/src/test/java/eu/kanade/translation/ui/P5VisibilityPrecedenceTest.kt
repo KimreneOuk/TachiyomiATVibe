@@ -8,7 +8,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 5 (spec §1.2, §3.1, §6.2 commit 9) — RED tests for the
+ *  Phase 5 (spec §1.2, §3.1, §6.2 commit 9) — RED tests for the
  * chapter-level visibility budget and stale-state precedence.
  *
  * Named defects pinned here:

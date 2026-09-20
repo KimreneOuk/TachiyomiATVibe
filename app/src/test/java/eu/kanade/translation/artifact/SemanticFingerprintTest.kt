@@ -9,9 +9,9 @@ import org.junit.jupiter.api.Test
 import java.text.Normalizer
 
 /**
- * T924-FP-09 determinism and equivalence gate for the semantic fingerprint
- * builders (T924-FP-02..FP-08): repeated computation over equal semantic
- * inputs is identical; T924-FP-01 exclusions do not affect values;
+ * 09 determinism and equivalence gate for the semantic fingerprint
+ * builders: repeated computation over equal semantic
+ * inputs is identical;  exclusions do not affect values;
  * length-prefix collision fixtures pass; golden fixtures for a 200-page
  * synthetic corpus and a frozen profile are byte-stable.
  */
@@ -230,7 +230,7 @@ class SemanticFingerprintTest {
         )
 
     // ------------------------------------------------------------------
-    // T924-FP-02: PageOcrContentFingerprint
+    // 02: PageOcrContentFingerprint
     // ------------------------------------------------------------------
 
     @Test
@@ -240,7 +240,7 @@ class SemanticFingerprintTest {
 
     @Test
     fun `page ocr content excludes translation state, user edits, colors and score`() {
-        // T924-FP-01/FP-02: a pure OCR content key must not change when a user
+        // 01/FP-02: a pure OCR content key must not change when a user
         // edits target text; translation/colors/score are excluded.
         val plain = snapshotPage(
             blocks = listOf(translationBlock("テスト")),
@@ -335,7 +335,7 @@ class SemanticFingerprintTest {
     }
 
     // ------------------------------------------------------------------
-    // T924-FP-03: OcrCorpusFingerprint
+    // 03: OcrCorpusFingerprint
     // ------------------------------------------------------------------
 
     @Test
@@ -401,7 +401,7 @@ class SemanticFingerprintTest {
     }
 
     // ------------------------------------------------------------------
-    // T924-FP-04: ProfileInputFingerprint
+    // 04: ProfileInputFingerprint
     // ------------------------------------------------------------------
 
     @Test
@@ -473,7 +473,7 @@ class SemanticFingerprintTest {
 
     @Test
     fun `profile input resists delimiter forgery`() {
-        // T924-SC-08: under naive concatenation "en" + "-US" fuses into the
+        // 08: under naive concatenation "en" + "-US" fuses into the
         // same string as the single "en-US" tag; length-prefixed fields must
         // keep the split and fused identities distinct.
         StageFingerprints.profileInputFingerprint(
@@ -491,13 +491,13 @@ class SemanticFingerprintTest {
     }
 
     // ------------------------------------------------------------------
-    // T924-FP-05: ProfileContentFingerprint
+    // 05: ProfileContentFingerprint
     // ------------------------------------------------------------------
 
     @Test
     fun `profile content ignores operational fields`() {
         val base = StageFingerprints.profileContentFingerprint(profile())
-        // Monotonic version is operational ordering ONLY (T924-FP-05).
+        // Monotonic version is operational ordering ONLY.
         StageFingerprints.profileContentFingerprint(profile(version = 2)) shouldBe base
         StageFingerprints.profileContentFingerprint(profile(frozenAtEpochMs = 1L)) shouldBe base
         StageFingerprints.profileContentFingerprint(profile(sourceRunId = "run-other")) shouldBe base
@@ -540,7 +540,7 @@ class SemanticFingerprintTest {
     }
 
     // ------------------------------------------------------------------
-    // T924-FP-06: TranslationProvenanceFingerprint
+    // 06: TranslationProvenanceFingerprint
     // ------------------------------------------------------------------
 
     @Test
@@ -595,7 +595,7 @@ class SemanticFingerprintTest {
 
     @Test
     fun `translation provenance resists delimiter forgery`() {
-        // T924-SC-08 / FP-09(c): naive flattening must not fuse the block-id
+        // 08 / FP-09(c): naive flattening must not fuse the block-id
         // list inside a page, nor across a contributing-page boundary.
         val pageFingerprint = pageOcrContent()
         val twoBlocks = provenance(
@@ -651,7 +651,7 @@ class SemanticFingerprintTest {
     }
 
     // ------------------------------------------------------------------
-    // T924-FP-07: LayoutCompatibilityFingerprint
+    // 07: LayoutCompatibilityFingerprint
     // ------------------------------------------------------------------
 
     @Test
@@ -678,7 +678,7 @@ class SemanticFingerprintTest {
     }
 
     // ------------------------------------------------------------------
-    // T924-FP-08: ColorStyleFingerprint
+    // 08: ColorStyleFingerprint
     // ------------------------------------------------------------------
 
     @Test
@@ -712,7 +712,7 @@ class SemanticFingerprintTest {
     }
 
     // ------------------------------------------------------------------
-    // T924-FP-09d: 200-page synthetic corpus golden
+    // 09d: 200-page synthetic corpus golden
     // ------------------------------------------------------------------
 
     @Test

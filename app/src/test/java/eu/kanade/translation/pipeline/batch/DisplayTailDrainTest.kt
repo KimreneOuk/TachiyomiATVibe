@@ -66,7 +66,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T934 display-tail drain: COMPLETE means "every page readable", not "every
+ *  display-tail drain: COMPLETE means "every page readable", not "every
  * ingredient done". The inpaint lane's render-terminal stamp only fires when
  * the page's translation was ALREADY terminal at inpaint time, so an
  * order-inverted page (inpaint committed before its envelope translation —

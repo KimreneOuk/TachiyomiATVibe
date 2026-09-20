@@ -6,14 +6,14 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.translation.TranslationPreferences
 
 /**
- * T924-FF-00: every surviving T924 flag is a boolean Preference accessor on
+ * 00: every surviving  flag is a boolean Preference accessor on
  * the real TranslationPreferences mechanism, default OFF, settable through
  * the preference store.
  *
- * T924 zero-legacy (D1): FF-01 (`translation_batch_profile_pipeline`)
+ *  zero-legacy:  (`translation_batch_profile_pipeline`)
  * completed its A/B lifecycle and was REMOVED — the profile pipeline is the
  * only pipeline and there is no flag to test. The leftover pref key in a
- * device DataStore is a harmless orphan. FF-02 keeps its lifecycle coverage
+ * device DataStore is a harmless orphan.  keeps its lifecycle coverage
  * here.
  */
 class TranslationFeatureFlagsTest {

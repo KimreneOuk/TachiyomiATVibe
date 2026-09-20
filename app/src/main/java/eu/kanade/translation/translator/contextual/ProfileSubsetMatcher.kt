@@ -10,7 +10,7 @@ import eu.kanade.translation.artifact.SceneRegister
 import eu.kanade.translation.artifact.ToneFlag
 
 /**
- * T924 Stage-6 slice B (design §7.1/§7.2): the PURE frozen-profile subset
+ *  Stage-6 slice B (design §7.1/§7.2): the PURE frozen-profile subset
  * matcher behind the profile-aware Batch translation prompt.
  *
  * Design contract (chapter-profile-batch-design §7 items 1-2):
@@ -31,7 +31,7 @@ import eu.kanade.translation.artifact.ToneFlag
  */
 object ProfileSubsetMatcher {
 
-    /** Hard cap on prompt subset entries (bounded constant, T924-SC-02-style "T"). */
+    /** Hard cap on prompt subset entries (bounded constant,  "T"). */
     const val MAX_SUBSET_FACTS = 24
 
     /** Hard cap on scene-context blocks carried in ONE prompt. */

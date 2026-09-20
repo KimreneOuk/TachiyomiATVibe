@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * T911 slice 1 (post-review): the drawer subtitle must never render an unknown
+ *  slice 1 (post-review): the drawer subtitle must never render an unknown
  * translation total as "(0/0)" — the same contract as the hero, applied to the
  * header subtitle's translating fallback.
  */
@@ -31,7 +31,7 @@ class TranslationProgressSheetSubtitleTest {
                 totalPages = totalPages,
                 totalStages = totalStages,
                 batchPhase = batchPhase,
-                // T917 Phase 5: numeric subtitles require a trusted page set;
+                //  Phase 5: numeric subtitles require a trusted page set;
                 // these fixtures model registered batch totals.
                 expectedPageCountTrusted = true,
             )

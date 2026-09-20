@@ -4,7 +4,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T924 zero-legacy (D1): the FF-01 A/B flag is gone — the dispatch gate is
+ *  zero-legacy: the  A/B flag is gone — the dispatch gate is
  * ENGINE-CATEGORY only.
  *
  * Truth table:

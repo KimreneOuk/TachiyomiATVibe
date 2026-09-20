@@ -89,10 +89,10 @@ class RollingAutoCoordinator(
     private val predecessorCoordinators: List<RollingAutoCoordinator> = emptyList(),
     private val ownerVersion: Long = 0L,
     /**
-     * T917 Phase 3 (D6 §2.3): bound for draining an in-flight paid call after
+     *  Phase 3 ( §2.3): bound for draining an in-flight paid call after
      * the window is cancelled, instead of tearing it down mid-call. The
      * translate+commit runs under NonCancellable inside this budget; expiry
-     * cancels the call cleanly (cancellation-class: the D9 attempt entry
+     * cancels the call cleanly (cancellation-class: the  attempt entry
      * stays unresolved).
      */
     private val drainGraceMs: Long = PROVIDER_DRAIN_GRACE_MS,
@@ -144,7 +144,7 @@ class RollingAutoCoordinator(
     private val pausedTranslations = ConcurrentHashMap<Int, Long>()
 
     // ------------------------------------------------------------------
-    // T922 Phase 3: correlated trace state (bounded, fail-open; no bitmaps or
+    //  Phase 3: correlated trace state (bounded, fail-open; no bitmaps or
     // models are retained — only trace tokens and finished-stage sums).
     // ------------------------------------------------------------------
 
@@ -212,14 +212,14 @@ class RollingAutoCoordinator(
                     currentSpec?.session?.key != session.key ||
                     currentSpec?.session?.store !== session.store
                 ) {
-                    // T922 Phase 3: chapter/session identity change closes the
+                    //  Phase 3: chapter/session identity change closes the
                     // old schedule (and its active runs) as coordinator_replaced
                     // before a fresh schedule starts for the new identity.
                     cancelLocked(TranslationTraceOutcome.COORDINATOR_REPLACED)
                     currentIdentity = identity
                     resetState()
                 }
-                // T922 Phase 3: one schedule per rolling-Auto session; repeated
+                //  Phase 3: one schedule per rolling-Auto session; repeated
                 // viewport updates coalesce into schedule_state events on the
                 // SAME schedule instead of opening new ones. Re-created after a
                 // cancel/re-arm (the previous schedule was terminally closed).
@@ -343,7 +343,7 @@ class RollingAutoCoordinator(
     }
 
     /**
-     * T922 Phase 3 (amendment §10.2): every started run gets exactly one
+     *  Phase 3 (amendment §10.2): every started run gets exactly one
      * terminal. Called on generation death under [lifecycleLock]: closes all
      * admitted-but-unclosed runs and the schedule itself. The currently
      * draining run is exempt — its real outcome lands when the drained call
@@ -453,7 +453,7 @@ class RollingAutoCoordinator(
     }
 
     /**
-     * T917 Phase 3 (D9, design §3.2): durable attempt entry BEFORE the auto
+     *  Phase 3 ( design §3.2): durable attempt entry BEFORE the auto
      * paid call. Returns a typed Paused outcome when the crash-loop cap
      * refuses the AUTO entry — no provider call is billed in that case, so
      * the ledger and the bill stay consistent. Returns null when the entry
@@ -470,7 +470,7 @@ class RollingAutoCoordinator(
             )
         }.onFailure {
             logcat(LogPriority.WARN) {
-                // T922 Phase 3 migration: raw pageKey removed from the log
+                //  Phase 3 migration: raw pageKey removed from the log
                 // (privacy contract); the correlated run's pageIndex is kept.
                 "TachiyomiAT D9: auto attempt-ledger record failed (fail-open): " +
                     "pageIndex=${work.pageIndex}"
@@ -526,7 +526,7 @@ class RollingAutoCoordinator(
     ) {
         for (work in preparedChannel) {
             coroutineContext.ensureActive()
-            // T922 Phase 3: settle the prepared-queue wait first (even for a
+            //  Phase 3: settle the prepared-queue wait first (even for a
             // stale pickup) — queue-class stage feeds schedule maxQueueMs.
             work.preparedQueueSpan?.end()
             if (!isWorkCurrent(work) || work.generation != loopGeneration) {
@@ -541,7 +541,7 @@ class RollingAutoCoordinator(
             // provider request is in flight. The stage listener refines this.
             updateSlot(work.pageIndex, AutoSlotState.Translating, work.generation)
             publishSnapshot(work.generation)
-            // T922 Phase 3: provider lane occupancy for the schedule overlap
+            //  Phase 3: provider lane occupancy for the schedule overlap
             // accumulator (N translate overlapping N+1 native prep).
             val providerLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.PROVIDER)
             try {
@@ -550,15 +550,15 @@ class RollingAutoCoordinator(
                     retireRunTrace(work.pageIndex, work.trace)
                     continue
                 }
-                // T917 Phase 3 (D6 §2.3): drain-not-cancel. The translate +
+                //  Phase 3 ( §2.3): drain-not-cancel. The translate +
                 // commit runs under NonCancellable inside [drainGraceMs], so a
                 // cancelled window lets the in-flight call finish, commit and
-                // resolve its D9 attempt entry instead of stranding the page.
+                // resolve its  attempt entry instead of stranding the page.
                 // The timeout is INNER: expiry cancels the call cleanly and is
                 // cancellation-class (the attempt entry stays unresolved). The
                 // outcome bookkeeping after the block stays generation-guarded,
                 // so a drained result commits even though the window is gone.
-                // T922 Phase 3: drainingRun marks the sweep exemption so a
+                //  Phase 3: drainingRun marks the sweep exemption so a
                 // cancelled window cannot race this run's real outcome.
                 drainingRun = work.trace
                 val translated = withContext(
@@ -646,14 +646,14 @@ class RollingAutoCoordinator(
                         }
                     }
                 }
-                // T922 Phase 3: exactly one typed terminal for the run, mapped
+                //  Phase 3: exactly one typed terminal for the run, mapped
                 // from the translated outcome (also covers the drained result
                 // of a window that died mid-flight — slot logic above stayed
                 // generation-guarded, the trace still tells the truth).
                 work.trace?.end(mapTranslatedTraceOutcome(work, translated))
                 retireRunTrace(work.pageIndex, work.trace)
             } catch (e: TimeoutCancellationException) {
-                // T922 Phase 3: drain grace expired — typed timeout. Caught
+                //  Phase 3: drain grace expired — typed timeout. Caught
                 // BEFORE the CancellationException catch (it is a subclass);
                 // control flow is unchanged: the exception rethrows exactly as
                 // before, only after the typed outcome is preserved.
@@ -688,9 +688,9 @@ class RollingAutoCoordinator(
     }
 
     /**
-     * T922 Phase 3: pure, non-suspending mapping of a translate outcome onto
+     *  Phase 3: pure, non-suspending mapping of a translate outcome onto
      * the bounded trace terminal. A persistence rejection is discriminated as
-     * EVICTED when a MANUAL owner now holds the page lease (T917 preemption),
+     * EVICTED when a MANUAL owner now holds the page lease ( preemption),
      * else PERSISTENCE_REJECTED. `null` (stale handoff / missing cleaned
      * image) maps to stale_handoff.
      */
@@ -850,7 +850,7 @@ class RollingAutoCoordinator(
 
             // Admit into the native lane (serialized inline by this loop).
             if (!markNativeAdmitted(idx, spec.generation)) return false
-            // T922 Phase 3: the page run starts at native admission. The trace
+            //  Phase 3: the page run starts at native admission. The trace
             // element wraps the prepare so deep ONNX/OCR code correlates its
             // stages with this run across suspension points. scheduleTrace is
             // null when tracing is off → every call below fails open.
@@ -862,7 +862,7 @@ class RollingAutoCoordinator(
                     plan = TranslationTracePlan.FRESH,
                 )
             }
-            // T922 Phase 4 (Phase 3 review F1): the run joins the terminal-sweep
+            //  Phase 4 (Phase 3 review F1): the run joins the terminal-sweep
             // registry and the generation liveness re-check ATOMICALLY under the
             // SAME lock the cancel sweep holds. A sweep can therefore never
             // interleave between admission and registration: either the
@@ -1331,7 +1331,7 @@ class RollingAutoCoordinator(
         val identity: AutoChapterIdentity,
         val session: TranslationSession,
         val generation: Long,
-        // T922 Phase 3: the run's terminal is owned by the translate consumer
+        //  Phase 3: the run's terminal is owned by the translate consumer
         // once the handoff completes; the queue span measures send→pickup.
         val trace: TranslationRunTrace? = null,
         val preparedQueueSpan: TranslationStageSpan? = null,
@@ -1345,14 +1345,14 @@ class RollingAutoCoordinator(
 
     companion object {
         /**
-         * T917 Phase 3 (D6 §2.3): production drain grace. Bounded so a hung
+         *  Phase 3 ( §2.3): production drain grace. Bounded so a hung
          * provider call still cancels cleanly; long enough that an in-flight
          * call normally finishes and commits even after the window is gone.
          *
-         * T917 Phase 4 (D7 §1.6): aligned to the drained call's legitimate
+         *  Phase 4 ( §1.6): aligned to the drained call's legitimate
          * budget (ONNX <= 90 s + HTTP/render <= 120 s, sequential): a shorter
          * grace would cut a healthy long call cancellation-class mid-chain and
-         * strand its D9 attempt entry unresolved (phase3-verification finding 4).
+         * strand its  attempt entry unresolved (phase3-verification finding 4).
          */
         const val PROVIDER_DRAIN_GRACE_MS = 210_000L
 

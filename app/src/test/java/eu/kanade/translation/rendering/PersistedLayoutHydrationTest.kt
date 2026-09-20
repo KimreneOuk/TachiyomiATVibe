@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.Executor
 
 /**
- * T924 WP9 gates 7.6/7.7 (JVM-testable parts): the [TextLayoutCoordinator]
+ *  WP9 gates 7.6/7.7 (JVM-testable parts): the [TextLayoutCoordinator]
  * hydrate-then-fallback contract and the [PersistedLayoutReaderBridge] /
  * [PersistedLayoutRuntime] seams.
  *
@@ -21,10 +21,10 @@ import java.util.concurrent.Executor
  * lambdas), which is the JVM-testable part of the gate; the on-device
  * holder-level rows are listed as owed in `evidence/stage2/wp9-report.md`.
  *
- * Gate 7.7 (fallback correctness): FF-02 off, no bridge source, Manual/Auto
+ * Gate 7.7 (fallback correctness):  off, no bridge source, Manual/Auto
  * and legacy data (no pointer), missing, corrupt (quarantined), unsupported
  * version, and lossy rehydration ALL route to the async planner. The planner
- * fallback is mandatory (T924-FF-02b) and the bind-generation stale defense
+ * fallback is mandatory  and the bind-generation stale defense
  * applies to hydrated deliveries identically (gate 7-4).
  */
 class PersistedLayoutHydrationTest {

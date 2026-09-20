@@ -26,7 +26,7 @@ internal sealed class TextLayoutBindResult<out T : Any> {
 }
 
 /**
- * TachiyomiAT T920 3.1: moves overlay text-layout planning OFF the thread that
+ * TachiyomiAT  3.1: moves overlay text-layout planning OFF the thread that
  * calls `TranslationOverlayView.bind` (the Main thread). The coordinator owns
  * the bind identity/generation bookkeeping:
  *
@@ -54,12 +54,12 @@ internal class TextLayoutCoordinator<T : Any>(
     private val plan: (blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) -> T,
     private val onPrepared: (T) -> Unit,
     /**
-     * T924 WP9 (T924-FF-02a(2)): optional persisted-layout hydration hook,
+     *  WP9: optional persisted-layout hydration hook,
      * consulted ON [backgroundExecutor] BEFORE [plan]. A non-null return is
      * delivered and cached exactly like a planned value with ZERO planner
      * invocations (gate 7.6); null (or a throw) falls back to [plan] — the
      * async planner stays the mandatory fallback for Manual/Auto, legacy data,
-     * and missing/invalid/incompatible plans (T924-FF-02b). The bind-generation
+     * and missing/invalid/incompatible plans. The bind-generation
      * stale defense below applies to hydrated deliveries identically.
      */
     private val hydrate: ((blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) -> T?)? = null,
@@ -97,9 +97,9 @@ internal class TextLayoutCoordinator<T : Any>(
                 // Superseded before we even started: skip the planner entirely.
                 if (bindGeneration != generation) return@execute
                 val prepared = try {
-                    // T924 WP9: valid persisted plan first (zero planner work);
+                    //  WP9: valid persisted plan first (zero planner work);
                     // every other outcome — absent, corrupt, incompatible, lossy,
-                    // FF-02 off — keeps the async planner fallback (T924-FF-02b).
+                    //  off — keeps the async planner fallback.
                     val hydrated = try {
                         hydrate?.invoke(blocks, pageWidth, pageHeight)
                     } catch (t: Throwable) {

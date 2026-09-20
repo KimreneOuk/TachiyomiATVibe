@@ -26,7 +26,7 @@ import java.lang.reflect.Field
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T924 hotfix regression guards for the batch start admission path:
+ *  hotfix regression guards for the batch start admission path:
  * - a generic queue start must not resurrect an ERROR-restored queue entry
  *   (restore work resumes only through an explicit per-chapter request);
  * - an admission for a chapter whose batch is still in flight must be a no-op

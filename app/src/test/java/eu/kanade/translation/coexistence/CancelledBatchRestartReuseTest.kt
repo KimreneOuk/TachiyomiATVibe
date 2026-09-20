@@ -14,7 +14,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- * T918 — batch retry affordance, pipeline leg (the exact ChapterTranslator.kt
+ * batch retry affordance, pipeline leg (the exact ChapterTranslator.kt
  * CancellationException scenario: the queue entry is already gone when the
  * batch worker is cancelled mid-run).
  *
@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Test
  * suspension point. No sleeps, no polling — barrier gates and bounded
  * state.first{} awaits only.
  *
- * T924 zero-legacy (D1): the fixture moved to the durable ARTIFACTS-authority
+ *  zero-legacy: the fixture moved to the durable ARTIFACTS-authority
  * store, so run 1's work products (OCR checkpoints + committed translation
  * work products) are genuinely durable sidecars and the former re-seed
  * deviation is DELETED — the restart consults the real artifacts. The lane is
@@ -60,8 +60,8 @@ class CancelledBatchRestartReuseTest {
     fun `cancelled batch restarts from completed work with only the remainder re-run`() = runBlocking<Unit> {
         // cleanedImagesOnDisk models the DURABLE cleaned images run 1 persisted
         // (document IO is a sanctioned fake seam): the resume gate's
-        // physical-presence check consults it (D10 precedent).
-        // T924 zero-legacy (D1): the batch requires artifact authority — the
+        // physical-presence check consults it ( precedent).
+        //  zero-legacy: the batch requires artifact authority — the
         // durable ARTIFACTS-authority store is also what makes run 1's work
         // products (OCR checkpoints + candidate work products) genuinely
         // resumable, so the legacy re-seed deviation is gone.
@@ -137,7 +137,7 @@ class CancelledBatchRestartReuseTest {
             }
 
             // (No re-seed: run 1's OCR checkpoints and p0's committed work
-            // product are DURABLY real under the T924 pipeline — the restart
+            // product are DURABLY real under the  pipeline — the restart
             // consults the real sidecars.)
 
             // The restart (what the sheet Retry button invokes): same chapter,
@@ -150,7 +150,7 @@ class CancelledBatchRestartReuseTest {
             withClue("the restart must complete the chapter") {
                 restart.translation.status shouldBe Translation.State.TRANSLATED
                 reconciliation.nonDurableFailure shouldBe false
-                // T924 zero-legacy (D1) + 2026-09-16 E-fix + T934 track I
+                //  zero-legacy  + 2026-09-16 E-fix +  track I
                 // round 3: the lane commits translations with NO in-pass
                 // render WORK. Both pages still end render-terminal:
                 // p0's inpaint ran in run 1 with its translation already
@@ -170,7 +170,7 @@ class CancelledBatchRestartReuseTest {
                     decodeP0BeforeRestart
             }
             withClue("reuse: page 1's inpaint is durable completed work - the restart re-decodes nothing") {
-                // T934 track I (round 3) DOCUMENTED CONVERSION — the
+                //  track I (round 3) DOCUMENTED CONVERSION — the
                 // choreography changed WITH the feature under test. The
                 // decoupled scheduler admits an OCR-final page regardless of
                 // translation status, so run 1's page-0 window already

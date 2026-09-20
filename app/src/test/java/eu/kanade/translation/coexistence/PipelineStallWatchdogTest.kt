@@ -15,7 +15,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 4 D8 — graph coverage for the native occupancy watchdog and
+ *  Phase 4  — graph coverage for the native occupancy watchdog and
  * honest single-page terminal outcomes. The harness uses real scheduler,
  * pipeline, quarantine, leases, and store; only its documented Android/IO
  * seams are faked.
@@ -140,7 +140,7 @@ class PipelineStallWatchdogTest {
         // BEFORE queueing behind the parked stove. Driven through the real
         // pipeline boundary directly: the scheduler's anti-blink dedup would
         // silently swallow a second translatePage for an already-active job,
-        // and the D8 typed-rejection contract lives at pipeline admission.
+        // and the  typed-rejection contract lives at pipeline admission.
         val rejected = withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
             CoroutineScope(Dispatchers.IO).async {
                 h.pipeline.translateSinglePage(

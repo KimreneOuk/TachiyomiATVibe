@@ -18,7 +18,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- * T917 Phase 5 (spec §1.2, §2): bounded UI vocabulary projected FROM existing
+ *  Phase 5 (spec §1.2, §2): bounded UI vocabulary projected FROM existing
  * typed outcomes, durable projections, and auto slot states. This is not a
  * new state machine and adds no scheduler state enum: every value here is a
  * presentation truth derived from store/scheduler facts, and every surface
@@ -42,7 +42,7 @@ enum class UiRetryMode {
     /** The user action starts a new attempt (explicit Retry). */
     EXPLICIT,
 
-    /** The D9 repeated-interruption cap: manual retry required (force path). */
+    /** The  repeated-interruption cap: manual retry required (force path). */
     MANUAL_REQUIRED,
 }
 
@@ -97,7 +97,7 @@ object TranslationUiTruth {
      * @param outcome   the scheduler's last typed outcome for this intent, if any.
      * @param durable   the durable display projection of the page.
      * @param partial   durable manifest fact: the committed result is partial.
-     * @param exhausted the D9 ledger says this page exhausted its attempts.
+     * @param exhausted the  ledger says this page exhausted its attempts.
      * @param cancelled an explicit paid-work cancellation was acknowledged.
      */
     fun forManualOutcome(
@@ -170,7 +170,7 @@ object TranslationUiTruth {
     // ------------------------------------------------------------------
 
     /**
-     * T917 Phase 5 D12 (spec §3.2): timeout copy names the ACTUAL result timer
+     *  Phase 5  (spec §3.2): timeout copy names the ACTUAL result timer
      * that fired and omits unmeasured durations. The native lane and the
      * HTTP+render lane run DIFFERENT timers; a generic "Translation timed out"
      * tells the user nothing about which half of the pipeline stalled.
@@ -183,14 +183,14 @@ object TranslationUiTruth {
         }
 
     /**
-     * One chapter's partial-download admission facts (T917 D10/N2).
+     * One chapter's partial-download admission facts ( /N2).
      * [expectedSourceTotal] is null when the source page count is still
      * unknown (download in progress).
      */
     data class PartialDecision(val downloaded: Int, val expectedSourceTotal: Int?)
 
     /**
-     * T917 Phase 5 N2 (spec §2, §3.3): the finish-first/translate-subset
+     *  Phase 5 N2 (spec §2, §3.3): the finish-first/translate-subset
      * decision body must describe EVERY chapter in the group — the phase-4
      * dialog showed only the first chapter's counts.
      */
@@ -280,13 +280,13 @@ object TranslationUiTruth {
     }
 
     /**
-     * T918: the progress sheet's Retry affordance truth (the field defect: a
+     *  the progress sheet's Retry affordance truth (the field defect: a
      * cancelled batch dead-ended in the sheet's aborted banner with no way
      * back). Offered ONLY when a restart is actually possible AND the caller
      * wired the restart callback: a terminal-aborted batch (explicit
      * cancellation of paid work), a terminal ERROR batch (FINISHED phase +
      * ERROR state), or a durable READY_WITH_WARNINGS batch that ENDED with
-     * unresolved pages (T924 field fix, Chapter 21: a persistence-rejected
+     * unresolved pages ( field fix, Chapter 21: a persistence-rejected
      * run surfaced as "Ready (Warnings)" with no way back — the same requeue
      * as Retry reuses committed pages and re-runs only the remainder).
      * A successfully FINISHED batch is completion, not a failure state —
@@ -335,7 +335,7 @@ object TranslationUiTruth {
     }
 
     /**
-     * T917 Phase 5 (spec §1.2 rule 6, §3.1): the single chapter-level
+     *  Phase 5 (spec §1.2 rule 6, §3.1): the single chapter-level
      * visibility gate. [previous] is the last surfaced snapshot for the same
      * chapter (may be null); [current] is the fresher durable state. The
      * CURRENT state is always the truth source — [previous] is used only to
@@ -616,7 +616,7 @@ object TranslationUiTruth {
     )
 
     // ------------------------------------------------------------------
-    // T934 U.3/U.6: chapter-level batch status-line truth.
+    //  U.3/U.6: chapter-level batch status-line truth.
     //
     // One priority chain (requestState → queuePosition → pauseReason →
     // coordinator phase+counters → batchPhase) resolved ONCE here, rendered
@@ -629,10 +629,10 @@ object TranslationUiTruth {
     // ------------------------------------------------------------------
 
     // ------------------------------------------------------------------
-    // T934 completion oracle: the celebratory "Completed / All pages
+    //  completion oracle: the celebratory "Completed / All pages
     // translated" state is a CLAIM about every page, so it is gated on the
     // run's failure/attention facts — never on the batch phase alone. The
-    // device trace that motivated this (T934) showed the sheet's green
+    // device trace that motivated this  showed the sheet's green
     // "Completed" pill and "All pages translated" subtitle while the same
     // run's trace recorded outcome=failure and "1 pages need attention":
     // FINISHED (which ERROR/READY_WITH_WARNINGS chapters also map to) was
@@ -652,7 +652,7 @@ object TranslationUiTruth {
     }
 
     /**
-     * T934 completion oracle: whether any page in the snapshot needs user
+     *  completion oracle: whether any page in the snapshot needs user
      * attention — the batch failure counter, the failure groups, a
      * non-durable (unsaved) result, or a per-page failed/partial fact.
      */
@@ -663,7 +663,7 @@ object TranslationUiTruth {
             snapshot.pages.any(::pageNeedsAttention)
 
     /**
-     * T934 completion oracle: the count behind the "N pages need attention"
+     *  completion oracle: the count behind the "N pages need attention"
      * wording. Never zero while attention exists, so an attention run whose
      * facts live outside the per-page list (unsaved result) still reads
      * honestly.
@@ -678,7 +678,7 @@ object TranslationUiTruth {
     }
 
     /**
-     * T934 completion oracle: the run may render "Completed / All pages
+     *  completion oracle: the run may render "Completed / All pages
      * translated" ONLY when the batch phase finished AND zero pages need
      * attention AND the run outcome is not failed/paused/aborted/unsaved. A
      * run with failure or attention pages NEVER classifies as completed.
@@ -820,7 +820,7 @@ object TranslationUiTruth {
                 fallback = "Finalizing translated chapter...",
             )
             TranslationBatchPhase.FINISHED -> when {
-                // T934 completion oracle: only a run with zero attention pages
+                //  completion oracle: only a run with zero attention pages
                 // and no failed/paused/aborted outcome may claim completion.
                 isCompletedOutcome(snapshot) -> BatchStatusLine(
                     kind = BatchStatusLineKind.COMPLETED,
@@ -888,7 +888,7 @@ object TranslationUiTruth {
         }
     }
 
-    /** T911 slice 1 (post-review) subtitle copy for unknown-total phases. */
+    /**  slice 1 (post-review) subtitle copy for unknown-total phases. */
     private fun heroPhaseSubtitle(hero: BatchHeroProjection.Phase): String {
         val percent = hero.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
         return when (hero.phase) {
@@ -913,7 +913,7 @@ object TranslationUiTruth {
     }
 
     /**
-     * T934 U.4: the reader bottom bar's short rendering of the SAME truth.
+     *  U.4: the reader bottom bar's short rendering of the SAME truth.
      * Returns null exactly when the bar must stay hidden (no request, no
      * pause, idle phase — the legacy visibility rule). The rebuild/restore
      * kinds replace the frozen "Batch X/Y" line during a resume rebuild;
@@ -986,12 +986,12 @@ object TranslationUiTruth {
         return "$value$suffix"
     }
 
-    /** T911 slice 2: truthful queue position, e.g. "Queued (2nd of 3) — ...". */
+    /**  slice 2: truthful queue position, e.g. "Queued (2nd of 3) — ...". */
     fun queuedPositionLabel(position: Int, total: Int): String =
         "Queued (${ordinalSuffixOf(position)} of $total) — waiting for earlier batches"
 }
 
-/** Bounded vocabulary for chapter-level batch status lines (T934 U.3). */
+/** Bounded vocabulary for chapter-level batch status lines ( U.3). */
 enum class BatchStatusLineKind {
     RESUMING,
     REQUEST_STARTING,
@@ -1004,10 +1004,10 @@ enum class BatchStatusLineKind {
     QUEUED_READY,
     PAUSED,
 
-    /** T934 U.1: run record says the resumed run is re-validating sources. */
+    /**  U.1: run record says the resumed run is re-validating sources. */
     REBUILDING,
 
-    /** T934 U.1: run record says the resumed run is re-adopting durable page work. */
+    /**  U.1: run record says the resumed run is re-adopting durable page work. */
     RESTORING,
     BUILDING_CONTEXT,
     FIRST_PASS_STAGES,
@@ -1016,7 +1016,7 @@ enum class BatchStatusLineKind {
     COMPLETED,
 
     /**
-     * T934 completion oracle: the batch phase finished but the run carries
+     *  completion oracle: the batch phase finished but the run carries
      * failure/attention pages or a failed/paused/unsaved outcome — the
      * attention state that replaces the celebratory completed copy.
      * [formatArgs] carries the attention page count.
@@ -1026,7 +1026,7 @@ enum class BatchStatusLineKind {
 }
 
 /**
- * One chapter-level batch status line (T934 U.3). [formatArgs] feeds the
+ * One chapter-level batch status line ( U.3). [formatArgs] feeds the
  * surface's string-resource lookup for [kind]; [fallback] is the English
  * source wording for surfaces (or locales) that render without the resource.
  */

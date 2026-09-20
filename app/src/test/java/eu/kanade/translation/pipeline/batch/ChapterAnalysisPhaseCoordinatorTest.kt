@@ -55,12 +55,12 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 /**
- * T924 Stage 5 slices A+B (T924-ST-07..10): the coordinator's analysis phase
+ *  Stage 5 slices A+B: the coordinator's analysis phase
  * through profile freeze. After a COMPLETE OCR preflight the run publishes
  * ANALYSIS_PLAN, executes the planned chunks through the typed runner,
  * persists validated results via the crash-safe sidecar-then-pointer
  * transaction, then synthesizes the glossary from the durable chunk
- * summaries and freezes the profile (TX-22) — and STOPS
+ * summaries and freezes the profile  — and STOPS
  * (PAUSED; envelope/translation are Stage 6). Resume reuses the checkpointed
  * preflight (no re-OCR) and skips the persisted chunk prefix (no re-send).
  */
@@ -343,7 +343,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_FROZEN] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_CHUNKS_RECONCILED] shouldBe 1
         record.ocrCorpusFingerprint.shouldNotBeNull()
-        // TX-22: the frozen profile pointer rides the PROFILE_FROZEN record.
+        //  the frozen profile pointer rides the PROFILE_FROZEN record.
         record.profilePointer.shouldNotBeNull().version shouldBe 1
         // Summary-glossary redesign: ONE synthesis call received exactly the
         // durable chunk summaries (the persisted chunk records' structured
@@ -418,7 +418,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // The checkpointed preflight was FULLY reused: zero re-OCR. The
-        // persisted prefix (ordinal 0) was never re-sent (ST-08).
+        // persisted prefix (ordinal 0) was never re-sent.
         resumedWorker.ocrPages shouldBe emptyList()
         analyzer2.executedOrdinals shouldContainExactly listOf(1)
         resumed.status shouldBe BatchPass1Status.PAUSED

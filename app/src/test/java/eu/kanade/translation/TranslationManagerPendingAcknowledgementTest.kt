@@ -169,7 +169,7 @@ class TranslationManagerPendingAcknowledgementTest {
         setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "pendingRequestMutationLock", Any())
         setField(manager, "storeScope", CoroutineScope(laneJob + Dispatchers.IO))
-        // T911 slice 2: generation/attach/group state the coordinator resolves.
+        //  slice 2: generation/attach/group state the coordinator resolves.
         setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
         setField(manager, "pendingGroupIdSequence", AtomicLong(0))

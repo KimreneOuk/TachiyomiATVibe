@@ -85,7 +85,7 @@ class TranslationScheduler(
         private const val JOIN_TIMEOUT_MS = 2_000L
 
         /**
-         * T917 D2 §2.4: cap of the [manualOutcomes] map (evict-oldest). Bounds
+         *   §2.4: cap of the [manualOutcomes] map (evict-oldest). Bounds
          * the memory a long reader session can pin to one entry per distinct
          * manual single-page intent.
          */
@@ -104,7 +104,7 @@ class TranslationScheduler(
     private val activePageJobs = ConcurrentHashMap<String, Job>()
 
     /**
-     * T917 D2 §2.4: typed outcome of the last completed manual single-page
+     *   §2.4: typed outcome of the last completed manual single-page
      * intents, keyed like [activePageJobs]. Bounded (evict-oldest, cap 32) and
      * cleared with the existing chapter-switch teardown. This is the Phase-5
      * hook the ReaderViewModel will map to the "Translating · background job"
@@ -120,7 +120,7 @@ class TranslationScheduler(
         )
 
     /**
-     * T917 Phase 5 (spec §5.2.2): read-only projection of the last completed
+     *  Phase 5 (spec §5.2.2): read-only projection of the last completed
      * manual single-page intent for this identity. Presence in the map is not
      * success — the caller must treat the typed value through the pure
      * TranslationUiTruth mapper. Unknown or foreign (chapter, page) identities
@@ -309,7 +309,7 @@ class TranslationScheduler(
     }
 
     /**
-     * T922 Phase 3 amendment §10.7 reachability inventory: the ONLY caller of
+     *  Phase 3 amendment §10.7 reachability inventory: the ONLY caller of
      * this method is [eu.kanade.translation.orchestration.TranslationManager.requestAutoWindow],
      * which itself has zero callers in live code (repo-wide sweep: definitions
      * plus this delegation only; the reader drives
@@ -417,7 +417,7 @@ class TranslationScheduler(
                         current.isCleanedImageReady
                     ) {
                         try {
-                            // T917 D1: the legacy auto window's work is AUTO at
+                            //   the legacy auto window's work is AUTO at
                             // the lease layer (never preempts, can be evicted
                             // by a reader tap).
                             executor.translateSinglePage(
@@ -719,7 +719,7 @@ class TranslationScheduler(
             if (GroupCommitConfiguration.enabled) {
                 manualOutcomes[jobKey] = SinglePageOutcome.Admitted
             }
-            // T922 Phase 3 (plan §4.4 Manual): the schedule + run are created
+            //  Phase 3 (plan §4.4 Manual): the schedule + run are created
             // BEFORE the coroutine is launched, and the lease_wait span starts
             // here so its duration is the request→coroutine-start scheduler
             // queue. The terminal run event is owned by the invoke-on-completion
@@ -754,7 +754,7 @@ class TranslationScheduler(
                     traceOutcome.set(TranslationTraceOutcome.CANCELLED)
                     throw e
                 } catch (e: Throwable) {
-                    // T922 §10.4 legacy-log migration: the raw page/chapter/manga
+                    //  §10.4 legacy-log migration: the raw page/chapter/manga
                     // identifiers this line used to carry are covered by the
                     // correlated trace run (sid/rid + keyed page token), so the
                     // retained log carries only a bounded errorType token plus
@@ -822,7 +822,7 @@ class TranslationScheduler(
     }
 
     /**
-     * T922 Phase 3: bounded trace outcome for a manual single-page outcome
+     *  Phase 3: bounded trace outcome for a manual single-page outcome
      * value. Attached-family jobs never owned the page; Rejected means the
      * request performed no owned work (dedup residual / persistence reject).
      */
@@ -853,7 +853,7 @@ class TranslationScheduler(
         // the write rather than creating a spurious FAILED entry.
         val existing = store.state.value[pageKey] ?: return
         if (existing.hasRenderedResult || existing.isStageFailed) return
-        // T924 LI-3: while a batch run holds this page's BATCH-origin stage
+        //   while a batch run holds this page's BATCH-origin stage
         // lease, the batch owns the page's stage state. The cancel write below
         // builds its precondition from the CURRENT snapshot — which carries the
         // batch's own lease token — and would punch straight through the fence,
@@ -1018,7 +1018,7 @@ class TranslationScheduler(
             val prefix = "$chapterId:"
             queuedPageKeys.removeIf { it.startsWith(prefix) }
             queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
-            // T917 D2: the chapter-switch teardown also drops this chapter's
+            //   the chapter-switch teardown also drops this chapter's
             // recorded manual outcomes (bounded map, §2.4).
             manualOutcomes.keys.removeAll { it.startsWith(prefix) }
             val toJoin = mutableListOf<Job>()

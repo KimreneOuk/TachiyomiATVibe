@@ -15,7 +15,7 @@ import logcat.LogPriority
 import logcat.logcat
 
 /**
- * T922 Phase 4: compatibility facade over `translation_trace_v1`
+ *  Phase 4: compatibility facade over `translation_trace_v1`
  * ([TranslationPipelineDiagnostics], tag `TachiyomiAT.Translation`).
  *
  * The legacy `TachiyomiAT.Batch` timing/status lines are migrated: every

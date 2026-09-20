@@ -27,14 +27,14 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Native lane + engine cache moved from `TranslationPipeline` (T909 Phase 10).
+ * Native lane + engine cache moved from `TranslationPipeline` ( Phase 10).
  * Owns the sole native-permit admission wrapper, the 8 cached engine fields,
  * the full config signature, the engine factories, and the defensive `init`
  * (invalid config at construction must not crash the eagerly built pipeline).
  * The native run scope/quarantine, the in-flight page-key set, and the
  * [onPageStuck] callback stay pipeline-owned and are injected here.
  *
- * T917 Phase 4 (D7, phase4-design §1.2): the lane also owns the engine EPOCH
+ *  Phase 4 ( phase4-design §1.2): the lane also owns the engine EPOCH
  * (bumped only by [closeEngines]) and the translator BORROW registry
  * ([beginTranslatorUse]/[endTranslatorUse]) that make in-flight reader work
  * observable to the stop path, plus the bounded NON-BLOCKING borrow drain:
@@ -48,7 +48,7 @@ internal class EngineLane(
     private val nativeRunQuarantine: NativeRunQuarantine,
     private val inFlightPageKeys: MutableSet<String>,
     private val onPageStuck: () -> ((chapterId: Long?, pageKey: String) -> Unit)?,
-    // T917 Phase 4 (D7): the borrow drain bounds. Defaults keep every existing
+    //  Phase 4: the borrow drain bounds. Defaults keep every existing
     // construction site compiling; production wires drainScope = nativeRunScope.
     private val drainGraceMs: Long = ENGINE_DRAIN_GRACE_MS,
     private val drainScope: CoroutineScope? = null,
@@ -58,14 +58,14 @@ internal class EngineLane(
 
     internal companion object {
         /**
-         * T917 Phase 4 (D7 §1.6): the ENGINE drain grace stays deliberately SHORT —
+         *  Phase 4 ( §1.6): the ENGINE drain grace stays deliberately SHORT —
          * its expiry neither fails nor bills anything; the epoch guard transparently
          * retries the racing page against the rebuilt translator exactly once. Holding
          * engines open for the full chain budget after an explicit Stop would delay
          * native-memory release (recognition engine teardown) — bounded memory
          * outranks the rare extra paid call. This asymmetry with the PROVIDER drain
          * grace (RollingAutoCoordinator.PROVIDER_DRAIN_GRACE_MS, aligned to
-         * the provider's own chain budget) is a decision, not an oversight. `[TARGET]` per D13.
+         * the provider's own chain budget) is a decision, not an oversight. `[TARGET]` per.
          */
         const val ENGINE_DRAIN_GRACE_MS = 5_000L
     }
@@ -76,7 +76,7 @@ internal class EngineLane(
     private var permitHolder: PermitHolder? = null
 
     // ------------------------------------------------------------------
-    // T917 Phase 4 (D7 §1.2): engine epoch + translator borrow registry.
+    //  Phase 4 ( §1.2): engine epoch + translator borrow registry.
     // ------------------------------------------------------------------
 
     /**
@@ -312,7 +312,7 @@ internal class EngineLane(
         inFlightPageKeys.clear()
         enginesClosed = true
         engineEpoch.incrementAndGet()
-        // T917 Phase 4 (D7 §1.5 row 1) HIGH-RISK GUARD: snapshot the EXACT engine
+        //  Phase 4 ( §1.5 row 1) HIGH-RISK GUARD: snapshot the EXACT engine
         // references at close time and close THOSE objects — a one-shot drain that
         // fires after a rebuild must never kill the NEW engines. The [enginesClosed]
         // flag stays the rebuild authority.
@@ -373,7 +373,7 @@ internal class EngineLane(
     }
 
     /**
-     * T917 Phase 4 (D7 §1.2): targeted TRANSLATOR-ONLY rebuild for the epoch
+     *  Phase 4 ( §1.2): targeted TRANSLATOR-ONLY rebuild for the epoch
      * guard's exactly-one retry. The HTTP translate phase runs OUTSIDE the permit
      * and has no native needs of its own, so it repairs only the closed translator
      * (the rebuild gate's full recognition+translator rebuild stays the authority

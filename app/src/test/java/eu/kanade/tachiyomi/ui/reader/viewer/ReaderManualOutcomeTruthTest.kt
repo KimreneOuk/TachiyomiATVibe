@@ -22,7 +22,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T917 P5 reader-hop (review finding P5-1, spec §0.2.2, §6.2.8, §6.2.10):
+ *  P5 reader-hop (review finding P5-1, spec §0.2.2, §6.2.8, §6.2.10):
  * the reader surfaces must consume the Phase 5 truth layer. These tests target
  * the JOIN, not the pure mapper (already covered by the P5 suites): the typed
  * manual outcome must reach the page chip wrapped verbatim from
@@ -148,7 +148,7 @@ class ReaderManualOutcomeTruthTest {
             durable = exhausted,
         )
 
-        // The D9 fact rides with the durable page: the mapper record must be
+        // The  fact rides with the durable page: the mapper record must be
         // the MANUAL_REQUIRED row, not a plain retryable failure.
         val expected = ReaderPageFeedbackState.ManualTruth(
             TranslationUiTruth.forManualOutcome(
@@ -252,7 +252,7 @@ class ReaderManualOutcomeTruthTest {
 
     @Test
     fun `T917 P5 reader-hop RED defect - native stall renders only on the stalled pageKey`() {
-        // The D8 stall flow is fenced by the same pageKey comparison: the
+        // The  stall flow is fenced by the same pageKey comparison: the
         // stalled page renders stall truth even without a scheduler outcome...
         val ownStall = NativeStallState(
             token = 1L,

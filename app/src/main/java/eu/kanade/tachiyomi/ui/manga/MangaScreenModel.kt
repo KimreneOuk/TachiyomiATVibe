@@ -194,7 +194,7 @@ class MangaScreenModel(
                     updateSuccessState {
                         it.copy(
                             manga = manga,
-                            // T912 ANR fix: the per-downloaded-chapter
+                            //  ANR fix: the per-downloaded-chapter
                             // getChapterTranslationStatus query inside
                             // toChapterListItems is now suspend and runs here
                             // on the IO collector — it used to park Main via
@@ -559,7 +559,7 @@ class MangaScreenModel(
     // the chapter list item for the determinate "12/40" indicator.
     private val translationProgressJobs = mutableMapOf<Long, kotlinx.coroutines.Job>()
 
-    // TachiyomiAT T911 slice 1: keyed retention of the last live/terminal batch
+    // TachiyomiAT  slice 1: keyed retention of the last live/terminal batch
     // snapshot so full chapter-list rebuilds (download cache/queue, translation
     // queue, pending request emissions) and collector cancellation at terminal
     // status cannot erase an unchanged live or terminal snapshot.
@@ -602,7 +602,7 @@ class MangaScreenModel(
     }
 
     private fun updateTranslationProgress(chapterId: Long, progress: TranslationProgressSnapshot?) {
-        // TachiyomiAT T911 slice 1: retain the snapshot in keyed screen-model
+        // TachiyomiAT  slice 1: retain the snapshot in keyed screen-model
         // state before it reaches the item, so a later full list rebuild reads
         // it back through the registry.
         translationSnapshots.remember(chapterId, progress)
@@ -619,7 +619,7 @@ class MangaScreenModel(
         }
     }
 
-    // TachiyomiAT T918: a batch cancelled mid-run removes its queue entry, and
+    // TachiyomiAT  a batch cancelled mid-run removes its queue entry, and
     // the removed entry's statusFlow simply stops (no terminal emission), so
     // the projected chapter state stays stranded at QUEUE/TRANSLATING/PAUSED
     // forever — the indicator routes every tap into the progress drawer and
@@ -694,8 +694,8 @@ class MangaScreenModel(
         }
     }
 
-    // T911 slice 1: internal for the snapshot-retention unit test.
-    // T912 ANR fix: suspend — the per-downloaded-chapter
+    //  slice 1: internal for the snapshot-retention unit test.
+    //  ANR fix: suspend — the per-downloaded-chapter
     // getChapterTranslationStatus query reaches the durable store over
     // SAF/UniFile (O(pages) FUSE reads) and must not run on Main. Both
     // production callers are IO coroutines (launchIO/collectLatest).
@@ -737,12 +737,12 @@ class MangaScreenModel(
                 requestState = translationRequest,
                 downloaded = downloadState == Download.State.DOWNLOADED,
             )
-            // T924 restart-retry fix: a durably FAILED chapter (no queue
+            //  restart-retry fix: a durably FAILED chapter (no queue
             // entry, no request after an app restart) must still surface its
             // terminal progress so the sheet can offer Retry — without this,
             // translationProgress stayed null and the sheet rendered an empty
             // snapshot with no affordance.
-            // T924 field fix: a durable READY_WITH_WARNINGS chapter that
+            //  field fix: a durable READY_WITH_WARNINGS chapter that
             // ended with unresolved pages gets the same terminal surface.
             val durableTerminal =
                 translationState == eu.kanade.translation.model.Translation.State.ERROR ||
@@ -913,7 +913,7 @@ class MangaScreenModel(
     }
 
     /**
-     * TachiyomiAT T911 slice 1: read-only view of the downloader queue for the
+     * TachiyomiAT  slice 1: read-only view of the downloader queue for the
      * batch drawer's download phase (state/progress/page counts). The drawer
      * only displays this; the downloader never becomes an owner of translation
      * state.
@@ -930,7 +930,7 @@ class MangaScreenModel(
     }
 
     /**
-     * TachiyomiAT T911 slice 1: opens the chapter's batch progress drawer in the
+     * TachiyomiAT  slice 1: opens the chapter's batch progress drawer in the
      * same UI transaction that acknowledges or inspects the request, so accepted
      * work is observable without a second tap. The manga screen is the only
      * navigation owner; downloader/translation callbacks never select this
@@ -950,7 +950,7 @@ class MangaScreenModel(
         val item = items.first()
         when (action) {
             ChapterTranslationAction.START -> {
-                // T911 slice 2 (R6): the whole selection is ONE batch — the
+                //  slice 2 (R6): the whole selection is ONE batch — the
                 // group is stored once and (when enabled) one confirmation
                 // dialog represents all selected chapters. The bottom bar now
                 // calls this list path once instead of looping the
@@ -1014,7 +1014,7 @@ class MangaScreenModel(
     }
 
     /**
-     * TachiyomiAT T918: the progress sheet's Retry control for a batch that
+     * TachiyomiAT  the progress sheet's Retry control for a batch that
      * was cancelled mid-run (terminal-aborted snapshot) or failed terminally.
      * Same re-queue as the cancel snackbar's Undo: [TranslationManager
      * .translateChapter]'s artifact scan (BatchResumeGateDecider) reuses READY
@@ -1059,7 +1059,7 @@ class MangaScreenModel(
             try {
                 val state = successState ?: return@launchNonCancellable
                 action(translationManager, state)
-                // T911 slice 1: reset/delete invalidates the retained snapshot.
+                //  slice 1: reset/delete invalidates the retained snapshot.
                 item.chapter.id?.let(translationSnapshots::forget)
                 updateSuccessState { current ->
                     val index = current.chapters.indexOfFirst { it.id == item.chapter.id }
@@ -1080,7 +1080,7 @@ class MangaScreenModel(
      * TachiyomiAT: shows the read-only settings review popup before a batch
      * translation runs. The popup renders the current [TranslationSettingsSummary]
      * and lets the user proceed, open settings, or suppress future popups.
-     * T911 slice 2 (R6): the popup represents the WHOLE selection; the dialog
+     *  slice 2 (R6): the popup represents the WHOLE selection; the dialog
      * lists every selected chapter name.
      */
     fun showConfirmTranslationDialog(item: ChapterList.Item) {
@@ -1119,7 +1119,7 @@ class MangaScreenModel(
             chapters = group.map { it.chapter },
         )
         updateTranslationRequests(translationManager.pendingTranslationRequests.value)
-        // TachiyomiAT T911 slice 1: confirmation opens the progress drawer
+        // TachiyomiAT  slice 1: confirmation opens the progress drawer
         // immediately — accepted work must be observable without a second tap.
         // The drawer opens for the primary (first) chapter of the batch; this
         // is the same UI transaction as the acknowledgement above and the
@@ -1133,7 +1133,7 @@ class MangaScreenModel(
             // in-memory translate-after-download request that the downloader then
             // filtered out silently, so the batch never started at all.
             //
-            // T911 slice 2 (R7): the request generation captured at
+            //  slice 2 (R7): the request generation captured at
             // acknowledgement fences every durable mutation below, so a user
             // cancel landing between a check and its use cannot be undone by
             // the in-flight probe.
@@ -1182,12 +1182,12 @@ class MangaScreenModel(
                 translationManager.isTranslationRequestCurrent(chapterId, generation)
             }
             if (pendingDownloaded.isEmpty()) return@launch
-            // T917 Phase 4 (D10, phase4-design §3.2): a directory-exists hit can
+            //  Phase 4 ( phase4-design §3.2): a directory-exists hit can
             // still be a MID-DOWNLOAD chapter (audit M-08 — the downloader owns
             // a partial dir while the trigger reads it as "downloaded").
             // Cross-check every candidate that still has a live queue entry;
             // a settled download has none, so there is nothing to probe and
-            // the pre-D10 truth stands. Local-only: the probe reads the
+            // the pre- truth stands. Local-only: the probe reads the
             // Download the UI already observes — no network.
             val partialProbes: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionDecision> =
                 pendingDownloaded.mapNotNull { candidate ->
@@ -1324,7 +1324,7 @@ class MangaScreenModel(
     }
 
     /**
-     * T917 Phase 4 (D10, phase4-design §3.2): the user chose FINISH first —
+     *  Phase 4 ( phase4-design §3.2): the user chose FINISH first —
      * route through the EXISTING fenced WAITING_FOR_DOWNLOAD path (the same
      * one the awaiting partition uses); the downloader's post-finalization
      * handoff admits the batch only after the download completes. Zero batch
@@ -1358,7 +1358,7 @@ class MangaScreenModel(
     }
 
     /**
-     * T917 Phase 4 (D10, phase4-design §3.3): the user chose TRANSLATE WHAT
+     *  Phase 4 ( phase4-design §3.3): the user chose TRANSLATE WHAT
      * EXISTS — subset admission carrying the probe's cross-check so the batch
      * records its partial truth (manifest `PartialBatchInfo`, source-total or
      * honestly-unknown expected count), never a fake 100%.
@@ -1806,7 +1806,7 @@ class MangaScreenModel(
         data class ConfirmTranslation(
             val item: ChapterList.Item,
             val summary: TranslationSettingsSummary,
-            // T911 slice 2 (R6): the confirmation represents the whole
+            //  slice 2 (R6): the confirmation represents the whole
             // selection; empty means the single [item] (legacy shape).
             val group: List<ChapterList.Item> = emptyList(),
         ) : Dialog
@@ -1820,12 +1820,12 @@ class MangaScreenModel(
             val conflict: eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict,
         ) : Dialog
 
-        // T917 Phase 4 (D10, phase4-design §3.2): a probed "downloaded"
+        //  Phase 4 ( phase4-design §3.2): a probed "downloaded"
         // candidate is actually MID-DOWNLOAD (audit M-08). The user picks per
         // chapter: finish the download first (the existing fenced
         // WAITING_FOR_DOWNLOAD path) or translate the found subset (honest
         // partial accounting in the manifest). [decisions] is keyed by chapter
-        // id. Functional Phase-4 structure; final copy is Phase 5 (D13).
+        // id. Functional Phase-4 structure; final copy is Phase 5.
         data class PartialDownloadTranslation(
             val group: List<ChapterList.Item>,
             val decisions: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionDecision>,

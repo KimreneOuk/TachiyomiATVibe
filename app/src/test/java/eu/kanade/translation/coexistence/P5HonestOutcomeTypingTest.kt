@@ -32,18 +32,18 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * T917 Phase 5 — typed-outcome truth at the single-page boundary and the batch
+ *  Phase 5 — typed-outcome truth at the single-page boundary and the batch
  * progress snapshot (product spec §4, conditions A/B/C).
  *
  * Defects under test (each RED failure names its condition):
  *  - **Condition A (Deviation #7, review/phase4-verification.md §5):** the resume
  *    paths of `translateSinglePageOnnx` return `null` on SUCCESS. This is a NEW
- *    wrong-outcome case introduced by D8's honest-timeout flip — pre-D8 the
- *    accident produced the right `Completed` for resumes; D8's fix mapped the
+ *    wrong-outcome case introduced by 's honest-timeout flip — pre- the
+ *    accident produced the right `Completed` for resumes; 's fix mapped the
  *    same null to `Failed(pageKey, "native phase timed out")`. The boundary must
  *    inspect store terminality (the `buildTerminalPreparedPage` discipline)
  *    before mapping null → Failed.
- *  - **Condition B (D8-1):** an HTTP+render timeout (`withTimeoutOrNull` → null
+ *  - **Condition B (-1):** an HTTP+render timeout (`withTimeoutOrNull` → null
  *    outcome) falls through to `SinglePageOutcome.Completed`. It must be typed
  *    honestly (Failed family, naming the HTTP+render timer).
  *  - **Condition C (P3 finding 5):** `ChunkCompletionOutcome.PersistenceRejected`
@@ -233,10 +233,10 @@ class P5HonestOutcomeTypingTest {
             "p0",
             TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
         )
-        // T934 (D7 heal) CONVERSION: the old fixture bumped pageVersion under
+        //  ( heal) CONVERSION: the old fixture bumped pageVersion under
         // the parked boundary — exactly the deferred-publication shape the
         // boundary now heals by design (the same-owner refresh in
-        // SinglePageHttpRenderPhase; under D1 the lease holder is the page's
+        // SinglePageHttpRenderPhase; under  the lease holder is the page's
         // exclusive writer, so a same-generation version drift under the held
         // lease is never a foreign write). The outcome-typing contract is
         // instead exercised through the rejection the heal legitimately does

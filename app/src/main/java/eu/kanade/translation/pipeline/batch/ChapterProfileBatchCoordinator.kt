@@ -99,56 +99,26 @@ import tachiyomi.core.common.util.system.logcat
 import java.security.MessageDigest
 
 /**
- * T924 — the chapter-profile Batch coordinator: THE Batch coordinator for
- * BOTH engine lanes since the zero-legacy wave (the FF-01 A/B flag completed
- * its lifecycle and the legacy SequentialBatchCoordinator was deleted).
- * STANDARD engines run its per-page standard tail; AI engines run the
- * analysis/profile/envelope phases below. Stage 3 landed the durable machine
- * through OCR_PREFLIGHT (T924-ST-02..06); Stage-5 slice A continues after a
- * COMPLETE preflight into:
+ * Coordinates durable batch translation for the AI and standard lanes.
  *
- *   ANALYSIS_PLAN (ST-07: corpus re-derived from the durable checkpoints,
- *   skip rules recorded) -> ANALYSIS_CHUNKS (ST-08: resume skips the
- *   persisted pointer prefix; each chunk runs through the typed analysis
- *   runner and persists crash-safely via [AnalysisChunkPublication]) ->
- *   PROFILE_RECONCILE (ST-09: pure deterministic reconciler over the durable
- *   chunks) -> PROFILE_FROZEN (ST-10: one atomic TX-22 publication) ->
- *   STOP with a PAUSED diagnostic (envelope/translation are Stage 6).
+ * The AI lane advances from OCR_PREFLIGHT through analysis planning, chunk
+ * publication, profile reconciliation, profile freeze, and envelope
+ * translation. The standard lane shares OCR preflight and then performs
+ * ordered per-page translation through the injected seam.
  *
- * Stage-5 slice B also owns the ST-05/OCR_PLAN skip rule: at run start, a
- * compatible frozen profile (valid sidecar + matching FP-04 input identity +
- * recomputed FP-05) skips the ENTIRE run through analysis with zero OCR and
- * zero provider calls.
+ * OCR preflight admits one decoded page at a time, releases the native OCR
+ * handoff before admitting the next page, and releases the page lease only
+ * after its checkpoint is committed. It performs no inpaint, translation, or
+ * display promotion. Provider calls are gated by the batch sub-limit and
+ * shared provider bucket; standard translation also uses the overlap window
+ * so native inpaint never overlaps translation.
  *
- * Invariants kept by the loop (gates §2.3 + §2.4):
- *  - ONE decoded page at a time: the preflight loop is strictly serial, the
- *    OCR worker's native handoff is released before the next page is admitted,
- *    and the page lease is released strictly AFTER the checkpoint committed
- *    (T924-TX-06).
- *  - No inpaint, no translation, no display promotion in the preflight;
- *    provider calls happen inside the analysis phase (AI lane, through the
- *    typed runner — never `promptText`) and inside the standard translate
- *    tail (standard lane, through the injected per-page seam), both gated by
- *    the 15-RPM Batch sub-limit + shared provider bucket discipline
- *    (T924-AP-08, DR-C/DR-D; the standard tail additionally brackets every
- *    per-page call with the overlap window so native inpaint never overlaps
- *    translation — ALL standard engines, MLKit included).
- *  - Resume re-enters OCR_PREFLIGHT (checkpoint reuse by content identity) or
- *    ANALYSIS_CHUNKS (never re-sends persisted chunks, ST-08).
- *  - The run record ([ChapterRunRecord]) is published at run start (FF-01d)
- *    and advanced at phase transitions + chunk completions; counter
- *    publications are best-effort progress carriers — the manifest's
- *    checkpoints and `analysisChunks` pointers stay authoritative
- *    (T924-ST-06/ST-08).
- *
- * T924 Phase 4 Wave A ([standardLane]): the DIRECTOR design — both AI and
- * standard engines do the same OCR, and the standard engine continues with
- * batch translation exactly like AI minus everything AI-specific: NO
- * frozen-profile reuse probe, NO analysis/profile/envelope phases or
- * pointers, NO glossary reads/writes. Translation runs IN ORDER per page
- * through the injected seam (LEGACY per-page commit machinery), with the
- * Stage-7 overlap windows + FINALIZE (completion = translation-terminal
- * WITHOUT in-pass render, exactly like the AI lane).
+ * Resume reuses content-identity OCR checkpoints or persisted analysis
+ * chunks without re-sending completed work. A compatible frozen profile can
+ * skip the run through analysis without OCR or provider calls. The run record
+ * is published at start and advanced at phase transitions and chunk
+ * completion; durable manifest checkpoints and analysis pointers remain
+ * authoritative.
  */
 /**
  * Typed identity of ONE unresolved preflight page failure (wave-2 review R2):
@@ -172,7 +142,7 @@ internal enum class PreflightFailureKind {
 }
 
 /**
- * T934 R2a.5: the typed reason a page's durable checkpoint could not back
+ * Typed reason a page's durable checkpoint could not back
  * this run at consumption. Each reason is a bounded run-record counter key
  * (the `ocrAdopt*` family, mirroring the bounded `ocrPages*` keys) and a
  * WARN log field — the re-OCR cliff is now observable per cause instead of
@@ -201,7 +171,7 @@ internal enum class CheckpointAdoptionFailure(val counterKey: String) {
     BUNDLE_MISSING("ocrAdoptBundleMissing"),
 }
 
-/** Typed outcome of the checkpoint-reuse probe for one page (T934 R2a). */
+/** Typed outcome of the checkpoint-reuse probe for one page. */
 internal sealed interface CheckpointReuse {
     /** The checkpoint's OCR content fingerprint; source identity was proven. */
     data class Reusable(val ocrContentFingerprint: String) : CheckpointReuse
@@ -210,7 +180,7 @@ internal sealed interface CheckpointReuse {
     data class Unavailable(val failure: CheckpointAdoptionFailure) : CheckpointReuse
 }
 
-/** Typed outcome of one checkpoint-adoption (hydration) attempt (T934 R2a). */
+/** Typed outcome of one checkpoint-adoption (hydration) attempt. */
 internal sealed interface CheckpointAdoption {
     data class Adopted(val snapshot: ChapterTranslationStore.PageSnapshot) : CheckpointAdoption
 
@@ -226,14 +196,14 @@ internal class ChapterProfileBatchCoordinator(
     private val frozenConfig: RunConfigSnapshot,
     /** Ordered (pageKey, sourceSha256) pairs; the run's source digest input. */
     private val orderedSourcePairs: List<Pair<String, String>>,
-    /** Releases the BATCH page lease (strictly after the checkpoint, TX-06). */
+    /** Releases the BATCH page lease strictly after the checkpoint. */
     private val releaseBatchLease: suspend (String) -> Unit,
     private val listener: BatchScheduleListener = BatchScheduleListener.NOOP,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     /**
      * Wave-2 review R2: the durable failure-ledger writer for an unresolved
      * preflight page. The DEFAULT writer mirrors the legacy
-     * `persistUnexpectedBatchStageFailure` idiom (T924 wave-3 slice B): the
+     * `persistUnexpectedBatchStageFailure` idiom: the
      * page patch (OCR FAILED + one `recordAttemptFailure()` charge per
      * attempt) and the `manifest.durableFailures` record share ONE atomic
      * store publication, with the consecutive-unresolved count bounded by
@@ -258,8 +228,8 @@ internal class ChapterProfileBatchCoordinator(
      */
     private val glossarySynthesizer: GlossarySynthesizer? = null,
     /**
-     * Stage-6 slice A: the typed AI text translator for the envelope phase
-     * (ST-11/ST-12). `null` is a typed CONFIGURATION-class gate: the run
+     * Typed AI text translator for the envelope phase. `null` is a typed
+     * CONFIGURATION-class gate: the run
      * plans nothing provider-bound and pauses at TRANSLATE — exactly like
      * the analysis runner seam above. Production wiring of BOTH seams is
      * the provider package's acceptance condition; tests drive the seam
@@ -277,24 +247,20 @@ internal class ChapterProfileBatchCoordinator(
     private val translationSublimitGate: BatchRequestSublimitGate =
         SharedBatchRequestSublimitGate.instance,
     /**
-     * T924 Stage 7 (D1): the inpaint-overlap scheduler. When present, the
-     * TRANSLATE phase wraps [translationSublimitGate] so every provider
-     * envelope window drives serial inpaint of committed pages (ST-13
-     * overlap), and the FINALIZE drains remaining pages serially (the
-     * gate-6.5 "keep serial" arm — semantics identical). `null` keeps the
-     * pre-Stage-7 machine shape exactly.
+     * Optional inpaint-overlap scheduler. When present, each provider
+     * envelope window drives serial inpaint of committed pages and FINALIZE
+     * drains the remaining pages serially. `null` keeps the asynchronous
+     * planner fallback and the pre-overlap completion semantics.
      */
     private val overlapScheduler: OverlapScheduler? = null,
     /**
-     * T924 Stage 7 (D2): the render join that owns the T924-TX-23
-     * persisted-layout publication transaction. When present (and FF-02 ON),
-     * every inpaint-committed page publishes its draw plan per page, and the
-     * FINALIZE sweeps any page the overlap hook missed. `null` keeps the
-     * async-planner fallback for every page (reader display never breaks).
+     * Optional render join for persisted-layout publication. Inpaint-committed
+     * pages publish their draw plan through it, and FINALIZE sweeps pages the
+     * overlap hook missed. `null` keeps the async planner fallback.
      */
     private val renderJoin: BatchRenderJoin? = null,
     /**
-     * T924 Phase 4 Wave A: the STANDARD-engine lane discriminator. `false`
+     * STANDARD-engine lane discriminator. `false`
      * (default) preserves the AI coordinator behavior exactly; `true` runs
      * the same OCR preflight and then — instead of the AI
      * analysis/profile/envelope phases — the per-page standard translate
@@ -302,7 +268,7 @@ internal class ChapterProfileBatchCoordinator(
      */
     private val standardLane: Boolean = false,
     /**
-     * T924 Phase 4 Wave A: the typed standard translate seam, injected by
+     * Typed standard translate seam, injected by
      * the shell so the coordinator never touches the legacy worker graph
      * directly. Mirrors `TranslatorLaneWorker.translateOutcome(ref)` (the
      * SBC per-page bridge): one page in, one typed [ChunkCompletionOutcome]
@@ -318,7 +284,7 @@ internal class ChapterProfileBatchCoordinator(
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
 
     /**
-     * T934 R2a: the per-page source digests RECORDED durably at first
+     * Per-page source digests recorded durably at first
      * admission ([ChapterArtifactManifest.sourceShaByPageKey], stamped by the
      * checkpoint transaction). Read once at run start and held stable for the
      * whole run, exactly like the constructor pairs.
@@ -328,7 +294,7 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * T934 R2a: the per-page ADMISSION identity — the recorded digest wins
+     * Per-page admission identity — the recorded digest wins
      * when the dispatch-time observation is absent or a non-hex placeholder
      * (the shell's UNKNOWN_SOURCE_FINGERPRINT on a hash failure — a value
      * that previously poisoned reuse identity forever and forced re-OCR); a
@@ -344,11 +310,11 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * T934 R2a.2: the run's ordered (pageKey, admission sha) pairs — the
+     * The run's ordered (pageKey, admission sha) pairs — the
      * SINGLE orderedSourceDigest input for every record of this run. Derived
      * from the RECORDED digests wherever they exist, so run-start identity no
      * longer re-reads page bytes and a dispatch hash failure can no longer
-     * break runId/ST-14 continuity across a resume. Evaluated once (the same
+     * break run identity continuity across a resume. Evaluated once (the same
      * run-start read that feeds the reuse probes), then stable.
      */
     private val effectiveSourcePairs: List<Pair<String, String>> by lazy {
@@ -413,22 +379,11 @@ internal class ChapterProfileBatchCoordinator(
     ): BatchPass1Outcome = preflightWorker().runPhase(orderedPages, computeClass)
 
     /**
-     * Stage-5 slice A analysis phase (T924-ST-07/ST-08):
-     *
-     *  1. ANALYSIS_PLAN — the OCR corpus manifest is a pure, recomputable
-     *     planner output re-derived from the durable checkpoints (ST-01.4 /
-     *     ST-05 analogy: only the phase transition persists). Skip rules
-     *     (no-work/textless) and the chunk plan are recorded via the record.
-     *  2. ANALYSIS_CHUNKS — resume skips the persisted pointer prefix
-     *     (chunk-ordinal order, WP1 deviation note); each remaining chunk is
-     *     executed through the typed analysis runner and persisted through
-     *     the crash-safe sidecar-then-pointer transaction (T924-SC-20).
-     *
-     * Typed failures pause the run at the failing chunk (ST-08: resume
-     * restarts at the first unpersisted chunk; the validated prefix stays
-     * durable and is never re-sent). When every chunk is durable, slice B's
-     * [runProfileReconcileAndFreeze] continues into ST-09/ST-10; nothing
-     * here publishes `COMPLETE` (wave-2 F1).
+     * Runs analysis from a recomputed OCR corpus plan and durable chunk
+     * checkpoints. Resume skips the persisted prefix and never re-sends a
+     * validated chunk. Typed failures pause at the first missing chunk so a
+     * later run can continue without weakening the durable prefix; this phase
+     * does not publish [ChapterRunState.COMPLETE].
      */
     private suspend fun runAnalysisPhase(
         artifact: ChapterArtifactEngine,
@@ -468,28 +423,11 @@ internal class ChapterProfileBatchCoordinator(
     )
 
     /**
-     * Stage-5 slice B (T924-ST-09 → ST-10, T924-TX-22): reconcile + freeze.
-     *
-     *  1. The durable chunk list is RE-READ from the manifest pointers
-     *     (identity-consistent with the run: the wave-4 prefix validation
-     *     above proved the persisted list IS this run's plan). Any
-     *     unreadable/invalid sidecar is treated as ABSENT (T924-ST-30) — a
-     *     typed pause, never a partial reconcile.
-     *  2. PROFILE_RECONCILE phase record published, then the one-shot
-     *     glossary synthesis (synthesizeProfileContent) runs over the
-     *     durable chunk summaries — characters and places only (Director
-     *     decision, summary-glossary redesign). A typed synthesis pause
-     *     defers the freeze; the summaries stay durable for a later run.
-     *  3. The profile DTO is assembled around the reconciled CONTENT with
-     *     this run's FP-04 input fingerprint and the next monotonic chapter
-     *     version; its FP-05 content fingerprint is computed over the DTO.
-     *  4. [ProfileFreezePublication.publish] performs the ONE atomic
-     *     TX-22 publication; on success the PROFILE_FROZEN record carries
-     *     the new pointer and the run stops PAUSED (envelope/translation are
-     *     Stage 6). On rejection the prior manifest stays authoritative.
-     *
-     * NOTHING here publishes `COMPLETE` (wave-2 F1 still owed to the first
-     * COMPLETE-publishing stage) and no page display state is touched.
+     * Re-reads durable chunks, reconciles their profile content, and freezes
+     * the resulting profile with one atomic publication. Invalid or missing
+     * sidecars cause a typed pause rather than a partial reconcile. A freeze
+     * publishes the profile pointer and leaves the run paused for the envelope
+     * and translation phases; this method does not publish COMPLETE.
      */
     private suspend fun runProfileReconcileAndFreeze(
         artifact: ChapterArtifactEngine,
@@ -527,27 +465,12 @@ internal class ChapterProfileBatchCoordinator(
     )
 
     /**
-     * Stage-6 slice A (T924-ST-11 + ST-12, TX-21/TX-20, DR-A Option 1):
-     * ENVELOPE_PLAN -> TRANSLATE, entered from PROFILE_FROZEN (fresh freeze)
-     * or from the ST-05 frozen-profile reuse branch.
-     *
-     *  1. The pending dispatch work is REBUILT from durable state (durable
-     *     checkpoints + live per-page translation state; committed, skipped,
-     *     manual-authoritative pages and user-edited blocks are never
-     *     planned) and the pure [GlobalEnvelopePlanner] runs over it —
-     *     deterministic, so a resume with unchanged inputs re-derives the
-     *     SAME plan fingerprint and REUSES the published plan (ST-11 resume:
-     *     re-plan if any input changed, else reuse).
-     *  2. The [EnvelopePlan] sidecar + manifest pointer publish in ONE SC-20
-     *     transaction when the fingerprint changed (superseding plan = new
-     *     content-addressed file; TX-21 suffix re-plans ride the same path).
-     *  3. TRANSLATE: the serial [ProfileEnvelopeExecutor] dispatches one
-     *     envelope at a time through the legacy typed retry machinery under
-     *     the shared Batch sub-limit gate, revalidating every page (TX-21)
-     *     and committing through the TX-20 provenance ladder. Progress is
-     *     durable per-page store state; the terminal stays PAUSED
-     *     (TRANSLATE_STOP_REASON — native/render are Stage 7; this slice
-     *     NEVER publishes COMPLETE).
+     * Rebuilds envelope work from durable checkpoints and live page state,
+     * excluding committed, skipped, manual-authoritative, and user-edited
+     * pages. The deterministic plan is reused when its fingerprint is still
+     * valid; otherwise the replacement sidecar and manifest pointer publish in
+     * one transaction. Translation dispatch is serial, provider-gated, and
+     * page-revalidated; completion remains paused until finalization.
      */
     private suspend fun runEnvelopePlanAndTranslate(
         artifact: ChapterArtifactEngine,
@@ -601,37 +524,12 @@ internal class ChapterProfileBatchCoordinator(
     )
 
     /**
-     * T924 Stage 7 (D4) — ST-14 FINALIZE, entered exactly when TRANSLATE
-     * drained (every planned envelope dispatched, committed, or skipped):
-     *
-     *  1. `FINALIZE` phase record (ST-14 durable write: activePhase pointer).
-     *  2. Serial inpaint drain through the overlap scheduler (the legacy
-     *     post-translate serial schedule — the gate-6.5 keep-serial arm; when
-     *     the scheduler is absent this is a no-op and the run keeps the
-     *     pre-Stage-7 completion semantics).
-     *  2b. T934 display-tail drain: pages whose translate+inpaint work is
-     *     done but whose committed display never landed are finished here
-     *     (bounded), or given a SPECIFIC typed terminal — the run still
-     *     completes, as a warning. See [drainFinalizeAndComplete] step 2b.
-     *  3. Per-page persisted-layout publication sweep (D2): any page with
-     *     committed translation + committed inpaint that the overlap hook did
-     *     not publish gets its TX-23 plan publication here; failures keep the
-     *     async planner fallback (reader display never breaks).
-     *  4. Stranded-page reconciliation — the VERIFIED legacy idiom
-     *     (`BatchChapterTranslator.kt:747-760`): every page that is not
-     *     durably terminal gets a durable failure so callers that observe the
-     *     terminal state can also inspect retryable failures.
-     *  5. Final `store.flush()` under [kotlinx.coroutines.NonCancellable]
-     *     (:781-793 idiom) + artifact retention reconciliation (:794).
-     *  6. Final run record: `state=COMPLETE` — the run's FIRST and ONLY
-     *     COMPLETE publication (wave-2 F1: the OFF+COMPLETE resume decision
-     *     tree keys on exactly this state).
-     *
-     * Completion semantics are the LEGACY translation-committed ones. The
-     * DISPLAY_READY redefinition is gate-7.8-gated and MUST stay OFF until
-     * gate 7.5 (restart/LRU rehydrate without planner invocation) has passed
-     * on device for Pager AND Webtoon — see
-     * [Companion.GATE_7_8_DISPLAY_READY_COMPLETION_ENABLED].
+     * Builds the recovery/finalization worker used after translation drains.
+     * Finalization records its phase, drains overlap inpaint and pending
+     * display work, publishes any missing layout plans, reconciles stranded
+     * pages into durable failures, flushes under NonCancellable, and publishes
+     * the single COMPLETE run record. Display-ready semantics remain separate
+     * from translation-terminal completion.
      */
     private fun recoveryWorker() = RecoveryWorker(
         RecoveryWorkerContext(
@@ -732,11 +630,11 @@ internal class ChapterProfileBatchCoordinator(
     )
 
     /**
-     * ST-14 resume gates (contracts-state-transactions :188-197) for a
+     * FINALIZE resume gates for a
      * durable record already past TRANSLATE, consulted at dispatch entry
      * BEFORE any RUN_SNAPSHOT republication:
      *
-     *  - `FINALIZE` (ST-14 Resume clause): a process death after the FINALIZE
+     *  - `FINALIZE`: a process death after the FINALIZE
      *    record but before the COMPLETE publication resumes by RE-RUNNING the
      *    idempotent finalize drain ([drainFinalizeAndComplete]) — never by
      *    stepping the durable state BACKWARD to RUN_SNAPSHOT and re-entering
@@ -747,11 +645,11 @@ internal class ChapterProfileBatchCoordinator(
      *    rides the durable FINALIZE record — the same run, not a new one.
      *  - `COMPLETE`: the run already closed — an idempotent finished outcome
      *    with zero work and NO new record publication. Since the zero-legacy
-     *    wave (D1) removed the FF-01 flag and its shell-level OFF+COMPLETE
-     *    decision tree, this ST-14 path is the ONLY COMPLETE-resume route
+     *    The shell-level OFF+COMPLETE decision tree is gone; this path is the
+     *    only COMPLETE-resume route
      *    for both lanes.
      *
-     * T924 LI-2 (COMPLETE work-product evidence gate): the `COMPLETE` fast path
+     *  The COMPLETE work-product evidence gate: the `COMPLETE` fast path
      * additionally demands per-page evidence that the run's page results are
      * still durably addressable — a committed bundle, an open candidate
      * snapshot, or a committed/textless display state in the manifest record
@@ -765,8 +663,8 @@ internal class ChapterProfileBatchCoordinator(
      * Returns null — the normal run-start path proceeds unchanged — when the
      * prior record is in any other state, or its frozen configuration
      * fingerprint / ordered source digest no longer match this dispatch
-     * (ST-15: a mismatch starts a NEW run exactly as before), or the recorded
-     * COMPLETE lacks per-page display evidence (LI-2 supersession above).
+     * A mismatch starts a new run exactly as before, or the recorded COMPLETE
+     * lacks per-page display evidence.
      */
     private suspend fun resumeFinalizeOrComplete(
         artifact: ChapterArtifactEngine,
@@ -813,7 +711,7 @@ internal class ChapterProfileBatchCoordinator(
                                 read.plan.planFingerprint == rebuilt.plan.planFingerprint
                         }
                 if (alreadyPublished) {
-                    // T934 LI-4: the identical plan is already durable — the
+                    //   the identical plan is already durable — the
                     // re-derivation (rebuild) window ends here.
                     listener.envelopePlanCommitted()
                     ReplanResult.Ready(rebuilt.work)
@@ -828,7 +726,7 @@ internal class ChapterProfileBatchCoordinator(
                     ) {
                         is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                             store.artifactManifest = publication.manifest
-                            // T934 LI-4: the superseding plan committed — the
+                            //   the superseding plan committed — the
                             // rebuild window ends.
                             listener.envelopePlanCommitted()
                             ReplanResult.Ready(rebuilt.work)
@@ -863,10 +761,10 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * Rebuilds the pending dispatch work from FRESH store state (T924-ST-11
-     * "re-plan from fresh store state"): durable checkpoints provide the OCR
+     * Rebuilds pending dispatch work from fresh store state. Durable
+     * checkpoints provide the OCR
      * corpus identity; the live store provides the plan-time page identities
-     * TX-21 revalidates against. Committed/skipped pages, manual-authoritative
+     * state revalidates against. Committed/skipped pages, manual-authoritative
      * pages, user-edited blocks and already-translated blocks are never
      * planned — durable progress is the STORE's per-page translation state,
      * never a coordinator list.
@@ -876,13 +774,13 @@ internal class ChapterProfileBatchCoordinator(
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
     ): EnvelopeWorkBuild {
-        // T934 LI-4: announce the rebuild window before the silent work starts
+        // Announce the rebuild window before the silent work starts.
         // — this build used to run for MINUTES with zero progress events (the
         // progress sheet sat frozen on a stale snapshot). The listener maps
         // this to a tracker emission; the tracker flips the snapshot's batch
         // phase to REBUILDING and recomputes its store-derived counters.
         listener.envelopePlanStarted(orderedPages.size)
-        // T934 LI-x: the resume-hydration adoption below (adoptCheckpointSnapshot
+        // The resume-hydration adoption below (adoptCheckpointSnapshot
         // per pending page) used to rewrite the FULL manifest JSON once or more
         // PER PAGE (~340 rewrites of a ~360KB document on a 206-page chapter,
         // ~1.3s apart — a main-thread ANR contributor). Coalesce those manifest
@@ -893,7 +791,7 @@ internal class ChapterProfileBatchCoordinator(
         // the plan publication afterwards sees the fully adopted durable state
         // and the façade equals the durable manifest. On any doubt the store
         // flushes (fail-safe); correctness of the plan publish itself no longer
-        // depends on the window (T934 LI-x rebase-retry).
+        // depends on the window and its one-shot stale-manifest retry.
         store.withArtifactEngineLocked { artifact ->
             artifact.beginManifestCoalescing()
         }
@@ -931,7 +829,7 @@ internal class ChapterProfileBatchCoordinator(
         )
         val workPages = linkedMapOf<String, PageDispatchWork>()
         val plannerPages = mutableListOf<EnvelopePlannerPage>()
-        // T934 LI-4: per-page progress for the (potentially minutes-long)
+        //   per-page progress for the (potentially minutes-long)
         // resume-hydration loop — one listener call per corpus entry, mapped
         // to a Channel trySend in the tracker; trivially cheap per page.
         val rebuildTotal = corpus.entries.size
@@ -947,7 +845,7 @@ internal class ChapterProfileBatchCoordinator(
             // durable OCR content lives in the checkpoint's page-snapshot
             // sidecar (checkpoint CLOSE re-owns it and clears the candidate).
             // Adopt it into the live store under the M1 lease+merge idiom so
-            // planning, TX-21 revalidation and TX-20 commits all operate on
+            // planning, revalidation, and commits all operate on
             // real block state. Fresh in-session pages carry blocks and skip
             // this entirely; committed/skipped/manual pages are never adopted.
             val (effectiveSnapshot, effectivePage) = if (page.blocks.isEmpty()) {
@@ -968,7 +866,7 @@ internal class ChapterProfileBatchCoordinator(
             val plannerBlocks = mutableListOf<EnvelopePlannerBlock>()
             effectivePage.blocks.forEachIndexed { index, block ->
                 if (block.text.isBlank()) return@forEachIndexed
-                // TX-21.3 / INV-07: user edits are authoritative — never planned.
+                // User-edited blocks are authoritative and are never planned.
                 if (block.userEditedAt != null) return@forEachIndexed
                 // Blocks the provider already translated validly (manual or a
                 // prior partial candidate) are not requestable — mirrors the
@@ -989,7 +887,7 @@ internal class ChapterProfileBatchCoordinator(
                 plannerBlocks += EnvelopePlannerBlock(stableBlockId = stableId, sourceText = block.text)
             }
             if (dispatchBlocks.isEmpty()) {
-                // T934 stranded-page fix: a non-terminal page with NO
+                //  stranded-page fix: a non-terminal page with NO
                 // dispatchable blocks used to be silently skipped EVERY
                 // planning round — a self-perpetuating deadlock (its blocks
                 // all carry translations or user edits from an earlier
@@ -1050,7 +948,7 @@ internal class ChapterProfileBatchCoordinator(
         }
     }
 
-    /** ST-11 whole-page done rule: committed, skipped, rendered, or manual-authoritative. */
+    /** Whole-page done rule: committed, skipped, rendered, or manual-authoritative. */
     private fun pageEnvelopeDone(pageKey: String, page: PageTranslation): Boolean {
         if (page.translationStatus == StageStatus.READY ||
             page.translationStatus == StageStatus.SKIPPED ||
@@ -1063,7 +961,7 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * T934 stranded-page fix: explicit terminal routing for a page that is
+     * Stranded-page fix: explicit terminal routing for a page that is
      * not envelope-done yet yields no dispatchable blocks (the dispatch-work
      * build used to skip it silently every round). Two honest terminal
      * classes reach here:
@@ -1181,7 +1079,7 @@ internal class ChapterProfileBatchCoordinator(
      * store under the standard BATCH OCR lease (M1 idiom), fenced by the
      * placeholder page's identity. Returns [CheckpointAdoption.Adopted] with
      * the post-merge page snapshot, or [CheckpointAdoption.Failed] with the
-     * TYPED reason (T934 R2a.5) — the caller defers the phase or re-runs the
+     * TYPED reason — the caller defers the phase or re-runs the
      * page (fail closed), never plans against fabricated content.
      */
     private suspend fun adoptCheckpointSnapshot(
@@ -1268,7 +1166,7 @@ internal class ChapterProfileBatchCoordinator(
         }
 
     /**
-     * T924 terminal predicate companion: the SPECIFIC reason a non-terminal
+     * Terminal predicate companion: the SPECIFIC reason a non-terminal
      * page was stranded at FINALIZE. Names the page's actual work state so
      * the durable failure (and the progress sheet's failure groups) carries
      * something actionable instead of a bare stage status.
@@ -1287,7 +1185,8 @@ internal class ChapterProfileBatchCoordinator(
     ) = recoveryWorker().persistEnvelopeStructuralFailure(pageKey, reason, carrier)
 
     /**
-     * T924-FP-04 for this run — computed with the SAME policy-fingerprint
+     * The profile input fingerprint for this run is computed with the SAME
+     * policy-fingerprint
      * helper the analysis identity uses, so the freeze-time input identity
      * and the reuse-probe identity are consistent by construction. Absent
      * user/series authority is the explicit ABSENT literal inside
@@ -1312,7 +1211,7 @@ internal class ChapterProfileBatchCoordinator(
         )
 
     /**
-     * Wave-4 F-W4-1: the ST-08 resume prefix is only valid when the persisted
+     * The resume prefix is only valid when the persisted
      * chunks ARE the re-planned chunks. Every persisted ordinal i is read back
      * and compared against planned chunk i (chunkId + core page keys +
      * contributing corpus fingerprint — the chunkId alone already embeds the
@@ -1400,7 +1299,7 @@ internal class ChapterProfileBatchCoordinator(
                 // CL100K on the real text (CJK-aware — chars/4 undercounts
                 // CJK ~2-4x) + the wire envelope's per-block/per-page overhead,
                 // so chunk windowing budgets the dispatch payload, not the
-                // raw OCR text (T924 analysis under-8k dispatch contract).
+                // raw OCR text (analysis under-8k dispatch contract).
                 estimatedInputTokens = TranslationContextChunkPlanner.estimateTokens(
                     blocks.joinToString("\n") { it.text },
                 ) + blocks.size * AnalysisRequestBuilder.PER_BLOCK_ENVELOPE_TOKENS +
@@ -1564,7 +1463,7 @@ internal class ChapterProfileBatchCoordinator(
      * FAILED outcome still stands (the pass semantics are unchanged) — the
      * record is a durability ADDITION, never a new failure source. The write
      * happens while the page lease is still held (strictly after the
-     * checkpoint attempt, strictly before the `finally` release — TX-06).
+     * checkpoint attempt, strictly before the `finally` release.
      */
     private suspend fun recordPageFailure(failure: PreflightStageFailure) {
         try {
@@ -1582,7 +1481,7 @@ internal class ChapterProfileBatchCoordinator(
     /**
      * Best-effort run-record publication. The record is identity/progress
      * state; per-page checkpoints in the manifest are the authoritative
-     * durable state (T924-ST-06), so a rejected publication never fails the
+     * durable state, so a rejected publication never fails the
      * preflight — it only loses advisory progress.
      *
      * Returns the publication outcome so callers that publish a NON-advisory
@@ -1592,9 +1491,9 @@ internal class ChapterProfileBatchCoordinator(
      * the shell from the record), while the advisory preflight callers may
      * ignore the return value.
      *
-     * The phase pointer itself MUST never be lost to the T924-SC-02
-     * phaseCounters bound (32 keys): D6's executor counters re-blew the
-     * wave-7b budget, silently dropping the ST-14 FINALIZE record and with
+     * The phase pointer itself MUST never be lost to the
+     * phaseCounters bound (32 keys): 's executor counters re-blew the
+     * wave-7b budget, silently dropping the  FINALIZE record and with
      * it the durable state a crash resume needs. Counters are best-effort
      * progress carriers, so an over-bound record publishes with the OLDEST
      * counter keys trimmed (insertion order) — the phase transition always
@@ -1681,11 +1580,11 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     enum class BatchCoordinatorKind {
-        /** T924 chapter-profile coordinator — the AI-model lane. */
+        /**  chapter-profile coordinator — the AI-model lane. */
         PROFILE_PIPELINE,
 
         /**
-         * T924 Phase 4 Wave A: the STANDARD-engine lane — the same
+         *  Phase 4 Wave A: the STANDARD-engine lane — the same
          * coordinator with [standardLane] set: pure FULL OCR
          * preflight, then per-page legacy-machinery batch translation
          * (no glossary, no analysis/profile/envelope work) and the shared
@@ -1719,7 +1618,7 @@ internal class ChapterProfileBatchCoordinator(
          * [BatchChapterTranslator] must re-evaluate the SAME predicate AFTER the
          * page lease is granted: a concurrent owner can commit its terminal
          * stage in the window between the tail's pre-check and the lease
-         * acquisition, and an already-terminal page is never re-paid (T917
+         * acquisition, and an already-terminal page is never re-paid (
          * exactly-once).
          */
         internal fun standardPageTerminalAtTranslate(page: PageTranslation): Boolean =
@@ -1763,7 +1662,7 @@ internal class ChapterProfileBatchCoordinator(
             "T924 translation envelopes drained; native/render arrive in Stage 7"
 
         /**
-         * T924 Phase 4 Wave A: the standard lane's typed CONFIGURATION pause —
+         * The standard lane's typed CONFIGURATION pause —
          * the coordinator was constructed with [ChapterProfileBatchCoordinator.standardLane]
          * but no [ChapterProfileBatchCoordinator.standardTranslateOutcome]
          * seam. Same discipline as [ANALYSIS_NO_TRANSPORT_REASON]: never run
@@ -1773,7 +1672,7 @@ internal class ChapterProfileBatchCoordinator(
             "T924 standard translation paused: no typed standard translate seam wired (CONFIGURATION gate)"
 
         /**
-         * T924 Stage 7 (D4): the terminal of a drained run. The completion
+         * The terminal of a drained run. The completion
          * semantics are the LEGACY translation-committed ones — the
          * DISPLAY_READY redefinition below is still gate-7.8-gated OFF.
          */
@@ -1782,7 +1681,7 @@ internal class ChapterProfileBatchCoordinator(
                 "(legacy completion semantics; DISPLAY_READY redefinition is gate-7.8-gated OFF)"
 
         /**
-         * ST-14 resume: the durable record already reads COMPLETE — the
+         * COMPLETE resume: the durable record already reads COMPLETE — the
          * re-dispatch finishes idempotently with zero work and no new record
          * publication.
          */
@@ -1795,7 +1694,7 @@ internal class ChapterProfileBatchCoordinator(
          * the run is still durably at FINALIZE. Reporting finished here
          * would let the shell mark the chapter done while the durable
          * record disagrees; the typed PAUSE instead makes the shell pause
-         * the run, and a later dispatch re-enters the ST-14 FINALIZE resume
+         * the run, and a later dispatch re-enters the  FINALIZE resume
          * ([resumeFinalizeOrComplete] → [drainFinalizeAndComplete]), which
          * re-attempts the run's single COMPLETE publication.
          */
@@ -1803,7 +1702,7 @@ internal class ChapterProfileBatchCoordinator(
             "T924 run-closure COMPLETE publication rejected; run stays at FINALIZE (ST-14 resume re-attempts closure)"
 
         /**
-         * T924 gate 7.8 ENCODED GATE (never activated on device-gated
+         * Gate 7.8 ENCODED GATE (never activated on device-gated
          * authority): redefining Batch completion as DISPLAY_READY (all reader
          * paths hydrate durable plans instead of translating committed) is
          * allowed ONLY after gate 7.5 — restart/LRU rehydrate with ZERO
@@ -1822,7 +1721,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_STRANDED_RECONCILED = "strandedPagesReconciled"
 
         /**
-         * T934 display-tail drain counters: pages whose committed display was
+          * Display-tail drain counters: pages whose committed display was
          * produced by the FINALIZE drain, and pages left without one (typed
          * terminal, run completes as a warning). Pages left pending on
          * publication rejections count in neither bucket.
@@ -1831,7 +1730,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_DISPLAY_TAIL_FAILED = "displayTailFailed"
 
         /**
-         * T934 display-tail drain bound: the first pass retries the overlap
+          * Display-tail drain bound: the first pass retries the overlap
          * scheduler's single orphan sweep (a stale-write rejection heals on a
          * fresh snapshot); the third exists so one transient rejection never
          * typed-fails a healthy page. A MANUAL Render owner persists across
@@ -1849,7 +1748,7 @@ internal class ChapterProfileBatchCoordinator(
         internal const val REJECTED_ARTIFACT_PUBLICATION = "ARTIFACT_PUBLICATION_FAILED"
 
         /**
-         * Analysis output budget (T924-AP-03 `outputBudget`): free-form
+          * Analysis output budget (`outputBudget`): free-form
          * chunk summaries are ~120 words, so the reservation is small and
          * the input side keeps the 8k window. Mirrors
          * [eu.kanade.translation.translator.analysis.AnalysisEngineTransport
@@ -1857,7 +1756,7 @@ internal class ChapterProfileBatchCoordinator(
          */
         const val ANALYSIS_MAX_OUTPUT_TOKENS = 512
 
-        /** FF-01d flag state, frozen as an operational (never fingerprinted) counter. */
+        /** Feature-flag state, frozen as an operational (never fingerprinted) counter. */
         const val COUNTER_FLAG = "flagProfilePipeline"
         const val COUNTER_TOTAL = "ocrPagesTotal"
         const val COUNTER_DONE = "ocrPagesDone"
@@ -1866,7 +1765,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_GAPS = "preflightCheckpointGaps"
 
         /**
-         * T934 R2a.5: typed checkpoint-adoption failures. The aggregate is
+         * Typed checkpoint-adoption failures. The aggregate is
          * emitted only when nonzero, alongside one bounded `ocrAdopt<Reason>`
          * key per observed reason ([CheckpointAdoptionFailure.counterKey]) —
          * appended AFTER the fixed keys so the publishRecord over-bound trim
@@ -1905,8 +1804,8 @@ internal class ChapterProfileBatchCoordinator(
         private val oversizedPageRegex = Regex("""^page (\S+) oversized""")
 
         /**
-         * T924-FF-01a dispatch decision, zero-legacy form (D1): the FF-01 A/B
-         * flag completed its lifecycle and was removed — the engine category
+         * Dispatch decision: the profile pipeline is selected by engine
+         * category; the old A/B flag is no longer consulted. The engine category
          * alone picks the lane at the `BatchChapterTranslator` coordinator
          * construction; this pure function carries the mapping.
          *
@@ -1926,12 +1825,12 @@ internal class ChapterProfileBatchCoordinator(
             }
 
         /**
-         * RUN_SNAPSHOT freeze (ST-03). Identity values that have no stable
+         * RUN_SNAPSHOT freeze. Identity values that have no stable
          * engine accessor yet are pinned to explicit shell placeholders —
          * recorded, stable, and never silently empty.
          *
          * The `flagProfilePipeline` snapshot field keeps its schema position
-         * and fingerprint basis, but the parameter is gone: the FF-01 A/B
+         * and fingerprint basis, but the parameter is gone: the  A/B
          * flag completed its lifecycle and the field is hardcoded `true`
          * (flag-ON records — including the A/B evidence records — keep
          * matching fingerprints and resume correctly). A leftover pref key in
@@ -2040,7 +1939,7 @@ internal class ChapterProfileBatchCoordinator(
             when (result) {
                 is ChapterTranslationStore.PatchResult.Accepted -> Unit
                 is ChapterTranslationStore.PatchResult.Rejected -> {
-                    // T934: the run is already failing — the durable RECORD of
+                    //  the run is already failing — the durable RECORD of
                     // that failure is best-effort and must never escalate or
                     // throw. Log WARN and continue so the ORIGINAL failure
                     // surfaces cleanly (what counts as a run failure is
@@ -2057,7 +1956,7 @@ internal class ChapterProfileBatchCoordinator(
         /** The manifest `durableFailures` key for the preflight OCR stage. */
         private fun durableFailureKey(pageKey: String): String = "$pageKey:${ArtifactStage.OCR.name}"
 
-        /** T924-SC-08-style length-prefixed hash over the canonical config JSON. */
+        /** style length-prefixed hash over the canonical config JSON. */
         fun runConfigFingerprint(config: RunConfigSnapshot): String = sha256Hex(
             lengthPrefixed("run-config-v1", ArtifactDocumentJson.encodeToString(config)),
         )

@@ -3,7 +3,7 @@ package eu.kanade.translation.pipeline.batch
 import eu.kanade.tachiyomi.source.model.Page
 
 /**
- * T917 Phase 4 (D10, phase4-design §3.2): admission decision for a chapter
+ *  Phase 4 ( phase4-design §3.2): admission decision for a chapter
  * whose download directory exists. The trigger resolves the chapter's
  * `Download` from `downloadManager.queueState` (the list the UI already
  * observes — no network) and passes the cross-check here; the probe is pure
@@ -55,12 +55,12 @@ internal object BatchAdmissionProbe {
 /**
  * The PLAN-mandated partial-download choice, typed so the screen model's
  * dialog and the admission routing cannot drift apart (phase4-design §3.2;
- * the dialog's copy is Phase 5 / D13).
+ * the dialog's copy is Phase 5 / ).
  */
 enum class PartialDownloadChoice { FINISH_DOWNLOAD_FIRST, TRANSLATE_WHAT_EXISTS }
 
 /**
- * Per-chapter probe outcome carried into queue admission (D10): the resolved
+ * Per-chapter probe outcome carried into queue admission: the resolved
  * cross-check the queued [eu.kanade.translation.model.Translation] stamps so
  * pre-registration can record honest totals. An absent context
  * (`sourceCountKnown = false`) is the legacy no-cross-check path.

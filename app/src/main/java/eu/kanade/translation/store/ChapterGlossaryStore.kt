@@ -8,7 +8,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * Glossary collaborator moved from `ChapterTranslationStore` (T909 Phase 8).
+ * Glossary collaborator moved from `ChapterTranslationStore` ( Phase 8).
  * Owns the chapter glossary state; all mutations are delegated by the store
  * under the store mutex (the collaborator receives the owning store and locks
  * through it). The LEGACY flat-file read fallback in [loadGlossary] is kept
@@ -23,7 +23,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
 
     internal var glossaryDirty = false
 
-    // T933 / Task 1.1: per-store accumulator and per-page contribution watermark.
+    //  / Task 1.1: per-store accumulator and per-page contribution watermark.
     // Owned under store.mutex.
     internal val stats = ChapterGlossaryBuilder.Stats()
     private var statsSeeded = false
@@ -32,7 +32,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
     fun glossarySnapshot(): Map<String, String> = glossary.toMap()
 
     /**
-     * TachiyomiAT T917 D5: the live glossary version for the reuse gate and
+     * TachiyomiAT   the live glossary version for the reuse gate and
      * provenance stamps (phase3-design §1.2/§1.3). `null` means the gate is
      * OFF — a legacy-authority manifest, or no glossary ever published — which
      * keeps glossary-less chapters and the standard engine lane at REUSE with
@@ -166,7 +166,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
     }
 
     /**
-     * Labeled fallback per T933 memory contract: recomputes the glossary by streaming all
+     * Labeled fallback per  memory contract: recomputes the glossary by streaming all
      * translated pairs in the chapter rather than using the incremental accumulator.
      */
     internal fun streamedRecomputeFallback(): Map<String, String> =

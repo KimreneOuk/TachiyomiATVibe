@@ -281,7 +281,7 @@ internal class PreflightWorker(
         private suspend fun existingActiveRecord(
             artifact: ChapterArtifactEngine,
         ): ChapterArtifactEngine.RunRecordRead? {
-            // ST-14 dispatch reads the DURABLE manifest, not the facade's cached
+            //  dispatch reads the DURABLE manifest, not the facade's cached
             // snapshot: the cache is a CAS optimization with many writers, while
             // this decision must never re-run paid work (or drain a stale
             // FINALIZE) behind what the artifact tree actually records. One
@@ -362,7 +362,7 @@ internal class PreflightWorker(
             val pointer = manifest.profile ?: return null
             if (!pointer.isWellFormed()) return null
             // The FP-04 corpus identity must come from checkpoints whose source
-            // identity STILL matches the current source (ST-04 resume: identities
+            // identity STILL matches the current source ( resume: identities
             // are revalidated against current files). A changed/missing page
             // makes the frozen profile NOT reusable — the normal path re-OCRs it
             // and the corpus drift gates downstream (wave-4 F-W4-1 discipline).
@@ -440,7 +440,7 @@ internal class PreflightWorker(
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
         val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
         val priorRecord = (existingActiveRecord(artifact) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
-        // ST-15: settings apply next run — a resume continues the recorded run
+        //  settings apply next run — a resume continues the recorded run
         // only while the frozen configuration fingerprint still matches; a
         // mismatch starts a NEW run id under the current configuration.
         val runId = priorRecord
@@ -448,7 +448,7 @@ internal class PreflightWorker(
             ?.runId
             ?: newRunId(sourceDigest, frozenFingerprint)
 
-        // ---- ST-14 resume gates: a record already past TRANSLATE never ----
+        // ----  resume gates: a record already past TRANSLATE never ----
         // ---- steps the durable state BACKWARD to RUN_SNAPSHOT.         ----
         resumeFinalizeOrComplete(
             artifact = artifact,
@@ -463,7 +463,7 @@ internal class PreflightWorker(
         var checkpointedPages = 0
         val corpusFingerprints = mutableListOf<Pair<String, String>>()
 
-        // T934 R2a.5: per-run typed adoption-failure tally. Emitted as bounded
+        //  R2a.5: per-run typed adoption-failure tally. Emitted as bounded
         // `ocrAdopt*` counters ONLY when nonzero, so steady-state record
         // counter maps stay byte-identical and the 32-key phaseCounters bound
         // is never pressured on healthy runs.
@@ -486,7 +486,7 @@ internal class PreflightWorker(
             // Kept for pre-field record compatibility; the authoritative
             // freeze is frozenConfig.flagProfilePipeline (participates in the
             // run-config fingerprint; counters never do, per FP-01). The
-            // FF-01 A/B flag completed its lifecycle — the profile pipeline
+            //  A/B flag completed its lifecycle — the profile pipeline
             // is the only pipeline — so the frozen state is always ON.
             ChapterProfileBatchCoordinator.COUNTER_FLAG to 1,
         ) + buildMap {
@@ -499,12 +499,12 @@ internal class PreflightWorker(
             }
         }
 
-        // ---- ST-05/OCR_PLAN skip rule (contracts-state-transactions :114): ----
+        // ---- OCR_PLAN skip rule (contracts-state-transactions :114): ----
         // when a compatible frozen profile already exists (its sidecar reads
         // back valid, the pointer identities match, and the current run's
         // FP-04 input fingerprint equals the pointer's), the plan records
         // skip-to-phase PROFILE_FROZEN reuse and the ENTIRE run through
-        // analysis is skipped: zero OCR, zero provider calls (the T924
+        // analysis is skipped: zero OCR, zero provider calls (the
         // fast-feedback core). The probe is LOCAL reads only (durable
         // checkpoints + profile sidecar), never decode/native work.
         // Wave A: AI-ONLY — the standard lane produces no frozen profile, so
@@ -516,8 +516,8 @@ internal class PreflightWorker(
             frozenProfileReuse(artifact, orderedPages, total)
         }
 
-        // ST-03: run start — RUN_SNAPSHOT record with the frozen configuration,
-        // the ordered source digest, and the frozen flag state (FF-01d).
+        //  run start — RUN_SNAPSHOT record with the frozen configuration,
+        // the ordered source digest, and the frozen flag state.
         publishRecord(
             artifact,
             record(runId, ChapterRunState.RUN_SNAPSHOT, frozenFingerprint, sourceDigest, counters()),
@@ -545,7 +545,7 @@ internal class PreflightWorker(
             // Stage-6 slice A: the reuse path CONTINUES into the envelope
             // phase — the whole point of the frozen-profile skip is
             // translating under the reused profile with zero re-OCR and
-            // zero provider analysis (D5).
+            // zero provider analysis.
             return runEnvelopePlanAndTranslate(
                 artifact = artifact,
                 runId = runId,
@@ -555,7 +555,7 @@ internal class PreflightWorker(
             )
         }
 
-        // ST-05: the OCR plan is recomputed in-memory (pure function of the
+        //  the OCR plan is recomputed in-memory (pure function of the
         // ordered pages + store state); only the phase transition persists.
         publishRecord(
             artifact,
@@ -571,10 +571,10 @@ internal class PreflightWorker(
 
             when (val reusable = checkpointReuse(artifact, pageKey)) {
                 is CheckpointReuse.Reusable -> {
-                    // ST-06 resume rule: the page's origin-neutral checkpoint matches
+                    //  resume rule: the page's origin-neutral checkpoint matches
                     // the current source identity — no re-OCR, no lease, no decode.
                     //
-                    // T924 zero-legacy (D1): a reused checkpoint must also BACK the
+                    //  zero-legacy: a reused checkpoint must also BACK the
                     // live store page. A reopened store (real restart, or the
                     // memory-only artifact-authority fixture) holds only a
                     // placeholder page record — its ocrStatus/blocks live in the
@@ -582,7 +582,7 @@ internal class PreflightWorker(
                     // tail's dependency gate reads WAIT_FOR_DEPENDENCY /
                     // DEPENDENCY_INCOMPLETE against the placeholder and silently
                     // skips the page's paid translation — the run then "completes"
-                    // without paying (D9's resumed-death cycle). Adopt the
+                    // without paying ('s resumed-death cycle). Adopt the
                     // checkpointed OCR snapshot into the live store — the SAME
                     // hydration idiom the envelope lane's resume uses — and only
                     // then count the page as reused. If the adoption cannot back
@@ -620,7 +620,7 @@ internal class PreflightWorker(
                         }
                         continue
                     }
-                    // T934 R2a.5: the re-OCR cliff is now TYPED (counter + WARN
+                    //  R2a.5: the re-OCR cliff is now TYPED (counter + WARN
                     // reason) instead of one untyped warning. The sealed
                     // hierarchy has exactly two cases, so the early-continue
                     // above leaves only Failed — spelled as a `when` because
@@ -691,7 +691,7 @@ internal class PreflightWorker(
                             }
                         }
                         is CheckpointOcrResult.Rejected -> {
-                            // ST-06 terminal: any unresolved checkpoint failure stops
+                            //  terminal: any unresolved checkpoint failure stops
                             // the phase before any later (paid) stage. The lease is
                             // released in `finally`; the shell teardown reconciles
                             // the candidate per the legacy durability rules.
@@ -750,7 +750,7 @@ internal class PreflightWorker(
             } finally {
                 // The decoded handoff NEVER crosses a page boundary and the
                 // lease is released strictly after the checkpoint attempt
-                // (T924-TX-06; one-decoded-page invariant).
+                // ( one-decoded-page invariant).
                 ref?.let(nativeWorker::releaseNativeHandoff)
                 if (pendingFailure != null) {
                     // B0 teardown idiom: the unresolved page's candidate-held OCR
@@ -770,7 +770,7 @@ internal class PreflightWorker(
         }
 
         // ---- OCR_PREFLIGHT complete durably; continue into the analysis ----
-        // ---- phase when the corpus is complete (T924-ST-07/08).        ----
+        // ---- phase when the corpus is complete.        ----
         store.flush()
         val corpusGaps = total - corpusFingerprints.size
         val corpusFingerprint = if (corpusGaps == 0 && corpusFingerprints.isNotEmpty()) {
@@ -814,7 +814,7 @@ internal class PreflightWorker(
             )
         }
 
-        // ---- T924 Phase 4 Wave A: the standard lane branches to its ----
+        // ----  Phase 4 Wave A: the standard lane branches to its ----
         // ---- per-page translate tail; the AI lane continues into the   ----
         // ---- analysis phases (Stage 5 slices A+B). Both share the     ----
         // ---- engine-agnostic Stage-7 FINALIZE/COMPLETE.               ----
@@ -882,7 +882,7 @@ internal class PreflightWorker(
             }
         }
 
-        // ---- T924 Stage 5 slices A+B: ANALYSIS_PLAN -> ANALYSIS_CHUNKS ----
+        // ----  Stage 5 slices A+B: ANALYSIS_PLAN -> ANALYSIS_CHUNKS ----
         // ---- -> PROFILE_RECONCILE -> PROFILE_FROZEN. The chapter stays   ----
         // ---- PAUSED (envelope/translation are Stage 6; completion        ----
         // ---- semantics are still NOT redefined).                         ----

@@ -7,7 +7,7 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
 
 /**
- * T924 Stage 1 gate 1.3 (schemas contract T924-SC-05/19/20/22): fault
+ *  Stage 1 gate 1.3 (schemas contract /20/22): fault
  * injection at every publication boundary — sidecar write, sidecar rename,
  * manifest publish — must leave the prior manifest authoritative with at most
  * an orphan sidecar; a manifest pointer never dangles.
@@ -218,7 +218,7 @@ class SidecarCrashPublicationTest {
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val pointer = committed.manifest.activeRun.shouldNotBeNull()
 
-        // Corrupt the pointed bytes: treated as absent, quarantined (T924-SC-17).
+        // Corrupt the pointed bytes: treated as absent, quarantined.
         io.files[pointer.fileName] = "{ corrupted".toByteArray()
         store.readRunRecord(pointer) shouldBe ChapterArtifactEngine.RunRecordRead.Absent
         io.files.keys.count { it.startsWith("${pointer.fileName}.corrupt") } shouldBe 1
@@ -235,7 +235,7 @@ class SidecarCrashPublicationTest {
 
         val outcome = store.publishActiveRun(stale, runRecord(), hex64)
 
-        // T924 LI-4: a stale caller snapshot (the façade cached the
+        //   a stale caller snapshot (the façade cached the
         // pre-verify manifest while the background health verify republished)
         // is retried ONCE against the freshly re-read durable manifest instead
         // of surfacing a spurious rejection on a healthy chapter.

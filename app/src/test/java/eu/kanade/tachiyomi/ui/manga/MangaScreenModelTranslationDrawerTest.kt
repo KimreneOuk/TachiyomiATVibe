@@ -76,7 +76,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * T911 slice 1: confirmation must select the batch progress drawer in the same
+ *  slice 1: confirmation must select the batch progress drawer in the same
  * UI transaction that acknowledges the request, and keyed snapshot retention
  * must keep the last live/terminal snapshot across full chapter-list rebuilds
  * and collector cancellation.
@@ -192,7 +192,7 @@ class MangaScreenModelTranslationDrawerTest {
         every { translationManager.statusFlow() } returns translationStatusFlow
         every { translationManager.pendingTranslationRequests } returns pendingRequestsState
         every { translationManager.getQueuedTranslationOrNull(any()) } returns null
-        // T912 ANR fix: getChapterTranslationStatus is now suspend.
+        //  ANR fix: getChapterTranslationStatus is now suspend.
         coEvery {
             translationManager.getChapterTranslationStatus(any(), any(), any(), any(), any())
         } returns Translation.State.NOT_TRANSLATED
@@ -219,7 +219,7 @@ class MangaScreenModelTranslationDrawerTest {
         every { trackPreferences.autoUpdateTrackOnMarkRead() } returns autoTrackPref
         every { readerPreferences.skipFiltered() } returns skipFilteredPref
 
-        // T911 slice 2 test-infra note (same as MangaScreenModelMultiSelectBatchTest):
+        //  slice 2 test-infra note (same as MangaScreenModelMultiSelectBatchTest):
         // voyager caches `screenModelScope` in a JVM-global ScreenModelStore under a
         // shared key for unregistered models, so a scope cancelled by a fixture that
         // ran earlier in this JVM (full-suite ordering) would silently kill this
@@ -277,7 +277,7 @@ class MangaScreenModelTranslationDrawerTest {
             // uncaught exception in whichever test class runs next. Destroying
             // the lifecycle and JOINING the cancelled scope while the delegate
             // is still installed pins the unwind inside this teardown.
-            // T934: the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
+            //  the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
             lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
             model.screenModelScope.cancel()
             runBlocking {
@@ -404,7 +404,7 @@ class MangaScreenModelTranslationDrawerTest {
             ?: error("chapter item $id not present in screen state")
 
     /** Simulates a full base-list rebuild without any new canonical snapshot emission. */
-    // T912 ANR fix: toChapterListItems is now suspend (it queries the durable
+    //  ANR fix: toChapterListItems is now suspend (it queries the durable
     // translation status per downloaded chapter).
     private fun rebuildChapters(): List<ChapterList.Item> = runBlocking {
         with(model) {

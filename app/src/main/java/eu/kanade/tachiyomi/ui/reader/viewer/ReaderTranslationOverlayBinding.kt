@@ -9,8 +9,8 @@ data class ReaderTranslationOverlayBinding(
     val pageWidth: Int,
     val pageHeight: Int,
     /**
-     * T924 Stage 7 (D3): the translation page key (`PageTranslation
-     * .sourceFileName`). Propagated to the overlay bind so the FF-02-gated
+     *  Stage 7: the translation page key (`PageTranslation
+     * .sourceFileName`). Propagated to the overlay bind so the
      * chapter hydration source can resolve the page's persisted draw plan.
      * Null/empty keeps the byte-identical legacy planner path.
      */

@@ -13,7 +13,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 1 — normal-manga isolation gate (design note §3.4; draft §8.2).
+ *  Phase 1 — normal-manga isolation gate (design note §3.4; draft §8.2).
  * GREEN at Phase 1 exit; it gates every later phase that touches arbitration,
  * storage observation, or decode paths.
  *
@@ -45,7 +45,7 @@ class NormalMangaIsolationTest {
         // ordered-wait planner (WAIT_FOR_DEPENDENCY/PRIOR_PAGE_INCOMPLETE for
         // pages behind a needs-work predecessor) makes a one-page chapter the
         // deterministic "batch completes end-to-end" fixture.
-        // T924 zero-legacy (D1): the batch pipeline requires artifact
+        //  zero-legacy: the batch pipeline requires artifact
         // authority, so the batch chapter's store is the durable
         // ARTIFACTS-authority recipe.
         val harness = TranslationCoexistenceHarness.create(
@@ -67,7 +67,7 @@ class NormalMangaIsolationTest {
             withClue("active batch must complete normally for this gate to be meaningful") {
                 batch.translation.status shouldBe Translation.State.TRANSLATED
                 reconciliation.strandedPages shouldBe emptyMap()
-                // T924 zero-legacy (D1) + 2026-09-16 E-fix: the batch still
+                //  zero-legacy  + 2026-09-16 E-fix: the batch still
                 // runs NO in-pass render stage (no render lane work, display
                 // re-derived when the reader opens the page), but the durable
                 // page record is now STAMPED render-terminal at
@@ -115,7 +115,7 @@ class NormalMangaIsolationTest {
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "disabled-1") shouldBe 0
             }
             withClue("positive control: the active chapter page was decoded (preflight OCR + inpaint re-decode)") {
-                // T924 zero-legacy (D1): the pipeline decodes the page once
+                //  zero-legacy: the pipeline decodes the page once
                 // for the OCR preflight and once more for the native inpaint
                 // drain — two real decodes, both on the active chapter.
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0") shouldBe 2

@@ -5,11 +5,11 @@ import uy.kohesive.injekt.api.get
 import tachiyomi.domain.translation.TranslationPreferences
 
 /**
- * T924 WP9 (T924-FF-02): process-wide runtime seams for the persisted-layout
+ *  WP9: process-wide runtime seams for the persisted-layout
  * track, kept Android-free so the whole hydration/publication decision logic
  * stays JVM-unit-testable.
  *
- *  - [flagEnabled] is the single FF-02 read
+ *  - [flagEnabled] is the single  read
  *    (`TranslationPreferences.translationBatchPersistedLayout`, domain :255,
  *    default OFF). Tests and JVM rigs pin it via [persistedLayoutFlagOverride];
  *    production resolves the registered preference lazily through DI. The read
@@ -26,7 +26,7 @@ import tachiyomi.domain.translation.TranslationPreferences
  */
 object PersistedLayoutRuntime {
 
-    /** Test/JVM seam: when non-null, overrides the FF-02 preference read. */
+    /** Test/JVM seam: when non-null, overrides the  preference read. */
     @Volatile
     var persistedLayoutFlagOverride: Boolean? = null
 
@@ -46,7 +46,7 @@ object PersistedLayoutRuntime {
     @Volatile
     private var pinnedFontSha256: String? = null
 
-    /** FF-02 (`translation_batch_persisted_layout`): ON only when explicitly enabled. */
+    /**  (`translation_batch_persisted_layout`): ON only when explicitly enabled. */
     fun flagEnabled(): Boolean =
         persistedLayoutFlagOverride ?: runCatching {
             Injekt.get<TranslationPreferences>().translationBatchPersistedLayout().get()

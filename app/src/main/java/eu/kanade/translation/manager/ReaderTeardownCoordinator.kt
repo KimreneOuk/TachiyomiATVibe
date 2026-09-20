@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
-// T909 Phase 18: the reader/page teardown region moved from
+//  Phase 18: the reader/page teardown region moved from
 // `TranslationManager` (reader stop trio + the page-job cancellation cluster).
 // The coordinator serializes the reader-stop paths through the manager's
 // `readerTeardownMutex` — the mutex FIELD stays on the manager

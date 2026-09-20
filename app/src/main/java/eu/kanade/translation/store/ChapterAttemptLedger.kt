@@ -8,7 +8,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * T917 Phase 3 (D9, phase3-design §3): durable attempt-ledger collaborator
+ *  Phase 3 ( phase3-design §3): durable attempt-ledger collaborator
  * moved alongside `ChapterGlossaryStore`. Owns the chapter's
  * [ChapterAttemptLedgerDocument]; every mutation is delegated by the owning
  * store under the store mutex (the collaborator receives the store and locks

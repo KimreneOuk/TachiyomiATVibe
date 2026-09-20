@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
 /**
- * T934 LI-x: adoption-write manifest coalescing for the batch-resume rebuild.
+ *  LI-x: adoption-write manifest coalescing for the batch-resume rebuild.
  * The resume-hydration loop used to rewrite the FULL manifest JSON once or
  * more PER PAGE (~340 rewrites of a ~360KB document on a 206-page chapter,
  * ~1.3s apart — a main-thread ANR contributor). While a coalescing window is

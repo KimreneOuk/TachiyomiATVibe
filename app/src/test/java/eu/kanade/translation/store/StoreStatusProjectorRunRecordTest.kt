@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
 /**
- * T924 LI-1 (durable half): when a durably COMPLETE run record owns the
+ *   (durable half): when a durably COMPLETE run record owns the
  * chapter (manifest `activeRun` readable at `ChapterRunState.COMPLETE`), the
  * chapter status projects from the MANIFEST PAGE RECORDS, not the legacy
  * live-page reconcile — a flagged-lane run commits translations WITHOUT an
@@ -69,7 +69,7 @@ class StoreStatusProjectorRunRecordTest {
     )
 
     /**
-     * ONE artifact store over one in-memory document IO (D5 fresh-chapter
+     * ONE artifact store over one in-memory document IO ( fresh-chapter
      * recipe): authority flipped to ARTIFACTS over the given page records.
      * Every later publication MUST ride this same instance so reads share its
      * document IO.

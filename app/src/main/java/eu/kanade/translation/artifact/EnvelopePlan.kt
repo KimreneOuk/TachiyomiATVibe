@@ -3,10 +3,10 @@ package eu.kanade.translation.artifact
 import kotlinx.serialization.Serializable
 
 /**
- * T924 Stage 1 (schemas contract §1.5): the durable whole-chapter envelope
+ *  Stage 1 (schemas contract §1.5): the durable whole-chapter envelope
  * plan. Pure data only — planning itself belongs to the pure-planner work
  * package (WP3). Serialized only through the shared [ArtifactDocumentJson]
- * instance (T924-SC-06).
+ * instance.
  */
 
 /**
@@ -47,13 +47,13 @@ data class PlannedEnvelope(
 
 /**
  * The envelope-plan sidecar document (schemas contract §1.5). Field
- * declaration order is the canonical byte order (T924-SC-06).
+ * declaration order is the canonical byte order.
  */
 @Serializable
 data class EnvelopePlan(
     val schemaVersion: Int = SCHEMA_VERSION,
     val kind: String = KIND,
-    /** Hash over ordered plan content (T924-SC-08). */
+    /** Hash over ordered plan content. */
     val planFingerprint: String,
     /** Corpus slice + pending-block set + profile subset estimate + envelope policy. */
     val planInputFingerprint: String,
@@ -63,7 +63,7 @@ data class EnvelopePlan(
     /** Operational only. */
     val createdAtEpochMs: Long,
 ) {
-    /** T924-SC-01/SC-02 semantic validation; null when the document is usable. */
+    /** 01/SC-02 semantic validation; null when the document is usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"
@@ -85,7 +85,7 @@ data class EnvelopePlan(
         const val SCHEMA_VERSION = 1
         const val KIND = "ENVELOPE_PLAN"
 
-        /** T924-SC-02 schema bound (T, tunable). */
+        /** 02 schema bound (T, tunable). */
         const val MAX_ENVELOPES = 4096
     }
 }

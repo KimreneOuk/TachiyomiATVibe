@@ -8,7 +8,7 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 
 /**
- * One durable pending-request record (T911 slice 2).
+ * One durable pending-request record ( slice 2).
  *
  * Backward compatible with the legacy format (phase + free-text reason only):
  * entries written before slice 2 parse with [generation] 0, no group, no

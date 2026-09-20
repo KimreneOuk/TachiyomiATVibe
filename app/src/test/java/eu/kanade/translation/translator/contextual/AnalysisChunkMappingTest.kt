@@ -14,7 +14,7 @@ import io.kotest.matchers.string.shouldContain
 import org.junit.jupiter.api.Test
 
 /**
- * T924 wave-2 review gap 4 (deviation 8 handoff): the pure
+ *  wave-2 review gap 4 (deviation 8 handoff): the pure
  * `PlannedAnalysisChunk` → `AnalysisChunkResult` mapping — identity/sets/
  * fingerprint preservation, the DTO's status initialization boundary
  * (INVALID+reason as the PENDING-analog parked state), the S1 DTO validation

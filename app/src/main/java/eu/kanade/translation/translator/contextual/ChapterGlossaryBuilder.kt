@@ -184,7 +184,7 @@ object ChapterGlossaryBuilder {
     }
 
     /**
-     * Labeled fallback per T933 memory contract: recomputes a glossary map from
+     * Labeled fallback per  memory contract: recomputes a glossary map from
      * a stream or collection of translated pairs.
      */
     fun streamedRecompute(pairs: Iterable<Pair<String, String>>): Map<String, String> {

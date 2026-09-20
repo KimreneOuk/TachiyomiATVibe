@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test
 import java.lang.reflect.Method
 
 /**
- * T917 Phase 5 (spec §2.1 batch rules, §6.2 commit 5) — RED tests for
+ *  Phase 5 (spec §2.1 batch rules, §6.2 commit 5) — RED tests for
  * terminal-only, honest batch progress totals.
  *
  * Named defects pinned here (new value fields on [TranslationProgressSnapshot],
@@ -226,7 +226,7 @@ class P5TerminalProgressTest {
     fun `an unknown source total is labeled unknown and never renders a percentage`() {
         // Three committed pages of a partially downloaded chapter: the store
         // page set is NOT the trusted source total, so "3/3 · 100%" would be a
-        // fabricated complete chapter (D10 fact).
+        // fabricated complete chapter ( fact).
         val snapshot = TranslationProgressSnapshot.compute(
             chapterId = 1L,
             state = Translation.State.TRANSLATING,
@@ -266,7 +266,7 @@ class P5TerminalProgressTest {
             scope = scope,
         )
         try {
-            // T911 slice 3: the first snapshot is derived from the ordered work
+            //  slice 3: the first snapshot is derived from the ordered work
             // keys at construction — the batch's own total is trusted.
             val snapshot = tracker.snapshot.value
             withClue("batch totals come from the registered work set") {

@@ -172,7 +172,7 @@ class RollingAutoCoordinatorTest {
      * LOCAL_COMPUTE: the shared compute gate serializes prepare and translate.
      * At no point do both run simultaneously.
      *
-     * Gate-release ordering note (T910): the coordinator admits page 1's native
+     * Gate-release ordering note: the coordinator admits page 1's native
      * prepare as soon as page 0 hands off — the translate consumer is
      * asynchronous to the reconcile loop even on [Dispatchers.Unconfined]
      * (its channel-handoff resumption is queued to the runBlocking event
@@ -1178,7 +1178,7 @@ class RollingAutoCoordinatorTest {
             // The scheduler-level flow re-points through flatMapLatest on the
             // scheduler's IO scope, so projection delivery is asynchronous to
             // updateAutoWindow returning: await the switched projection instead
-            // of reading stable.value inline (T910: the inline read raced).
+            // of reading stable.value inline ( the inline read raced).
             val second = withTimeout(5_000) {
                 stable.first {
                     it?.identity == oldIdentity &&

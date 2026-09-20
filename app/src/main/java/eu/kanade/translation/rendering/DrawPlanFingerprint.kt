@@ -6,7 +6,7 @@ import eu.kanade.translation.artifact.StageFingerprints
 import java.security.MessageDigest
 
 /**
- * T924 WP8 (T924-FP-07): thin assembling wrapper over
+ *  WP8: thin assembling wrapper over
  * [StageFingerprints.layoutCompatibilityFingerprint] for the rendering side of
  * the persisted-layout track. It owns the single sources of truth for the
  * planner-side fingerprint inputs the renderer actually controls:
@@ -112,7 +112,7 @@ object DrawPlanFingerprint {
     )
 
     /**
-     * T924-FP-07 layout compatibility fingerprint. First seven parameters are
+     * 07 layout compatibility fingerprint. First seven parameters are
      * the existing `StageFingerprints.layout` inputs (unchanged order); the
      * remaining values are the FP-07 additions with the rendering-owned ones
      * supplied from this object's constants. `platformShapingKey` defaults to

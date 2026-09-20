@@ -7,11 +7,11 @@ import eu.kanade.translation.storage.*
 import eu.kanade.translation.storage.*
 
 /**
- * T930 Slice A2: Writer registry (N2).
+ *  Slice A2: Writer registry (N2).
  *
  * Process-wide registry of active chapter writers in [ActiveChapterStoreRegistry].
  * Under Slice A (flag OFF), this is observability-only: registration records writers
- * but excludes nothing, preserving existing probe/verify LI-4 choreography.
+ * but excludes nothing, preserving existing probe/verify  choreography.
  *
  * Under Slice B (flag ON), exclusion semantics apply: a second writer
  * (probe store, health-verify, migration, glossary lane) force-flushes the owning

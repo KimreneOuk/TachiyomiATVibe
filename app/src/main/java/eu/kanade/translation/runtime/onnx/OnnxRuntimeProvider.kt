@@ -22,7 +22,7 @@ object OnnxRuntimeProvider {
     }
 
     /**
-     * T922 Phase 5 (plan §3.4): typed execution-provider registration result.
+     *  Phase 5 (plan §3.4): typed execution-provider registration result.
      * Reported by [createSessionOptionsWithRegistration] from what actually
      * registered on the built options — never from
      * [HardwareDiscoveryEngine.activeRoute], which is device preference only.
@@ -52,7 +52,7 @@ object OnnxRuntimeProvider {
     )
 
     /**
-     * T922 Phase 5 (plan §3.4): a STRICT accelerator execution provider failed
+     *  Phase 5 (plan §3.4): a STRICT accelerator execution provider failed
      * to register while building session options. The options are already
      * closed by the builder when this is thrown; [OnnxRuntimeProvider.createSessionWithFallback]
      * owns the CPU retry so a default-CPU session can never masquerade as the
@@ -92,7 +92,7 @@ object OnnxRuntimeProvider {
     ): Map<String, String> = buildGenericHtpOptions(socModel = socModel, htpArch = htpArch)
 
     /**
-     * T922 Phase 5 (plan §3.4): typed options build used by the generic
+     *  Phase 5 (plan §3.4): typed options build used by the generic
      * orchestration core; [OnnxRuntimeProvider.SessionOptionsWithRegistration]
      * is its native-typed form.
      */
@@ -102,7 +102,7 @@ object OnnxRuntimeProvider {
     )
 
     /**
-     * T922 Phase 5 (plan §3.4): pure, ORT-free core of the
+     *  Phase 5 (plan §3.4): pure, ORT-free core of the
      * [createSessionWithFallback] main path, generic over the concrete
      * option/session types so JVM provenance tests can drive it with inert
      * tokens (ai.onnxruntime classes refuse to initialize off-device — their
@@ -197,7 +197,7 @@ object OnnxRuntimeProvider {
      *
      * [providerSink] receives the provider that actually served the session
      * ("qnn_htp", "qnn_gpu", "nnapi", "xnnpack", or "cpu") for honest
-     * per-engine route logging. T922 Phase 5 (plan §3.4): the label is the
+     * per-engine route logging.  Phase 5 (plan §3.4): the label is the
      * TYPED registration result of the options actually used — it NEVER
      * derives from [HardwareDiscoveryEngine.activeRoute] alone — and it is
      * emitted only after `createSession` succeeds. A strict accelerator
@@ -226,7 +226,7 @@ object OnnxRuntimeProvider {
         } else {
             HardwareDiscoveryEngine.activeRoute
         }
-        // T922 Phase 5 (plan §3.3): the attempt gate is the coherent
+        //  Phase 5 (plan §3.3): the attempt gate is the coherent
         // accelerator gate — TEMPORARY_FAILURE still owns its one documented
         // recreation attempt (bounded by the SSR retry counter).
         val canUseAccelerator = useAccelerator &&
@@ -447,7 +447,7 @@ object OnnxRuntimeProvider {
         }
 
     /**
-     * T922 Phase 5 (plan §3.4): [createSessionOptions] plus a TYPED
+     *  Phase 5 (plan §3.4): [createSessionOptions] plus a TYPED
      * registration result describing what actually registered on the built
      * options. Behavior is otherwise byte-identical to the pre-Phase-5
      * builder — same logs, same option code — except:
@@ -488,7 +488,7 @@ object OnnxRuntimeProvider {
                 logcat(LogPriority.INFO) { "ONNX session options using CPU execution provider" }
         }
 
-        // T922 Phase 5 (plan §3.4): strict registration failures propagate to
+        //  Phase 5 (plan §3.4): strict registration failures propagate to
         // the session creator; XNNPACK failures resolve to CPU.
         var strictRegistrationFailure: Pair<HardwareDiscoveryEngine.HardwareRoute, Throwable>? = null
         var xnnpackRegistrationFailed = false
@@ -574,7 +574,7 @@ object OnnxRuntimeProvider {
                         addXnnpack(java.util.HashMap<String, String>())
                         logcat(LogPriority.INFO) { "Successfully added XNNPACK EP" }
                     }.onFailure { e ->
-                        // T922 Phase 5 (plan §3.4): the failure no longer stops
+                        //  Phase 5 (plan §3.4): the failure no longer stops
                         // at logging — the options keep the default CPU EP and
                         // the reported registration resolves to CPU so the
                         // session is labelled honestly.

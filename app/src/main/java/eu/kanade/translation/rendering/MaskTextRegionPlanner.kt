@@ -8,7 +8,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * TachiyomiAT T912 slice 3: pure partitioner for ONE shared segmentation
+ * TachiyomiAT  slice 3: pure partitioner for ONE shared segmentation
  * component. Partitions the `(planGeometryId, componentId)` group's members
  * into disjoint half-open cells so every shared-component pixel is owned by at
  * most one block and a deterministic dead zone separates neighbouring cells.
@@ -45,7 +45,7 @@ import kotlin.math.min
  *     cells (same slabs, no span lists).
  *  8. At most [MAX_SHARED_BLOCKS_OPTIMIZED] members per component are
  *     optimized; members beyond the first 8 in stable order get no cell at all
- *     ([Cell.slab] == null, [Cell.optimized] == false). T912 repair (R4b):
+ *     ([Cell.slab] == null, [Cell.optimized] == false).  repair (R4b):
  *     they additionally carry [Cell.overflowSlab] — a disjoint bounds-rect
  *     slab cut from the same partition sequence — so the integration can give
  *     them a hard `cellRect` (no component path) and the hard-cell exemption
@@ -126,7 +126,7 @@ internal object MaskTextRegionPlanner {
      * list (empty in bounds-rect mode); [empty] marks a cell with no usable
      * component pixels; [optimized] is false only for beyond-cap members.
      *
-     * T912 repair (R4b): beyond-cap members carry [overflowSlab] — a disjoint
+     *  repair (R4b): beyond-cap members carry [overflowSlab] — a disjoint
      * BOUNDS-RECT slab cut from the SAME partition sequence (cuts span all
      * members), so the integration can give them a hard `cellRect` without a
      * component path. Null when their own slab would be degenerate.
@@ -180,7 +180,7 @@ internal object MaskTextRegionPlanner {
         )
         val optimizedCount = min(members.size, MAX_SHARED_BLOCKS_OPTIMIZED)
         val optimized = sorted.subList(0, optimizedCount)
-        // T912 repair (R4b): members beyond the cap keep a bounds-rect slab
+        //  repair (R4b): members beyond the cap keep a bounds-rect slab
         // cut from the SAME partition sequence (see [Cell.overflowSlab]).
         val overflowInputs = HashSet<Int>(sorted.size - optimizedCount)
         for (i in optimizedCount until sorted.size) overflowInputs += sorted[i].member.inputIndex
@@ -273,7 +273,7 @@ internal object MaskTextRegionPlanner {
             val rect = slabRect(horizontal, slab, orthoLow, orthoHigh)
             val degenerate = slab.start >= slab.endExclusive
             if (member.inputIndex in overflowInputs) {
-                // T912 repair (R4b): beyond-cap member — no cell, but a
+                //  repair (R4b): beyond-cap member — no cell, but a
                 // disjoint bounds-rect slab from the same cut sequence when it
                 // has positive area.
                 cellsByInput[member.inputIndex] = Cell(

@@ -163,7 +163,7 @@ object StageFingerprints {
     )
 
     /**
-     * T924-FP-02 (`PageOcrContentFingerprint`): semantic content fingerprint
+     * 02 (`PageOcrContentFingerprint`): semantic content fingerprint
      * over one page's OCR payload. Inputs, in fixed order: corpus schema
      * version; pageKey; naturalPageIndex; source sha256 + width + height +
      * orientation; detection fingerprint (or the explicit [DETECTION_SKIPPED]
@@ -174,7 +174,7 @@ object StageFingerprints {
      * textless state; the ordered `inpaintMaskBoxes` content (with label) plus
      * `inpaintMaskRevision`.
      *
-     * Excluded per T924-FP-01: block `translation`, `userEditedAt`, colors,
+     * Excluded per  block `translation`, `userEditedAt`, colors,
      * score-derived data (already covered by the detection fingerprint),
      * candidate/page versions, sidecar file names, generation ids. A pure OCR
      * content key must not change when a user edits target text — deliberately
@@ -231,7 +231,7 @@ object StageFingerprints {
     }
 
     /**
-     * T924-FP-03 (`OcrCorpusFingerprint`): order-stable semantic fingerprint
+     * 03 (`OcrCorpusFingerprint`): order-stable semantic fingerprint
      * over the chapter's full OCR corpus. Inputs: corpus schema version;
      * expected page count (+ trusted flag); the sequence of per-page
      * [OcrBlockContent]-level [StageFingerprints.pageOcrContentFingerprint]
@@ -244,7 +244,7 @@ object StageFingerprints {
      * identical outputs does not change the value; page insertion, removal,
      * or reorder does.
      *
-     * Interpretation note (recorded in the T924-S1 fingerprints report): the
+     * Interpretation note (recorded in the  fingerprints report): the
      * pageKey is fed explicitly next to each page content fingerprint so the
      * sorted-key fallback order is itself hashed, not just implied.
      */
@@ -272,7 +272,7 @@ object StageFingerprints {
     }
 
     /**
-     * T924-FP-04 (`ProfileInputFingerprint`): identity of everything the
+     * 04 (`ProfileInputFingerprint`): identity of everything the
      * analysis/profile stage consumes. Absent user/series authority is the
      * explicit [AUTHORITY_ABSENT] literal — absence is a value, never an
      * empty-string collision. Any single input change changes the value; an
@@ -306,7 +306,7 @@ object StageFingerprints {
     )
 
     /**
-     * T924-FP-05 / T924-SC-10 (`ProfileContentFingerprint`): SHA-256 over the
+     * 05 /  (`ProfileContentFingerprint`): SHA-256 over the
      * canonical re-encoded JSON of the validated profile (decode-then-encode
      * under the shared [ArtifactDocumentJson] instance). Operational fields
      * (`version`, `frozenAtEpochMs`, `sourceRunId`) are zeroed in the hashing
@@ -329,7 +329,7 @@ object StageFingerprints {
     }
 
     /**
-     * T924-FP-06: translation provenance fingerprint (per page or per
+     * 06: translation provenance fingerprint (per page or per
      * envelope). Inputs: [ProfileContentFingerprint]; translator signature
      * (provider/model/credential + protocol version); prompt version; source
      * and target language; per contributing page, in order: that page's
@@ -381,7 +381,7 @@ object StageFingerprints {
     }
 
     /**
-     * T924-FP-07: layout compatibility fingerprint. Carries every existing
+     * 07: layout compatibility fingerprint. Carries every existing
      * [StageFingerprints.layout] input (same order, first seven parameters)
      * plus ALL of: font asset identity (asset name + asset sha256),
      * typeface/style, paint measurement flags, layout planner algorithm
@@ -432,7 +432,7 @@ object StageFingerprints {
     )
 
     /**
-     * T924-FP-08: color/style fingerprint. Inputs: color estimator version;
+     * 08: color/style fingerprint. Inputs: color estimator version;
      * consumed image identity — cleaned file name + `inpaintRevision`, or
      * [DisplayBaseKind.ORIGINAL_SOURCE] marker + source sha256 when the
      * original pixels were consumed; per-block geometry fingerprints consumed
@@ -470,7 +470,7 @@ object StageFingerprints {
     }
 
     // -------------------------------------------------------------------------
-    // T924 wave-2 review F2 consolidation: the envelope planners' composite
+    //  wave-2 review F2 consolidation: the envelope planners' composite
     // fingerprint builders (formerly the planner-local `PlannerFingerprints`
     // core in `translator/contextual/GlobalEnvelopePlanner.kt`) moved here so
     // there is exactly ONE canonical encoding for every persisted fingerprint.
@@ -512,7 +512,7 @@ object StageFingerprints {
      * the contributing pages of ONE envelope, in planned order, each as
      * `pageKey to pageOcrContentFingerprint`. Payload order is hashed
      * verbatim — callers must pass the canonical planned order (same
-     * core-then-context convention as T924-AP-03, wave-2 F4).
+     * core-then-context convention as  wave-2 F4).
      */
     fun envelopeContributingCorpusFingerprint(
         contributingPages: List<Pair<String, String>>,
@@ -527,7 +527,7 @@ object StageFingerprints {
     }
 
     /**
-     * T924-SC-08 `EnvelopePlan.planInputFingerprint`: corpus slice + planner
+     * 08 `EnvelopePlan.planInputFingerprint`: corpus slice + planner
      * version + envelope policy + the pending-block set, in canonical page
      * then reading order. Callers pass only pages that carry pending blocks
      * (textless pages contribute nothing) — the composite hashes exactly the
@@ -557,7 +557,7 @@ object StageFingerprints {
     }
 
     /**
-     * T924-SC-10 `EnvelopePlan.planFingerprint`: SHA-256 over the canonical
+     * 10 `EnvelopePlan.planFingerprint`: SHA-256 over the canonical
      * re-encoded JSON of the plan DTO with operational fields zeroed and the
      * `planFingerprint` itself blanked (a value cannot contain its own hash).
      * Callers own the hashing view; this is the byte-level core only.
@@ -581,7 +581,7 @@ object StageFingerprints {
         }
 
     /**
-     * T924-SC-09 text normalization applied before any hashing: Unicode NFC,
+     * 09 text normalization applied before any hashing: Unicode NFC,
      * CRLF/CR normalized to LF. No case folding, no whitespace collapsing
      * (case and spacing are semantic in CJK/source text).
      */
@@ -591,14 +591,14 @@ object StageFingerprints {
             .replace('\r', '\n')
 
     /**
-     * T924-SC-09 `sourceExcerptHash`: SHA-256 of the NFC/LF-normalized
+     * 09 `sourceExcerptHash`: SHA-256 of the NFC/LF-normalized
      * excerpt, lowercase hex.
      */
     fun sourceExcerptHash(excerpt: String): String =
         sha256Hex(normalizeText(excerpt).toByteArray(Charsets.UTF_8))
 
     /**
-     * Public canonical field hasher — the single T924-SC-08 encoding core
+     * Public canonical field hasher — the single  encoding core
      * behind every builder in this object (wave-2 F2 consolidation). Named
      * builders are preferred; this is the sanctioned core for planner-domain
      * composites whose inputs do not belong in the `artifact` package (e.g.
@@ -636,7 +636,7 @@ object StageFingerprints {
         append(value.length).append(':').append(value).append('|')
     }
 
-    /** Schema version of the T924 OCR corpus content input set (FP-02/FP-03). */
+    /** Schema version of the  OCR corpus content input set (FP-02/FP-03). */
     const val OCR_CORPUS_SCHEMA_VERSION = 1
 
     /** Explicit marker for a legitimately skipped detection stage (FP-02). */
@@ -648,7 +648,7 @@ object StageFingerprints {
     /**
      * Raw SHA-256 over [bytes], lowercase hex — the byte-level core under
      * [profileContentFingerprint], [envelopePlanContentFingerprint] and
-     * [sourceExcerptHash] (T924-SC-09/SC-10).
+     * [sourceExcerptHash] (/SC-10).
      */
     fun sha256Hex(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256")
@@ -658,7 +658,7 @@ object StageFingerprints {
 
 /**
  * One OCR block's content-facing fields consumed by
- * [StageFingerprints.pageOcrContentFingerprint] (T924-FP-02). Only the fields
+ * [StageFingerprints.pageOcrContentFingerprint]. Only the fields
  * listed there are carried; translation, colors, score, panel/bubble context
  * and masks are deliberately absent.
  */
@@ -676,10 +676,10 @@ data class OcrBlockContent(
 
 /**
  * One contributing page's actually-translated content for
- * [StageFingerprints.translationProvenanceFingerprint] (T924-FP-06). The
+ * [StageFingerprints.translationProvenanceFingerprint]. The
  * hashes are over the NFC/LF-normalized source text actually sent (use
  * [StageFingerprints.sourceExcerptHash]); envelope ids and envelope policy
- * are deliberately absent (T924-FP-01, matrix row 7).
+ * are deliberately absent ( matrix row 7).
  */
 data class TranslationProvenancePage(
     val pageOcrContentFingerprint: String,
@@ -689,7 +689,7 @@ data class TranslationProvenancePage(
 
 /**
  * One pending page's planning-facing input for
- * [StageFingerprints.envelopePlanInputFingerprint] (T924-SC-08, wave-2 F2).
+ * [StageFingerprints.envelopePlanInputFingerprint] ( wave-2 F2).
  * Only the block ids matter to the composite — text, geometry and content
  * fingerprints enter through [StageFingerprints.ocrCorpusFingerprint]
  * (`corpusFingerprint`) instead, so this carrier keeps the plan input a

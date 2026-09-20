@@ -250,12 +250,12 @@ internal object CollisionRelaxation {
      * rectangles around the current occupancy. Duplicates after clamping are
      * skipped without counting; the FIRST validating candidate wins.
      *
-     * T912 repair (R2): the ladder NEVER drops the block. When every candidate
+     *  repair (R2): the ladder NEVER drops the block. When every candidate
      * fails validation, a clipped draw is accepted (visibility override —
      * placement safety may never remove text from the page). Unmasked layouts
      * retain the original candidate-8 free-rect fallback.
      *
-     * T912 contained-fit rescue (Director-validated model): on the masked
+     *  contained-fit rescue (Director-validated model): on the masked
      * branch, candidate 1 — a known duplicate collision failure whenever the
      * resolver was entered (slice-7 review NOTE 3) — is replaced by the
      * OCR-box-first tiered [containedReflowRescue]. If that rescue is
@@ -313,7 +313,7 @@ internal object CollisionRelaxation {
         } else {
             Float.POSITIVE_INFINITY
         }
-        // T912 contained-fit rescue: precomputed by the placement loop for
+        //  contained-fit rescue: precomputed by the placement loop for
         // EVERY masked block (containment-first — the rescue is attempted
         // before any shift machinery, and its cached result is reused here so
         // the band-fit budget is never double-spent). Not a counted candidate
@@ -598,12 +598,12 @@ internal object CollisionRelaxation {
             }
         }
 
-        // T912 repair (R2): ladder exhausted → accept a CLIPPED DRAW, never
+        //  repair (R2): ladder exhausted → accept a CLIPPED DRAW, never
         // `NonDraw(NO_DISJOINT_POST_ANCHOR_PLACEMENT)` (visibility override:
         // placement safety may never remove text from the page).
         // Unmasked layouts preserve the prior candidate-8 free-rect fallback.
         //
-        // T912 contained-fit tail, in priority order:
+        //  contained-fit tail, in priority order:
         //  1. A computed contained rescue exists → return it even though its
         //     conservative occupancy overlaps another block: fully contained,
         //     complete text in its own bubble beats exile or shrinking, and
@@ -1075,7 +1075,7 @@ internal object CollisionRelaxation {
     }
 
     /**
-     * T912 slice 6: widest symmetric box centered at [centerX] that stays on
+     *  slice 6: widest symmetric box centered at [centerX] that stays on
      * the page and does not overlap any already-placed obstacle extent whose
      * vertical extent overlaps the candidate's band `[bandTop, bandBottom)`.
      * Extends the [freeSpaceLeft]/[freeSpaceRight] bound scan with that band

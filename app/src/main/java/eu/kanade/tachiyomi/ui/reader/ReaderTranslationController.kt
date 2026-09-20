@@ -1211,7 +1211,7 @@ internal class ReaderTranslationController(
                 pt.translationStatus == StageStatus.FAILED ||
                 pt.renderStatus == StageStatus.FAILED ||
                 pt.displayImageName != null ||
-                // T924 no-render batch design: a page whose cleaned image is
+                //  no-render batch design: a page whose cleaned image is
                 // published and current already produced its durable result —
                 // the batch leaves renderStatus PENDING forever (overlay is
                 // drawn on demand), and treating that as stranded healed healthy
@@ -1234,7 +1234,7 @@ internal class ReaderTranslationController(
                 "TachiyomiAT stranded-page sweep: healing $pageKey " +
                     "(ocr=${pt.ocrStatus} inpaint=${pt.inpaintStatus} age=${age / 1000}s)"
             }
-            // T917 D1: the sweep is reader-side AUTOMATIC maintenance — its
+            //   the sweep is reader-side AUTOMATIC maintenance — its
             // lease is AUTO (never preempts; a reader tap evicts it).
             val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.AUTO)
             if (lease !is LeaseAcquisition.Granted) continue
@@ -1536,14 +1536,14 @@ internal class ReaderTranslationController(
     }
 
     /**
-     * T924 Stage 7 (D3) — THE persisted-layout reader install (FF-02-gated).
+     * Stage 7: the persisted-layout reader install.
      * Installs the chapter hydration source on the process-wide
      * [PersistedLayoutReaderBridge] so Pager and Webtoon holder binds can
      * hydrate the page's durable draw plan ([PersistedLayoutHydrator] typed
      * outcomes) instead of running the async planner. EVERY non-Resolved
-     * outcome (FF-02 OFF, no pointer, corrupt, incompatible, lossy,
+     * outcome (feature flag OFF, no pointer, corrupt, incompatible, lossy,
      * unsupported version) returns null from the source — the mandatory async
-     * planner fallback (T924-FF-02b); Manual/Auto behavior with FF-02 OFF is
+     * planner fallback; Manual/Auto behavior with the feature flag OFF is
      * byte-identical because nothing is installed. Plans are vector draw DTOs
      * only — the overlay keeps drawing text (R041, no rasterized output).
      */

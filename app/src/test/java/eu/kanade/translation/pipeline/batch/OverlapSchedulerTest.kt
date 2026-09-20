@@ -33,7 +33,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * T924 Stage 7 gate 6.x basis (implementation-sequence §S7): the
+ *  Stage 7 gate 6.x basis (implementation-sequence §S7): the
  * [OverlapScheduler] — serial local inpaint inside the single in-flight
  * remote request window, EXISTING native inpaint lane + guarded identity
  * path, native admission unchanged (never preempts a MANUAL owner), strictly
@@ -132,7 +132,7 @@ class OverlapSchedulerTest {
     }
 
     /**
-     * T934 track I: seeds a page whose OCR is FINAL (READY, non-empty blocks)
+     *  track I: seeds a page whose OCR is FINAL (READY, non-empty blocks)
      * while its translation is still PENDING — the decoupled gate's new
      * candidate shape. Inpaint's data dependency is detection/masks only
      * (StageFingerprints.inpaint has no translation input), so this page must
@@ -349,7 +349,7 @@ class OverlapSchedulerTest {
     }
 
     // ------------------------------------------------------------------
-    // T925 coexistence: contention with a live concurrent writer (the
+    //  coexistence: contention with a live concurrent writer (the
     // reader's translate-on-view lane) must YIELD the page, never retry it
     // forever — the retry livelocked the whole ordered drain on device.
     // ------------------------------------------------------------------
@@ -476,7 +476,7 @@ class OverlapSchedulerTest {
     }
 
     // ------------------------------------------------------------------
-    // T934 track I — inpaint decoupling: the inpaint artifact fingerprint
+    //  track I — inpaint decoupling: the inpaint artifact fingerprint
     // (StageFingerprints.inpaint) has NO translation input, so candidate
     // admission gates on OCR being FINAL instead of the page's translation
     // status. What must NOT regress: no OCR/detector work ever rides this
@@ -515,7 +515,7 @@ class OverlapSchedulerTest {
             page.ocrStatus shouldBe StageStatus.READY
             page.inpaintStatus shouldBe StageStatus.READY
             page.translationStatus shouldBe StageStatus.PENDING
-            // TX-06 teardown discipline unchanged.
+            //  teardown discipline unchanged.
             store.snapshot(key).leaseToken shouldBe null
         }
     }
@@ -569,13 +569,13 @@ class OverlapSchedulerTest {
 
     @Test
     fun `display promotion still requires translation terminal and cleaned image even when inpaint commits first`() = runTest {
-        // T934 round 2 fixture fix: the committed-display promotion
+        //  round 2 fixture fix: the committed-display promotion
         // (ChapterArtifactEngine.promoteLiveCandidate → displayBaseIsValid)
         // validates the cleaned image FOR REAL — the companion file must exist
         // on disk and probe as a decodable image matching the page's source
         // dimensions. Production is correct; the fixture was missing both. The
         // JVM has no BitmapFactory, so install the header-probe seam
-        // (ChapterTranslationStorePersistenceTest / D7 fixture recipe) and
+        // (ChapterTranslationStorePersistenceTest /  fixture recipe) and
         // persist the cleaned companion file the layout expects.
         val productionProbe = ChapterTranslationStore.artifactImageProbe
         ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
@@ -687,7 +687,7 @@ class OverlapSchedulerTest {
 
     @Test
     fun `serial drain stamps order-inverted display-complete pages render-terminal`() = runTest {
-        // T934 round 3: the decoupled window inpaints p1/p2 while BOTH
+        //  round 3: the decoupled window inpaints p1/p2 while BOTH
         // translations are still PENDING (the order inversion the relaxed
         // candidacy creates). The inpaint lane's own render stamp is gated
         // on the translation being already terminal, so no stamp lands
@@ -743,7 +743,7 @@ class OverlapSchedulerTest {
             store.resolveDisplayPage("p1")!!.toPageDisplayProjection().displayReady shouldBe true
             // Missing display evidence is NOT stamped.
             store.snapshot("p2").page!!.renderStatus shouldBe StageStatus.PENDING
-            // TX-06 teardown discipline: the sweep's Render lease is released.
+            //  teardown discipline: the sweep's Render lease is released.
             store.snapshot("p1").leaseToken shouldBe null
             store.snapshot("p2").leaseToken shouldBe null
         } finally {
@@ -752,7 +752,7 @@ class OverlapSchedulerTest {
     }
 
     // ------------------------------------------------------------------
-    // T934 track V — continuous overlap admission (Director decision
+    //  track V — continuous overlap admission (Director decision
     // 2026-09-18). On-device evidence: strictly window-gated admission
     // throttled overlap inpaint to roughly once per envelope gap (~8 pages/min
     // against ~12 pages/min committed by the envelopes) while the NPU idled

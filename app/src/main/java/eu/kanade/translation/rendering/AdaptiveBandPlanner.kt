@@ -37,7 +37,7 @@ internal data class AdaptiveResult(
 )
 
 /**
- * TachiyomiAT T912 slice 5: pure adaptive band fitter for horizontal text in a
+ * TachiyomiAT  slice 5: pure adaptive band fitter for horizontal text in a
  * span-mode shared cell (architecture revision 2, "Slice 5: adaptive bands and
  * the Android shaping contract").
  *

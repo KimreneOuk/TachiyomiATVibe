@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * T911 slice 2 (R10): a translation-queue admission rejection is never labeled
+ *  slice 2 (R10): a translation-queue admission rejection is never labeled
  * DOWNLOAD_FAILED. The durable phase is ADMISSION_FAILED with a typed kind
  * that distinguishes a non-HTTP source from an invalid translation
  * configuration from a generic admission rejection.

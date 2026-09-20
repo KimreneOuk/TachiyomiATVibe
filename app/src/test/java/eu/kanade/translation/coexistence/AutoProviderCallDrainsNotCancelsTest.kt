@@ -44,13 +44,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T917 Phase 3 — D6 §2.3 drain-not-cancel (phase3-design §2.3).
+ *  Phase 3 —  §2.3 drain-not-cancel (phase3-design §2.3).
  *
  * When the reader leaves (auto window shutdown/cancel), an auto provider call
  * already in flight must DRAIN to completion inside a bounded grace window —
  * translate + commit run under NonCancellable — instead of being torn down
- * mid-call (which strands the page and, per D9, leaves an unresolved attempt
- * ledger entry). Grace expiry must cancel the call cleanly and leave the D9
+ * mid-call (which strands the page and, per  leaves an unresolved attempt
+ * ledger entry). Grace expiry must cancel the call cleanly and leave the
  * entry unresolved.
  *
  * RED (committed first, phase3-design §6 step 6): `drainGraceMs` is not
@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * missing.
  *
  * Fixture: the REAL [RollingAutoCoordinator] over a minimal executor fake, with
- * the REAL [ChapterTranslationStore] in artifact authority (D9 fresh-chapter
+ * the REAL [ChapterTranslationStore] in artifact authority ( fresh-chapter
  * recipe) so the ledger sidecar is durable and observable. The scheduler-level
  * routing into this coordinator is covered by the existing scheduler tests;
  * the coordinator boundary is the unit that owns the §2.3 drain seam.
@@ -88,7 +88,7 @@ class AutoProviderCallDrainsNotCancelsTest {
     // fixtures
     // ------------------------------------------------------------------
 
-    /** Production fresh-chapter recipe over the shared IO (D9 test precedent). */
+    /** Production fresh-chapter recipe over the shared IO ( test precedent). */
     private fun freshStore(pageKeys: List<String>): ChapterTranslationStore {
         val artifactStore = ChapterArtifactEngine(
             AtomicChapterDocuments(io),
@@ -135,7 +135,7 @@ class AutoProviderCallDrainsNotCancelsTest {
     }
 
     // ------------------------------------------------------------------
-    // ledger-file observation (D9 schema mirror)
+    // ledger-file observation ( schema mirror)
     // ------------------------------------------------------------------
 
     @kotlinx.serialization.Serializable
@@ -183,7 +183,7 @@ class AutoProviderCallDrainsNotCancelsTest {
     }
 
     /**
-     * Pins the production grace bound. T917 Phase 4 (D7 §1.6) CONTRACT CHANGE
+     * Pins the production grace bound.  Phase 4 ( §1.6) CONTRACT CHANGE
      * (recorded in the phase-4 implementation log): the bound moved from the
      * pinned 90 s to exactly the drained call chain's own legitimate budget —
      * [eu.kanade.translation.pipeline.TranslationPipeline.ONNX_PHASE_TIMEOUT_MS] +
@@ -226,7 +226,7 @@ class AutoProviderCallDrainsNotCancelsTest {
             session = fakeSession(store),
             pageResolver = resolver(),
         )
-        // The paid call is parked mid-flight (the D5 PROVIDER_START analogue).
+        // The paid call is parked mid-flight (the  PROVIDER_START analogue).
         withTimeout(AWAIT_TIMEOUT_MS) { executor.awaitTranslateStarted("p0") }
 
         // Reader leaves: the real teardown path cancels the coordination job.
@@ -434,7 +434,7 @@ class AutoProviderCallDrainsNotCancelsTest {
                 // shape the harness's manual publish shim does (harness note
                 // §1.2.3): promoting renderStatus to READY additionally needs
                 // a decodable cleaned base file, which a JVM fixture cannot
-                // produce (documented fixture deviation, D9 harness notes).
+                // produce (documented fixture deviation,  harness notes).
                 ocrStatus = StageStatus.READY
                 translationStatus = StageStatus.READY
                 inpaintStatus = StageStatus.READY

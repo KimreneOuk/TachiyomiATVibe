@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
-// T909 Phase 17b: the persistence scheduler moved from
+//  Phase 17b: the persistence scheduler moved from
 // `ChapterTranslationStore` (persistLocked + flush/close lifecycle + the
 // debounced persist job + the retention sweep, plus the persistence
 // constants). The scheduler owns `persistScope` and is constructed eagerly by
@@ -98,7 +98,7 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
     }
 
     suspend fun closeAndFlush() {
-        // T921 hotfix: no retention sweep here either. closeAndFlush runs on
+        //  hotfix: no retention sweep here either. closeAndFlush runs on
         // the caller's coroutine — for probe stores that is the reader-entry
         // path itself (DurableChapterStatusResolver.withProbeStore's finally),
         // so the multi-second recursive SAF crawl stalled every first open of
@@ -149,7 +149,7 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
             // written only AFTER a publication's durable manifest rotation,
             // so a capture taken outside the artifact monitor can lag an
             // in-flight publication by its whole body — deleting the sidecar
-            // that publication just pointed at (the T924 COMPLETE run record
+            // that publication just pointed at (the  COMPLETE run record
             // was observed vanishing exactly this way between publication and
             // the next read).
             store.deleteVerifiedRetentionCandidates(candidates)

@@ -199,7 +199,7 @@ internal class FinalizeWorker(
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
         val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
 
-        // ST-14 entry: the FINALIZE phase pointer (resume re-runs finalize —
+        //  entry: the FINALIZE phase pointer (resume re-runs finalize —
         // every step below is an idempotent re-run).
         publishRecord(
             artifact,
@@ -231,14 +231,14 @@ internal class FinalizeWorker(
     }
 
     /**
-     * Steps 2-6 of the ST-14 FINALIZE phase — the idempotent drain shared by
-     * the fresh entry ([runFinalizeAndComplete]) and the ST-14 FINALIZE
+     * Steps 2-6 of the  FINALIZE phase — the idempotent drain shared by
+     * the fresh entry ([runFinalizeAndComplete]) and the  FINALIZE
      * resume ([resumeFinalizeOrComplete]):
      *
      *  2. Serial inpaint drain through the overlap scheduler — pages whose
      *     inpaint already committed are skipped by the scheduler's candidate
      *     rule (never re-inpainted); with no scheduler this is a no-op.
-     *  2b. T934 display-tail drain: pages whose translate+inpaint work is
+     *  2b.  display-tail drain: pages whose translate+inpaint work is
      *     done but whose committed display (render-terminal stamp →
      *     promotion) never landed are drained to completion here, bounded;
      *     a page the drain cannot finish takes a SPECIFIC typed terminal and
@@ -277,7 +277,7 @@ internal class FinalizeWorker(
         // 2. Serial post-translate inpaint drain (overlap-fallback arm).
         overlapScheduler?.drainSerial()
 
-        // 2b. T934 display-tail drain: COMPLETE means "every page readable",
+        // 2b.  display-tail drain: COMPLETE means "every page readable",
         //     not "every ingredient done". The inpaint lane's render-terminal
         //     stamp only fires when the page's translation was ALREADY
         //     terminal at inpaint time, so order-inverted pages (inpaint
@@ -304,7 +304,7 @@ internal class FinalizeWorker(
         }
 
         // 4. Stranded-page reconciliation: pages that are not durably
-        //    terminal get a durable failure + a reported reason. The T924
+        //    terminal get a durable failure + a reported reason. The
         //    terminal predicate is NOT the legacy reconciler's one: the legacy
         //    schedule renders + promotes display in-pass (hasRenderedResult),
         //    while the flagged pipeline's committed-translation state is
@@ -315,7 +315,7 @@ internal class FinalizeWorker(
         for (pageKey in orderedPages.map { it.first }) {
             val page = stateNow[pageKey]
             if (t924PageTerminalAtFinalize(page, store.currentGeneration)) continue
-            // T934 stranded-page fix: the reason must name the page's actual
+            //  stranded-page fix: the reason must name the page's actual
             // work state (all-translated, textless, user-owned, or genuinely
             // unfinished) — a bare status is what made these pages show as a
             // generic "Unknown error" class in the progress sheet.
@@ -348,7 +348,7 @@ internal class FinalizeWorker(
         //    FINALIZE, so the coordinator pauses instead of reporting a
         //    completion the record disagrees with (ChapterProfileBatchCoordinator.RUN_CLOSURE_REJECTED_REASON).
         //
-        //    T934 round 3: the publication CASes against the façade manifest
+        //     round 3: the publication CASes against the façade manifest
         //    snapshot while the drain steps above move durable state through
         //    their own store transactions. One fresh-baseline retry — re-read
         //    the durable manifest into the façade, then re-publish — keeps
@@ -411,7 +411,7 @@ internal class FinalizeWorker(
     }
 
     /**
-     * T924 Phase 4 Wave A — the STANDARD-engine translate tail, entered
+     *  Phase 4 Wave A — the STANDARD-engine translate tail, entered
      * exactly when the OCR preflight published a COMPLETE corpus (the
      * whole-corpus gap gate above is unchanged). The DIRECTOR design: the
      * standard engine continues batch translation just like the AI lane,
@@ -419,7 +419,7 @@ internal class FinalizeWorker(
      *
      *  1. `TRANSLATE` phase record carrying the run's OCR corpus fingerprint
      *     and NO analysis/profile/envelope pointers (the standard lane never
-     *     produces them; the ST-14 resume gate reads the fingerprint from
+     *     produces them; the  resume gate reads the fingerprint from
      *     the FINALIZE record this tail leads to).
      *  2. IN-ORDER per-page translation through the injected
      *     [standardTranslateOutcome] seam — the LEGACY per-page machinery

@@ -8,7 +8,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * T934: [AtomicChapterDocuments.publish] runs write(`name.tmp`) → read-back
+ *  [AtomicChapterDocuments.publish] runs write(`name.tmp`) → read-back
  * validate → delete `.bak` → rename `name`→`name.bak` → rename `name.tmp`→
  * `name` under a PROCESS-WIDE per-document-name lock (companion-object state).
  * The temp name is deterministic, so two in-process writers to the same

@@ -15,7 +15,7 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.math.max
 
 /*
- * T922 Phase 2 trace foundation: schedule/run identities, immutable coroutine
+ *  Phase 2 trace foundation: schedule/run identities, immutable coroutine
  * trace element, fixed-size stage timers, online overlap accumulator, and an
  * injectable monotonic clock.
  *
@@ -68,7 +68,7 @@ enum class TranslationTraceStage : TraceToken {
     SOURCE_DECODE,
 
     /**
-     * T922 Phase 4 (batch): source-fingerprint preflight — the I/O-only hash of
+     *  Phase 4 (batch): source-fingerprint preflight — the I/O-only hash of
      * the downloaded page bytes before resume planning. Batch schedule scope.
      */
     SOURCE_FINGERPRINT,
@@ -155,7 +155,7 @@ enum class TranslationScheduleState : TraceToken {
     CANCELLED,
 
     /**
-     * T922 Phase 4 (batch): the scheduled unit contributes no work — an OCR
+     *  Phase 4 (batch): the scheduled unit contributes no work — an OCR
      * skip (no reference / fully durable page) or an artifact reuse decision.
      */
     SKIP,
@@ -207,7 +207,7 @@ enum class TranslationTraceReason(val token: String) {
     CPU_FALLBACK("cpu_fallback"),
     DEVICE_PREFERENCE("device_preference"),
 
-    // T922 Phase 4 (batch): bounded reason tokens migrated from the legacy
+    //  Phase 4 (batch): bounded reason tokens migrated from the legacy
     // BatchTranslationDiagnostics vocabulary (stage decisions, artifact reuse,
     // provider envelope lifecycle). Same tokens, now schema-sanctioned.
     REFERENCE_READY("reference_ready"),
@@ -518,7 +518,7 @@ class TranslationScheduleTrace internal constructor(
     private var slowestPageToken: String = TranslationPipelineDiagnostics.NONE
     private var slowestRunMs: Long = 0
     private var lastStateKey: String? = null
-    // T922 Phase 3: runs that terminated with a non-success outcome under this
+    //  Phase 3: runs that terminated with a non-success outcome under this
     // schedule. Lets a natural shutdown after a fully successful window emit
     // schedule_end success instead of a misleading cancelled.
     private val nonSuccessRuns = AtomicInteger(0)
@@ -567,7 +567,7 @@ class TranslationScheduleTrace internal constructor(
 
     /**
      * Emits a bounded scheduling decision that bypasses the identical-key
-     * coalescer (T922 Phase 4 batch facade): envelope lifecycle and stage
+     * coalescer ( Phase 4 batch facade): envelope lifecycle and stage
      * decisions repeat legitimately and must not be collapsed. Detailed-gated
      * and fail-open like [reportState].
      */
@@ -598,7 +598,7 @@ class TranslationScheduleTrace internal constructor(
         (nowNanos - startNanos).coerceAtLeast(0) / 1_000_000
 
     /**
-     * T922 Phase 4: starts a SCHEDULE-scoped stage interval — batch work that
+     *  Phase 4: starts a SCHEDULE-scoped stage interval — batch work that
      * belongs to the whole invocation rather than one page (source-fingerprint
      * preflight, engine setup, one provider translation envelope). Emits
      * `stage_start` with the schedule identity (rid=none, page=none) and
@@ -652,7 +652,7 @@ class TranslationScheduleTrace internal constructor(
     }
 
     /**
-     * T922 Phase 3: records a run terminal outcome so the schedule sweep can
+     *  Phase 3: records a run terminal outcome so the schedule sweep can
      * distinguish a fully-successful window's teardown from a cancellation
      * that cut runs short. Bounded: one counter.
      */
@@ -696,7 +696,7 @@ class TranslationScheduleTrace internal constructor(
 }
 
 /**
- * One SCHEDULE-scoped stage interval (T922 Phase 4): batch work owned by the
+ * One SCHEDULE-scoped stage interval ( Phase 4): batch work owned by the
  * whole invocation — source-fingerprint preflight, engine setup, and one
  * provider translation envelope (plan §4.4 batch, §9). Emits
  * `stage_start`/`stage_end` with the schedule identity (rid=none, page=none)
@@ -776,7 +776,7 @@ class TranslationRunTrace internal constructor(
     private val stageLock = Any()
     private val stageNanos = EnumMap<TranslationTraceStage, Long>(TranslationTraceStage::class.java)
     private val retries = AtomicInteger(0)
-    // T922 Phase 3 deviation (documented): run_start is emitted before the
+    //  Phase 3 deviation (documented): run_start is emitted before the
     // resume plan is known (the scheduler/coordinator creates the run before
     // the onnx phase resolves PageWorkPlanner.plan). The resolved plan is
     // installed here and surfaces on the terminal run_end summary.

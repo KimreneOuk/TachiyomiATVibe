@@ -11,7 +11,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
 /**
- * T907: the translation-driven enqueue bridge must guarantee the downloader
+ *  the translation-driven enqueue bridge must guarantee the downloader
  * runs even when the download queue was not empty before the enqueue — stock
  * auto-start only fires on an empty queue, so a stale or restored entry
  * (including a retained ERROR download) used to leave fresh QUEUED chapters

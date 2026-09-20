@@ -16,10 +16,10 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * T930 Slice A1: tests the CommitPoint contract codification.
+ *  Slice A1: tests the CommitPoint contract codification.
  *
  * Asserts:
- * 1. The mandatory commit points are codified. The T930 group-commit work
+ * 1. The mandatory commit points are codified. The  group-commit work
  *    (milestone commit 8010961, M6 targeted fsync) deliberately added a 7th
  *    boundary, BATCH_CHUNK — the MAX_STAGED_PAGES accumulation flush — and it
  *    is a REAL commit point: ChapterTranslationStore.flushStagedMutationsLocked
@@ -102,7 +102,7 @@ class ChapterCommitPointContractTest {
             CommitPoint.CHAPTER_COMPLETE,
             CommitPoint.USER_STOP_DRAIN,
             CommitPoint.EXPLICIT_FLUSH,
-            // T930 group-commit accumulation boundary: real and fsync-forcing
+            //  group-commit accumulation boundary: real and fsync-forcing
             // (ChapterTranslationStore.kt:270/:297, ChapterArtifactEngine.kt:911).
             CommitPoint.BATCH_CHUNK,
         )

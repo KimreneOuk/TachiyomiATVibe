@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T917 Phase 3 — reader-only provider-window behavior.
+ *  Phase 3 — reader-only provider-window behavior.
  *
  * Session mutual exclusion removes the old batch/manual interleaving
  * choreography. The provider governor contract remains: reader work carries
