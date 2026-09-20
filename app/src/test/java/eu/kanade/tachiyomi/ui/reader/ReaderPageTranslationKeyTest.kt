@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 class ReaderPageTranslationKeyTest {
 
     @Test
-    fun `manual writer and reader observation share the rebound source filename`() = kotlinx.coroutines.runBlocking {
+    fun `manual writer and reader observation share the rebound source filename`() = kotlinx.coroutines.runBlocking<Unit> {
         val page = ReaderPage(
             index = 3,
             url = "https://source.invalid/page/3",
