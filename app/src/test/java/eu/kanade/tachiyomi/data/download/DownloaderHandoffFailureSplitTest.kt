@@ -8,7 +8,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.translation.InMemorySharedPreferences
 import eu.kanade.translation.TranslationManager
-import eu.kanade.translation.TranslationPendingRequestStore
+import eu.kanade.translation.storage.TranslationPendingRequestStore
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState

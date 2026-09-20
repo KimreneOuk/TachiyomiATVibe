@@ -16,7 +16,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy

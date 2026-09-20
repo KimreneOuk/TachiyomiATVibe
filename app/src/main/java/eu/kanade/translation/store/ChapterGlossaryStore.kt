@@ -1,7 +1,7 @@
 package eu.kanade.translation.store
 
-import eu.kanade.translation.ChapterTranslationStore
-import eu.kanade.translation.MutationAdmission
+import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.storage.MutationAdmission
 import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -135,7 +135,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
             val artifact = store.artifactEngine
             val manifest = store.artifactManifest
             if (artifact != null && manifest != null) {
-                val glossaryWriter = eu.kanade.translation.ActiveChapterStoreRegistry.registerWriter(
+                val glossaryWriter = eu.kanade.translation.storage.ActiveChapterStoreRegistry.registerWriter(
                     chapterKey = store.chapterKey,
                     origin = eu.kanade.translation.WriterOrigin.GLOSSARY_LANE,
                 )

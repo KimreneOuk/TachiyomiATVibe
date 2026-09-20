@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.storage.*
+
 import android.content.Context
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile

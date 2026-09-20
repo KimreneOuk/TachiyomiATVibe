@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.ProfilePointer

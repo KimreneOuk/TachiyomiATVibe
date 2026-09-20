@@ -1,6 +1,6 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.ChapterContextSnapshot
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.SidecarRead

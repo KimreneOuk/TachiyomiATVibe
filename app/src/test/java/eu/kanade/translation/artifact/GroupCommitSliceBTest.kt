@@ -1,7 +1,7 @@
 package eu.kanade.translation.artifact
 
-import eu.kanade.translation.ActiveChapterStoreRegistry
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.WriterOrigin
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus

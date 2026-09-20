@@ -1,7 +1,7 @@
 package eu.kanade.translation.ui
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.Translation

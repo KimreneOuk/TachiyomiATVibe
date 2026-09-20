@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.storage.*
+
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableStatus

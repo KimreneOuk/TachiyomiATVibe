@@ -129,7 +129,7 @@ class MilestoneM2KillTheStallsTest {
         val mockSourceManager = mockk<tachiyomi.domain.source.service.SourceManager>(relaxed = true)
         val mockPreferences = mockk<tachiyomi.domain.translation.TranslationPreferences>(relaxed = true)
         val mockStreamRegistry = mockk<eu.kanade.translation.scheduling.TranslationStreamRegistry>(relaxed = true)
-        val mockQueueStore = mockk<eu.kanade.translation.TranslationQueueStore>(relaxed = true)
+        val mockQueueStore = mockk<eu.kanade.translation.storage.TranslationQueueStore>(relaxed = true)
         val mockPipeline = mockk<eu.kanade.translation.TranslationPipeline>(relaxed = true)
 
         val translator = ChapterTranslator(

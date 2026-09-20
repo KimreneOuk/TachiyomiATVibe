@@ -2,8 +2,8 @@ package eu.kanade.translation.manager
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.ActiveChapterStoreRegistry
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.data.TranslationProvider

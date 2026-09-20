@@ -4,7 +4,7 @@ import eu.kanade.translation.artifact.loadArtifact
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.model.Page
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactEngine

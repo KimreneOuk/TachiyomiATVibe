@@ -2,7 +2,7 @@ package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.artifact.loadArtifact
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactEngine

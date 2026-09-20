@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.storage.*
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source

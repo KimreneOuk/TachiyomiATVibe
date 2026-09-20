@@ -1,6 +1,6 @@
 package eu.kanade.translation.artifact
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.loadArtifact
 
 import eu.kanade.translation.model.PageDisplayState

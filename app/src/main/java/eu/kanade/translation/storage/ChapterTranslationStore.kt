@@ -1,4 +1,6 @@
-package eu.kanade.translation
+package eu.kanade.translation.storage
+
+import eu.kanade.translation.*
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.ArtifactManifestProbe

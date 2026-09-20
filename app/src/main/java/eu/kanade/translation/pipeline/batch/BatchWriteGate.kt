@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.artifact.ArtifactStage

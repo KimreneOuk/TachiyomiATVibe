@@ -1,7 +1,9 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.storage.*
+
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationExecutor

@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe

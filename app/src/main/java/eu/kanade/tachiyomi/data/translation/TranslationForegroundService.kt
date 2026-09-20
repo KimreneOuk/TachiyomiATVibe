@@ -102,7 +102,7 @@ class TranslationForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        eu.kanade.translation.ActiveChapterStoreRegistry.flushAllActiveStores()
+        eu.kanade.translation.storage.ActiveChapterStoreRegistry.flushAllActiveStores()
         releaseWakeLock()
         monitorJob?.cancel()
         serviceScope.cancel()
@@ -156,7 +156,7 @@ class TranslationForegroundService : Service() {
 
     private fun handleFgsTimeout() {
         retainNotification = true
-        eu.kanade.translation.ActiveChapterStoreRegistry.flushAllActiveStores()
+        eu.kanade.translation.storage.ActiveChapterStoreRegistry.flushAllActiveStores()
         manager.pauseTranslation()
         releaseWakeLock()
         serviceScope.launch {

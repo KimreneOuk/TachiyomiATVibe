@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.storage.*
+
 /**
  * T930 Slice A2: Writer registry (N2).
  *

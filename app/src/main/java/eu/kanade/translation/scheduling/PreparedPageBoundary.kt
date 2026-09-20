@@ -1,6 +1,6 @@
 package eu.kanade.translation.scheduling
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.model.PageTranslation

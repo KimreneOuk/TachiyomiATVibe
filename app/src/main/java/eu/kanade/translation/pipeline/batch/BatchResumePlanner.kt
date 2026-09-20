@@ -1,7 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.BatchExpectedFingerprints

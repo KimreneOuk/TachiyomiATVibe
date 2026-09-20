@@ -1,7 +1,7 @@
 package eu.kanade.translation.manager
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.ActiveChapterStoreRegistry
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation

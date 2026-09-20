@@ -44,7 +44,7 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy
@@ -377,7 +377,7 @@ class ReaderViewModel @JvmOverloads constructor(
     internal var translationBatchProgressJob: kotlinx.coroutines.Job? = null
     internal var translationStateJob: kotlinx.coroutines.Job? = null
     internal var autoSnapshotJob: kotlinx.coroutines.Job? = null
-    internal var currentTranslationStore: eu.kanade.translation.ChapterTranslationStore? = null
+    internal var currentTranslationStore: eu.kanade.translation.storage.ChapterTranslationStore? = null
 
     /** Resolver indirection is invalidated before any chapter/page resources are recycled. */
     internal val autoPageResolver = ReaderAutoTranslationPageResolver(chapterCache)

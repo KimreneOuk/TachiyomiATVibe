@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.storage.*
+
 import eu.kanade.translation.model.PageTranslation
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest

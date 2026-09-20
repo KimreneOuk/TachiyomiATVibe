@@ -1,6 +1,6 @@
 package eu.kanade.translation.scheduling
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationSession

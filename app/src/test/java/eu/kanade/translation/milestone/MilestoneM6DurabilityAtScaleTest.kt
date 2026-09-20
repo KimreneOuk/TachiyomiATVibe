@@ -5,8 +5,8 @@ import eu.kanade.tachiyomi.data.translation.BatchTranslationForegroundPolicy
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.translation.ChapterTranslator
 import eu.kanade.translation.TranslationManager
-import eu.kanade.translation.TranslationPendingRequestRecord
-import eu.kanade.translation.TranslationPendingRequestStore
+import eu.kanade.translation.storage.TranslationPendingRequestRecord
+import eu.kanade.translation.storage.TranslationPendingRequestStore
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind

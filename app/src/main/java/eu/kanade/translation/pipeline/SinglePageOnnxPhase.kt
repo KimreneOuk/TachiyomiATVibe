@@ -5,7 +5,7 @@ import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage

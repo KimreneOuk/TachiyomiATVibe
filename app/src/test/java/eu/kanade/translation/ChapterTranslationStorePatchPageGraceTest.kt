@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.storage.*
+
 import eu.kanade.translation.artifact.loadArtifact
 
 import com.hippo.unifile.UniFile

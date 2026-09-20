@@ -1,7 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.ChapterTranslationStore
-import eu.kanade.translation.CheckpointOcrResult
+import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.storage.CheckpointOcrResult
 import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.context.SeriesProfileRegistry
@@ -440,4 +440,3 @@ internal class StandardLaneWorker(
     }
 
 }
-

@@ -1,6 +1,6 @@
 package eu.kanade.translation.store
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageStageLease
 import eu.kanade.translation.PageWriteOrigin

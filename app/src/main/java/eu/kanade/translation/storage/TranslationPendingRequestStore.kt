@@ -1,4 +1,6 @@
-package eu.kanade.translation
+package eu.kanade.translation.storage
+
+import eu.kanade.translation.*
 
 import android.content.Context
 import androidx.core.content.edit

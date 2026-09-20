@@ -1,6 +1,6 @@
 package eu.kanade.translation.store
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.AttemptLedgerEntry
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument

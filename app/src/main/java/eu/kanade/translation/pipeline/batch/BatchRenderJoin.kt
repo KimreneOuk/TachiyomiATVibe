@@ -9,7 +9,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.LayoutFailureException
 import eu.kanade.translation.RenderBlockPatch
 import eu.kanade.translation.RenderStagePatch

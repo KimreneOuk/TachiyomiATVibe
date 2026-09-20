@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.TranslationBlockPatch
 import eu.kanade.translation.TranslationStagePatch
 import eu.kanade.translation.ocrBlockFingerprints
@@ -154,4 +154,3 @@ class TranslationProvenanceMergeTest {
         store.state.value["p1"]!!.blocks[0].translation shouldBe ""
     }
 }
-

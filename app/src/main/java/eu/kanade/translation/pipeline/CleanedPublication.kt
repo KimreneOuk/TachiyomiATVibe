@@ -4,8 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.CleanedImagePublisher
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.CleanedImagePublisher
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation

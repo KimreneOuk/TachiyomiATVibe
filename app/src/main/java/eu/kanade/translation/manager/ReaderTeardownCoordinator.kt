@@ -1,7 +1,7 @@
 package eu.kanade.translation.manager
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.ActiveChapterStoreRegistry
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.ChapterTranslator
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.orchestration.TranslationSessionState
@@ -129,7 +129,7 @@ internal class ReaderTeardownCoordinator(
 
     /**
      * Cancels all in-flight single-page translation jobs for [chapterId] and evicts the shared
-     * [eu.kanade.translation.ChapterTranslationStore] so it does not leak across chapter navigations. Call this on
+     * [eu.kanade.translation.storage.ChapterTranslationStore] so it does not leak across chapter navigations. Call this on
      * reader navigate-away so the previous chapter's work can no longer hold the executor's
      * single permit. Job cancellation is delegated to the scheduler; store eviction is manager-owned.
      */

@@ -1,7 +1,7 @@
 package eu.kanade.translation.pipeline
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.model.PageTranslation
