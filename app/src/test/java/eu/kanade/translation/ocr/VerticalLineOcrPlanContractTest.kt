@@ -1,4 +1,4 @@
-package eu.kanade.translation.recognition
+package eu.kanade.translation.ocr
 
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import org.junit.jupiter.api.Assertions.assertEquals

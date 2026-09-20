@@ -4,7 +4,7 @@ import eu.kanade.translation.model.Detection
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
-import eu.kanade.translation.recognition.BoxGeometry
+import eu.kanade.translation.ocr.BoxGeometry
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat

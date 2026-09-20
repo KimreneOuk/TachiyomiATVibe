@@ -3,8 +3,8 @@ package eu.kanade.translation.pipeline
 import android.content.Context
 import android.graphics.Bitmap
 import coil3.imageLoader
-import eu.kanade.translation.recognition.PageRecognitionEngine
-import eu.kanade.translation.recognition.RoiPageRecognitionEngine
+import eu.kanade.translation.ocr.PageRecognitionEngine
+import eu.kanade.translation.ocr.RoiPageRecognitionEngine
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
 import logcat.LogPriority

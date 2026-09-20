@@ -29,7 +29,7 @@ import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
-import eu.kanade.translation.recognition.PageRecognitionEngine
+import eu.kanade.translation.ocr.PageRecognitionEngine
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.analysis.AnalysisChunkExecutor
 import eu.kanade.translation.translator.analysis.AnalysisEngineGlossarySynthesizer

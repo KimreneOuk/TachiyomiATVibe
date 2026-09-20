@@ -3,7 +3,7 @@ package eu.kanade.translation.inpainting
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.recognition.BoxGeometry
+import eu.kanade.translation.ocr.BoxGeometry
 import kotlin.math.max
 
 /**

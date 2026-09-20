@@ -8,7 +8,7 @@ import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.recognition.PageRecognitionEngine
+import eu.kanade.translation.ocr.PageRecognitionEngine
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision

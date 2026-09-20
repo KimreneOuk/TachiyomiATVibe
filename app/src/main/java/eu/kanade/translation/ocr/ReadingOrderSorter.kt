@@ -1,4 +1,4 @@
-package eu.kanade.translation.recognition
+package eu.kanade.translation.ocr
 
 /**
  * XY-cut panel reading-order sort, extracted from [RoiPageRecognitionEngine].

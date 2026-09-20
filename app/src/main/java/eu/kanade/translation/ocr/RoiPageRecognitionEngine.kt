@@ -1,4 +1,4 @@
-package eu.kanade.translation.recognition
+package eu.kanade.translation.ocr
 
 import android.content.Context
 import android.graphics.Bitmap

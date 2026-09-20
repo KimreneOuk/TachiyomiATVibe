@@ -1,4 +1,4 @@
-package eu.kanade.translation.recognition
+package eu.kanade.translation.ocr
 
 import kotlin.math.abs
 import kotlin.math.max
@@ -11,7 +11,7 @@ import kotlin.math.min
  * Previously the same primitives (`iou`, `intersectionArea`, `bboxArea`) and a
  * near-identical geometric-duplicate predicate existed in BOTH
  * [eu.kanade.translation.detection.OnnxPageTextDetector] and
- * [eu.kanade.translation.recognition.RoiPageRecognitionEngine], with only the
+ * [eu.kanade.translation.ocr.RoiPageRecognitionEngine], with only the
  * threshold constants differing. A fix to one copy never reached the other.
  * Centralizing the math gives a single tested source of truth; the per-stage
  * threshold sets stay on their owners as [DedupThresholds].

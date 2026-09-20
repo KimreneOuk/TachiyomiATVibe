@@ -26,7 +26,7 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
-import eu.kanade.translation.recognition.PageRecognitionEngine
+import eu.kanade.translation.ocr.PageRecognitionEngine
 import eu.kanade.translation.scheduling.CrossOriginBitmapBudget
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException

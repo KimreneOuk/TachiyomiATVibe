@@ -25,7 +25,7 @@ import kotlin.math.roundToInt
  *
  * Runs the DB (Differentiable Binarization) text-line detector on a single
  * bitmap crop and returns the text-line boxes in **crop pixel coords**. The det
- * model is invoked inside [eu.kanade.translation.recognition.RoiPageRecognitionEngine]
+ * model is invoked inside [eu.kanade.translation.ocr.RoiPageRecognitionEngine]
  * on each Stage-1 detected ROI crop, replacing the ink-gap vertical-column
  * heuristic (`detectVerticalColumns`) for the PaddleOCR rec path.
  *
