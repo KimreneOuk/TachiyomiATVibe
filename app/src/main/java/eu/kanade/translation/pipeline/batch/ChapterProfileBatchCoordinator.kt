@@ -363,489 +363,54 @@ internal class ChapterProfileBatchCoordinator(
      * `runPass1`). [computeClass] is accepted for call-shape parity only —
      * this stage never dispatches a provider lane.
      */
+    private fun preflightWorker() = PreflightWorker(
+        PreflightWorkerContext(
+            store = store,
+            nativeWorker = nativeWorker,
+            frozenConfig = frozenConfig,
+            effectiveSourcePairs = effectiveSourcePairs,
+            releaseBatchLease = releaseBatchLease,
+            listener = listener,
+            nowEpochMs = nowEpochMs,
+            failureRecorder = { failure -> recordPageFailure(failure) },
+            standardLane = standardLane,
+            seriesKey = seriesKey,
+            publishRecord = { recordArtifact, runRecord ->
+                publishRecord(recordArtifact, runRecord)
+            },
+            record = { id, state, fingerprint, digest, counters, ocrFingerprint, profile ->
+                record(id, state, fingerprint, digest, counters, ocrFingerprint, profile)
+            },
+            admissionSourceSha = { pageKey -> admissionSourceSha(pageKey) },
+            orientationOf = { snapshot -> orientationOf(snapshot) },
+            resumeFinalizeOrComplete = { recordArtifact, prior, fingerprint, digest, pages ->
+                resumeFinalizeOrComplete(recordArtifact, prior, fingerprint, digest, pages)
+            },
+            runEnvelopePlanAndTranslate = { recordArtifact, id, pages, fingerprint, counters ->
+                runEnvelopePlanAndTranslate(recordArtifact, id, pages, fingerprint, counters)
+            },
+            runStandardTranslateAndFinalize = { recordArtifact, id, pages, fingerprint, counters ->
+                runStandardTranslateAndFinalize(recordArtifact, id, pages, fingerprint, counters)
+            },
+            runAnalysisPhase = { recordArtifact, id, pages, fingerprint, counters ->
+                runAnalysisPhase(recordArtifact, id, pages, fingerprint, counters)
+            },
+            adoptCheckpointSnapshot = { recordArtifact, pageKey, before ->
+                adoptCheckpointSnapshot(recordArtifact, pageKey, before)
+            },
+            stampAdoptedRenderTerminal = { pageKey ->
+                stampAdoptedRenderTerminal(pageKey)
+            },
+            profileInputFingerprintOf = { fingerprint ->
+                profileInputFingerprintOf(fingerprint)
+            },
+        ),
+    )
+
     suspend fun runPass1(
         orderedPages: List<PageKey>,
         computeClass: TranslatorComputeClass,
-    ): BatchPass1Outcome {
-        if (orderedPages.isEmpty()) {
-            return BatchPass1Outcome(needsTranslation = emptyList())
-        }
-        currentCoroutineContext().ensureActive()
-        // The coordinator retains this compatibility token while each actual
-        // engine operation is routed through the facade's locked seams below.
-        val artifact = store.withArtifactEngineLocked { it }
-        if (artifact == null || store.artifactManifest == null) {
-            // The preflight writes origin-neutral checkpoints; without artifact
-            // authority the flagged path cannot do its one job. Fail fast
-            // WITHOUT burning any OCR work (the legacy path remains available).
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT t924 preflight refused: chapter artifact authority not established"
-            }
-            return BatchPass1Outcome(
-                needsTranslation = emptyList(),
-                status = BatchPass1Status.FAILED,
-                anchorPageKey = orderedPages.first().first,
-                reason = "T924 OCR preflight requires chapter artifact authority",
-            )
-        }
-
-        val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
-        val priorRecord = (existingActiveRecord(artifact) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
-        // ST-15: settings apply next run — a resume continues the recorded run
-        // only while the frozen configuration fingerprint still matches; a
-        // mismatch starts a NEW run id under the current configuration.
-        val runId = priorRecord
-            ?.takeIf { it.frozenRunConfigFingerprint == frozenFingerprint }
-            ?.runId
-            ?: newRunId(sourceDigest, frozenFingerprint)
-
-        // ---- ST-14 resume gates: a record already past TRANSLATE never ----
-        // ---- steps the durable state BACKWARD to RUN_SNAPSHOT.         ----
-        resumeFinalizeOrComplete(
-            artifact = artifact,
-            priorRecord = priorRecord,
-            frozenFingerprint = frozenFingerprint,
-            sourceDigest = sourceDigest,
-            orderedPages = orderedPages,
-        )?.let { resumed -> return resumed }
-
-        val total = orderedPages.size
-        var reusedPages = 0
-        var checkpointedPages = 0
-        val corpusFingerprints = mutableListOf<Pair<String, String>>()
-
-        // T934 R2a.5: per-run typed adoption-failure tally. Emitted as bounded
-        // `ocrAdopt*` counters ONLY when nonzero, so steady-state record
-        // counter maps stay byte-identical and the 32-key phaseCounters bound
-        // is never pressured on healthy runs.
-        val adoptionFailures = mutableMapOf<CheckpointAdoptionFailure, Int>()
-
-        fun recordAdoptionFailure(pageKey: String, failure: CheckpointAdoptionFailure, detail: String?) {
-            adoptionFailures.merge(failure, 1, Int::plus)
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT t924 preflight checkpoint adoption failed pageHash=${pageHash(pageKey)} " +
-                    "reason=${failure.name}" +
-                    (detail?.let { " detail=$it" } ?: "") +
-                    " — re-OCRing"
-            }
-        }
-
-        fun counters(): Map<String, Int> = mapOf(
-            COUNTER_TOTAL to total,
-            COUNTER_DONE to (reusedPages + checkpointedPages),
-            COUNTER_REUSED to reusedPages,
-            // Kept for pre-field record compatibility; the authoritative
-            // freeze is frozenConfig.flagProfilePipeline (participates in the
-            // run-config fingerprint; counters never do, per FP-01). The
-            // FF-01 A/B flag completed its lifecycle — the profile pipeline
-            // is the only pipeline — so the frozen state is always ON.
-            COUNTER_FLAG to 1,
-        ) + buildMap {
-            // Appended AFTER the fixed keys so the publishRecord over-bound
-            // trim (takeLast) drops these first, never the phase-critical
-            // `ocrPages*` keys.
-            if (adoptionFailures.isNotEmpty()) {
-                put(COUNTER_ADOPT_FAILED, adoptionFailures.values.sum())
-                adoptionFailures.forEach { (failure, count) -> put(failure.counterKey, count) }
-            }
-        }
-
-        // ---- ST-05/OCR_PLAN skip rule (contracts-state-transactions :114): ----
-        // when a compatible frozen profile already exists (its sidecar reads
-        // back valid, the pointer identities match, and the current run's
-        // FP-04 input fingerprint equals the pointer's), the plan records
-        // skip-to-phase PROFILE_FROZEN reuse and the ENTIRE run through
-        // analysis is skipped: zero OCR, zero provider calls (the T924
-        // fast-feedback core). The probe is LOCAL reads only (durable
-        // checkpoints + profile sidecar), never decode/native work.
-        // Wave A: AI-ONLY — the standard lane produces no frozen profile, so
-        // the probe is fenced off (it would short-circuit into the envelope
-        // phase, which requires one).
-        val reusableProfile = if (standardLane) {
-            null
-        } else {
-            frozenProfileReuse(artifact, orderedPages, total)
-        }
-
-        // ST-03: run start — RUN_SNAPSHOT record with the frozen configuration,
-        // the ordered source digest, and the frozen flag state (FF-01d).
-        publishRecord(
-            artifact,
-            record(runId, ChapterRunState.RUN_SNAPSHOT, frozenFingerprint, sourceDigest, counters()),
-        )
-        if (reusableProfile != null) {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT t924 profile reuse: compatible frozen profile, " +
-                    "skipping OCR+analysis (skip-to-phase PROFILE_FROZEN)"
-            }
-            publishRecord(
-                artifact,
-                record(
-                    runId,
-                    ChapterRunState.PROFILE_FROZEN,
-                    frozenFingerprint,
-                    sourceDigest,
-                    counters() + mapOf(
-                        COUNTER_STOP to 1,
-                        COUNTER_PROFILE_REUSED to 1,
-                    ),
-                    ocrCorpusFingerprint = reusableProfile.corpusFingerprint,
-                    profilePointer = reusableProfile.pointer,
-                ),
-            )
-            // Stage-6 slice A: the reuse path CONTINUES into the envelope
-            // phase — the whole point of the frozen-profile skip is
-            // translating under the reused profile with zero re-OCR and
-            // zero provider analysis (D5).
-            return runEnvelopePlanAndTranslate(
-                artifact = artifact,
-                runId = runId,
-                orderedPages = orderedPages,
-                corpusFingerprint = reusableProfile.corpusFingerprint,
-                baseCounters = counters() + mapOf(COUNTER_PROFILE_REUSED to 1),
-            )
-        }
-
-        // ST-05: the OCR plan is recomputed in-memory (pure function of the
-        // ordered pages + store state); only the phase transition persists.
-        publishRecord(
-            artifact,
-            record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
-        )
-
-        for (page in orderedPages) {
-            val (pageKey, pageIndex) = page
-            currentCoroutineContext().ensureActive()
-            // Reader-priority yield between pages: a suspension point (never a
-            // sleep) that lets interactive native demand win the lane.
-            yield()
-
-            when (val reusable = checkpointReuse(artifact, pageKey)) {
-                is CheckpointReuse.Reusable -> {
-                    // ST-06 resume rule: the page's origin-neutral checkpoint matches
-                    // the current source identity — no re-OCR, no lease, no decode.
-                    //
-                    // T924 zero-legacy (D1): a reused checkpoint must also BACK the
-                    // live store page. A reopened store (real restart, or the
-                    // memory-only artifact-authority fixture) holds only a
-                    // placeholder page record — its ocrStatus/blocks live in the
-                    // durable checkpoint sidecar. Without adoption the translate
-                    // tail's dependency gate reads WAIT_FOR_DEPENDENCY /
-                    // DEPENDENCY_INCOMPLETE against the placeholder and silently
-                    // skips the page's paid translation — the run then "completes"
-                    // without paying (D9's resumed-death cycle). Adopt the
-                    // checkpointed OCR snapshot into the live store — the SAME
-                    // hydration idiom the envelope lane's resume uses — and only
-                    // then count the page as reused. If the adoption cannot back
-                    // the page (unreadable sidecar, racing owner), fall through to
-                    // a fresh OCR run: never plan against fabricated content.
-                    val before = store.snapshot(pageKey)
-                    val hydrated = before.page != null &&
-                        before.page.ocrStatus == StageStatus.READY &&
-                        before.page.blocks.isNotEmpty()
-                    val adoption = if (hydrated) {
-                        CheckpointAdoption.Adopted(before)
-                    } else {
-                        adoptCheckpointSnapshot(artifact, pageKey, before)
-                    }
-                    if (adoption is CheckpointAdoption.Adopted) {
-                        reusedPages++
-                        corpusFingerprints += pageKey to reusable.ocrContentFingerprint
-                        // Same live-progress marks a fresh OCR page emits: without
-                        // them the tracker's snapshot stays frozen at the pre-resume
-                        // counts for the entire revalidation and the drawer looks
-                        // unresponsive (2026-09-15/16 field report).
-                        listener.ocrStarted(pageKey)
-                        listener.ocrPublished(pageKey)
-                        stampAdoptedRenderTerminal(pageKey)
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT t924 preflight reused checkpoint pageHash=${pageHash(pageKey)}"
-                        }
-                        // M3: Batched advisory progress records: publish on first page, every 5 pages, or last page
-                        val shouldPublishProgress = (pageIndex == 0) || ((pageIndex + 1) % 5 == 0) || ((pageIndex + 1) == total)
-                        if (shouldPublishProgress) {
-                            publishRecord(
-                                artifact,
-                                record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
-                            )
-                        }
-                        continue
-                    }
-                    // T934 R2a.5: the re-OCR cliff is now TYPED (counter + WARN
-                    // reason) instead of one untyped warning. The sealed
-                    // hierarchy has exactly two cases, so the early-continue
-                    // above leaves only Failed — spelled as a `when` because
-                    // the compiler does not narrow a sealed type from a
-                    // negated `is` after an if-statement.
-                    when (adoption) {
-                        is CheckpointAdoption.Failed ->
-                            recordAdoptionFailure(pageKey, adoption.failure, adoption.detail)
-                        is CheckpointAdoption.Adopted -> Unit
-                    }
-                }
-                is CheckpointReuse.Unavailable -> {
-                    // NO_POINTER is the quiet never-checkpointed answer (a normal
-                    // fresh OCR below); every other reason means a checkpoint
-                    // EXISTS but cannot back this run — the typed cliff.
-                    if (reusable.failure != CheckpointAdoptionFailure.NO_POINTER) {
-                        recordAdoptionFailure(pageKey, reusable.failure, null)
-                    }
-                }
-            }
-
-            listener.ocrStarted(pageKey)
-            val pageStartedAt = System.currentTimeMillis()
-            var ref: OcrReadyPageRef? = null
-            // Set when THIS page's attempt ended unresolved (REJECTED checkpoint
-            // or worker exception): the ledger record is written in `finally`,
-            // AFTER the B0 candidate teardown — cancelCandidate strips
-            // candidate-owned stage records, so the record must outlive it.
-            var pendingFailure: PreflightStageFailure? = null
-            try {
-                ref = try {
-                    // Per-page watchdog: lease acquisition, bitmap-budget
-                    // permits, and SAF decode sit BEFORE the native lane's own
-                    // 120s timeout, and a wedge in any of them used to stall
-                    // the pass silently forever (2026-09-15 incident). Bound
-                    // the whole page; the failure ledger path below makes the
-                    // timeout visible and the pass continues.
-                    withTimeout(PREFLIGHT_PAGE_TIMEOUT_MS) {
-                        nativeWorker.runOcrStage(pageKey, pageIndex)
-                    }
-                } catch (e: TimeoutCancellationException) {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT t924 preflight page watchdog timeout pageHash=${pageHash(pageKey)} " +
-                            "afterMs=${System.currentTimeMillis() - pageStartedAt}"
-                    }
-                    pendingFailure = PreflightStageFailure(
-                        pageKey = pageKey,
-                        kind = PreflightFailureKind.OCR_WORKER_FAILED,
-                        reason = "preflight page watchdog timeout after ${PREFLIGHT_PAGE_TIMEOUT_MS}ms",
-                    )
-                    null
-                }
-                if (ref == null) {
-                    // Lease-denied or otherwise unresolved: no checkpoint was
-                    // published. The final diagnostic counts every
-                    // uncheckpointed page as a gap.
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT t924 preflight skipped pageHash=${pageHash(pageKey)} (denied or unresolved)"
-                    }
-                } else {
-                    listener.ocrPublished(pageKey)
-                    val outcome = checkpointPage(artifact, pageKey, ref)
-                    when (outcome) {
-                        is CheckpointOcrResult.Committed -> {
-                            checkpointedPages++
-                            readCheckpointFingerprint(artifact, pageKey)?.let { fingerprint ->
-                                corpusFingerprints += pageKey to fingerprint
-                            }
-                        }
-                        is CheckpointOcrResult.Rejected -> {
-                            // ST-06 terminal: any unresolved checkpoint failure stops
-                            // the phase before any later (paid) stage. The lease is
-                            // released in `finally`; the shell teardown reconciles
-                            // the candidate per the legacy durability rules.
-                            logcat(LogPriority.WARN) {
-                                "TachiyomiAT t924 preflight checkpoint rejected pageHash=${pageHash(pageKey)} " +
-                                    "reason=${outcome.reason}"
-                            }
-                            // R2: record the failure for the `finally` writer,
-                            // which persists it AFTER the B0 teardown (a
-                            // pre-teardown write would be stripped by
-                            // cancelCandidate's candidate-owned record sweep),
-                            // still strictly after the checkpoint attempt.
-                            pendingFailure = PreflightStageFailure(
-                                pageKey = pageKey,
-                                kind = PreflightFailureKind.CHECKPOINT_REJECTED,
-                                reason = outcome.reason,
-                            )
-                            return BatchPass1Outcome(
-                                needsTranslation = emptyList(),
-                                status = BatchPass1Status.FAILED,
-                                anchorPageKey = pageKey,
-                                completedPageKeys = corpusFingerprints.mapTo(mutableSetOf()) { it.first },
-                                reason = "T924 OCR preflight checkpoint rejected: ${outcome.reason}",
-                            )
-                        }
-                    }
-                    // M3: Batched advisory progress records: publish on first page, every 5 pages, or last page
-                    val shouldPublishProgress = (pageIndex == 0) || ((pageIndex + 1) % 5 == 0) || ((pageIndex + 1) == total)
-                    if (shouldPublishProgress) {
-                        publishRecord(
-                            artifact,
-                            record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
-                        )
-                    }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT t924 preflight ocr failed pageHash=${pageHash(pageKey)} error=${e::class.java.simpleName}"
-                }
-                // R2: same durable ledger as a REJECTED checkpoint, carrying the
-                // exception identity as the typed reason.
-                pendingFailure = PreflightStageFailure(
-                    pageKey = pageKey,
-                    kind = PreflightFailureKind.OCR_WORKER_FAILED,
-                    reason = "${e::class.java.simpleName}: ${e.message ?: "no message"}",
-                )
-                return BatchPass1Outcome(
-                    needsTranslation = emptyList(),
-                    status = BatchPass1Status.FAILED,
-                    anchorPageKey = pageKey,
-                    completedPageKeys = corpusFingerprints.mapTo(mutableSetOf()) { it.first },
-                    reason = "T924 OCR preflight failed: ${e.message ?: e::class.java.simpleName}",
-                )
-            } finally {
-                // The decoded handoff NEVER crosses a page boundary and the
-                // lease is released strictly after the checkpoint attempt
-                // (T924-TX-06; one-decoded-page invariant).
-                ref?.let(nativeWorker::releaseNativeHandoff)
-                if (pendingFailure != null) {
-                    // B0 teardown idiom: the unresolved page's candidate-held OCR
-                    // never committed (no checkpoint), so cancel it — the page
-                    // re-OCRs next attempt. The durable failure record is
-                    // written AFTER the cancellation: `cancelCandidate` strips
-                    // candidate-owned stage records, so the ledger record must
-                    // be installed once no candidate owns it (the legacy
-                    // persistUnexpectedBatchStageFailure order — the shell
-                    // persists after the coordinator's teardown).
-                    store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
-                    recordPageFailure(pendingFailure)
-                }
-                releaseBatchLease(pageKey)
-                listener.ocrFinished(pageKey)
-            }
-        }
-
-        // ---- OCR_PREFLIGHT complete durably; continue into the analysis ----
-        // ---- phase when the corpus is complete (T924-ST-07/08).        ----
-        store.flush()
-        val corpusGaps = total - corpusFingerprints.size
-        val corpusFingerprint = if (corpusGaps == 0 && corpusFingerprints.isNotEmpty()) {
-            val naturalOrderProven = orderedPages.map { it.second }.toSet() == (0 until total).toSet()
-            StageFingerprints.ocrCorpusFingerprint(
-                pages = corpusFingerprints,
-                expectedPageCount = total,
-                expectedPageCountTrusted = true,
-                naturalOrderProven = naturalOrderProven,
-            )
-        } else {
-            null
-        }
-        val finalCounters = counters() + mapOf(
-            COUNTER_STOP to 1,
-            COUNTER_GAPS to corpusGaps,
-        )
-        publishRecord(
-            artifact,
-            record(
-                runId,
-                ChapterRunState.OCR_PREFLIGHT,
-                frozenFingerprint,
-                sourceDigest,
-                finalCounters,
-                ocrCorpusFingerprint = corpusFingerprint,
-            ),
-        )
-        if (corpusFingerprint == null) {
-            // Incomplete corpus (reused/unresolved gaps): analysis needs the
-            // whole OCR corpus — stop exactly like the S3 shell did.
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT t924 preflight stopped-not-finished: ocr=$total reused=$reusedPages gaps=$corpusGaps " +
-                    "analysis deferred until the corpus is complete"
-            }
-            return BatchPass1Outcome(
-                needsTranslation = emptyList(),
-                status = BatchPass1Status.PAUSED,
-                completedPageKeys = corpusFingerprints.mapTo(mutableSetOf()) { it.first },
-                reason = STOP_REASON,
-            )
-        }
-
-        // ---- T924 Phase 4 Wave A: the standard lane branches to its ----
-        // ---- per-page translate tail; the AI lane continues into the   ----
-        // ---- analysis phases (Stage 5 slices A+B). Both share the     ----
-        // ---- engine-agnostic Stage-7 FINALIZE/COMPLETE.               ----
-        if (standardLane) {
-            return runStandardTranslateAndFinalize(
-                artifact = artifact,
-                runId = runId,
-                orderedPages = orderedPages,
-                corpusFingerprint = corpusFingerprint,
-                baseCounters = finalCounters,
-            )
-        }
-
-        // Milestone M5 (S6 / P8): Series-scoped profile carry-over (drift-gated).
-        // If a series profile is registered and passes drift gating, adopt it
-        // and skip the expensive analysis phase (ANALYSIS_PLAN -> ANALYSIS_CHUNKS -> PROFILE_RECONCILE).
-        if (seriesKey != null) {
-            val carried = SeriesProfileRegistry.get(seriesKey)
-            if (carried != null && SeriesProfileRegistry.isDriftSafe(carried, frozenConfig)) {
-                val adopted = SeriesProfileRegistry.adoptForChapter(
-                    carried = carried,
-                    runId = runId,
-                    profileInputFingerprint = profileInputFingerprintOf(corpusFingerprint),
-                    nowEpochMs = nowEpochMs(),
-                )
-                val manifestForPublish = store.artifactManifest
-                if (manifestForPublish != null) {
-                    val publication = ProfileFreezePublication.publish(
-                        store = store,
-                        manifest = manifestForPublish,
-                        profile = adopted,
-                        nowEpochMs = nowEpochMs(),
-                    )
-                    if (publication is ChapterArtifactEngine.TransactionOutcome.Committed) {
-                        store.artifactManifest = publication.manifest
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT M5 series profile carry-over adopted: version=${adopted.version} " +
-                                "entities=${adopted.entities.size} terms=${adopted.terms.size}"
-                        }
-                        publishRecord(
-                            artifact,
-                            record(
-                                runId,
-                                ChapterRunState.PROFILE_FROZEN,
-                                frozenFingerprint,
-                                sourceDigest,
-                                finalCounters + mapOf(
-                                    COUNTER_PROFILE_FROZEN to 1,
-                                    COUNTER_SERIES_PROFILE_CARRIED_OVER to 1,
-                                    COUNTER_STOP to 1,
-                                ),
-                                ocrCorpusFingerprint = corpusFingerprint,
-                                profilePointer = publication.manifest.profile,
-                            ),
-                        )
-                        return runEnvelopePlanAndTranslate(
-                            artifact = artifact,
-                            runId = runId,
-                            orderedPages = orderedPages,
-                            corpusFingerprint = corpusFingerprint,
-                            baseCounters = finalCounters + mapOf(COUNTER_SERIES_PROFILE_CARRIED_OVER to 1),
-                        )
-                    }
-                }
-            }
-        }
-
-        // ---- T924 Stage 5 slices A+B: ANALYSIS_PLAN -> ANALYSIS_CHUNKS ----
-        // ---- -> PROFILE_RECONCILE -> PROFILE_FROZEN. The chapter stays   ----
-        // ---- PAUSED (envelope/translation are Stage 6; completion        ----
-        // ---- semantics are still NOT redefined).                         ----
-        return runAnalysisPhase(
-            artifact = artifact,
-            runId = runId,
-            orderedPages = orderedPages,
-            corpusFingerprint = corpusFingerprint,
-            baseCounters = finalCounters,
-        )
-    }
+    ): BatchPass1Outcome = preflightWorker().runPhase(orderedPages, computeClass)
 
     /**
      * Stage-5 slice A analysis phase (T924-ST-07/ST-08):
@@ -1721,60 +1286,6 @@ internal class ChapterProfileBatchCoordinator(
         carrier: String = "envelope planner rejected the page",
     ) = recoveryWorker().persistEnvelopeStructuralFailure(pageKey, reason, carrier)
 
-    /** A reusable frozen profile plus the corpus identity it was probed with. */
-    private data class FrozenProfileReuse(
-        val pointer: ProfilePointer,
-        val corpusFingerprint: String,
-    )
-
-    /**
-     * ST-05 skip-rule probe: computes the current run's corpus identity from
-     * the DURABLE checkpoints (local reads only) and, when a frozen profile
-     * pointer exists whose FP-04 input fingerprint matches AND whose sidecar
-     * fully validates (content, version, recomputed FP-05), returns the
-     * reusable pointer. Any gap returns null — the normal path runs.
-     */
-    private suspend fun frozenProfileReuse(
-        artifact: ChapterArtifactEngine,
-        orderedPages: List<PageKey>,
-        expectedPageCount: Int,
-    ): FrozenProfileReuse? {
-        val manifest = store.artifactManifest ?: return null
-        val pointer = manifest.profile ?: return null
-        if (!pointer.isWellFormed()) return null
-        // The FP-04 corpus identity must come from checkpoints whose source
-        // identity STILL matches the current source (ST-04 resume: identities
-        // are revalidated against current files). A changed/missing page
-        // makes the frozen profile NOT reusable — the normal path re-OCRs it
-        // and the corpus drift gates downstream (wave-4 F-W4-1 discipline).
-        val corpusPairs = mutableListOf<Pair<String, String>>()
-        for ((pageKey, _) in orderedPages) {
-            val reusable = checkpointReuse(artifact, pageKey)
-            val fingerprint = (reusable as? CheckpointReuse.Reusable)?.ocrContentFingerprint ?: return null
-            corpusPairs += pageKey to fingerprint
-        }
-        val naturalOrderProven =
-            orderedPages.map { it.second }.toSet() == (0 until expectedPageCount).toSet()
-        val corpusFingerprint = StageFingerprints.ocrCorpusFingerprint(
-            pages = corpusPairs,
-            expectedPageCount = expectedPageCount,
-            expectedPageCountTrusted = true,
-            naturalOrderProven = naturalOrderProven,
-        )
-        val inputFingerprint = profileInputFingerprintOf(corpusFingerprint)
-        return when (
-            val read = ProfileFreezePublication.readReusableFrozenProfile(
-                store = store,
-                manifest = manifest,
-                expectedInputFingerprint = inputFingerprint,
-            )
-        ) {
-            is ProfileFreezePublication.FrozenProfileRead.Reusable ->
-                FrozenProfileReuse(pointer, corpusFingerprint)
-            is ProfileFreezePublication.FrozenProfileRead.NotReusable -> null
-        }
-    }
-
     /**
      * T924-FP-04 for this run — computed with the SAME policy-fingerprint
      * helper the analysis identity uses, so the freeze-time input identity
@@ -2069,101 +1580,6 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * The per-page checkpoint transaction: CLOSE the BATCH candidate (TX-03 default).
-     *
-     * T934 R2a: the checkpoint stamps the page's ADMISSION identity (the
-     * recorded digest, or the fresh dispatch observation for a first
-     * admission) — the store publishes it into
-     * [ChapterArtifactManifest.sourceShaByPageKey] in the SAME atomic
-     * transaction, so the digest is recorded at write time, never at run end.
-     */
-    private suspend fun checkpointPage(
-        artifact: ChapterArtifactEngine,
-        pageKey: String,
-        ref: OcrReadyPageRef,
-    ): CheckpointOcrResult {
-        val snapshot = store.snapshot(pageKey)
-        val leaseToken = ref.leaseToken
-        if (leaseToken == null) {
-            return CheckpointOcrResult.Rejected(
-                "preflight ocr reference without a lease token",
-            )
-        }
-        val admissionSha = admissionSourceSha(pageKey)
-        return store.checkpointOcr(
-            pageKey = pageKey,
-            generation = snapshot.generation,
-            expectedPageVersion = snapshot.pageVersion,
-            expectedLeaseToken = leaseToken,
-            expectedCandidateGenerationId = ref.candidateGenerationId,
-            expectedArtifactPageVersion = snapshot.artifactPageVersion,
-            expectedDependencyFingerprint = ref.dependencyFingerprint,
-            sourceSha256 = admissionSha,
-            sourceOrientation = orientationOf(snapshot),
-            mode = OcrCheckpointMode.CLOSE,
-            description = "t924 ocr preflight checkpoint",
-        )
-    }
-
-    /**
-     * ST-06 reuse rule (T934 R2a typed): a usable checkpoint whose recorded
-     * source identity still matches the page's ADMISSION identity. The
-     * admission identity prefers the fresh dispatch observation, so a changed
-     * source is DETECTED here at consumption and fails closed (the page
-     * re-runs — never stale reuse); with no fresh observation it falls back
-     * to the RECORDED digest (written at first admission), so a dispatch
-     * hash failure can no longer force a full re-OCR of a proven-unchanged
-     * chapter. A checkpoint that cannot prove source equality is typed
-     * [CheckpointAdoptionFailure], not silently dropped.
-     */
-    private suspend fun checkpointReuse(
-        artifact: ChapterArtifactEngine,
-        pageKey: String,
-    ): CheckpointReuse {
-        val manifest = store.artifactManifest
-            ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
-        val pointer = manifest.ocrCheckpoints[pageKey]
-            ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
-        val read = store.withArtifactEngineLocked { engine ->
-            engine.readOcrCheckpoint(pointer)
-        }
-        if (read !is ChapterArtifactEngine.OcrCheckpointRead.Usable) {
-            return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
-        }
-        val admissionSha = admissionSourceSha(pageKey)
-        if (admissionSha == null || read.checkpoint.sourceIdentity.sha256 != admissionSha) {
-            return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SHA_MISMATCH)
-        }
-        return CheckpointReuse.Reusable(read.checkpoint.ocrContentFingerprint)
-    }
-
-    private suspend fun readCheckpointFingerprint(
-        artifact: ChapterArtifactEngine,
-        pageKey: String,
-    ): String? {
-        val manifest = store.artifactManifest ?: return null
-        val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
-        val read = store.withArtifactEngineLocked { engine ->
-            engine.readOcrCheckpoint(pointer)
-        }
-        return (read as? ChapterArtifactEngine.OcrCheckpointRead.Usable)?.checkpoint?.ocrContentFingerprint
-    }
-
-    private suspend fun existingActiveRecord(
-        artifact: ChapterArtifactEngine,
-    ): ChapterArtifactEngine.RunRecordRead? {
-        // ST-14 dispatch reads the DURABLE manifest, not the facade's cached
-        // snapshot: the cache is a CAS optimization with many writers, while
-        // this decision must never re-run paid work (or drain a stale
-        // FINALIZE) behind what the artifact tree actually records. One
-        // sidecar read per dispatch — negligible next to the preflight.
-        return store.withArtifactEngineLocked { engine ->
-            val pointer = engine.readManifest()?.activeRun ?: return@withArtifactEngineLocked null
-            engine.readRunRecord(pointer)
-        }
-    }
-
-    /**
      * Best-effort run-record publication. The record is identity/progress
      * state; per-page checkpoints in the manifest are the authoritative
      * durable state (T924-ST-06), so a rejected publication never fails the
@@ -2288,7 +1704,7 @@ internal class ChapterProfileBatchCoordinator(
          * permits, SAF decode — where a wedge used to stall the pass
          * silently forever.
          */
-        private const val PREFLIGHT_PAGE_TIMEOUT_MS = 240_000L
+        internal const val PREFLIGHT_PAGE_TIMEOUT_MS = 240_000L
 
         /**
          * The standard tail's translate-time terminal predicate: a page with a
