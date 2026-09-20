@@ -120,7 +120,7 @@ internal class FinalizeWorkerContext(
     ) -> ChapterRunRecord,
     val drainDisplayTailBeforeComplete: suspend (
         List<String>,
-    ) -> ChapterProfileBatchCoordinator.DisplayTailDrain,
+    ) -> RecoveryWorker.DisplayTailDrain,
     val t924PageTerminalAtFinalize: (PageTranslation?, Long) -> Boolean,
     val strandedPageReason: (PageTranslation?) -> String,
     val persistEnvelopeStructuralFailure: suspend (String, String, String) -> Unit,
@@ -166,7 +166,7 @@ internal class FinalizeWorker(
 
     private suspend fun drainDisplayTailBeforeComplete(
         orderedPageKeys: List<String>,
-    ): ChapterProfileBatchCoordinator.DisplayTailDrain =
+    ): RecoveryWorker.DisplayTailDrain =
         context.drainDisplayTailBeforeComplete(orderedPageKeys)
 
     private fun t924PageTerminalAtFinalize(
