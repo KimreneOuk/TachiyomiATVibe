@@ -75,19 +75,21 @@ P1-05 resolved as **Option A** (defer excision, gather device evidence).
 Reports: [implementation](team/p2-implementation-report.md) · [review](team/p2-review-report.md).
 Key outcomes: −2,616 net lines; legacy subsystem + `ManifestAuthority` gone; `ChapterArtifactStore` → `ChapterArtifactEngine` behind single-Mutex facade (`ChapterStoreEngineMode`: Memory/LazyDurable/Durable); progress truth = store projection. −59 executed tests fully reconciled as legacy-scoped removals.
 
-### Phase 3 — Coexistence Simplification (IN PROGRESS, branch `t936/phase3-coexistence-pipeline`)
+### Phase 3 — Coexistence Simplification (COMPLETE — merged to main @ `e4bec7b`, review PASS WITH NOTES)
 
-**Roadmap corrections from scoping** (`team/p3-scoping-report.md`):
-- `translator/analysis/` deletion DROPPED — package is live in the AI profile lane (6 files, 1,872 LOC, tested).
-- "Pass 1 OCR push-through / Pass 2 parallel lanes" RECLASSIFIED as already implemented
-  (`runPass1` barrier + `OCR_PREFLIGHT` + `OverlapScheduler` Lane B + `BatchRenderJoin`). No new pipeline work.
-- Phase 3 scope = session mutual exclusion + removal of cross-origin machinery only.
+Reports: [scoping](team/p3-scoping-report.md) · [implementation](team/p3-implementation-report.md) · [review](team/p3-review-report.md).
+Key outcomes: `TranslationSessionCoordinator` session gate (zero bypasses verified), quiescent batch→reader
+transition (3s join, timeout-never-admits policy), cross-origin attach/defer/S8 machinery deleted.
+Roadmap corrections applied: analysis-package deletion dropped (live code); pipelined batch reclassified
+as already implemented.
+
+### Phase 4 — Monolith Decomposition (IN PROGRESS, branch `t936/phase4-monolith-decomposition`)
 
 | Ticket | Title |
 |---|---|
-| [P3-01](ticket/p3-01-session-admission-state-machine.md) | Session admission state machine routing all entry points |
-| [P3-02](ticket/p3-02-quiescent-batch-reader-transition.md) | Quiescent batch→reader transition, 3s bounded join, honest timeout policy |
-| [P3-03](ticket/p3-03-remove-cross-origin-machinery.md) | Delete attach/defer/rescan cross-origin machinery + test disposition |
+| [P4-01](ticket/p4-01-decompose-batch-coordinator.md) | Decompose `ChapterProfileBatchCoordinator` (4,256 lines) into phase workers |
+| [P4-02](ticket/p4-02-extract-layout-geometry.md) | Extract geometry from `TextLayoutPlanner` (3,605 lines) |
+| [P4-03](ticket/p4-03-extract-reader-translation-controller.md) | Extract `ReaderTranslationController` from `ReaderViewModel` (2,945 lines) |
 
 ### Phases 3–5
 
