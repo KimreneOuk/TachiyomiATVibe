@@ -204,12 +204,19 @@ internal class ReaderAutoTranslationPageResolver(
 }
 
 internal fun resolveReaderPageTranslationKey(page: ReaderPage): String {
+    // A page can be resolved once while it is still online and later rebound to
+    // a downloaded loader. In that transition the cached URL key is stale; the
+    // loader's source filename is the canonical key used by the store and must
+    // supersede the cached fallback for both writes and observation.
+    val sourceKey = page.sourceFileName ?: page.translation?.sourceFileName
+    if (sourceKey != null) {
+        page.translationStorageKey = sourceKey
+        return sourceKey
+    }
     page.translationStorageKey?.let { return it }
-    val resolved = page.sourceFileName
-        ?: page.translation?.sourceFileName
-        ?: onlinePageTranslationKey(page.imageUrl, page.url)
-    page.translationStorageKey = resolved
-    return resolved
+    return onlinePageTranslationKey(page.imageUrl, page.url).also {
+        page.translationStorageKey = it
+    }
 }
 
 /**

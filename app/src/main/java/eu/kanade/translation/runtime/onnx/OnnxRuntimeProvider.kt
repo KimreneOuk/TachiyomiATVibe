@@ -11,13 +11,16 @@ object OnnxRuntimeProvider {
     val environment: OrtEnvironment by lazy {
         logcat { "Creating ONNX Runtime environment" }
         val environment = OrtEnvironment.getEnvironment()
-        runCatching {
-            logcat(LogPriority.INFO) {
-                "[onnx_runtime] compiledProviders=${OrtEnvironment.getAvailableProviders().joinToString(",") { it.getName() }}"
-            }
-        }.onFailure { error ->
+        val compiledProviders = runCatching {
+            OrtEnvironment.getAvailableProviders().joinToString(",") { it.getName() }
+        }.getOrElse { error ->
             logcat(LogPriority.WARN, error) { "[onnx_runtime] provider query failed" }
+            "query_failed:${error.javaClass.simpleName}"
         }
+        // Keep this emission outside the provider-query lambda so a query or
+        // logger failure cannot silently remove the diagnostic from the init
+        // trace. This reports compiled availability, not the selected route.
+        logcat(LogPriority.INFO) { "[onnx_runtime] compiledProviders=$compiledProviders" }
         environment
     }
 
