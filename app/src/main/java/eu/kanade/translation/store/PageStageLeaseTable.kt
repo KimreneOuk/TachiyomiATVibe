@@ -1,9 +1,9 @@
 package eu.kanade.translation.store
 
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.LeaseAcquisition
-import eu.kanade.translation.PageStageLease
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.PageStageLease
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.model.PageStage
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock

@@ -3,8 +3,8 @@ package eu.kanade.translation.pipeline.batch
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.LeaseAcquisition
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactEngine

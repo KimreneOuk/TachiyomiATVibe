@@ -1,7 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -12,7 +12,7 @@ import java.io.InputStream
  * depends on, decoupled from the concrete executor.
  *
  * Today this is satisfied by [eu.kanade.translation.orchestration.ChapterTranslator], which
- * delegates to [eu.kanade.translation.TranslationPipeline]'s
+ * delegates to [eu.kanade.translation.pipeline.TranslationPipeline]'s
  * decode → OCR → translate → inpaint → render pipeline. The scheduler only
  * cares that the executor runs one page to completion (or failure) under its
  * own single permit, with stage-resume + native-run quarantine already handled.

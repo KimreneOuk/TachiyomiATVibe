@@ -3,10 +3,10 @@ package eu.kanade.translation.pipeline.batch
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.LeaseAcquisition
-import eu.kanade.translation.OcrStagePatch
-import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.StagePatchResult
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.OcrStagePatch
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
@@ -16,7 +16,7 @@ import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus

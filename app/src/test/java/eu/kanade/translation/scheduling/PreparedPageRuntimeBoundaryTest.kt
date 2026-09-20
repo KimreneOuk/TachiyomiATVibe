@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test
  * [publishPreparedPageFromOcr] will fail the first test because the store
  * snapshot will have empty blocks and `ocrStatus = RUNNING` instead of `READY`.
  *
- * The heavy [eu.kanade.translation.TranslationPipeline] needs an Android
+ * The heavy [eu.kanade.translation.pipeline.TranslationPipeline] needs an Android
  * Context + on-device ONNX models, so the boundary's store/PreparedPage
  * construction was extracted into [publishPreparedPageFromOcr] — a top-level
  * internal function that is pure JVM and is the exact code path

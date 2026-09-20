@@ -1,7 +1,7 @@
 package eu.kanade.translation.ui
 
-import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.TranslationPipeline
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.AiPageProgressState

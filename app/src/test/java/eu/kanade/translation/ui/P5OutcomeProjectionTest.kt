@@ -6,7 +6,7 @@ import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import io.kotest.assertions.withClue

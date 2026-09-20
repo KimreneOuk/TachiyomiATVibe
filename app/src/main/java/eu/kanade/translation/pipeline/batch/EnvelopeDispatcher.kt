@@ -2,12 +2,12 @@ package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.storage.CheckpointOcrResult
-import eu.kanade.translation.LeaseAcquisition
-import eu.kanade.translation.OcrStagePatch
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.context.SeriesProfileRegistry
 import eu.kanade.translation.model.PageStage
-import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.StagePatchResult
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.AnalyzerProvenance
@@ -52,8 +52,8 @@ import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.ocrBlockFingerprints
-import eu.kanade.translation.ocrFingerprint
+import eu.kanade.translation.pipeline.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.ocrFingerprint
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator

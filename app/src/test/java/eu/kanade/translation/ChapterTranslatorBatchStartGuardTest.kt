@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.pipeline.*
+
 import eu.kanade.translation.orchestration.*
 
 import eu.kanade.translation.storage.*

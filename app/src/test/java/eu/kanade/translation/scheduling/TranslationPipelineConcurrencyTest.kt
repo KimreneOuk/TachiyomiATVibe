@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Tests for the thread-safe [ConcurrentHashMap.newKeySet] used by
- * [eu.kanade.translation.TranslationPipeline]'s inFlightPageKeys.
+ * [eu.kanade.translation.pipeline.TranslationPipeline]'s inFlightPageKeys.
  *
  * These verify the data structure guarantees under the actual concurrent access
  * patterns (watchdog, worker finally, closeEngines) without constructing the

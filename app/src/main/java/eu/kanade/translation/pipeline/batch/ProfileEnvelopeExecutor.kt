@@ -1,11 +1,11 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.LeaseAcquisition
-import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.StagePatchResult
-import eu.kanade.translation.TranslationBlockPatch
-import eu.kanade.translation.TranslationStagePatch
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.TranslationBlockPatch
+import eu.kanade.translation.pipeline.TranslationStagePatch
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterTranslationProfile
@@ -19,8 +19,8 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.ocrBlockFingerprints
-import eu.kanade.translation.ocrFingerprint
+import eu.kanade.translation.pipeline.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.ocrFingerprint
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderFailure

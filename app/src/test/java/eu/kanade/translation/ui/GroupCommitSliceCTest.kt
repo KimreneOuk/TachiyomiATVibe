@@ -4,7 +4,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageFeedbackState
 import eu.kanade.tachiyomi.ui.reader.viewer.readerManualOutcomeFeedback
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest

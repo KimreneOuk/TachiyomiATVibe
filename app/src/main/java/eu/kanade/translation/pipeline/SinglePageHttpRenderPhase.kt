@@ -6,12 +6,12 @@ import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
-import eu.kanade.translation.toArtifactOrigin
+import eu.kanade.translation.pipeline.toArtifactOrigin
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage

@@ -2,7 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.orchestration.TranslationPageRequest
 import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.artifact.GroupCommitConfiguration

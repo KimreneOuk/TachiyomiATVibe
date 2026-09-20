@@ -10,10 +10,10 @@ import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.LayoutFailureException
-import eu.kanade.translation.RenderBlockPatch
-import eu.kanade.translation.RenderStagePatch
-import eu.kanade.translation.StagePatchResult
+import eu.kanade.translation.pipeline.LayoutFailureException
+import eu.kanade.translation.pipeline.RenderBlockPatch
+import eu.kanade.translation.pipeline.RenderStagePatch
+import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactEngine
@@ -21,7 +21,7 @@ import eu.kanade.translation.artifact.ColorStylePreparation
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.StageArtifactRecord
-import eu.kanade.translation.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome

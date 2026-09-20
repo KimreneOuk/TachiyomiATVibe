@@ -2,7 +2,7 @@ package eu.kanade.translation.manager
 
 import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.TranslationPipeline
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest

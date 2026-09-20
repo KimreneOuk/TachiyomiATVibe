@@ -2,7 +2,7 @@ package eu.kanade.translation.coexistence
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageFailed

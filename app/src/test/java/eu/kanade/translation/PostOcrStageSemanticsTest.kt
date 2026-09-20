@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.pipeline.*
+
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus

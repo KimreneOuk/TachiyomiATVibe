@@ -1,8 +1,8 @@
 package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.LeaseAcquisition
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import io.kotest.assertions.withClue

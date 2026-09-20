@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.pipeline.*
+
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

@@ -2,8 +2,8 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 
 import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationSlot
 import eu.kanade.tachiyomi.ui.reader.projectReaderAutoTranslationUiState
-import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.TranslationPipeline
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock

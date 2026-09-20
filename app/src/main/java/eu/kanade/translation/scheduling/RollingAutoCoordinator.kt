@@ -1,8 +1,8 @@
 package eu.kanade.translation.scheduling
 
-import eu.kanade.translation.TranslationPipeline
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.orchestration.TranslationSession
-import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceLane

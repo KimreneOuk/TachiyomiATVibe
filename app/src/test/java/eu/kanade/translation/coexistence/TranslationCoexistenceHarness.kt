@@ -13,12 +13,12 @@ import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.InMemorySharedPreferences
-import eu.kanade.translation.OcrStagePatch
-import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.StagePatchResult
+import eu.kanade.translation.pipeline.OcrStagePatch
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.storage.TranslationPendingRequestStore
-import eu.kanade.translation.TranslationPipeline
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.storage.TranslationQueueStore
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.artifact.AtomicChapterDocuments
@@ -33,7 +33,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage

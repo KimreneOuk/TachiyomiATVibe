@@ -137,7 +137,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
             if (artifact != null && manifest != null) {
                 val glossaryWriter = eu.kanade.translation.storage.ActiveChapterStoreRegistry.registerWriter(
                     chapterKey = store.chapterKey,
-                    origin = eu.kanade.translation.WriterOrigin.GLOSSARY_LANE,
+                    origin = eu.kanade.translation.pipeline.WriterOrigin.GLOSSARY_LANE,
                 )
                 try {
                     val pointer = artifact.publishGlossary(glossary)

@@ -1,5 +1,7 @@
 package eu.kanade.translation.storage
 
+import eu.kanade.translation.pipeline.*
+
 import eu.kanade.translation.*
 
 import eu.kanade.translation.model.PageTranslation
