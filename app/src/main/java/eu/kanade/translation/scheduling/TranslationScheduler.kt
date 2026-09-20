@@ -103,6 +103,11 @@ class TranslationScheduler(
     // (it uses no per-page coroutine).
     private val activePageJobs = ConcurrentHashMap<String, Job>()
 
+    // Cancellation is attributed before a Job is cancelled because its finally block runs
+    // after the cancellation signal and must preserve the initiating intent in the durable
+    // page error instead of collapsing every path to "Translation cancelled".
+    private val pageCancellationReasons = ConcurrentHashMap<String, String>()
+
     /**
      *   §2.4: typed outcome of the last completed manual single-page
      * intents, keyed like [activePageJobs]. Bounded (evict-oldest, cap 32) and
@@ -554,14 +559,21 @@ class TranslationScheduler(
             // reader overlay/dim clears immediately on the current frame. Durable persistence
             // is dispatched asynchronously to IO without blocking the caller.
             if (chapterId != null) {
-                val inMemoryFlipped = immediateStoreResolver?.invoke(chapterId)?.fastCancelInFlightStagesInMemory() ?: 0
+                val inMemoryFlipped = immediateStoreResolver?.invoke(chapterId)?.fastCancelInFlightStagesInMemory(
+                    origin = PageWriteOrigin.AUTO,
+                    cancellationReason = "Auto translation cancelled",
+                ) ?: 0
                 if (inMemoryFlipped > 0) {
                     cancelled = true
                 }
                 if (cancelled) {
                     scope.launch {
                         try {
-                            markChapterCancelledAsync(chapterId)
+                            markChapterCancelledAsync(
+                                chapterId,
+                                origin = PageWriteOrigin.AUTO,
+                                reason = "Auto translation cancelled",
+                            )
                         } catch (e: Throwable) {
                             logcat(LogPriority.WARN, e) { "Failed to drain cancellation for $chapterId" }
                         }
@@ -575,7 +587,10 @@ class TranslationScheduler(
                     .toList()
                 var anyFlipped = false
                 affectedChapterIds.forEach { id ->
-                    val flipped = immediateStoreResolver?.invoke(id)?.fastCancelInFlightStagesInMemory() ?: 0
+                    val flipped = immediateStoreResolver?.invoke(id)?.fastCancelInFlightStagesInMemory(
+                        origin = PageWriteOrigin.AUTO,
+                        cancellationReason = "Auto translation cancelled",
+                    ) ?: 0
                     if (flipped > 0) anyFlipped = true
                 }
                 if (anyFlipped) {
@@ -585,7 +600,11 @@ class TranslationScheduler(
                     scope.launch {
                         affectedChapterIds.forEach { id ->
                             try {
-                                markChapterCancelledAsync(id)
+                                markChapterCancelledAsync(
+                                    id,
+                                    origin = PageWriteOrigin.AUTO,
+                                    reason = "Auto translation cancelled",
+                                )
                             } catch (e: Throwable) {
                                 logcat(LogPriority.WARN, e) { "Failed to drain cancellation for $id" }
                             }
@@ -787,12 +806,14 @@ class TranslationScheduler(
                         else -> false
                     }
                     if (cancelledMidFlight && !attachFamily) {
+                        val cancellationReason = pageCancellationReasons.remove(jobKey)
+                            ?: "Manual translation cancelled"
                         // Reset stranded RUNNING on a NonCancellable child so the
                         // reset can't be torn down by the cancellation that triggered
                         // it. Guarded so a reset failure never masks the original CancellationException.
                         try {
                             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                                markPageCancelled(chapter, pageKey)
+                                markPageCancelled(chapter, pageKey, cancellationReason)
                             }
                         } catch (resetError: Throwable) {
                             logcat(LogPriority.WARN, resetError) {
@@ -842,17 +863,28 @@ class TranslationScheduler(
      * mid-flight cancellation. Cancellation is not a stage failure and must not
      * increment retryCount.
      */
-    private suspend fun markPageCancelled(chapter: Chapter, pageKey: String) {
+    private suspend fun markPageCancelled(
+        chapter: Chapter,
+        pageKey: String,
+        reason: String = "Translation cancelled",
+        requiredOrigin: PageWriteOrigin? = null,
+    ) {
         val chapterId = chapter.id ?: return
         val store = storeResolver.resolve(chapterId) ?: return
-        markPageCancelled(store, pageKey)
+        markPageCancelled(store, pageKey, reason, requiredOrigin)
     }
 
-    private suspend fun markPageCancelled(store: ChapterTranslationStore, pageKey: String) {
+    private suspend fun markPageCancelled(
+        store: ChapterTranslationStore,
+        pageKey: String,
+        reason: String = "Translation cancelled",
+        requiredOrigin: PageWriteOrigin? = null,
+    ) {
         // Peek first: if no entry or already terminal, nothing is stranded — skip
         // the write rather than creating a spurious FAILED entry.
         val existing = store.state.value[pageKey] ?: return
         if (existing.hasRenderedResult || existing.isStageFailed) return
+        if (requiredOrigin != null && store.pageLeaseOwner(pageKey) != requiredOrigin) return
         //   while a batch run holds this page's BATCH-origin stage
         // lease, the batch owns the page's stage state. The cancel write below
         // builds its precondition from the CURRENT snapshot — which carries the
@@ -874,17 +906,17 @@ class TranslationScheduler(
         }
         // Flip in-flight stages to CANCELLED so the reader clears the overlay and
         // auto can reschedule the page later.
-        store.updatePageFromCurrentSnapshot(pageKey, "auto page cancelled") { current ->
+        store.updatePageFromCurrentSnapshot(pageKey, reason) { current ->
             // Re-check inside the lock in case it changed between peek and write.
             val cur = current ?: PageTranslation(
                 sourceFileName = pageKey,
                 ocrStatus = StageStatus.CANCELLED,
                 updatedAt = System.currentTimeMillis(),
-            ).also { it.ocrError = "Translation cancelled" }
+            ).also { it.ocrError = reason }
             if (cur.hasRenderedResult || cur.isStageFailed) return@updatePageFromCurrentSnapshot cur
             cur.apply {
                 cancelInFlightStages()
-                ocrError = "Translation cancelled"
+                ocrError = reason
                 updatedAt = System.currentTimeMillis()
             }
         }
@@ -904,18 +936,26 @@ class TranslationScheduler(
      * concerns). Pages that already reached a rendered or failed terminal state are
      * left untouched so accepted artifacts survive.
      */
-    suspend fun markChapterCancelledAsync(chapterId: Long): Int = withContext(Dispatchers.IO) {
+    suspend fun markChapterCancelledAsync(
+        chapterId: Long,
+        origin: PageWriteOrigin? = null,
+        reason: String = "Translation cancelled",
+    ): Int = withContext(Dispatchers.IO) {
         val store = immediateStoreResolver?.invoke(chapterId) ?: return@withContext 0
         val runningKeys = store.state.value.entries
             .asSequence()
-            .filter { (_, page) -> page != null && (page!!.isStageRunning || page.ocrError == "Translation cancelled") }
+            .filter { (pageKey, page) ->
+                page != null &&
+                    (page!!.isStageRunning || page.ocrError == "Translation cancelled") &&
+                    (origin == null || store.pageLeaseOwner(pageKey)?.let { it == origin } != false)
+            }
             .map { it.key }
             .toList()
         if (runningKeys.isEmpty()) return@withContext 0
         var flipped = 0
         runningKeys.forEach { key ->
             try {
-                markPageCancelled(store, key)
+                markPageCancelled(store, key, reason, origin)
                 flipped++
             } catch (e: Throwable) {
                 logcat(LogPriority.WARN, e) { "Failed to mark page cancelled: $key" }
@@ -924,20 +964,27 @@ class TranslationScheduler(
         flipped
     }
 
-    fun markChapterCancelledSync(chapterId: Long): Int {
+    fun markChapterCancelledSync(
+        chapterId: Long,
+        reason: String = "Translation cancelled",
+        origin: PageWriteOrigin? = null,
+    ): Int {
         val store = immediateStoreResolver?.invoke(chapterId) ?: return 0
         val runningKeys = store.state.value.entries
             .asSequence()
-            .filter { (_, page) -> page != null && page!!.isStageRunning }
+            .filter { (pageKey, page) ->
+                page != null && page!!.isStageRunning &&
+                    (origin == null || store.pageLeaseOwner(pageKey)?.let { it == origin } != false)
+            }
             .map { it.key }
             .toList()
         if (runningKeys.isEmpty()) return 0
-        store.fastCancelInFlightStagesInMemory()
+        store.fastCancelInFlightStagesInMemory(origin = origin, cancellationReason = reason)
         var flipped = 0
         runBlocking {
             runningKeys.forEach { key ->
                 try {
-                    markPageCancelled(store, key)
+                    markPageCancelled(store, key, reason, origin)
                     flipped++
                 } catch (e: Throwable) {
                     logcat(LogPriority.WARN, e) { "Failed to mark page cancelled: $key" }
@@ -974,18 +1021,23 @@ class TranslationScheduler(
      * Returns true if a job was actually cancelled, false if none was running
      * (already finished or deduped).
      */
-    fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean {
+    fun cancelPageTranslation(
+        chapterId: Long,
+        pageKey: String,
+        reason: String = "Manual page cancellation requested",
+    ): Boolean {
         val jobKey = "$chapterId:$pageKey"
         queuedPageKeys.remove(jobKey)
         queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") && it.endsWith(":${pageKey.replace(':', '_')}") }
         val job = synchronized(activePageJobs) { activePageJobs.remove(jobKey) }
+        if (job != null) pageCancellationReasons[jobKey] = reason
         job?.cancel()
         val autoCancelled = cancelAutoTranslations(chapterId)
         // The reader's stop action is synchronous. Flip the shared store before
         // returning so the UI cannot remain stuck on RUNNING while the cancelled
         // worker is still unwinding its coroutine finally block.
         immediateStoreResolver?.invoke(chapterId)?.let { store ->
-            runBlocking { markPageCancelled(store, pageKey) }
+            runBlocking { markPageCancelled(store, pageKey, reason) }
         }
         return job != null || autoCancelled
     }
@@ -1005,7 +1057,10 @@ class TranslationScheduler(
      * NOTE: store eviction is NOT done here; the store lifecycle is owned by
      * TranslationManager. The caller evicts the store if needed.
      */
-    suspend fun cancelPageTranslations(chapterId: Long) {
+    suspend fun cancelPageTranslations(
+        chapterId: Long,
+        reason: String = "Reader chapter navigation",
+    ) {
         // Ticket 03: stop the rolling coordinator's admission for the outgoing
         // chapter. A new chapter's [updateAutoWindow] (new identity) cancels
         // and resets it; cancelling here bounds the gap between navigate-away
@@ -1036,6 +1091,7 @@ class TranslationScheduler(
                 while (iterator.hasNext()) {
                     val (key, job) = iterator.next()
                     if (key.startsWith(prefix)) {
+                        pageCancellationReasons[key] = reason
                         job.cancel()
                         toJoin.add(job)
                         iterator.remove()
@@ -1064,7 +1120,7 @@ class TranslationScheduler(
      * owned by the caller via [ChapterTranslationStore.clearTransientQueuePages]
      * — this method only guarantees the in-memory snapshot settles synchronously.
      */
-    fun cancelAllPageTranslations() {
+    fun cancelAllPageTranslations(reason: String = "Reader translation stop") {
         // Ticket 03: full reader-close / master-toggle-off teardown of the
         // rolling coordinator. shutdown (not cancel) nulls the snapshot and
         // drops scheduling state so no observer or coordinator lingers.
@@ -1088,6 +1144,7 @@ class TranslationScheduler(
                 val iterator = activePageJobs.entries.iterator()
                 while (iterator.hasNext()) {
                     val (key, job) = iterator.next()
+                    pageCancellationReasons[key] = reason
                     job.cancel()
                     iterator.remove()
                     key.substringBefore(':').toLongOrNull()?.let { affectedChapterIds += it }
@@ -1096,7 +1153,7 @@ class TranslationScheduler(
             // TachiyomiAT bug 4 fix: flip every affected chapter's in-flight pages
             // synchronously so the dim/overlay clears without waiting on each job's
             // finally block.
-            affectedChapterIds.forEach { markChapterCancelledSync(it) }
+            affectedChapterIds.forEach { markChapterCancelledSync(it, reason = reason) }
         } finally {
             finishAutoCancellation(cancellation)
         }
@@ -1110,7 +1167,7 @@ class TranslationScheduler(
      * terminated; the scheduler scope itself remains available for the next
      * reader session.
      */
-    suspend fun awaitReaderStop() {
+    suspend fun awaitReaderStop(reason: String = "Reader stopped") {
         synchronized(autoCoordinatorLock) {
             readerStopInFlight = true
         }
@@ -1144,13 +1201,14 @@ class TranslationScheduler(
                     val iterator = activePageJobs.entries.iterator()
                     while (iterator.hasNext()) {
                         val (key, job) = iterator.next()
+                        pageCancellationReasons[key] = reason
                         job.cancel()
                         jobsToJoin += job
                         iterator.remove()
                         key.substringBefore(':').toLongOrNull()?.let { affectedChapterIds += it }
                     }
                 }
-                affectedChapterIds.forEach { markChapterCancelledSync(it) }
+                affectedChapterIds.forEach { markChapterCancelledSync(it, reason = reason) }
             } finally {
                 finishAutoCancellation(cancellation)
             }

@@ -8,19 +8,25 @@ import java.io.File
 
 object OnnxRuntimeProvider {
 
-    val environment: OrtEnvironment by lazy {
-        logcat { "Creating ONNX Runtime environment" }
-        val environment = OrtEnvironment.getEnvironment()
+    private fun logCompiledProviders(reason: String) {
         val compiledProviders = runCatching {
             OrtEnvironment.getAvailableProviders().joinToString(",") { it.getName() }
         }.getOrElse { error ->
             logcat(LogPriority.WARN, error) { "[onnx_runtime] provider query failed" }
             "query_failed:${error.javaClass.simpleName}"
         }
+        logcat(LogPriority.INFO) {
+            "[onnx_runtime] compiledProviders=$compiledProviders reason=$reason"
+        }
+    }
+
+    val environment: OrtEnvironment by lazy {
+        logcat { "Creating ONNX Runtime environment" }
+        val environment = OrtEnvironment.getEnvironment()
         // Keep this emission outside the provider-query lambda so a query or
         // logger failure cannot silently remove the diagnostic from the init
         // trace. This reports compiled availability, not the selected route.
-        logcat(LogPriority.INFO) { "[onnx_runtime] compiledProviders=$compiledProviders" }
+        logCompiledProviders("environment")
         environment
     }
 
@@ -472,6 +478,10 @@ object OnnxRuntimeProvider {
         tripCircuitBreakerOnRegistrationFailure: Boolean = true,
         configure: (OrtSession.SessionOptions) -> Unit = {},
     ): SessionOptionsWithRegistration {
+        // Session-option construction is the first reliably captured point on
+        // device traces; repeat the additive diagnostic here when lazy ORT
+        // environment initialization predates logcat capture.
+        logCompiledProviders("session_options")
         val route = routeOverride ?: when {
             useAccelerator -> HardwareDiscoveryEngine.resolveRoute()
             useXnnpack -> HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK

@@ -46,6 +46,7 @@ fun BottomReaderBar(
     onClickSettings: () -> Unit,
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
     translationBatchProgress: TranslationProgressSnapshot? = null,
+    isBatchSession: Boolean = false,
     autoTranslation: ReaderAutoTranslationUiState = ReaderAutoTranslationUiState.empty(),
     onClickTranslate: () -> Unit = {},
     // TachiyomiAT: while translation is running the icon is disabled so repeated
@@ -66,7 +67,7 @@ fun BottomReaderBar(
             modifier = Modifier.padding(top = 4.dp),
         )
 
-        translationBatchProgress?.let { snapshot ->
+        translationBatchProgress?.takeIf { isBatchSession }?.let { snapshot ->
             //  U.4: the bar renders the SAME chapter status truth as the
             // progress sheet (TranslationUiTruth.readerBarLine). During a
             // resume rebuild the rebuild/restore kinds resolve the shared
@@ -74,7 +75,7 @@ fun BottomReaderBar(
             // legacy kinds keep their historical bar wording via the truth
             // line's fallback. Null = the bar's legacy hidden state.
             val isPaused = snapshot.state == Translation.State.PAUSED || snapshot.pauseReason != null
-            val line = TranslationUiTruth.readerBarLine(snapshot)
+            val line = TranslationUiTruth.readerBarLine(snapshot, isBatchSession = true)
             if (line != null) {
                 val status = when (line.kind) {
                     BatchStatusLineKind.REBUILDING ->
@@ -123,7 +124,10 @@ fun BottomReaderBar(
             }
 
             IconButton(onClick = onClickTranslate, enabled = translateEnabled) {
-                val requestPhase = translationBatchProgress?.requestState?.phase
+                val requestPhase = translationBatchProgress
+                    ?.takeIf { isBatchSession }
+                    ?.requestState
+                    ?.phase
                 when {
                     requestPhase == TranslationRequestPhase.WAITING_FOR_DOWNLOAD -> {
                         Icon(

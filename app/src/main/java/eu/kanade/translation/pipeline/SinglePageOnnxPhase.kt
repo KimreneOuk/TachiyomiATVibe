@@ -1094,6 +1094,19 @@ internal class SinglePageOnnxPhase(
         // failure and there is nothing to clean.
         val ocrFailed = pageTranslation.ocrStatus == StageStatus.FAILED
         if (!ocrFailed) {
+            // The recognition result is held locally until the native phase returns, so
+            // publish the inpaint boundary before entering ONNX inpaint. The reader observes
+            // the shared store, not this local object; without this write it remains on OCR
+            // RUNNING until the final HTTP/render commit.
+            pageTranslation.inpaintStatus = StageStatus.RUNNING
+            pageTranslation.updatedAt = System.currentTimeMillis()
+            updatePageFromCurrentSnapshot(store, fileName, "single-page inpaint running") {
+                pageTranslation.copy().apply {
+                    sourceFileName = fileName
+                    inpaintStatus = StageStatus.RUNNING
+                    updatedAt = System.currentTimeMillis()
+                }
+            }
             stageListener?.onStageEntered(fileName, TranslationStageEvent.CLEANING)
             try {
                 preflightInpaintGate(bitmap, fileName)

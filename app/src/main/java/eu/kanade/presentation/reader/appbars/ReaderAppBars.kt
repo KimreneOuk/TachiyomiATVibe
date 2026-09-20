@@ -74,6 +74,7 @@ fun ReaderAppBars(
     onClickSettings: () -> Unit,
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
     translationBatchProgress: TranslationProgressSnapshot? = null,
+    isBatchSession: Boolean = false,
     autoTranslation: ReaderAutoTranslationUiState = ReaderAutoTranslationUiState.empty(),
     onClickTranslate: () -> Unit = {},
     // TachiyomiAT: forwarded to BottomReaderBar to disable the translate icon
@@ -204,6 +205,7 @@ fun ReaderAppBars(
                         onClickSettings = onClickSettings,
                         translationState = translationState,
                         translationBatchProgress = translationBatchProgress,
+                        isBatchSession = isBatchSession,
                         autoTranslation = autoTranslation,
                         onClickTranslate = onClickTranslate,
                         translateEnabled = translateEnabled,

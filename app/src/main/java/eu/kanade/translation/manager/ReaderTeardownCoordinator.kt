@@ -76,7 +76,7 @@ internal class ReaderTeardownCoordinator(
         applicationScope.launch(start = CoroutineStart.DEFAULT) {
             readerTeardownMutex.withLock {
                 sessionCoordinator.abortPausingToBatch()
-                cancelAllPageTranslations(cancelBatchQueue = false)
+                cancelAllPageTranslations(cancelBatchQueue = false, reason = reason)
                 if (!isAnyBatchTranslationActive) {
                     translatorStop(reason, closeEngines = false)
                 }
@@ -133,13 +133,16 @@ internal class ReaderTeardownCoordinator(
      * reader navigate-away so the previous chapter's work can no longer hold the executor's
      * single permit. Job cancellation is delegated to the scheduler; store eviction is manager-owned.
      */
-    suspend fun cancelPageTranslations(chapterId: Long) {
+    suspend fun cancelPageTranslations(
+        chapterId: Long,
+        reason: String = "Translation cancelled",
+    ) {
         scheduler.cancelPageTranslations(chapterId)
         if (isBatchTranslationRetained(chapterId)) {
             return
         }
         disposeBatchTracker(chapterId)
-        activeStores.get(chapterId)?.clearTransientQueuePages("Translation cancelled")
+        activeStores.get(chapterId)?.clearTransientQueuePages(reason)
         // Evict the store on chapter exit; the reader re-opens it via observeLiveTranslationStore on the next loadChapter.
         unregisterActiveTranslationStore(chapterId)
     }
@@ -150,7 +153,10 @@ internal class ReaderTeardownCoordinator(
      * keeps running and no collector outlives the session. Job cancellation is delegated to the
      * scheduler; store eviction + chapter queue clearing are manager-owned.
      */
-    fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) {
+    fun cancelAllPageTranslations(
+        cancelBatchQueue: Boolean = false,
+        reason: String = "All translation cancelled",
+    ) {
         scheduler.cancelAllPageTranslations()
         val chapterIdsToEvict = activeStores.chapterIds()
             .filter { cancelBatchQueue || !isBatchTranslationRetained(it) }
@@ -166,7 +172,7 @@ internal class ReaderTeardownCoordinator(
             // the small number of active chapter stores) before eviction.
             kotlinx.coroutines.runBlocking {
                 stores.forEach { store ->
-                    store.clearTransientQueuePages("All translation cancelled")
+                    store.clearTransientQueuePages(reason)
                 }
             }
         }
@@ -185,9 +191,12 @@ internal class ReaderTeardownCoordinator(
      * The underlying method remains synchronous for existing lifecycle callers,
      * but its SAF-backed store cleanup must never execute on UI dispatchers.
      */
-    suspend fun cancelAllPageTranslationsOffMain(cancelBatchQueue: Boolean = false) {
+    suspend fun cancelAllPageTranslationsOffMain(
+        cancelBatchQueue: Boolean = false,
+        reason: String = "All translation cancelled",
+    ) {
         withContext(Dispatchers.IO) {
-            cancelAllPageTranslations(cancelBatchQueue)
+            cancelAllPageTranslations(cancelBatchQueue, reason)
         }
     }
 }

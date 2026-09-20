@@ -16,9 +16,11 @@ import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.PreparedPage
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
@@ -170,5 +172,20 @@ class CancelSyncStoreWriteTest {
 
         // Store state must be flipped to CANCELLED in memory immediately without waiting for disk I/O
         store.state.value["p0"]?.ocrStatus shouldBe StageStatus.CANCELLED
+    }
+
+    @Test
+    fun `auto cancellation does not cancel a page owned by a manual lease`() = runTest {
+        val store = newStore()
+        store.updatePage("manual") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+        store.tryAcquirePageStageLease("manual", PageStage.Ocr, PageWriteOrigin.MANUAL)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>()
+        try {
+            scheduler(store).cancelAutoTranslations(chapterId = 1L)
+
+            store.state.value["manual"]?.ocrStatus shouldBe StageStatus.RUNNING
+        } finally {
+            store.releasePageStageLease("manual", PageWriteOrigin.MANUAL)
+        }
     }
 }

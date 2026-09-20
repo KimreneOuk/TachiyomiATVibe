@@ -919,7 +919,11 @@ object TranslationUiTruth {
      * kinds replace the frozen "Batch X/Y" line during a resume rebuild;
      * every legacy branch keeps its historical bar wording byte-identically.
      */
-    fun readerBarLine(snapshot: TranslationProgressSnapshot): BatchStatusLine? {
+    fun readerBarLine(
+        snapshot: TranslationProgressSnapshot,
+        isBatchSession: Boolean = true,
+    ): BatchStatusLine? {
+        if (!isBatchSession) return null
         val request = snapshot.requestState
         val isPaused = snapshot.state == Translation.State.PAUSED || snapshot.pauseReason != null
         val isVisible = request != null ||

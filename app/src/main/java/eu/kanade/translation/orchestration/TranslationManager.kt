@@ -1916,14 +1916,20 @@ class TranslationManager(
     fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean =
         readerTeardown.cancelPageTranslation(chapterId, pageKey)
 
-    suspend fun cancelPageTranslations(chapterId: Long) =
-        readerTeardown.cancelPageTranslations(chapterId)
+    suspend fun cancelPageTranslations(
+        chapterId: Long,
+        reason: String = "Translation cancelled",
+    ) = readerTeardown.cancelPageTranslations(chapterId, reason)
 
-    fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) =
-        readerTeardown.cancelAllPageTranslations(cancelBatchQueue)
+    fun cancelAllPageTranslations(
+        cancelBatchQueue: Boolean = false,
+        reason: String = "All translation cancelled",
+    ) = readerTeardown.cancelAllPageTranslations(cancelBatchQueue, reason)
 
-    suspend fun cancelAllPageTranslationsOffMain(cancelBatchQueue: Boolean = false) =
-        readerTeardown.cancelAllPageTranslationsOffMain(cancelBatchQueue)
+    suspend fun cancelAllPageTranslationsOffMain(
+        cancelBatchQueue: Boolean = false,
+        reason: String = "All translation cancelled",
+    ) = readerTeardown.cancelAllPageTranslationsOffMain(cancelBatchQueue, reason)
 
     fun statusFlow(): Flow<Translation> = queueState
         .flatMapLatest { translations ->

@@ -241,6 +241,25 @@ internal class SinglePageHttpRenderPhase(
             )
         }
 
+        suspend fun publishLiveStage(
+            description: String,
+            update: (PageTranslation) -> Unit,
+        ) {
+            val result = store.updatePageFromCurrentSnapshot(pageKey, description) { current ->
+                (current ?: pageTranslation.copy()).apply {
+                    sourceFileName = pageKey
+                    update(this)
+                    updatedAt = System.currentTimeMillis()
+                }
+            }
+            if (result is ChapterTranslationStore.PatchResult.Rejected) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT live stage publication rejected: pageKey=$pageKey " +
+                        "description=$description reason=${result.reason}"
+                }
+            }
+        }
+
         // AI translators use translateContextual with the chapter glossary so on-demand
         // single-page translation reuses established terms/pronouns (same continuity the
         // batch path gets). Standard translators keep plain translatePage.
@@ -419,6 +438,9 @@ internal class SinglePageHttpRenderPhase(
                         readingOrder,
                     )
                     pageTranslation.translationStatus = StageStatus.RUNNING
+                    publishLiveStage("single-page translation running") {
+                        it.translationStatus = StageStatus.RUNNING
+                    }
                     stageListener?.onStageEntered(pageKey, TranslationStageEvent.TRANSLATING)
                     var singlePageRetry = 0
                     withRequestRetryBudget(retryBudget) {
@@ -436,6 +458,9 @@ internal class SinglePageHttpRenderPhase(
                                     "pageKey=$pageKey missing=${missing.size}"
                             }
                             pageTranslation.translationStatus = StageStatus.RUNNING
+                            publishLiveStage("single-page translation retry running") {
+                                it.translationStatus = StageStatus.RUNNING
+                            }
                             val retryPage = PageTranslation(blocks = missing.toMutableList())
                             runTranslate(retryPage)
                             TranslationBlockValidation.applyTo(pageTranslation)
@@ -581,6 +606,9 @@ internal class SinglePageHttpRenderPhase(
                     )
                     try {
                         pageTranslation.renderStatus = StageStatus.RUNNING
+                        publishLiveStage("single-page render running") {
+                            it.renderStatus = StageStatus.RUNNING
+                        }
                         stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
                         if (cleanedBitmap != null) {
                             RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
@@ -662,6 +690,9 @@ internal class SinglePageHttpRenderPhase(
                                     "Cleaned image could not be published; translated text was not rendered."
                             } else {
                                 pageTranslation.renderStatus = StageStatus.RUNNING
+                                publishLiveStage("single-page render retry running") {
+                                    it.renderStatus = StageStatus.RUNNING
+                                }
                                 stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
                                 RenderColorEstimator.recomputeFor(retriedCleaned, pageTranslation.blocks)
                                 retryLayoutSpan.end()

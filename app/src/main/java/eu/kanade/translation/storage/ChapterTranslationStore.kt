@@ -970,7 +970,10 @@ class ChapterTranslationStore(
      * pages until their leases release. The lease query only takes the lease
      * table's own monitor, never [mutex], so the fast path stays lock-cheap.
      */
-    fun fastCancelInFlightStagesInMemory(): Int {
+    fun fastCancelInFlightStagesInMemory(
+        origin: PageWriteOrigin? = null,
+        cancellationReason: String = "Translation cancelled",
+    ): Int {
         var flipped = 0
         val current = _state.value
         val hasRunning = current.values.any { it?.isStageRunning == true }
@@ -978,6 +981,10 @@ class ChapterTranslationStore(
         val updatedPages = buildMap {
             current.forEach { (pageKey, page) ->
                 if (page != null && page.isStageRunning && !page.hasRenderedResult && !page.isStageFailed) {
+                    if (origin != null && pageLeaseOwner(pageKey)?.let { it != origin } == true) {
+                        put(pageKey, page)
+                        return@forEach
+                    }
                     if (hasActiveBatchStageLease(pageKey)) {
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT cancel skipped: page holds an active BATCH stage lease " +
@@ -991,7 +998,7 @@ class ChapterTranslationStore(
                             pageKey,
                             page.detachedCopy().apply {
                                 cancelInFlightStages()
-                                ocrError = "Translation cancelled"
+                                ocrError = cancellationReason
                                 updatedAt = System.currentTimeMillis()
                             },
                         )

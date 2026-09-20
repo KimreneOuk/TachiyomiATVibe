@@ -17,6 +17,33 @@ import org.junit.jupiter.api.Test
 class ReaderTranslationFeedbackTest {
 
     @Test
+    fun `manual page stage transitions remain observable at every stage`() {
+        listOf(
+            PageTranslation(
+                ocrStatus = StageStatus.RUNNING,
+                inpaintStatus = StageStatus.PENDING,
+            ) to ReaderPageFeedbackState.ReadingText,
+            PageTranslation(
+                ocrStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.RUNNING,
+            ) to ReaderPageFeedbackState.CleaningBubbles,
+            PageTranslation(
+                ocrStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.READY,
+                translationStatus = StageStatus.RUNNING,
+            ) to ReaderPageFeedbackState.TranslatingText,
+            PageTranslation(
+                ocrStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.READY,
+                translationStatus = StageStatus.READY,
+                renderStatus = StageStatus.RUNNING,
+            ) to ReaderPageFeedbackState.FinishingPage,
+        ).forEach { (page, expected) ->
+            page.toReaderPageFeedback() shouldBe expected
+        }
+    }
+
+    @Test
     fun `every live auto slot maps to a truthful page label`() {
         val expected = listOf(
             ReaderAutoTranslationSlotState.Queued to ReaderPageFeedbackState.Queued,

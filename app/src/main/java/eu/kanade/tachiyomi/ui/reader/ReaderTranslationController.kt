@@ -970,7 +970,10 @@ internal class ReaderTranslationController(
         liveTranslationState = Translation.State.NOT_TRANSLATED
         recomputeTranslationState()
         viewModelScope.launchIO {
-            translationManager.cancelAllPageTranslationsOffMain(cancelBatchQueue = true)
+            translationManager.cancelAllPageTranslationsOffMain(
+                cancelBatchQueue = true,
+                reason = "Manual stop requested from reader",
+            )
             // TachiyomiAT: closeEngines = true so the cached textTranslator /
             // recognitionEngine are torn down and enginesClosed is set. Without this,
             // any config change made after stopping (engine, provider, API key, model,

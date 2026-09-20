@@ -18,6 +18,14 @@ import org.junit.jupiter.api.Test
  */
 class ReaderBarTruthTest {
 
+    @Test
+    fun `reader bar hides batch framing outside a batch session`() {
+        TranslationUiTruth.readerBarLine(
+            snapshot = snapshot(totalPages = 1, donePages = 0),
+            isBatchSession = false,
+        ).shouldBeNull()
+    }
+
     private fun snapshot(
         state: Translation.State = Translation.State.TRANSLATING,
         batchPhase: TranslationBatchPhase = TranslationBatchPhase.FIRST_PASS,

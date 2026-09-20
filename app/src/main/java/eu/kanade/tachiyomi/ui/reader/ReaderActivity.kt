@@ -87,6 +87,7 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.orchestration.TranslationSessionState
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
@@ -480,6 +481,8 @@ class ReaderActivity : BaseActivity() {
             val translationBatchProgress by viewModel.state.map {
                 it.translationBatchProgress
             }.collectAsState(initial = null)
+            val translationSessionState by viewModel.translationSessionState.collectAsState()
+            val isBatchSession = translationSessionState == TranslationSessionState.BATCH_SESSION
             // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
             val translationQueue by viewModel.translationQueueState.collectAsState()
             val translationSettingsState by viewModel.translationSettingsState.collectAsState()
@@ -563,6 +566,7 @@ class ReaderActivity : BaseActivity() {
                 onClickSettings = viewModel::openSettingsDialog,
                 translationState = translationState,
                 translationBatchProgress = translationBatchProgress,
+                isBatchSession = isBatchSession,
                 autoTranslation = state.autoTranslation,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
                 // TachiyomiAT: the translate control is ALWAYS tappable, even while

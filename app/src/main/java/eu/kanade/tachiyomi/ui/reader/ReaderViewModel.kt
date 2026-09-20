@@ -51,6 +51,7 @@ import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.orchestration.ReaderEntryTrace
 import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.orchestration.TranslationSessionState
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
@@ -173,6 +174,9 @@ class ReaderViewModel @JvmOverloads constructor(
 
     internal val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
+
+    val translationSessionState: kotlinx.coroutines.flow.StateFlow<TranslationSessionState>
+        get() = translationManager.sessionCoordinator.state
 
     /** Reader-specific rolling Auto projection; batch state remains separate. */
     val autoTranslationUiState: kotlinx.coroutines.flow.StateFlow<ReaderAutoTranslationUiState> =
@@ -679,7 +683,10 @@ class ReaderViewModel @JvmOverloads constructor(
                     // translator permit) after the per-page buttons disappear.
                     resetAutoTranslationState()
                     withIOContext {
-                        translationManager.cancelAllPageTranslationsOffMain(cancelBatchQueue = true)
+                        translationManager.cancelAllPageTranslationsOffMain(
+                            cancelBatchQueue = true,
+                            reason = "Translation disabled by user",
+                        )
                         // TachiyomiAT: user disabled translation — tear down engines so a
                         // subsequent re-enable picks up any config changes made while off.
                         translationManager.translatorStop("translation disabled", closeEngines = true)
