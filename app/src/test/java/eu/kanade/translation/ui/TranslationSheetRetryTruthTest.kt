@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test
  * at the RED checkpoint: the missing truth method IS the defect under test and
  * fails by a named assertion, never by compilation error.
  */
-class T918SheetRetryTruthTest {
+class TranslationSheetRetryTruthTest {
 
     /**
      * Unlike the P5 helper this distinguishes "truth method missing" (named

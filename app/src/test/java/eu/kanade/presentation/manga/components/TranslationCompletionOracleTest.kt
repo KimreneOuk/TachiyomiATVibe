@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test
  * [TranslationUiTruth.isCompletedOutcome]; the truth line and the sheet
  * subtitle render the attention wording instead.
  */
-class T934CompletionOracleTest {
+class TranslationCompletionOracleTest {
 
     private fun finishedSnapshot(
         state: Translation.State = Translation.State.TRANSLATED,

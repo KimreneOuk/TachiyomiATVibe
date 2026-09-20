@@ -28,7 +28,7 @@ import java.lang.reflect.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-class MilestoneM6DurabilityAtScaleTest {
+class DurabilityAtScaleTest {
 
     @TempDir
     lateinit var tempDir: File

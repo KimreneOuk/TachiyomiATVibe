@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test
  * pipeline, quarantine, leases, and store; only its documented Android/IO
  * seams are faked.
  */
-class D8StallWatchdogTest {
+class PipelineStallWatchdogTest {
     private var harness: TranslationCoexistenceHarness? = null
 
     @AfterEach

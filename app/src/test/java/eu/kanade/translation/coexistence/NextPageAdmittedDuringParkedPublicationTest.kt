@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test
  * actually commit (a moved persist that silently drops its work would be a
  * worse defect than the latency one).
  */
-class D11PermitFreeCommitTest {
+class NextPageAdmittedDuringParkedPublicationTest {
 
     companion object {
         const val AWAIT_TIMEOUT_MS = TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS

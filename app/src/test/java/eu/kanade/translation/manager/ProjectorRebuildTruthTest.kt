@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Test
  * a run record stays untouched. The stamp is read-only projection: the store,
  * the manifest, and the run record are never mutated.
  */
-class T934ProjectorRebuildTruthTest {
+class ProjectorRebuildTruthTest {
 
     private val chapterId = 9L
     private val hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

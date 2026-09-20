@@ -8,7 +8,7 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicInteger
 
-class MilestoneM3OcrPushThroughTest {
+class LazySourceFingerprintPushThroughTest {
 
     @Test
     fun `lazy source fingerprinting computes fingerprints on demand and caches results`() = runBlocking {

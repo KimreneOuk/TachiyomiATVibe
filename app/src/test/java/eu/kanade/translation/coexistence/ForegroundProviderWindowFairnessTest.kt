@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * INTERACTIVE priority, a request that cannot fit the current window becomes a
  * typed pause, and the scheduler records exactly one outcome.
  */
-class D6ForegroundFairnessTest {
+class ForegroundProviderWindowFairnessTest {
 
     companion object {
         private const val AWAIT_TIMEOUT_MS = 10_000L

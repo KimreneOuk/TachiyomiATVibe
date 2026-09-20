@@ -16,7 +16,7 @@ import tachiyomi.domain.translation.TranslationPreferences
  * device DataStore is a harmless orphan. FF-02 keeps its lifecycle coverage
  * here.
  */
-class T924FeatureFlagsTest {
+class TranslationFeatureFlagsTest {
 
     @Test
     fun `T924 flags default OFF`() {

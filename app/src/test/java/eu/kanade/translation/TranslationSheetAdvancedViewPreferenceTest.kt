@@ -21,7 +21,7 @@ import tachiyomi.domain.translation.TranslationPreferences
  * no test: AndroidPreferenceStore preferences read and write the shared
  * SharedPreferences on every access.
  */
-class T934SheetAdvancedViewPreferenceTest {
+class TranslationSheetAdvancedViewPreferenceTest {
 
     @Test
     fun `advanced view defaults to off - the simplified default`() {

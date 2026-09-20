@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test
  * rebuild/restore copy — never a frozen "Batch X/Y" — and every legacy bar
  * behavior (wording, visibility) is preserved byte-identically.
  */
-class T934ReaderBarTruthTest {
+class ReaderBarTruthTest {
 
     private fun snapshot(
         state: Translation.State = Translation.State.TRANSLATING,

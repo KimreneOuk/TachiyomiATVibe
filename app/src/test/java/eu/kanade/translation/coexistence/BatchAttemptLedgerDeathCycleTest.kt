@@ -51,7 +51,7 @@ import kotlin.coroutines.EmptyCoroutineContext
  * bridge below, which raises an assertion naming the missing defect — never a
  * timeout and never a compile-time dependency on commit 2.
  */
-class D9AttemptLedgerTest {
+class BatchAttemptLedgerDeathCycleTest {
 
     companion object {
         /** The design-mandated ledger sidecar path for the fixture chapter. */

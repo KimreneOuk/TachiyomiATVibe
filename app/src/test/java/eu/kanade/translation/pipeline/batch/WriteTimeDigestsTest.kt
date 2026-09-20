@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * invocation necessarily re-hashes the source bytes (counted in
  * [FakeDigestWorker.hashCalls]).
  */
-class T934WriteTimeDigestsTest {
+class WriteTimeDigestsTest {
 
     @TempDir
     lateinit var mangaDir: File

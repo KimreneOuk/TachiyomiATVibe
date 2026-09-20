@@ -1019,7 +1019,7 @@ class MangaScreenModel(
      * Same re-queue as the cancel snackbar's Undo: [TranslationManager
      * .translateChapter]'s artifact scan (BatchResumeGateDecider) reuses READY
      * work, so completed pages are not re-OCR'd and only the remainder re-runs
-     * (contract pinned by T918CancelledBatchRestartTest).
+     * (contract pinned by CancelledBatchRestartReuseTest).
      */
     fun retryBatchTranslation(chapterId: Long) {
         val manga = successState?.manga ?: return

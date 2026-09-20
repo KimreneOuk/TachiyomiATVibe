@@ -32,7 +32,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicInteger
 
-class MilestoneM5LanProviderHeadroomTest {
+class ProviderHeadroomTest {
 
     @BeforeEach
     @AfterEach

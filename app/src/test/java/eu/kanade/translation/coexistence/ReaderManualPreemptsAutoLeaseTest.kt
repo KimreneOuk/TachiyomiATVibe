@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Test
  * semantics live entirely in the lease table + token fencing; driving them
  * through the full harness would only re-test D2's choreography.
  */
-class D1OriginPriorityTest {
+class ReaderManualPreemptsAutoLeaseTest {
 
     @Test
     fun `manual boundary evicts an auto lease whose later writes fail closed and cannot release the manual lease`() = runTest {

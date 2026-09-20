@@ -59,7 +59,7 @@ import java.io.ByteArrayInputStream
  * assertion naming the missing defect — never a timeout and never a
  * compile-time dependency on the GREEN commit.
  */
-class D10PartialDownloadAdmissionTest {
+class PartialDownloadAdmissionTest {
 
     companion object {
         const val MANIFEST_FILE = "D10 Chapter.manifest.json"

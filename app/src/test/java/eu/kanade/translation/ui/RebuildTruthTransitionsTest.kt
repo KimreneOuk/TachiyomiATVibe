@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test
  * projects NO rebuild phase, so ordinary running and finished work is never
  * restamped.
  */
-class T934RebuildTruthTransitionsTest {
+class RebuildTruthTransitionsTest {
 
     private val hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 

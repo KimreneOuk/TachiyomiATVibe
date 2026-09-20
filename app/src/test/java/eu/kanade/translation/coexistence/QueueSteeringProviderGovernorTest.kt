@@ -22,7 +22,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import java.lang.reflect.Field
 import java.util.concurrent.atomic.AtomicBoolean
 
-class MilestoneM2KillTheStallsTest {
+class QueueSteeringProviderGovernorTest {
 
     @Test
     fun `S7 queue steering reorders queued chapters behind active translating chapter`() {

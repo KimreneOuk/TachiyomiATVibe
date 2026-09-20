@@ -66,7 +66,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * routing into this coordinator is covered by the existing scheduler tests;
  * the coordinator boundary is the unit that owns the §2.3 drain seam.
  */
-class D6DrainNotCancelTest {
+class AutoProviderCallDrainsNotCancelsTest {
 
     companion object {
         private const val AWAIT_TIMEOUT_MS = 10_000L

@@ -57,7 +57,7 @@ import java.io.ByteArrayInputStream
  * while the glossary was empty is REUSEd forever). Each RED assertion below
  * documents its expected failure message shape.
  */
-class D5GlossaryAwareReuseTest {
+class GlossaryAwareZeroPaidReuseTest {
 
     // ------------------------------------------------------------------
     // fixtures

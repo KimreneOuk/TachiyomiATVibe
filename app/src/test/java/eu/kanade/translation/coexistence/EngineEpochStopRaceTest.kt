@@ -70,12 +70,12 @@ import tachiyomi.domain.translation.pools.BitmapPool
  * Fixture: the REAL production graph over the REAL AUTO prepared-page boundary
  * (`pipeline.prepareSinglePage` + `pipeline.translatePreparedPage` — the two calls the
  * RollingAutoCoordinator makes, driven directly for determinism; the coordinator's own
- * drain/cancel semantics are already covered by D6DrainNotCancelTest) on an
+ * drain/cancel semantics are already covered by AutoProviderCallDrainsNotCancelsTest) on an
  * ARTIFACT-authority store (D9 fresh-chapter recipe) so the D9 ledger is observable.
  * The stop analogue is the REAL `manager.clearQueue()` → `translator.stop()` →
  * `pipeline.closeEngines()` chain.
  */
-class D7EngineEpochStopRaceTest {
+class EngineEpochStopRaceTest {
 
     companion object {
         private const val AWAIT_TIMEOUT_MS = TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS

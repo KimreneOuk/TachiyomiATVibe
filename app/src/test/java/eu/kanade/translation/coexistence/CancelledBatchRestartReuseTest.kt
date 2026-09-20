@@ -49,7 +49,7 @@ import org.junit.jupiter.api.Test
  * terminal snapshot, the queue settlement, and the restart's work routing are
  * all the REAL graph.
  */
-class T918CancelledBatchRestartTest {
+class CancelledBatchRestartReuseTest {
 
     companion object {
         private const val AWAIT_TIMEOUT_MS = TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS
