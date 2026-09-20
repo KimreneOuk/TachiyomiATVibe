@@ -990,318 +990,50 @@ internal class ChapterProfileBatchCoordinator(
         orderedPages: List<PageKey>,
         corpusFingerprint: String,
         baseCounters: Map<String, Int>,
-    ): BatchPass1Outcome {
-        val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
-        val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
-
-        fun envelopeCounters(extra: Map<String, Int>): Map<String, Int> =
-            baseCounters + extra
-
-        fun envelopeRecord(state: ChapterRunState, counters: Map<String, Int>): ChapterRunRecord =
-            record(
-                runId,
-                state,
-                frozenFingerprint,
-                sourceDigest,
-                counters,
-                ocrCorpusFingerprint = corpusFingerprint,
-                profilePointer = store.artifactManifest?.profile,
-            )
-
-        // ST-11 entry: phase record, then plan (pure re-derivation).
-        publishRecord(
-            artifact,
-            envelopeRecord(ChapterRunState.ENVELOPE_PLAN, envelopeCounters(emptyMap())),
-        )
-
-        val manifest = store.artifactManifest ?: return BatchPass1Outcome(
-            needsTranslation = emptyList(),
-            status = BatchPass1Status.PERSISTENCE_REJECTED,
-            reason = "T924 envelope plan deferred: manifest unavailable",
-        )
-        val frozenProfilePointer = manifest.profile ?: return BatchPass1Outcome(
-            needsTranslation = emptyList(),
-            status = BatchPass1Status.PAUSED,
-            completedPageKeys = allPageKeys,
-            reason = "T924 envelope plan deferred: frozen profile pointer absent",
-        )
-
-        // Stage-6 slice B (design §7): load the frozen profile DTO for prompt
-        // enrichment. The SAME ST-05/ST-30 reuse discipline applies — a
-        // sidecar that does not read back fully valid and identity-matched is
-        // treated as ABSENT and the executor keeps the LEGACY prompt shape
-        // (degraded-but-correct, never partially trusted).
-        val frozenProfile = when (
-            val profileRead = ProfileFreezePublication.readReusableFrozenProfile(
-                store = store,
-                manifest = manifest,
-                expectedInputFingerprint = profileInputFingerprintOf(corpusFingerprint),
-            )
-        ) {
-            is ProfileFreezePublication.FrozenProfileRead.Reusable -> {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT t924 envelope prompt shape=enriched " +
-                        "(frozen profile v${profileRead.profile.version} loaded)"
-                }
-                profileRead.profile
-            }
-            ProfileFreezePublication.FrozenProfileRead.NotReusable -> {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT t924 envelope prompt shape=legacy " +
-                        "(frozen profile sidecar unreadable — degraded-but-correct)"
-                }
-                null
-            }
-        }
-
-        // ST-12 entry needs a typed AI transport; the plan still publishes so
-        // a later wired run resumes directly into TRANSLATE. Wave A: the
-        // constructor widened to TextTranslator for the standard lane, so the
-        // envelope path re-narrows here — a non-contextual translator on the
-        // AI lane takes the SAME typed CONFIGURATION pause as a missing one
-        // (the dispatch gate makes this unreachable in production).
-        val translator = textTranslator as? ContextualTextTranslator
-
-        // ---- ENVELOPE_PLAN: build + plan + publish (or reuse). ----
-        when (val build = buildEnvelopeDispatchWork(artifact, orderedPages, corpusFingerprint)) {
-            is EnvelopeWorkBuild.CorpusDrift -> return BatchPass1Outcome(
-                needsTranslation = emptyList(),
-                status = BatchPass1Status.PAUSED,
-                completedPageKeys = allPageKeys,
-                reason = build.reason,
-            )
-            is EnvelopeWorkBuild.NothingPending -> {
-                // Skip rule (ST-11): no translatable work — textless chapters
-                // never reach TRANSLATE. Typed PAUSED no-work terminal.
-                publishRecord(
-                    artifact,
-                    envelopeRecord(
-                        ChapterRunState.ENVELOPE_PLAN,
-                        envelopeCounters(
-                            mapOf(
-                                COUNTER_ENVELOPES_TOTAL to 0,
-                                COUNTER_ENVELOPES_DONE to 0,
-                                COUNTER_SKIPPED_NO_WORK to 1,
-                                COUNTER_STOP to 1,
-                            ),
-                        ),
-                    ),
-                )
-                return BatchPass1Outcome(
-                    needsTranslation = emptyList(),
-                    status = BatchPass1Status.PAUSED,
-                    completedPageKeys = allPageKeys,
-                    reason = ENVELOPE_NO_WORK_REASON,
-                )
-            }
-            is EnvelopeWorkBuild.PlannerRejected -> {
-                // ST-11 terminal: a page that cannot fit any legal envelope
-                // is rejected whole (page atomicity); it takes a durable
-                // structural failure and the phase pauses at it.
-                build.namedPageKeys.forEach { pageKey ->
-                    persistEnvelopeStructuralFailure(pageKey, build.reasons.joinToString("; "))
-                }
-                publishRecord(
-                    artifact,
-                    envelopeRecord(
-                        ChapterRunState.ENVELOPE_PLAN,
-                        envelopeCounters(
-                            mapOf(
-                                COUNTER_ENVELOPE_PLAN_REJECTED to 1,
-                                COUNTER_STOP to 1,
-                            ),
-                        ),
-                    ),
-                )
-                return BatchPass1Outcome(
-                    needsTranslation = emptyList(),
-                    status = BatchPass1Status.PAUSED,
-                    anchorPageKey = build.namedPageKeys.firstOrNull(),
-                    reason = "T924 envelope plan rejected: ${build.reasons.joinToString("; ")}",
-                )
-            }
-            is EnvelopeWorkBuild.Ready -> {
-                val fresh = build.plan
-                // ST-11 resume rule: identical inputs re-derive an identical
-                // plan fingerprint — reuse the published plan, no write.
-                val reuse = manifest.envelopePlan != null &&
-                    EnvelopePlanPublication.readValidatedPlan(store, manifest).let { read ->
-                        read is EnvelopePlanPublication.EnvelopePlanRead.Usable &&
-                            read.plan.planFingerprint == fresh.planFingerprint
-                    }
-                if (!reuse) {
-                    val manifestForPublish = store.artifactManifest ?: return BatchPass1Outcome(
-                        needsTranslation = emptyList(),
-                        status = BatchPass1Status.PERSISTENCE_REJECTED,
-                        reason = "T924 envelope plan deferred: manifest unavailable",
-                    )
-                    when (
-                        val publication = EnvelopePlanPublication.publish(
-                            store = store,
-                            manifest = manifestForPublish,
-                            plan = fresh,
-                            nowEpochMs = nowEpochMs(),
-                        )
-                    ) {
-                        is ChapterArtifactEngine.TransactionOutcome.Committed ->
-                            store.artifactManifest = publication.manifest
-                        is ChapterArtifactEngine.TransactionOutcome.Rejected ->
-                            // Prior manifest stays authoritative (SC-20/22).
-                            return BatchPass1Outcome(
-                                needsTranslation = emptyList(),
-                                status = BatchPass1Status.PERSISTENCE_REJECTED,
-                                reason = "T924 envelope plan publication rejected: ${publication.reason}",
-                            )
-                    }
-                }
-                // T934 LI-4: the plan is durable again (published, or an
-                // identical fingerprint was reused) — end the rebuild window.
-                listener.envelopePlanCommitted()
-
-                // ---- ST-12 TRANSLATE. ----
-                if (translator == null) {
-                    publishRecord(
-                        artifact,
-                        envelopeRecord(
-                            ChapterRunState.TRANSLATE,
-                            envelopeCounters(
-                                mapOf(
-                                    COUNTER_ENVELOPES_TOTAL to fresh.envelopes.size,
-                                    COUNTER_ENVELOPES_DONE to 0,
-                                    COUNTER_SKIPPED_NO_TRANSPORT to 1,
-                                    COUNTER_STOP to 1,
-                                ),
-                            ),
-                        ),
-                    )
-                    return BatchPass1Outcome(
-                        needsTranslation = emptyList(),
-                        status = BatchPass1Status.PAUSED,
-                        completedPageKeys = allPageKeys,
-                        reason = TRANSLATE_NO_TRANSPORT_REASON,
-                    )
-                }
-
-                publishRecord(
-                    artifact,
-                    envelopeRecord(
-                        ChapterRunState.TRANSLATE,
-                        envelopeCounters(
-                            mapOf(
-                                COUNTER_ENVELOPES_TOTAL to fresh.envelopes.size,
-                                COUNTER_ENVELOPES_DONE to 0,
-                                COUNTER_ENVELOPES_PENDING to fresh.envelopes.size,
-                            ),
-                        ),
-                    ),
-                )
-
-                val work = build.work
-                // T924 Stage 7 (D1): when the overlap scheduler is present,
-                // every provider envelope dispatch opens a remote window that
-                // drives serial inpaint of committed pages (ST-13). Admission
-                // semantics are unchanged — the wrapper delegates to the SAME
-                // process-wide sub-limit gate.
-                val dispatchGate = overlapScheduler?.let { scheduler ->
-                    OverlapScheduler.WindowSignallingGate(translationSublimitGate, scheduler)
-                } ?: translationSublimitGate
-                // D2: publish the persisted layout right after each inpaint
-                // commits (per page, never blocking the envelope loop — the
-                // hook runs inside the overlap scheduler's coroutine).
-                overlapScheduler?.onInpaintCommitted = { pageKey ->
-                    renderJoin?.publishPersistedLayoutForCompletedPage(pageKey)
-                    Unit
-                }
-                val executor = ProfileEnvelopeExecutor(
-                    store = store,
-                    textTranslator = translator,
-                    profileContentFingerprint = frozenProfilePointer.contentFingerprint,
-                    frozenProfile = frozenProfile,
-                    replan = { reason ->
-                        rebuildDispatchWork(artifact, orderedPages, corpusFingerprint, reason)
-                    },
-                    sublimitGate = dispatchGate,
-                    providerProfile = providerChunkProfile(),
-                    nowEpochMs = nowEpochMs,
-                    // T934 track V: freed write slots wake the overlap lane at
-                    // the commit settle — deferred inpaint candidates no longer
-                    // wait a whole envelope cycle for the next window's open.
-                    onCommitSettled = { overlapScheduler?.notifyCandidatesChanged() },
-                )
-                val overlapLoop: suspend (suspend () -> ProfileEnvelopeExecutor.PhaseOutcome) -> ProfileEnvelopeExecutor.PhaseOutcome =
-                    { runPhase ->
-                        if (overlapScheduler == null) {
-                            runPhase()
-                        } else {
-                            kotlinx.coroutines.coroutineScope {
-                                val loop = launch { overlapScheduler.runOverlapLoop() }
-                                val outcome = runPhase()
-                                // No further windows: stop the loop between pages
-                                // (a running inpaint finishes through the lane).
-                                overlapScheduler.stopOverlap()
-                                loop.join()
-                                outcome
-                            }
-                        }
-                    }
-                return overlapLoop { executor.run(work) }.let { outcome ->
-                    when (outcome) {
-                        is ProfileEnvelopeExecutor.PhaseOutcome.Drained -> {
-                            publishRecord(
-                                artifact,
-                                envelopeRecord(
-                                    ChapterRunState.TRANSLATE,
-                                    envelopeCounters(
-                                        outcome.counters.toMap() + mapOf(COUNTER_STOP to 1),
-                                    ),
-                                ),
-                            )
-                            // T924 Stage 7 (D4): TRANSLATE drained — the
-                            // ST-14 FINALIZE phase completes the run and
-                            // publishes its single COMPLETE.
-                            runFinalizeAndComplete(
-                                artifact = artifact,
-                                runId = runId,
-                                orderedPages = orderedPages,
-                                corpusFingerprint = corpusFingerprint,
-                                baseCounters = envelopeCounters(
-                                    outcome.counters.toMap() + mapOf(COUNTER_STOP to 1),
-                                ),
-                            )
-                        }
-                        is ProfileEnvelopeExecutor.PhaseOutcome.Paused -> {
-                            overlapScheduler?.stopOverlap()
-                            publishRecord(
-                                artifact,
-                                envelopeRecord(
-                                    ChapterRunState.TRANSLATE,
-                                    envelopeCounters(
-                                        outcome.counters.toMap() +
-                                            mapOf(
-                                                COUNTER_STOP to 1,
-                                                COUNTER_ENVELOPES_PENDING to outcome.counters.envelopesPending,
-                                            ),
-                                    ),
-                                ),
-                            )
-                            logcat(LogPriority.WARN) {
-                                "TachiyomiAT t924 translate paused: ${outcome.reason}"
-                            }
-                            BatchPass1Outcome(
-                                needsTranslation = emptyList(),
-                                status = BatchPass1Status.PAUSED,
-                                anchorPageKey = outcome.anchorPageKey,
-                                failure = outcome.failure,
-                                nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
-                                reason = outcome.reason,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
+    ): BatchPass1Outcome = EnvelopeDispatcher(
+        EnvelopeDispatcherContext(
+            store = store,
+            frozenConfig = frozenConfig,
+            effectiveSourcePairs = effectiveSourcePairs,
+            listener = listener,
+            textTranslator = textTranslator,
+            translationSublimitGate = translationSublimitGate,
+            overlapScheduler = overlapScheduler,
+            renderJoin = renderJoin,
+            envelopePlannerPolicy = envelopePlannerPolicy,
+            nowEpochMs = nowEpochMs,
+            publishRecord = { recordArtifact, runRecord ->
+                publishRecord(recordArtifact, runRecord)
+            },
+            record = { id, state, fingerprint, digest, counters, ocrFingerprint, profile ->
+                record(id, state, fingerprint, digest, counters, ocrFingerprint, profile)
+            },
+            profileInputFingerprintOf = { fingerprint ->
+                profileInputFingerprintOf(fingerprint)
+            },
+            buildEnvelopeDispatchWork = { recordArtifact, pages, fingerprint ->
+                buildEnvelopeDispatchWork(recordArtifact, pages, fingerprint)
+            },
+            rebuildDispatchWork = { recordArtifact, pages, fingerprint, reason ->
+                rebuildDispatchWork(recordArtifact, pages, fingerprint, reason)
+            },
+            persistEnvelopeStructuralFailure = { pageKey, reason ->
+                persistEnvelopeStructuralFailure(pageKey, reason)
+            },
+            providerChunkProfile = {
+                providerChunkProfile()
+            },
+            runFinalizeAndComplete = { recordArtifact, id, pages, fingerprint, counters ->
+                runFinalizeAndComplete(recordArtifact, id, pages, fingerprint, counters)
+            },
+        ),
+    ).runPhase(
+        artifact = artifact,
+        runId = runId,
+        orderedPages = orderedPages,
+        corpusFingerprint = corpusFingerprint,
+        baseCounters = baseCounters,
+    )
 
     /**
      * T924 Stage 7 (D4) — ST-14 FINALIZE, entered exactly when TRANSLATE
@@ -2076,7 +1808,7 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /** Analysis-corpus entries rebuilt; null when a checkpoint vanished (drift). */
-    private sealed interface EnvelopeWorkBuild {
+    internal sealed interface EnvelopeWorkBuild {
         data class Ready(
             val work: EnvelopeDispatchWork,
             val plan: EnvelopePlan,
