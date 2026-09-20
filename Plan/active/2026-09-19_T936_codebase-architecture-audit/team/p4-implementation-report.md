@@ -132,3 +132,54 @@ $changed = git diff --name-only bc21d7c..HEAD
 ```
 
 Result: 0 test files changed. The working tree is clean aside from the final report file pending its dedicated report commit.
+
+## Reviewer follow-up — pure collision-relaxation spans
+
+The Phase 4 review identified nine pure collision-relaxation spans that had
+remained in `TextLayoutPlanner`. They were re-read against the reviewer’s
+purity evidence and extracted verbatim into
+`app/src/main/java/eu/kanade/translation/rendering/CollisionRelaxation.kt` in
+`d9b5744` (`refactor(translation): extract reviewer-listed pure relaxation spans from TextLayoutPlanner`):
+
+1. `hardCellsDisjoint`, `footprintCollides`, `translateRect`, `translateLayout`,
+   and the fixed `SHIFT_*` direction constants.
+2. `minShiftDisplacement`.
+3. `resolvePostAnchorPlacement`.
+4. `freeRectDisplacement`.
+5. `fitIntoFreeRect`.
+6. `resolveMinimalDisplacementX` and `freeSpaceLeft`,
+   `freeSpaceRight`, `freeSpaceVerticalUp`, `freeSpaceVerticalDown`.
+7. `growIntoFreeSpaceIfNeeded`.
+8. `boundedFreeTextWideningPlan`.
+9. `collisionFreeWidthForBand` and the shared `overflows` predicate.
+
+Only mechanical adaptation was needed: the planner delegates to the extracted
+object, and the existing private nested result/context types are package-local
+internal so the helper can use them without changing their fields or behavior.
+No tests were modified. `TextLayoutPlanner` is now 2,617 raw / 2,458
+non-blank lines; `CollisionRelaxation` is 1,125 raw / 1,060 non-blank lines.
+
+Follow-up verification:
+
+```text
+./gradlew :app:compileDevDebugKotlin --no-parallel --max-workers=1
+```
+
+Result: `BUILD SUCCESSFUL` (the extracted helper and planner delegates compile).
+
+```text
+./gradlew :app:testDevDebugUnitTest --tests 'eu.kanade.translation.segmentation.MaskGeometryDeterministicAssignmentTest' --tests 'eu.kanade.translation.segmentation.MaskGeometryOrderedRleTest' --tests 'eu.kanade.translation.rendering.TextLayoutPlannerTest' --tests 'eu.kanade.translation.rendering.TextLayoutPlannerDirectionTest' --tests 'eu.kanade.translation.rendering.TextLayoutPlannerStrokeTest' --no-parallel --max-workers=1
+```
+
+Result: `BUILD SUCCESSFUL` (focused rendering/segmentation suite, 3m 46s).
+
+```text
+./gradlew :app:testDevDebugUnitTest --no-parallel --max-workers=1
+```
+
+Result: `BUILD SUCCESSFUL` (full Dev unit suite, 3m 41s). The earlier
+Phase-end load-sensitive `BatchDispatchResumeWiringTest` signature did not
+recur in this follow-up run.
+
+The test-file diff remains zero relative to `bc21d7c`; the follow-up changes
+are production rendering source plus this report addendum only.
