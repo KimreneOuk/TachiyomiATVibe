@@ -7,10 +7,20 @@ Branch: `t936/perf-manual-latency`
 
 Items 1, 3, and 4 are implemented. Item 2 (native-lane interactive priority) was
 cancelled after the required stop-gate probe falsified its prefetch-contention premise;
-the measured delay is absorbed by item 3's memory-first publication change. The latest
-full Dev and Standard unit gates are green at 2,043 tests each, and `assembleDevDebug`
-is green. The APK contains the live segmentation and OCR runtime assets and none of the
-excluded model-repository documentation or stale segmentation asset.
+the measured delay is absorbed by item 3's memory-first publication change. The
+HF-03 AUTO-lane bitmap-ownership hotfix is implemented in `68034b4`: lazy cleaned-image
+flushes now complete before the AUTO boundary recycles the source bitmap, and a failed
+cleaned publication preserves the translated overlay on the original image instead of
+poisoning inpaint/render truth.
+
+The post-hotfix Standard full suite is green at 2,045/2,045. The final serial Dev full
+suite completed 2,045 tests with one occurrence of the already tracked,
+load-sensitive `StandardLaneMultiPageCompletionTest` residual (`TRANSLATED` expected,
+`ERROR` observed); the class passed 3/3 warm isolated runs, so no further production
+change was made for that unrelated residual family. The post-hotfix Dev and Standard
+flavor compiles and `assembleDevDebug` are green. The APK contains the live segmentation
+and OCR runtime assets and none of the excluded model-repository documentation or stale
+segmentation asset.
 
 ## Commit map
 
@@ -20,6 +30,7 @@ excluded model-repository documentation or stale segmentation asset.
 | `4ba13c6` | Free Google endpoint span-ID envelope batching |
 | `b717184` | Memory-first active-store persistence and lazy flush |
 | `6bdaf74` | Admission-time stage truth |
+| `68034b4` | Serialize lazy cleaned-bitmap release and preserve original-image fallback |
 | (this report) | Ticket status update, evidence, and implementation report |
 
 ## Item 1 — free-endpoint span-ID envelope batching
@@ -109,6 +120,42 @@ Focused behavioral suites:
 The unit contract verifies admission ordering. Device tap-to-truth timing remains a
 device/orchestrator measurement; no unsupported device latency number is claimed here.
 
+## HF-03 hotfix — AUTO lazy cleaned-bitmap ownership and fallback truth
+
+The device evidence in `team/hf-03-evidence/` and `%TEMP%/opencode/live_capture2.txt`
+showed `CleanedImagePublisher` failing with `Can't compress a recycled bitmap` on the
+AUTO lane. The failing ownership sequence was the lazy JPEG enqueue in
+`CleanedPublication` followed by the eager recycle at `PreparedPageBoundary`: the flush
+worker still owned the same bitmap when the AUTO boundary recycled it. Inpaint had
+already completed, but the publication exception then poisoned inpaint/render truth and
+left the reader with no cleaned image.
+
+The recycle audit found the active boundary as the only lazy race. The deferred reader
+release in `SinglePageHttpRenderPhase` already flushes before recycling; retry and ONNX
+resume paths are synchronous, and batch/held-bitmap paths do not use the lazy publisher.
+The fix therefore adds the existing `StorePersistenceScheduler.flush()` ownership
+barrier before the active boundary recycles a bitmap when lazy persistence is enabled.
+Probe stores retain their synchronous behavior.
+
+Lazy cleaned-publication failure now records `originalImageFallback=true`, keeps the
+translated blocks, clears the cleaned-image name, restores inpaint/render to `READY`,
+and clears the publication error. `PageDisplayProjection` and the reader overlay
+binding treat this state as display-ready, so the original page image remains visible
+with the translated overlay. Retry/reset paths clear the fallback marker. Successful
+cleaned publication also clears it.
+
+Behavioral coverage added in `68034b4`:
+
+```text
+.\gradlew.bat :app:testStandardDebugUnitTest --tests eu.kanade.translation.scheduling.PreparedPageRuntimeBoundaryTest --tests eu.kanade.translation.model.PageDisplayProjectionTest --no-parallel --max-workers=1
+18 tests, 0 failures, 0 errors
+```
+
+The runtime-boundary test asserts the exact `flush -> recycle` ordering under lazy
+AUTO pressure. The display-projection test asserts that a cleaned-publication failure
+does not surface an error, keeps inpaint/render ready, and binds the translated blocks
+over the original image.
+
 ## Verification
 
 Environment: `JAVA_HOME=C:\\Program Files\\Android\\Android Studio\\jbr`.
@@ -116,21 +163,21 @@ Dev tasks temporarily used `app/src/standard/google-services.json` copied to
 `app/google-services.json`; every command removed the temporary file in a `finally` block,
 and the file is absent from the final worktree.
 
-Compile both flavors:
+Baseline compile both flavors:
 
 ```text
 .\gradlew.bat :app:compileDevDebugUnitTestKotlin :app:compileStandardDebugUnitTestKotlin --no-parallel --max-workers=1
 BUILD SUCCESSFUL (20m 5s)
 ```
 
-Final full Dev gate:
+Baseline full Dev gate (before the AUTO bitmap hotfix):
 
 ```text
 .\gradlew.bat :app:testDevDebugUnitTest --no-parallel --max-workers=1
 BUILD SUCCESSFUL; 2,043 tests, 0 failures, 0 errors, 0 skipped
 ```
 
-Final full Standard gate:
+Baseline full Standard gate (before the AUTO bitmap hotfix):
 
 ```text
 .\gradlew.bat :app:testStandardDebugUnitTest --no-parallel --max-workers=1
@@ -146,21 +193,58 @@ The full suites are load-sensitive. Earlier attempts were preserved rather than 
 | Full Dev attempt 2 | `BatchDispatchResumeWiringTest` plus `StandardPipelineCoexistenceTest` | each affected class 3/3 isolated green |
 | Full Standard attempt 2 | `BatchDispatchResumeWiringTest` plus `StandardPipelineCoexistenceTest` | each affected class 3/3 isolated green |
 | Full Standard attempt 3 | `BatchDispatchResumeWiringTest`: run remained `TRANSLATE`, `pagesTranslated=1` | 3/3 isolated green |
-| Final full passes | none | Dev and Standard both 2,043/2,043 green |
+| Baseline final full passes | none | Dev and Standard both 2,043/2,043 green |
+
+### Post-hotfix verification addendum
+
+The post-hotfix flavor compile completed successfully:
+
+```text
+.\gradlew.bat :app:compileDevDebugUnitTestKotlin :app:compileStandardDebugUnitTestKotlin --no-parallel --max-workers=1
+BUILD SUCCESSFUL in 2m 40s
+```
+
+The required StandardLane isolation policy was satisfied before the full gates:
+
+```text
+.\gradlew.bat :app:testDevDebugUnitTest --tests eu.kanade.translation.coexistence.StandardLaneMultiPageCompletionTest --no-parallel --max-workers=1
+```
+
+Runs 1, 2, and 3 were each green (2 tests, 0 failures, 0 errors). Their XML files are
+`hf03-hotfix-standardlane-isolation-1.xml`, `hf03-hotfix-standardlane-isolation-2.xml`,
+and `hf03-hotfix-standardlane-isolation-3.xml`.
+
+The post-hotfix full gates were:
+
+```text
+.\gradlew.bat :app:testStandardDebugUnitTest --no-parallel --max-workers=1
+BUILD SUCCESSFUL; 2,045 tests, 0 failures, 0 errors, 0 skipped
+
+.\gradlew.bat :app:testDevDebugUnitTest --no-parallel --max-workers=1
+2045 tests completed, 1 failed: StandardLaneMultiPageCompletionTest.fresh standard batch translates every page of a multi-page chapter
+```
+
+The Dev failure is the same load-sensitive `expected:<TRANSLATED> but was:<ERROR>`
+family observed before this hotfix; the class was green in all three required isolated
+runs. The full-run XML is preserved as
+`full-dev-HF03-hotfix-StandardLaneMultiPageCompletionTest-failure-final.xml`; it has
+no new page-error reason string, only the existing native-lane trace. No assertion or
+production change was made to hide this residual.
 
 The XML reports for all listed failures and isolation retries are retained under
 `team/hf-03-evidence/`. These are existing coexistence/load-sensitive families; no
 production change was made in response because the affected classes passed in isolation.
 
-APK build and inspection:
+Post-hotfix APK build and inspection:
 
 ```text
 .\gradlew.bat :app:assembleDevDebug --no-parallel --max-workers=1
-BUILD SUCCESSFUL (7m 42s)
+BUILD SUCCESSFUL (1m 56s)
 APK: app/build/outputs/apk/dev/debug/app-dev-universal-debug.apk
 ```
 
-`jar tf` inspection of the universal Dev APK produced:
+`jar tf` inspection of all five Dev APK outputs (including the universal APK) produced
+the same counts:
 
 ```text
 best_int8.onnx: 0
