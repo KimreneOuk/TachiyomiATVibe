@@ -61,6 +61,8 @@ import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -350,6 +352,78 @@ class ChapterTranslationStore(
     internal var persistJob: Job? = null
     private val persistenceScheduler = StorePersistenceScheduler(this)
 
+    /**
+     * Active reader stores publish live state first.  Their durable artifact
+     * transactions are coalesced by [persistenceScheduler] instead of running
+     * synchronously in the stage-emission path.  Test/probe stores keep the
+     * historical synchronous default unless the manager explicitly enables
+     * this mode when registering the live chapter store.
+     */
+    @Volatile
+    private var lazyPersistenceEnabled = false
+
+    private data class PendingLazyMutation(
+        val pageKey: String,
+        val previous: PageTranslation?,
+        val updated: PageTranslation,
+        val expected: PatchPrecondition,
+        val generation: Long,
+    )
+
+    internal data class LazyPersistenceTask(
+        val generation: Long,
+        val work: suspend () -> Boolean,
+        val result: CompletableDeferred<Boolean>,
+    )
+
+    private val pendingLazyMutations = LinkedHashMap<String, PendingLazyMutation>()
+    private val pendingLazyTasks = java.util.ArrayDeque<LazyPersistenceTask>()
+
+    /** Enables memory-first publication for a registered production chapter. */
+    internal fun enableLazyPersistence() {
+        lazyPersistenceEnabled = true
+    }
+
+    internal fun isLazyPersistenceEnabled(): Boolean = lazyPersistenceEnabled
+
+    internal fun isLazyGenerationCurrent(expectedGeneration: Long): Boolean =
+        !defunct && generation == expectedGeneration
+
+    /**
+     * Queues disk work behind the store's persistence worker.  The returned
+     * handle is a durability result, not display admission: callers may render
+     * from the live state immediately and await it at a terminal commit/barrier.
+     */
+    internal suspend fun enqueueLazyPersistence(
+        expectedGeneration: Long,
+        work: suspend () -> Boolean,
+    ): Deferred<Boolean> {
+        val result = CompletableDeferred<Boolean>()
+        mutex.withLock {
+            if (defunct || generation != expectedGeneration) {
+                result.complete(false)
+                return@withLock
+            }
+            pendingLazyTasks.addLast(
+                LazyPersistenceTask(
+                    generation = expectedGeneration,
+                    work = work,
+                    result = result,
+                ),
+            )
+        }
+        persistenceScheduler.schedulePersist(markPageDirty = false)
+        return result
+    }
+
+    internal suspend fun takeLazyPersistenceTask(): LazyPersistenceTask? = mutex.withLock {
+        if (pendingLazyTasks.isEmpty()) null else pendingLazyTasks.removeFirst()
+    }
+
+    internal suspend fun hasPendingLazyPersistence(): Boolean = mutex.withLock {
+        pendingLazyTasks.isNotEmpty() || pendingLazyMutations.isNotEmpty()
+    }
+
     //  Slice B1: Staged mutations buffer + debounce.
     private val stagedPageKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var stagedDebounceJob: Job? = null
@@ -415,12 +489,40 @@ class ChapterTranslationStore(
     }
 
     internal fun flushStagedMutationsBlocking() {
-        if (!hasStagedMutations()) return
         runBlocking {
-            mutex.withLock {
-                flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+            persistenceScheduler.flush()
+        }
+    }
+
+    /**
+     * Drains memory-first page publications into the existing artifact bridge.
+     * The bridge remains the sole owner of atomic sidecar/manifest writes; this
+     * method only changes when that bridge is reached.  A generation mismatch
+     * or defunct store discards the work without touching disk.
+     *
+     * Caller holds [mutex].
+     */
+    internal fun flushLazyMutationsLocked(): Boolean {
+        if (pendingLazyMutations.isEmpty()) return true
+        val pending = pendingLazyMutations.values.toList()
+        pendingLazyMutations.clear()
+        var allAccepted = true
+        pending.forEach { mutation ->
+            if (!isLazyGenerationCurrent(mutation.generation)) return@forEach
+            if (!persistArtifactMutationLocked(
+                    pageKey = mutation.pageKey,
+                    previous = mutation.previous,
+                    updated = mutation.updated,
+                    expected = mutation.expected,
+                )
+            ) {
+                allAccepted = false
+                if (isLazyGenerationCurrent(mutation.generation)) {
+                    pendingLazyMutations[mutation.pageKey] = mutation
+                }
             }
         }
+        return allAccepted
     }
 
     /**
@@ -2092,6 +2194,13 @@ class ChapterTranslationStore(
         durableFailure: DurableFailureMetadata? = null,
     ): Boolean {
         val pageKey = updated.sourceFileName ?: ""
+        // Active reader stores are display-first: publish the complete live
+        // snapshot and enqueue the artifact transaction for the IO worker.
+        // Durable failure records remain synchronous so cancellation/retry
+        // semantics never report a failure before its ledger is recorded.
+        if (lazyPersistenceEnabled && durableFailure == null) {
+            return publishLazyLocked(pageKey, previous, updated, expected)
+        }
         val isDurable = shouldPersistUpdate(previous, updated)
         //  R2 restricted UI-before-persist: transient non-durable updates publish StateFlows
         // before staging into memory; durable results keep persist-first.
@@ -2110,6 +2219,45 @@ class ChapterTranslationStore(
             _state.value = snapshotPages()
             _display.value = displaySnapshotLocked()
         }
+        return true
+    }
+
+    private fun publishLazyLocked(
+        pageKey: String,
+        previous: PageTranslation?,
+        updated: PageTranslation,
+        expected: PatchPrecondition?,
+    ): Boolean {
+        val snapshot = snapshotLocked(pageKey)
+        // Preserve the pre-existing durability gate: transient RUNNING/PENDING
+        // emissions update the live StateFlows but do not become durable page
+        // candidates when the manifest already knows this page. A durable
+        // publication already queued for this page remains authoritative until
+        // the next durable update replaces it.
+        val shouldQueueArtifact = shouldPersistUpdate(previous, updated) ||
+            artifactManifest?.pages?.containsKey(pageKey) != true
+        if (shouldQueueArtifact) {
+            pendingLazyMutations[pageKey] = PendingLazyMutation(
+                pageKey = pageKey,
+                previous = previous?.detachedCopy(),
+                updated = updated.detachedCopy(),
+                expected = PatchPrecondition(
+                    generation = snapshot.generation,
+                    pageVersion = snapshot.pageVersion,
+                    blockFingerprints = snapshot.blockFingerprints,
+                    leaseToken = snapshot.leaseToken ?: expected?.leaseToken,
+                    candidateGenerationId = snapshot.candidateGenerationId,
+                    dependencyFingerprint = snapshot.dependencyFingerprint,
+                    artifactPageVersion = snapshot.artifactPageVersion,
+                ),
+                generation = snapshot.generation,
+            )
+        }
+        promoteDisplayIfReadyLocked(pageKey, updated)
+        if (shouldQueueArtifact) dirty = true
+        _state.value = snapshotPages()
+        _display.value = displaySnapshotLocked()
+        if (shouldQueueArtifact) persistenceScheduler.schedulePersist(markPageDirty = false)
         return true
     }
 

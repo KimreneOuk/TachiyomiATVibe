@@ -34,6 +34,7 @@ import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1201,4 +1202,6 @@ internal data class OnnxPhaseResult(
     val streams: List<Pair<String, () -> InputStream>>,
     val decoded: DecodedPage,
     val commitPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
+    /** Completes after a lazy cleaned-image write reaches durable storage. */
+    val pendingCleanedPublication: Deferred<Boolean>? = null,
 )

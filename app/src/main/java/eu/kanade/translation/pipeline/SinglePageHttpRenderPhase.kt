@@ -223,6 +223,13 @@ internal class SinglePageHttpRenderPhase(
         )
         var governorSpanSettled = false
         var translationOutcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
+        // A lazy cleaned-image worker may still be encoding this bitmap while
+        // the live page reaches its terminal commit. Keep the ownership
+        // reference until the existing final store.flush() barrier has joined
+        // the worker; the display path must not await the disk write itself.
+        var deferredCleanedBitmap: Bitmap? = ctx.pendingCleanedPublication?.let {
+            pageTranslation.cleanedBitmap
+        }
         val renderFailure = ProviderFailure(
             kind = ProviderFailureKind.PROTOCOL,
             retryability = ProviderFailureRetryability.RETRY_NOW,
@@ -628,7 +635,7 @@ internal class SinglePageHttpRenderPhase(
                         markRenderFailure()
                         logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
                     } finally {
-                        if (cleanedBitmap != null) {
+                        if (cleanedBitmap != null && ctx.pendingCleanedPublication == null) {
                             try {
                                 cleanedBitmap.recycle()
                             } catch (_: Exception) {}
@@ -828,6 +835,15 @@ internal class SinglePageHttpRenderPhase(
                 store.flush()
             } finally {
                 flushSpan.end()
+                // The flush above is the durability barrier for the lazy
+                // cleaned image. Release the bitmap even when the barrier
+                // reports an error; the live page commit did not wait for this
+                // disk path.
+                deferredCleanedBitmap?.let {
+                    try {
+                        it.recycle()
+                    } catch (_: Exception) {}
+                }
             }
             // Defensive recycle: a cancel/timeout can unwind here from before render, where
             // cleanedBitmap (the inpainted full-page bitmap, ~10–48 MB) was never recycled.

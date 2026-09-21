@@ -1413,6 +1413,10 @@ class TranslationManager(
 
     fun registerActiveTranslationStore(chapterId: Long, store: ChapterTranslationStore) {
         // Keep the existing instance if already registered so a reader keeps observing the same object.
+        // Active reader/batch stores publish live state first; unit/probe stores
+        // retain the synchronous ChapterTranslationStore default until they are
+        // explicitly registered here.
+        store.enableLazyPersistence()
         activeStores.register(chapterId, store)
         durableStatusResolver.clearDurableStatusCache()
     }
@@ -1493,6 +1497,7 @@ class TranslationManager(
         // document walk or manifest probe — both ran when it was opened and
         // their result is already baked into the registry entry.
         activeStores.get(chapterId)?.let { registered ->
+            registered.enableLazyPersistence()
             scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
             return registered
         }
@@ -1517,6 +1522,7 @@ class TranslationManager(
                 )
             }
         } ?: return null
+        registered.enableLazyPersistence()
         scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
         return registered
     }

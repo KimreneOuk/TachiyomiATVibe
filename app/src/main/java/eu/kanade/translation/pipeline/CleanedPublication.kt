@@ -13,6 +13,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -212,6 +213,16 @@ internal class CleanedPublication(
             val snapshot = result.store.snapshot(pageKey)
             return result.copy(commitPrecondition = snapshot.toPrecondition())
         }
+        if (result.store.isLazyPersistenceEnabled()) {
+            return persistLazyCleanedBitmap(
+                manga = manga,
+                chapter = chapter,
+                source = source,
+                pageKey = pageKey,
+                result = result,
+                cleanedBitmap = cleaned,
+            )
+        }
         val companionDir = provider.getCompanionImageDir(
             manga.title,
             source,
@@ -240,6 +251,140 @@ internal class CleanedPublication(
             return null
         }
         return result.copy(commitPrecondition = published.toPrecondition())
+    }
+
+    /**
+     * Memory-first cleaned-image publication for active reader stores.  The
+     * page metadata is visible immediately (the current pipeline can render
+     * from [cleanedBitmap]); JPEG/SAF work runs on the store persistence worker
+     * and is joined only by the existing final flush/batch durability barrier.
+     */
+    private suspend fun persistLazyCleanedBitmap(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        result: OnnxPhaseResult,
+        cleanedBitmap: Bitmap,
+    ): OnnxPhaseResult? {
+        val store = result.store
+        val pageTranslation = result.pageTranslation
+        val previousName = pageTranslation.cleanedImageName
+        val precondition = result.commitPrecondition ?: store.snapshot(pageKey).toPrecondition()
+        val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val version = System.currentTimeMillis().toString(36) + "-" + System.nanoTime().toString(36).takeLast(6)
+        val finalName = "$safeName.cleaned.$version.jpg"
+        val livePatch = store.patchPage(pageKey, precondition, "publish cleaned image live") { current ->
+            (current ?: pageTranslation).apply {
+                cleanedImageName = finalName
+                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+                inpaintingModeUsed = currentInpaintingMode().name
+                inpaintFingerprint = pageTranslation.inpaintFingerprint
+                inpaintStatus = StageStatus.READY
+                if (pageTranslation.ocrStatus == StageStatus.READY) {
+                    ocrStatus = StageStatus.READY
+                }
+                if (blocks.isEmpty() && pageTranslation.blocks.isNotEmpty()) {
+                    blocks = pageTranslation.blocks.map { it.copy() }.toMutableList()
+                }
+                if (inpaintMaskBoxes.isEmpty() && pageTranslation.inpaintMaskBoxes.isNotEmpty()) {
+                    inpaintMaskBoxes = pageTranslation.inpaintMaskBoxes
+                }
+                if (imgWidth == 0f && pageTranslation.imgWidth != 0f) {
+                    imgWidth = pageTranslation.imgWidth
+                    imgHeight = pageTranslation.imgHeight
+                }
+                errorMessage = null
+            }
+        }
+        val accepted = livePatch as? ChapterTranslationStore.PatchResult.Accepted
+            ?: return null
+        pageTranslation.cleanedImageName = finalName
+        pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+        pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
+        pageTranslation.inpaintStatus = StageStatus.READY
+        pageTranslation.errorMessage = null
+        val generation = accepted.snapshot.generation
+        val completion: Deferred<Boolean> = store.enqueueLazyPersistence(generation) {
+            val companionDir = provider.getCompanionImageDir(
+                manga.title,
+                source,
+                chapter.name,
+                chapter.scanlator,
+            )
+            val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
+                override fun writeVerifiedVersionedFile(): String {
+                    check(companionDir != null) { "translation output folder is unavailable" }
+                    val finalFile = companionDir.findFile(finalName) ?: companionDir.createFile(finalName)
+                    check(finalFile != null) { "could not create final cleaned image" }
+                    finalFile.openOutputStream().use { output ->
+                        check(cleanedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) {
+                            "JPEG encoding returned false"
+                        }
+                    }
+                    check(finalFile.exists() && finalFile.length() > 0L) {
+                        "published cleaned image is unavailable"
+                    }
+                    return finalName
+                }
+
+                override fun delete(name: String): Boolean = companionDir?.findFile(name)?.delete() ?: true
+            })
+            when (val publication = publisher.publish(
+                chapter = chapter.name,
+                pageKey = pageKey,
+                previousName = previousName,
+                commit = {
+                    if (store.isLazyGenerationCurrent(generation)) {
+                        ChapterTranslationStore.PatchResult.Accepted(accepted.snapshot)
+                    } else {
+                        ChapterTranslationStore.PatchResult.Rejected("store generation changed")
+                    }
+                },
+                mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
+                retirePrevious = { name, delete ->
+                    chapter.id?.let { stableChapterId ->
+                        streamRegistry.retireCleanedImage(
+                            sourceId = source.id,
+                            mangaId = manga.id,
+                            chapterId = stableChapterId,
+                            pageKey = pageKey,
+                            imageName = name,
+                        ) {
+                            if (store.mayDeleteCleanedImage(pageKey, name)) delete()
+                        }
+                    }
+                },
+            )) {
+                is CleanedImagePublisher.Result.Published -> true
+                else -> {
+                    // A write failure must not leave the live page pointing at
+                    // a name that never reached storage. This guarded update
+                    // is itself memory-first and will be coalesced into the
+                    // next scheduler flush.
+                    store.patchPage(
+                        pageKey = pageKey,
+                        expected = store.snapshot(pageKey).toPrecondition(),
+                        description = "record lazy cleaned publication failure",
+                    ) { current ->
+                        (current ?: pageTranslation).apply {
+                            cleanedImageName = null
+                            inpaintStatus = StageStatus.FAILED
+                            renderStatus = StageStatus.FAILED
+                            recordAttemptFailure()
+                            errorMessage =
+                                "Cleaned image could not be published; translated text was not rendered."
+                        }
+                    }
+                    false
+                }
+            }
+        }
+        return result.copy(
+            pageTranslation = pageTranslation,
+            commitPrecondition = accepted.snapshot.toPrecondition(),
+            pendingCleanedPublication = completion,
+        )
     }
 }
 
