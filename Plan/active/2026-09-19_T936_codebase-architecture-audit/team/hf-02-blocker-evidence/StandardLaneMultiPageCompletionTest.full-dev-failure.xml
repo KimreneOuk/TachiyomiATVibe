@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="eu.kanade.translation.coexistence.StandardLaneMultiPageCompletionTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-20T18:20:23" hostname="DESKTOP-8VBDTJF" time="23.535">
+  <properties/>
+  <testcase name="fresh standard batch translates every page of a multi-page chapter()" classname="eu.kanade.translation.coexistence.StandardLaneMultiPageCompletionTest" time="20.617"/>
+  <testcase name="failed predecessor keeps successors honestly stranded()" classname="eu.kanade.translation.coexistence.StandardLaneMultiPageCompletionTest" time="2.892"/>
+  <system-out><![CDATA[DBG nativeLane run pageKey=<engine-setup>
+DBG nativeLane run pageKey=p0
+DBG nativeLane run pageKey=p1
+DBG nativeLane run pageKey=p2
+DBG nativeLane run pageKey=p1
+DBG inpaint p1 run
+DBG transport call pageKey=p0 inst=1
+DBG signalStart p0
+DBG transport call pageKey=p1 inst=1
+DBG signalStart p1
+DBG transport call pageKey=p2 inst=1
+DBG signalStart p2
+DBG nativeLane run pageKey=p0
+DBG inpaint p0 run
+DBG nativeLane run pageKey=p2
+DBG inpaint p2 run
+DBG nativeLane run pageKey=<engine-setup>
+DBG nativeLane run pageKey=p0
+DBG nativeLane run pageKey=p1
+DBG nativeLane run pageKey=p0
+DBG inpaint p0 run
+DBG nativeLane run pageKey=p1
+DBG inpaint p1 run
+]]></system-out>
+  <system-err><![CDATA[WARNING: A Java agent has been loaded dynamically (C:\Users\User\.gradle\caches\modules-2\files-2.1\net.bytebuddy\byte-buddy-agent\1.14.17\e3c251a39dc90badaf71c83427ba46840f219d8d\byte-buddy-agent-1.14.17.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+]]></system-err>
+</testsuite>

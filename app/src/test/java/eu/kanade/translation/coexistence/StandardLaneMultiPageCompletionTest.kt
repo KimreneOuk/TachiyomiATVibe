@@ -9,6 +9,7 @@ import io.kotest.matchers.maps.shouldBeEmpty
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -48,10 +49,11 @@ class StandardLaneMultiPageCompletionTest {
             pageKeys,
             storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(pageKeys),
         )
+        var batch: TranslationCoexistenceHarness.BatchRun? = null
         try {
             harness.installGraphicsShims()
             harness.stubChapterPages(pageKeys)
-            val batch = harness.launchBatch(pageKeys)
+            val batchRun = harness.launchBatch(pageKeys).also { batch = it }
 
             // p0 must run (sanity marker for the harness itself).
             withTimeout(AWAIT_TIMEOUT_MS) { harness.transportStarted.getValue("p0").await() }
@@ -76,8 +78,24 @@ class StandardLaneMultiPageCompletionTest {
                 )
             }
 
-            val reconciliation = withTimeout(AWAIT_TIMEOUT_MS) { batch.reconciliation.await() }
+            val reconciliation = withTimeout(AWAIT_TIMEOUT_MS) { batchRun.reconciliation.await() }
             reconciliation.shouldNotBeNull()
+            if (reconciliation!!.chapterStatus != Translation.State.TRANSLATED) {
+                println("DBG failure reconciliation=$reconciliation")
+                pageKeys.forEach { pageKey ->
+                    val page = harness.store.state.value[pageKey]
+                    println(
+                        "DBG failure page=$pageKey status=${page?.translationStatus} " +
+                            "ocr=${page?.ocrStatus} inpaint=${page?.inpaintStatus} " +
+                            "render=${page?.renderStatus} activeError=${page?.activeError} " +
+                            "generation=${page?.runGeneration} version=${page?.pageVersion}",
+                    )
+                }
+                println(
+                    "DBG failure batch active=${batchRun.job.isActive} " +
+                        "completed=${batchRun.job.isCompleted} cancelled=${batchRun.job.isCancelled}",
+                )
+            }
             reconciliation!!.chapterStatus shouldBe Translation.State.TRANSLATED
             reconciliation.strandedPages.shouldBeEmpty()
             pageKeys.forEach { pageKey ->
@@ -102,6 +120,10 @@ class StandardLaneMultiPageCompletionTest {
             }
             terminal.perStage.getValue(BatchPhase.RENDER).processed shouldBe pageKeys.size
         } finally {
+            // The batch job may still be unwinding when an observation times
+            // out. Join it before removing global MockK shims or chapter-page
+            // stubs; otherwise the next test can observe a half-torn graph.
+            batch?.job?.cancelAndJoin()
             harness.removeGraphicsShims()
             harness.unstubChapterPages()
             harness.close()
@@ -122,10 +144,11 @@ class StandardLaneMultiPageCompletionTest {
             }
         }
         val harness = TranslationCoexistenceHarness.create(listOf("p0", "p1"), storeOverride = store)
+        var batch: TranslationCoexistenceHarness.BatchRun? = null
         try {
             harness.installGraphicsShims()
             harness.stubChapterPages(listOf("p0", "p1"))
-            harness.launchBatch(listOf("p0", "p1"))
+            batch = harness.launchBatch(listOf("p0", "p1"))
 
             // The live unblock must be predecessor-terminality, not merely the
             // absence of the static marker: a FAILED predecessor must NOT let
@@ -143,6 +166,9 @@ class StandardLaneMultiPageCompletionTest {
             // a paid call and never a fake success.
             harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.FAILED
         } finally {
+            // Do not tear down global mocks while the negative-control batch is
+            // still unwinding; its real job is intentionally not awaited above.
+            batch?.job?.cancelAndJoin()
             harness.removeGraphicsShims()
             harness.unstubChapterPages()
             harness.close()

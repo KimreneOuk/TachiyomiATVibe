@@ -68,6 +68,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkObject
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1101,7 +1102,13 @@ internal class TranslationCoexistenceHarness private constructor(
         val activeJob = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { awaitCancellation() }
         batchJobStub = activeJob
         setField(translator, "translationJob", activeJob)
-        val job = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        // Start the real batch coroutine on the caller before returning. The
+        // harness's first observation is an event from inside the batch; an
+        // ordinary IO launch can leave that observation queued behind other
+        // fixture collectors long enough to make a healthy run look absent.
+        val job = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch(
+            start = CoroutineStart.UNDISPATCHED,
+        ) {
             try {
                 reconciliation.complete(translator.translateChapterInternal(translation))
             } catch (t: Throwable) {
