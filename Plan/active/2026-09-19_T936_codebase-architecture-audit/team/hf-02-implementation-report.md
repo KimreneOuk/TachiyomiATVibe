@@ -7,7 +7,13 @@ Branch: `t936/hotfix-manual-ux-truth`
 
 - `0c613e9 docs(plan): HF-02 manual UX truth ticket`
 - `5c23bdf fix(translation): manual-mode reader truth (no batch framing, live stage feedback, attributed cancel)`
-- This report is committed separately as `docs(plan): HF-02 manual UX truth implementation report`.
+- `c44e660 docs(plan): HF-02 manual UX truth implementation report`
+- `d93450c test(translation): join StandardLane batch runs and undispatch launch (isolation determinism)`
+  - Preserves the timeout and residual load-ERROR XML/HTML evidence under
+    `team/hf-02-blocker-evidence/`.
+- `7f42201 test(translation): remove temporary StandardLane failure diagnostics`
+- The corrected flake ledger is committed separately as
+  `docs(plan): update HF-02 flake ledger after harness determinism fix`.
 
 ## Task 1 — manual reader bars no longer show batch framing
 
@@ -92,29 +98,45 @@ Focused suites:
 1. `./gradlew.bat :app:compileDevDebugUnitTestKotlin :app:testDevDebugUnitTest --tests ReaderBarTruthTest --tests ReaderTranslationFeedbackTest --tests CancelSyncStoreWriteTest --no-parallel --max-workers=1` — **PASS**.
 2. `./gradlew.bat :app:compileStandardDebugUnitTestKotlin :app:testStandardDebugUnitTest --tests ReaderBarTruthTest --tests ReaderTranslationFeedbackTest --tests CancelSyncStoreWriteTest --no-parallel --max-workers=1` — **PASS**.
 
-Full suites and flake isolation:
+Full suites and flake isolation ledger:
 
-1. `:app:testDevDebugUnitTest --no-parallel --max-workers=1` — 2,030 tests; two load-sensitive
-   coexistence failures: `BatchDispatchResumeWiringTest.re-dispatch after a reset demotes real
-   work in the same lane while healthy pages stay retired()` failed with `state=TRANSLATE` and
-   `pagesTranslated=1` after the 10,000 ms completion wait, and
-   `StandardPipelineCoexistenceTest.flagged standard lane runs the real shell end-to-end with
-   full OCR before translate()` ended at `TRANSLATE` instead of `COMPLETE`. Each class passed
-   three isolated Dev runs (0,0,0).
-2. A second full Dev run — 2,030 tests; the same
-   `BatchDispatchResumeWiringTest` 10-second `state=TRANSLATE` timeout plus
-   `StandardLaneMultiPageCompletionTest.fresh standard batch translates every page of a
-   multi-page chapter()` (`expected TRANSLATED, got ERROR`). Both classes passed three isolated
-   Dev runs (0,0,0). These are existing batch/coexistence end-to-end timing signatures under full
-   suite load, not manual-reader, legacy-storage, or HF-02-specific failures.
-3. `:app:testStandardDebugUnitTest --no-parallel --max-workers=1` — first full run: 2,026 tests;
+1. Historical HF-02 full-suite runs recorded load-sensitive coexistence failures in
+   `BatchDispatchResumeWiringTest` (`state=TRANSLATE`, `pagesTranslated=1`, after a 10,000 ms
+   completion wait), `StandardPipelineCoexistenceTest` (`TRANSLATE` instead of `COMPLETE`), and
+   `StandardLaneMultiPageCompletionTest` (`expected TRANSLATED, got ERROR`). The affected classes
+   passed their three isolated runs at that stage. These failures motivated the deterministic
+   harness investigation; they are not silently counted as green.
+2. The investigation identified two harness mechanisms and fixed both in `d93450c`:
+   - an ordinary `Dispatchers.IO.launch` could leave the real batch coroutine undispatched behind
+     full-suite IO load, producing the preserved 10-second p0 transport-start timeout;
+   - the negative-control test discarded its `BatchRun.job`, allowing real work to unwind after
+     global MockK/chapter-page teardown and bleed into a following test, including the preserved
+     pre-transport load-ERROR signature.
+   `CoroutineStart.UNDISPATCHED` now starts the batch from the caller, and both StandardLane tests
+   retain and `cancelAndJoin` their batch jobs before removing global shims/stubs. Assertions were
+   unchanged. The timeout evidence is
+   `team/hf-02-blocker-evidence/StandardLaneMultiPageCompletionTest.failure-run-10-20260921-074650674.xml`;
+   the one residual load-ERROR evidence is
+   `team/hf-02-blocker-evidence/full-dev1-StandardLane-20260921-084220.xml`.
+3. Post-fix isolation: the local StandardLane class passed **10/10** repetitions (two tests per
+   run), and the parent verification machine passed **3/3** repetitions after previously failing
+   2/4. The conditional failure diagnostics used for the investigation were removed in
+   `7f42201`; no diagnostic code remains in the final test.
+4. Post-fix full Dev: the parent verification machine completed **2,030 tests, 0 failures, 0
+   errors, 0 skipped** (fresh XMLs at 09:51). The final clean local command
+   `./gradlew.bat :app:testDevDebugUnitTest --no-parallel --max-workers=1 --console=plain`
+   completed **PASS** in 4m09s; its 293 XML suites aggregate to **2,030 tests, 0 failures, 0
+   errors, 0 skipped**. The earlier one-occurrence load-ERROR variant had no emitted page-state
+   snapshot, so its exact production failure site remains unproven; it is filed as a tracked
+   follow-up with both preserved XML/HTML artifacts rather than being relabeled as a pass.
+5. `:app:testStandardDebugUnitTest --no-parallel --max-workers=1` — first full run: 2,026 tests;
    `MangaScreenModelTranslationDrawerTest` initialization timed out after 5,000 ms waiting for
    `screen state becomes Success (state=Loading)`. The test passed three isolated Standard runs
    (0,0,0). A clean final full Standard rerun completed **PASS**, 2,026 tests.
 
-Per flake policy, every full-suite failure was isolated three times and passed; no touched manual,
-reader teardown, storage, or HF-01 regression failed in isolation. The transient failures match
-the repository's pre-existing timing-flake pattern in end-to-end translation/UI tests under load.
+The ledger therefore distinguishes the two fixed harness mechanisms from the single residual
+load-ERROR occurrence whose mechanism was not captured. No touched manual, reader teardown,
+storage, or HF-01 regression failed in isolation, and no test assertion was weakened.
 
 APK gate:
 
