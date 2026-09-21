@@ -248,12 +248,6 @@ internal class SinglePageOnnxPhase(
         val syntheticTranslation = Translation(source, manga, chapter, fromLang, toLang)
         syntheticTranslation.status = Translation.State.TRANSLATING
 
-        // The caller already owns native quarantine. Rebuild is therefore ordered
-        // after any timed-out predecessor's real exit and cannot race closeEngines.
-        engineRebuildMutex.withLock {
-            ensureEnginesBuiltFor(fromLang, toLang)
-        }
-
         var ownStore: ChapterTranslationStore? = null
         val store = activeStoreResolver?.invoke(syntheticTranslation).also {
             ownStore = if (it == null) null else syntheticTranslation.let { _ -> it }
@@ -298,6 +292,50 @@ internal class SinglePageOnnxPhase(
                     "TachiyomiAT single-page resume skip: pageKey=$pageKey already has final output"
                 }
                 return null
+            }
+
+            // Stage admission is the user-visible event, not the first
+            // post-admission side quest. Publish OCR RUNNING before chapter
+            // stream enumeration, source decode, or ONNX work so a manual tap
+            // reaches "Reading Text" as soon as the active store is available.
+            if (workPlan.runOcr) {
+                if (force) clearAttemptCapForManualRetry(store, pageKey)
+                updatePageFromCurrentSnapshot(store, pageKey, "single-page OCR admission") {
+                    (it ?: PageTranslation()).apply {
+                        sourceFileName = pageKey
+                        ocrStatus = StageStatus.RUNNING
+                        if (force) prepareForcedRetry()
+                        resetAttemptCharge()
+                        errorMessage = null
+                        updatedAt = System.currentTimeMillis()
+                    }
+                }
+                stageListener?.onStageEntered(pageKey, TranslationStageEvent.READING)
+            }
+
+            // The caller already owns native quarantine. Rebuild is therefore
+            // ordered after any timed-out predecessor's real exit and cannot
+            // race closeEngines. It is deliberately after the live admission
+            // emission above: engine/session checks are side work and must not
+            // delay the first reader truth signal.
+            try {
+                engineRebuildMutex.withLock {
+                    ensureEnginesBuiltFor(fromLang, toLang)
+                }
+            } catch (failure: Throwable) {
+                if (failure is CancellationException) throw failure
+                if (workPlan.runOcr) {
+                    updatePageFromCurrentSnapshot(store, pageKey, "single-page OCR admission failed") {
+                        (it ?: PageTranslation(sourceFileName = pageKey)).apply {
+                            sourceFileName = pageKey
+                            ocrStatus = StageStatus.FAILED
+                            errorMessage = "Translation engine initialization failed: " +
+                                (failure.message ?: failure::class.java.simpleName)
+                            updatedAt = System.currentTimeMillis()
+                        }
+                    }
+                }
+                throw failure
             }
 
             if (!workPlan.runOcr && !workPlan.runInpaint) {
@@ -512,25 +550,8 @@ internal class SinglePageOnnxPhase(
                 }
             }
 
-            if (force) clearAttemptCapForManualRetry(store, pageKey)
-            updatePageFromCurrentSnapshot(store, pageKey, "single-page OCR start") {
-                (it ?: PageTranslation()).apply {
-                    sourceFileName = pageKey
-                    if (force || ocrStatus != StageStatus.READY) {
-                        ocrStatus = StageStatus.RUNNING
-                    }
-                    if (force) {
-                        prepareForcedRetry()
-                    }
-                    resetAttemptCharge()
-                    errorMessage = null
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-
             val pageTranslation: PageTranslation
             try {
-                stageListener?.onStageEntered(pageKey, TranslationStageEvent.READING)
                 pageTranslation = processSinglePage(
                     pageKey,
                     bitmap,

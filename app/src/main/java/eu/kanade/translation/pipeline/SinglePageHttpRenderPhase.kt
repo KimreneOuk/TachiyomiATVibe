@@ -411,6 +411,14 @@ internal class SinglePageHttpRenderPhase(
             coroutineContext.ensureActive()
 
             if (pageTranslation.blocks.isNotEmpty()) {
+                // Admit the visible stage before sorting, diagnostics, the
+                // governor, or any provider preparation. Truth reflects the
+                // work the user just entered, not the first network call.
+                pageTranslation.translationStatus = StageStatus.RUNNING
+                publishLiveStage("single-page translation admission") {
+                    it.translationStatus = StageStatus.RUNNING
+                }
+                stageListener?.onStageEntered(pageKey, TranslationStageEvent.TRANSLATING)
                 val nonEmptyBlocks = pageTranslation.blocks.count { it.text.isNotBlank() }
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT translate step START: pageHash=${ShortHash.hash(pageKey)} " +
@@ -444,11 +452,6 @@ internal class SinglePageHttpRenderPhase(
                         fromLang,
                         readingOrder,
                     )
-                    pageTranslation.translationStatus = StageStatus.RUNNING
-                    publishLiveStage("single-page translation running") {
-                        it.translationStatus = StageStatus.RUNNING
-                    }
-                    stageListener?.onStageEntered(pageKey, TranslationStageEvent.TRANSLATING)
                     var singlePageRetry = 0
                     withRequestRetryBudget(retryBudget) {
                         runTranslate(pageTranslation)

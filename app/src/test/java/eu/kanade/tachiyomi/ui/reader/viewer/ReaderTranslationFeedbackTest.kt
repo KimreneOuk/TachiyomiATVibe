@@ -44,6 +44,38 @@ class ReaderTranslationFeedbackTest {
     }
 
     @Test
+    fun `admission snapshots expose the honest stage sequence`() {
+        val snapshots = listOf(
+            PageTranslation(
+                ocrStatus = StageStatus.RUNNING,
+                inpaintStatus = StageStatus.PENDING,
+            ),
+            PageTranslation(
+                ocrStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.RUNNING,
+            ),
+            PageTranslation(
+                ocrStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.READY,
+                translationStatus = StageStatus.RUNNING,
+            ),
+            PageTranslation(
+                ocrStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.READY,
+                translationStatus = StageStatus.READY,
+                renderStatus = StageStatus.RUNNING,
+            ),
+        )
+
+        snapshots.map { it.toReaderPageFeedback() } shouldBe listOf(
+            ReaderPageFeedbackState.ReadingText,
+            ReaderPageFeedbackState.CleaningBubbles,
+            ReaderPageFeedbackState.TranslatingText,
+            ReaderPageFeedbackState.FinishingPage,
+        )
+    }
+
+    @Test
     fun `every live auto slot maps to a truthful page label`() {
         val expected = listOf(
             ReaderAutoTranslationSlotState.Queued to ReaderPageFeedbackState.Queued,
