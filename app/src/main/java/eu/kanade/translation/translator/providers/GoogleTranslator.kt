@@ -2,6 +2,9 @@ package eu.kanade.translation.translator.providers
 import eu.kanade.translation.translator.retry.withTranslationRetry
 import eu.kanade.translation.translator.currentProviderRequestPriority
 import eu.kanade.translation.translator.ProviderFailureException
+import eu.kanade.translation.translator.ProviderFailure
+import eu.kanade.translation.translator.ProviderFailureKind
+import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.retry.classifyHttpFailure
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.TextTranslatorLanguage
@@ -17,28 +20,69 @@ import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONArray
+import org.jsoup.Jsoup
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import tachiyomi.core.common.util.system.logcat
 import java.io.UnsupportedEncodingException
 import java.net.URLEncoder
+import java.util.Locale
 
 class GoogleTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
     private val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
+    val okHttpClient: OkHttpClient = OkHttpClient(),
 ) : BaseTranslator() {
     private val client1 = "gtx"
-    private val client2 = "webapp"
-    val okHttpClient = OkHttpClient()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         // Pin sl=fromLang.code (not the old hardcoded "auto"). "auto" made Google guess the source
         // per request, a silent fallback that hid misconfigured OCR language settings and produced
         // inconsistent results across blocks. Pinning makes the configured language authoritative.
-        pages.mapValues { (_, v) ->
-            v.blocks.map { b ->
-                b.translation = translateText(toLang.code, fromLang.code, b.text)
+        pages.forEach { (_, page) ->
+            translatePage(page)
+        }
+    }
+
+    private suspend fun translatePage(page: PageTranslation) {
+        if (page.blocks.isEmpty()) return
+
+        val chunks = GoogleTranslationEnvelope.plan(page.blocks.map { it.text })
+        if (chunks != null) {
+            val translations = mutableMapOf<Int, String>()
+            var envelopeValid = true
+            for (chunk in chunks) {
+                val expectedIds = chunk.blockIndices.map { GoogleTranslationEnvelope.idFor(it) }
+                val response = requestEnvelope(
+                    lang = toLang.code,
+                    sourceLang = fromLang.code,
+                    source = chunk.source,
+                )
+                val parsed = parseEnvelopeResponse(response.body, expectedIds)
+                if (parsed == null) {
+                    envelopeValid = false
+                    break
+                }
+                chunk.blockIndices.zip(parsed).forEach { (index, translation) ->
+                    translations[index] = translation
+                }
             }
+            if (envelopeValid) {
+                page.blocks.forEachIndexed { index, block ->
+                    block.translation = translations[index].orEmpty()
+                }
+                return
+            }
+        }
+
+        // A malformed envelope is a protocol anomaly, not a reason to guess or
+        // discard the page. Retry the existing serial per-block path for the
+        // whole page; no envelope request is retried after its response fails
+        // strict reconstruction.
+        page.blocks.forEach { block ->
+            block.translation = translateText(toLang.code, fromLang.code, block.text)
         }
     }
 
@@ -53,48 +97,91 @@ class GoogleTranslator(
             envelopeId = ShortHash.hash(text),
             priority = currentProviderRequestPriority(),
         )
-        val response = withTranslationRetry(logTag = "google") {
-            requestGovernor.executeValue(metadata) {
-                okHttpClient.newCall(build).await().use { response ->
-                    val raw = RawGoogleResponse(
-                        code = response.code,
-                        retryAfter = response.header("Retry-After"),
-                        body = response.body?.string().orEmpty(),
+        val response = request(build, metadata)
+        return parseSingleResponse(response.body, lang, text, response.code)
+    }
+
+    private suspend fun requestEnvelope(
+        lang: String,
+        sourceLang: String,
+        source: String,
+    ): RawGoogleResponse {
+        val build = Request.Builder()
+            .url(getEnvelopeUrl(lang, sourceLang, source))
+            .build()
+        val metadata = ProviderRequestMetadata(
+            key = ProviderRequestKey(backend = "google"),
+            estimatedInputTokens = TranslationContextChunkPlanner.estimateTokens(source),
+            operation = "translate",
+            envelopeId = ShortHash.hash(source),
+            priority = currentProviderRequestPriority(),
+        )
+        return request(build, metadata)
+    }
+
+    private suspend fun request(
+        build: Request,
+        metadata: ProviderRequestMetadata,
+    ): RawGoogleResponse = withTranslationRetry(logTag = "google") {
+        requestGovernor.executeValue(metadata) {
+            okHttpClient.newCall(build).await().use { response ->
+                val raw = RawGoogleResponse(
+                    code = response.code,
+                    retryAfter = response.header("Retry-After"),
+                    body = response.body?.string().orEmpty(),
+                )
+                if (raw.code !in 200..299) {
+                    val failure = classifyHttpFailure(
+                        backend = "google",
+                        statusCode = raw.code,
+                        retryAfterHeader = raw.retryAfter,
+                        safeSummary = "Google Translate HTTP ${raw.code}",
                     )
-                    if (raw.code !in 200..299) {
-                        val failure = classifyHttpFailure(
-                            backend = "google",
-                            statusCode = raw.code,
-                            retryAfterHeader = raw.retryAfter,
-                            safeSummary = "Google Translate HTTP ${raw.code}",
-                        )
-                        throw ProviderFailureException(failure)
-                    }
-                    raw
+                    throw ProviderFailureException(failure)
                 }
+                if (isHtmlChallengeBody(raw.body)) {
+                    // A successful HTTP status does not make a CAPTCHA page a
+                    // translation. Charge it as a quota failure so the shared
+                    // governor opens its cooldown breaker for this endpoint.
+                    throw ProviderFailureException(
+                        ProviderFailure(
+                            kind = ProviderFailureKind.QUOTA_EXHAUSTED,
+                            retryability = ProviderFailureRetryability.PAUSE,
+                            safeSummary = "Google Translate challenge response",
+                        ),
+                    )
+                }
+                raw
             }
         }
-        val string = response.body
+    }
+
+    private fun parseSingleResponse(
+        string: String,
+        lang: String,
+        text: String,
+        statusCode: Int,
+    ): String {
         if (string.isBlank()) {
             logcat(LogPriority.WARN) {
                 "event=provider_response_empty backend=google reason=empty_body lang=$lang " +
-                    "inputChars=${text.length} status=${response.code}"
+                    "inputChars=${text.length} status=$statusCode"
             }
             return ""
         }
-        try {
-            val jSONArray = JSONArray(string).getJSONArray(0).getJSONArray(0)
-            return jSONArray.getString(0)
-        } catch (e: Exception) {
-            // Google's free endpoint returns 429/HTML (not JSON) on rate-limiting or bot-detection,
-            // which this catch previously turned into "" with no visible error — blank pages with
-            // no cause. Log only status, counts, and a response fingerprint.
-            logcat(LogPriority.WARN) {
-                "event=provider_response_invalid backend=google reason=parse_failure lang=$lang " +
-                    "inputChars=${text.length} status=${response.code} responseHash=${ShortHash.hash(string)}"
+        return extractTranslationText(string).orEmpty().also {
+            if (it.isEmpty()) {
+                logcat(LogPriority.WARN) {
+                    "event=provider_response_invalid backend=google reason=parse_failure lang=$lang " +
+                        "inputChars=${text.length} status=$statusCode responseHash=${ShortHash.hash(string)}"
+                }
             }
-            return ""
         }
+    }
+
+    private fun parseEnvelopeResponse(body: String, expectedIds: List<String>): List<String>? {
+        val translated = extractTranslationText(body) ?: return null
+        return GoogleTranslationEnvelope.parse(translated, expectedIds)
     }
 
     private fun getTranslateUrl(lang: String, sourceLang: String, text: String): String {
@@ -109,6 +196,10 @@ class GoogleTranslator(
             return "https://translate.google.com/translate_a/single?client=$client2&sl=$sourceLang&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken2&q=$text"
         }
     }
+
+    private fun getEnvelopeUrl(lang: String, sourceLang: String, source: String): String =
+        "https://translate.googleapis.com/translate_a/single?client=$client1" +
+            "&sl=$sourceLang&tl=$lang&dt=t&q=${URLEncoder.encode(source, "utf-8")}"
 
     private fun calculateToken(str: String): String {
         val list = mutableListOf<Int>()
@@ -166,6 +257,29 @@ class GoogleTranslator(
         return result
     }
 
+    private fun extractTranslationText(body: String): String? {
+        return runCatching {
+            val root = Json.parseToJsonElement(body) as? JsonArray
+                ?: return@runCatching null
+            val segments = root.firstOrNull() as? JsonArray
+                ?: return@runCatching null
+            buildString {
+                segments.forEach { element ->
+                    val segment = element as? JsonArray ?: return@forEach
+                    val value = segment.firstOrNull() as? JsonPrimitive ?: return@forEach
+                    if (value.isString) append(value.content)
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun isHtmlChallengeBody(body: String): Boolean {
+        val normalized = body.trimStart().lowercase(Locale.ROOT)
+        return normalized.startsWith("<!doctype html") ||
+            normalized.startsWith("<html") ||
+            (normalized.contains("captcha") && normalized.contains('<'))
+    }
+
     override fun close() {
         okHttpClient.connectionPool.evictAll()
         okHttpClient.dispatcher.executorService.shutdown()
@@ -176,4 +290,62 @@ class GoogleTranslator(
         val retryAfter: String?,
         val body: String,
     )
+}
+
+/** Strict, no-concurrency envelope planner/parser for the free Google endpoint. */
+internal object GoogleTranslationEnvelope {
+    const val MAX_SOURCE_CHARS = 5_000
+
+    internal data class Chunk(
+        val blockIndices: List<Int>,
+        val source: String,
+    )
+
+    fun idFor(index: Int): String = "b$index"
+
+    fun plan(blocks: List<String>): List<Chunk>? {
+        if (blocks.isEmpty()) return emptyList()
+        val chunks = mutableListOf<Chunk>()
+        val indices = mutableListOf<Int>()
+        val source = StringBuilder()
+        blocks.forEachIndexed { index, text ->
+            val wrapped = span(idFor(index), text)
+            val wrappedChars = wrapped.codePointCount(0, wrapped.length)
+            // An individual block that cannot fit the envelope must use the
+            // proven per-block path instead of violating the hard cap.
+            if (wrappedChars > MAX_SOURCE_CHARS) return null
+            val currentChars = source.codePointCount(0, source.length)
+            if (indices.isNotEmpty() && currentChars + wrappedChars > MAX_SOURCE_CHARS) {
+                chunks += Chunk(indices.toList(), source.toString())
+                indices.clear()
+                source.setLength(0)
+            }
+            indices += index
+            source.append(wrapped)
+        }
+        if (indices.isNotEmpty()) chunks += Chunk(indices.toList(), source.toString())
+        return chunks
+    }
+
+    fun parse(rawHtml: String, expectedIds: List<String>): List<String>? {
+        val spans = Jsoup.parseBodyFragment(rawHtml).select("span[data-id]")
+        if (spans.size != expectedIds.size) return null
+        val ids = spans.map { it.attr("data-id") }
+        if (ids != expectedIds || ids.toSet().size != ids.size) return null
+        return spans.map { it.text() }
+    }
+
+    private fun span(id: String, text: String): String =
+        "<span data-id=\"$id\">${escape(text)}</span>"
+
+    private fun escape(text: String): String = buildString(text.length) {
+        text.forEach { char ->
+            when (char) {
+                '&' -> append("&amp;")
+                '<' -> append("&lt;")
+                '>' -> append("&gt;")
+                else -> append(char)
+            }
+        }
+    }
 }
