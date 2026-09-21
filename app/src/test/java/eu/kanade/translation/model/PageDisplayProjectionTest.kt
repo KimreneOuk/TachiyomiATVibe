@@ -7,7 +7,9 @@ import eu.kanade.translation.artifact.DisplayBaseKind
 import eu.kanade.translation.artifact.DisplayBaseReference
 import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.StageArtifactRecord
+import eu.kanade.translation.pipeline.markOriginalImageFallback
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
+import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
@@ -73,6 +75,23 @@ class PageDisplayProjectionTest {
         )
 
         page.toPageDisplayProjection().displayReady shouldBe true
+    }
+
+    @Test
+    fun `cleaned publication failure keeps translated overlay on the original image`() {
+        val fallback = markOriginalImageFallback(readyPage())
+
+        fallback.cleanedImageName shouldBe null
+        fallback.originalImageFallback shouldBe true
+        fallback.inpaintStatus shouldBe StageStatus.READY
+        fallback.renderStatus shouldBe StageStatus.READY
+        fallback.toPageDisplayProjection().let {
+            it.state shouldBe PageDisplayState.DISPLAY_READY
+            it.displayReady shouldBe true
+        }
+        fallback.displayImageName shouldBe null
+        fallback.shouldSurfaceError shouldBe false
+        selectReaderTranslationOverlayBinding(true, fallback).blocks shouldBe fallback.blocks
     }
 
     @Test

@@ -138,7 +138,7 @@ private fun PageTranslation.singlePageProjection(): PageDisplayProjection {
 }
 
 private fun PageTranslation.isTranslationDisplayShapeReady(): Boolean =
-    isCleanedImageReady &&
+    (isCleanedImageReady || originalImageFallback) &&
         (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
         renderStatus == StageStatus.READY &&
         blocks.any { it.translation.isNotBlank() }
@@ -151,5 +151,6 @@ private fun PageTranslation.differsFromCommitted(committed: PageTranslation): Bo
         inpaintStatus != committed.inpaintStatus ||
         renderStatus != committed.renderStatus ||
         cleanedImageName != committed.cleanedImageName ||
+        originalImageFallback != committed.originalImageFallback ||
         translationOrigin != committed.translationOrigin ||
         blocks != committed.blocks

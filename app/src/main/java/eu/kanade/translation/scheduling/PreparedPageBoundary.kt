@@ -16,7 +16,9 @@ import logcat.logcat
  * lightweight [PreparedPage] reference from the resulting durable snapshot.
  *
  * This is the exact code path [TranslationPipeline.prepareSinglePage] runs
- * after the cleaned image is published. It is extracted as a top-level internal
+ * after the cleaned image is published. Active reader stores join the lazy
+ * cleaned-image worker before recycling its source bitmap; probe stores retain
+ * the historical synchronous path. It is extracted as a top-level internal
  * function so pure-JVM regression tests can drive the REAL durability write
  * without instantiating the full Android-bound pipeline. A test that removes
  * the durable write below will fail because the durable snapshot will have
@@ -60,6 +62,14 @@ internal suspend fun publishPreparedPageFromOcr(
         }
     }
 
+    // Active reader stores enqueue the JPEG write before this boundary is
+    // reached. The AUTO lane must not recycle the source bitmap while that
+    // worker still owns it: [StorePersistenceScheduler.flush] serializes the
+    // worker and is the same durability/ownership barrier used by the reader
+    // render path. Probe stores keep their historical synchronous behavior.
+    if (store.isLazyPersistenceEnabled()) {
+        store.flush()
+    }
     try {
         ocrResult.cleanedBitmap?.recycle()
     } catch (_: Exception) {}

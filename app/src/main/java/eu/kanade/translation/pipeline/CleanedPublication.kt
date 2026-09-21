@@ -149,6 +149,7 @@ internal class CleanedPublication(
                             inpaintingModeUsed = currentInpaintingMode().name
                             inpaintFingerprint = pageTranslation.inpaintFingerprint
                             inpaintStatus = StageStatus.READY
+                            originalImageFallback = false
                             if (pageTranslation.ocrStatus == StageStatus.READY) {
                                 ocrStatus = StageStatus.READY
                             }
@@ -187,6 +188,7 @@ internal class CleanedPublication(
                 pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                 pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
                 pageTranslation.inpaintStatus = StageStatus.READY
+                pageTranslation.originalImageFallback = false
                 pageTranslation.errorMessage = null
                 result.snapshot
             }
@@ -281,6 +283,7 @@ internal class CleanedPublication(
                 inpaintingModeUsed = currentInpaintingMode().name
                 inpaintFingerprint = pageTranslation.inpaintFingerprint
                 inpaintStatus = StageStatus.READY
+                originalImageFallback = false
                 if (pageTranslation.ocrStatus == StageStatus.READY) {
                     ocrStatus = StageStatus.READY
                 }
@@ -303,6 +306,7 @@ internal class CleanedPublication(
         pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
         pageTranslation.inpaintStatus = StageStatus.READY
+        pageTranslation.originalImageFallback = false
         pageTranslation.errorMessage = null
         val generation = accepted.snapshot.generation
         val completion: Deferred<Boolean> = store.enqueueLazyPersistence(generation) {
@@ -366,16 +370,7 @@ internal class CleanedPublication(
                         pageKey = pageKey,
                         expected = store.snapshot(pageKey).toPrecondition(),
                         description = "record lazy cleaned publication failure",
-                    ) { current ->
-                        (current ?: pageTranslation).apply {
-                            cleanedImageName = null
-                            inpaintStatus = StageStatus.FAILED
-                            renderStatus = StageStatus.FAILED
-                            recordAttemptFailure()
-                            errorMessage =
-                                "Cleaned image could not be published; translated text was not rendered."
-                        }
-                    }
+                    ) { current -> markOriginalImageFallback(current ?: pageTranslation) }
                     false
                 }
             }
@@ -386,6 +381,20 @@ internal class CleanedPublication(
             pendingCleanedPublication = completion,
         )
     }
+}
+
+/**
+ * A cleaned-image write is a display-artifact failure, not a failed OCR,
+ * translation, or inpaint attempt. Keep the translated blocks usable and let
+ * the reader draw them over the original image until a later retry can publish
+ * a cleaned base.
+ */
+internal fun markOriginalImageFallback(page: PageTranslation): PageTranslation = page.apply {
+    cleanedImageName = null
+    originalImageFallback = true
+    inpaintStatus = StageStatus.READY
+    renderStatus = StageStatus.READY
+    errorMessage = null
 }
 
 /**

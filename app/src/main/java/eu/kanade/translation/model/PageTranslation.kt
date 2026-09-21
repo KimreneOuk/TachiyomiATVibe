@@ -75,6 +75,12 @@ data class PageTranslation(
     /** Reader-ad-hoc output is displayable but lacks full-chapter context. */
     var translationOrigin: String? = null,
     /**
+     * The translated blocks are ready, but the cleaned-image publication was
+     * unavailable. The reader keeps the original image and draws the overlay
+     * instead of poisoning inpaint/render truth with a storage failure.
+     */
+    var originalImageFallback: Boolean = false,
+    /**
      * TachiyomiAT: SERIALIZABLE inpaint mask captured at OCR time.
      *
      * This is the durable record of every region the inpainter must erase: the
@@ -200,6 +206,7 @@ data class PageTranslation(
         inpaintStatus = StageStatus.PENDING
         inpaintError = null
         cleanedImageName = null
+        originalImageFallback = false
         cleanedBitmap = null
         inpaintRevision = 0
         inpaintingModeUsed = null

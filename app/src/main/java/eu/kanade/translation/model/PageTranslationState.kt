@@ -114,6 +114,7 @@ fun PageTranslation.prepareForcedRetry() {
     renderStatus = StageStatus.PENDING
     errorMessage = null
     cleanedImageName = null
+    originalImageFallback = false
 }
 
 /**

@@ -1,5 +1,6 @@
 package eu.kanade.translation.scheduling
 
+import android.graphics.Bitmap
 import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -8,6 +9,8 @@ import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
@@ -238,6 +241,41 @@ class PreparedPageRuntimeBoundaryTest {
             // still calls recycle() safely (null-safe) and nulls the field.
         }
         publishPreparedPageFromOcr(store, "p0", ocrResult, 1L, 1L, 1L, expectedPageVersion = store.snapshot("p0").pageVersion, expectedGeneration = store.snapshot("p0").generation)
+        ocrResult.cleanedBitmap shouldBe null
+    }
+
+    @Test
+    fun `lazy auto boundary flushes before eager cleaned bitmap recycle`() = runTest {
+        val store = newStore().also { it.enableLazyPersistence() }
+        store.updatePage("p0") {
+            PageTranslation(sourceFileName = "p0", ocrStatus = StageStatus.RUNNING)
+        }
+        val events = mutableListOf<String>()
+        store.enqueueLazyPersistence(store.currentGeneration) {
+            events += "flush"
+            true
+        }
+        val bitmap = mockk<Bitmap>(relaxed = true) {
+            every { recycle() } answers { events += "recycle" }
+        }
+        val ocrResult = PageTranslation(sourceFileName = "p0", ocrStatus = StageStatus.READY).apply {
+            blocks = mutableListOf(block("text"))
+            cleanedImageName = "p0.cleaned.v1.jpg"
+            cleanedBitmap = bitmap
+        }
+
+        publishPreparedPageFromOcr(
+            store = store,
+            pageKey = "p0",
+            ocrResult = ocrResult,
+            chapterId = 1L,
+            mangaId = 1L,
+            sourceId = 1L,
+            expectedPageVersion = store.snapshot("p0").pageVersion,
+            expectedGeneration = store.snapshot("p0").generation,
+        )
+
+        events shouldBe listOf("flush", "recycle")
         ocrResult.cleanedBitmap shouldBe null
     }
 }
