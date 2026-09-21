@@ -80,22 +80,6 @@ class StandardLaneMultiPageCompletionTest {
 
             val reconciliation = withTimeout(AWAIT_TIMEOUT_MS) { batchRun.reconciliation.await() }
             reconciliation.shouldNotBeNull()
-            if (reconciliation!!.chapterStatus != Translation.State.TRANSLATED) {
-                println("DBG failure reconciliation=$reconciliation")
-                pageKeys.forEach { pageKey ->
-                    val page = harness.store.state.value[pageKey]
-                    println(
-                        "DBG failure page=$pageKey status=${page?.translationStatus} " +
-                            "ocr=${page?.ocrStatus} inpaint=${page?.inpaintStatus} " +
-                            "render=${page?.renderStatus} activeError=${page?.activeError} " +
-                            "generation=${page?.runGeneration} version=${page?.pageVersion}",
-                    )
-                }
-                println(
-                    "DBG failure batch active=${batchRun.job.isActive} " +
-                        "completed=${batchRun.job.isCompleted} cancelled=${batchRun.job.isCancelled}",
-                )
-            }
             reconciliation!!.chapterStatus shouldBe Translation.State.TRANSLATED
             reconciliation.strandedPages.shouldBeEmpty()
             pageKeys.forEach { pageKey ->
