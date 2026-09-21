@@ -161,3 +161,120 @@ the envelope protocol fails closed at every anomaly class with the breaker armed
 is now emitted at admission. Merge-ready from this reviewer's standpoint, pending the
 orchestrator's device verification of the latency targets (tap→Reading Text <300 ms, warm
 manual page <5 s) which no local test can substitute for.
+
+---
+
+# DELTA RE-REVIEW — HF-03 hotfix: lazy bitmap release + fallback truth (2026-09-21)
+
+Post-merge device regression: the AUTO lane recycled the cleaned bitmap after lazy enqueue
+but before the flush worker compressed it (`IllegalStateException: Can't compress a recycled
+bitmap`, CleanedImagePublisher phase=write), poisoning page truth to inpaint/render FAILED
+and dead-ending the cleaned swap. Delta under review: `68034b4` (fix) + `4c8f732`
+(report/evidence). Scope: 5 production files + 2 test files + report/evidence — **exactly
+the two fix surfaces; no scope creep** (HF-01 keying untouched; HF-02 gating untouched;
+`TranslationSessionCoordinator` not in delta).
+
+## 1. Recycle-vs-flush ordering — PASS (full site census)
+
+Every cleaned/source bitmap recycle site enumerated and classified:
+
+- **`PreparedPageBoundary.kt:74` (the AUTO bug site) — FIXED:** `publishPreparedPageFromOcr`
+  now calls `store.flush()` when the store is lazy-enabled BEFORE
+  `ocrResult.cleanedBitmap?.recycle()`. `flush()` is the scheduler-serialized drain that
+  joins the lazy JPEG task (worker's `compress` completes inside the task), so the recycle
+  is provably post-compression. Probe stores keep the historical synchronous path (write
+  already completed before this boundary).
+- **Manual lane (`SinglePageHttpRenderPhase`):** L643 recycle is guarded by
+  `pendingCleanedPublication == null` (sync-published ⇒ no worker owns it); L725 is a
+  retry-render FAILURE finally (nothing enqueued); L743/L847/L855 recycle only after the
+  final flush barrier joins `deferredCleanedBitmap` (the HF-03 original retention). ✓
+- **ONNX phase:** L642 resume-render failure finally (publication never succeeded — owning);
+  L727 `persisted == null` (publish rejected BEFORE enqueue — owning); L819 recycles the
+  pre-scale original only when a scaled copy was created (the kept `s` moves forward);
+  L832 `retryBitmap` is the freshly DECODED source of `retryInpaintDownscaled`, recycled in
+  its finally — no lazy enqueue exists in that function (publication happens later on the
+  kept `scaledCleaned`, which is never recycled there).
+- **`finalizePostOcrStage` (PostOcrStageSemantics:23):** recycles `page.cleanedBitmap` only
+  when `inpaintMaskBoxes.isEmpty()` and inpaint never ran — structurally, no lazy cleaned
+  task can exist for such a page; guarded by `runCatching` besides.
+- **Sync path (`CleanedPublication.kt:250`):** recycles after the synchronous write on the
+  non-lazy branch.
+- **Batch lane:** `CleanedPublication` is constructed only in `TranslationPipeline` (the
+  single-page path); batch bitmap ownership is `HeldBitmapRegistry`/`BatchRenderJoin`
+  internal and **never enqueues lazy tasks** — no enqueue-then-recycle possible.
+- **Worker failure paths / bounded memory:** the scheduler dequeues the task before running
+  it and completes its `CompletableDeferred` on EVERY path (success, thrown failure,
+  cancellation, generation-mismatch) — the closure (and its bitmap reference) becomes
+  unreachable after the task leaves the queue, so a failed flush cannot retain the bitmap
+  indefinitely; drain paths (schedule/close/evict barrier) bound the queue lifetime.
+
+## 2. Fallback truth correctness — PASS
+
+Publication failure now routes to `markOriginalImageFallback`: `cleanedImageName = null`,
+`originalImageFallback = true`, `inpaintStatus = renderStatus = READY`, `errorMessage =
+null` — a display-artifact (storage) failure no longer poisons pipeline truth.
+
+- **No misreporting of genuine failures:** the helper is reachable ONLY from the lazy
+  cleaned-write failure branch. A genuine inpaint exception takes the unchanged inpaint
+  catch (`FAILED` + `recordAttemptFailure`); a genuine render failure takes the unchanged
+  render catch — both still project `FAILED_NO_RESULT` via `isStageFailed`. Separation is
+  structural (storage failure vs pipeline failure are different code paths).
+- **Reader renders original + overlay (no dead swap):** pinned end-to-end by the new
+  `PageDisplayProjectionTest` case — fallback page projects `DISPLAY_READY` /
+  `displayReady = true` via `isTranslationDisplayShapeReady` accepting
+  `originalImageFallback` in place of cleaned-readiness, `displayImageName == null` (no
+  cleaned swap attempted), `shouldSurfaceError == false`, and
+  `selectReaderTranslationOverlayBinding(true, fallback).blocks == fallback.blocks` (the
+  actual reader binding draws the translated blocks over the original image).
+- **State hygiene:** all four success paths (lazy + sync, initial + retry) now clear
+  `originalImageFallback = false`, and both reset points (`prepareForcedRetry`, the
+  inpaint-artifact reset) clear it — a later successful publication or retry cannot inherit
+  a stale fallback. `differsFromCommitted` includes the flag, so committed-state overlay
+  refresh triggers on the transition.
+- The dropped `recordAttemptFailure()` on this branch is semantically consistent: a storage
+  write failure is not a pipeline attempt; the KDoc documents the retry intent.
+
+## 3. Tests — PASS
+
+- `PreparedPageRuntimeBoundaryTest.lazy auto boundary flushes before eager cleaned bitmap
+  recycle` (now 9/9 executed in XML, +1): **actually constructs the race** — lazy-enabled
+  store, a lazy task recording "flush", a recording mock bitmap whose `recycle()` logs
+  "recycle", then asserts `events == ["flush", "recycle"]` after the boundary runs. Under
+  the old code the order inverts; the assertion pins ordering, not implementation.
+  `runTest` body — alive (no T906).
+- `PageDisplayProjectionTest.cleaned publication failure keeps translated overlay on the
+  original image` (now 9/9, +1): drives the real `markOriginalImageFallback` helper through
+  the real projection and the real reader overlay binding — behavioral, statement body,
+  alive.
+- No existing assertion weakened (both files only gained tests).
+
+## 4. Scope — PASS
+
+Delta files: `CleanedPublication`, `PreparedPageBoundary`, `PageTranslation`,
+`PageTranslationState`, `PageDisplayProjection` + the two test files + report/evidence.
+HF-01 keying (`sourceFileName = pageKey`) untouched; HF-02 session gating untouched; no
+durability-contract change beyond the two fix surfaces.
+
+## 5. Gates — PASS WITH NOTE
+
+- **Standard full: 2,045 tests, 295 files, 0 failures** (fresh, 09-21 21:41) ✓.
+- **Focused suites:** `PreparedPageRuntimeBoundaryTest` 9/9 and `PageDisplayProjectionTest`
+  9/9 executed and green in XML ✓.
+- **Tracked residual:** the last full Dev run on disk shows the known
+  `StandardLaneMultiPageCompletionTest` load flake (1 failure), with
+  `hf03-hotfix-standardlane-isolation-1/2/3.xml` committed as the 3/3 isolation evidence —
+  exactly as the gate brief describes. Note: no final green full **Dev** run is on disk or
+  claimed; the residual is the established family, but a clean Dev full run should be
+  captured when the queue is quiet. Test arithmetic: 2,043 + 2 new = 2,045 ✓.
+
+## FINAL HF-03 VERDICT (including hotfix delta): **PASS WITH NOTES**
+
+The original review's PASS WITH NOTES stands; the hotfix delta remediates the bitmap race
+with a real ordering test, fixes the truth poisoning with a correctly-scoped fallback that
+cannot mask genuine failures, and stays inside its two surfaces. Carried notes: (1) capture
+a clean full Dev run to replace the residual flake state on disk; (2) the direct-to-final-name
+cleaned-write/orphan-sweep and registration-gated lazy-mode observations from the original
+review remain valid watch items; (3) my original HF-03 review file went missing from the
+worktree between turns (untracked file lost during the hotfix evidence commit) — this
+document restores it with the delta appended; recommend committing review reports alongside
+implementation reports so they survive worktree cleanups.
