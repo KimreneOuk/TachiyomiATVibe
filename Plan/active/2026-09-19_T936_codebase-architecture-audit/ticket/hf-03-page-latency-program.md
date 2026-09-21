@@ -37,6 +37,13 @@ priority stops at scheduler admission). Confirm the 2.65s/0.98s gaps are prefetc
 instrumenting native-lane queue wait (temporary, removed before merge), then implement preemption
 or a priority queue. Prefetch resumes after interactive work drains.
 
+**Status: cancelled — mechanism absorbed into item 3.** Local queue-wait instrumentation recorded
+`queueMs=0`, with no AUTO/native-prefetch activity; the warm ONNX sessions were already cached.
+The ~2.65s pre-detect and ~0.98s pre-inpaint gaps were synchronous durable publication through
+`updatePageGuarded → persistArtifactMutationLocked` under the store mutex (with approximately
+290ms of GC observed in the latter gap). No native-priority change was made; item 3 moves this
+publication off the live display path.
+
 ### 3. Lazy persistence (4.2s off the display path)
 - Render/store completion publishes to the store's LIVE state immediately; display projects from
   live state. Disk work (PNG encode, write, fsync) moves to a background flush worker.
