@@ -210,3 +210,22 @@ data class DurableFailureMetadata(
      */
     val missingBlockCharLengths: Map<String, Int> = emptyMap(),
 )
+
+/**
+ * Reader-facing wording for a durable retryable failure. Provider admission
+ * failures may keep their provider-specific message, but artifact/store
+ * protocol failures must identify the consistency boundary that rejected the
+ * page instead of falling through to the generic provider-unavailable copy.
+ */
+internal fun DurableFailureMetadata.toUiPauseReason(): String? {
+    val message = lastFailureMessage?.takeIf { it.isNotBlank() }
+        ?: "No diagnostic was recorded"
+    if (category != FailureCategory.PROTOCOL) return message
+    val lower = message.lowercase()
+    return when {
+        "page missing" in lower -> "Page manifest mismatch: $message"
+        "fingerprint" in lower -> "Page fingerprint mismatch: $message"
+        "checkpoint" in lower -> "Page checkpoint rejected: $message"
+        else -> "Page consistency check failed: $message"
+    }
+}

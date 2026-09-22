@@ -297,6 +297,16 @@ internal class PreflightWorker(
             pageKey: String,
             ref: OcrReadyPageRef,
         ): CheckpointOcrResult {
+            // OCR preflight is a durability boundary. Active reader stores
+            // publish page state and page registration memory-first, so drain
+            // that queue before reading the manifest-backed checkpoint
+            // identity. This call is deliberately outside any store mutex;
+            // StorePersistenceScheduler serializes its own flush worker and
+            // no flush task calls back into this checkpoint path.
+            val lazyPersistence = store.isLazyPersistenceEnabled()
+            if (lazyPersistence) {
+                store.flush()
+            }
             val snapshot = store.snapshot(pageKey)
             val leaseToken = ref.leaseToken
             if (leaseToken == null) {
@@ -304,15 +314,33 @@ internal class PreflightWorker(
                     "preflight ocr reference without a lease token",
                 )
             }
+            // The worker reference predates the flush. Prefer the fresh
+            // manifest identity and retain the reference only for stores that
+            // published synchronously before this boundary.
+            val candidateGenerationId = if (lazyPersistence) {
+                snapshot.candidateGenerationId ?: ref.candidateGenerationId
+            } else {
+                ref.candidateGenerationId
+            }
+            val artifactPageVersion = if (lazyPersistence) {
+                snapshot.artifactPageVersion ?: ref.artifactPageVersion
+            } else {
+                snapshot.artifactPageVersion
+            }
+            val dependencyFingerprint = if (lazyPersistence && snapshot.candidateGenerationId != null) {
+                snapshot.dependencyFingerprint
+            } else {
+                ref.dependencyFingerprint
+            }
             val admissionSha = context.admissionSourceSha(pageKey)
             return store.checkpointOcr(
                 pageKey = pageKey,
                 generation = snapshot.generation,
                 expectedPageVersion = snapshot.pageVersion,
                 expectedLeaseToken = leaseToken,
-                expectedCandidateGenerationId = ref.candidateGenerationId,
-                expectedArtifactPageVersion = snapshot.artifactPageVersion,
-                expectedDependencyFingerprint = ref.dependencyFingerprint,
+                expectedCandidateGenerationId = candidateGenerationId,
+                expectedArtifactPageVersion = artifactPageVersion,
+                expectedDependencyFingerprint = dependencyFingerprint,
                 sourceSha256 = admissionSha,
                 sourceOrientation = context.orientationOf(snapshot),
                 mode = OcrCheckpointMode.CLOSE,

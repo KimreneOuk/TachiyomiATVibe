@@ -14,6 +14,7 @@ import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ArtifactManifestProbe
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.toUiPauseReason
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
@@ -1744,14 +1745,18 @@ class TranslationManager(
     ): TranslationProgressSnapshot {
         if (state != Translation.State.PAUSED) return this
         val failure = store.durableFailuresSnapshot().values
-            .firstOrNull {
-                it.stage == ArtifactStage.TRANSLATION &&
-                    it.status == ArtifactStageStatus.FAILED_RETRYABLE
-            }
+            .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
+            .minWithOrNull(
+                compareBy<eu.kanade.translation.artifact.DurableFailureMetadata>(
+                    { if (it.category == eu.kanade.translation.artifact.FailureCategory.PROTOCOL) 0 else 1 },
+                    { it.stage.ordinal },
+                    { it.pageKey },
+                ),
+            )
             ?: return this
         return copy(
             pauseAnchorPageKey = pauseAnchorPageKey ?: failure.pageKey,
-            pauseReason = pauseReason ?: failure.lastFailureMessage,
+            pauseReason = pauseReason ?: failure.toUiPauseReason(),
             nextEligibleRetryAtEpochMs = nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
         )
     }

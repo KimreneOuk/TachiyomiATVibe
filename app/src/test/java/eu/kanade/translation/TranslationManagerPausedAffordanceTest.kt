@@ -11,6 +11,7 @@ import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.ui.TranslationUiTruth
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -87,14 +88,24 @@ class TranslationManagerPausedAffordanceTest {
     }
 
     @Test
-    fun `durable pause leaves snapshots without a retryable translation failure untouched`() {
+    fun `durable pause surfaces retryable protocol failures from every stage`() {
         val paused = TranslationProgressSnapshot.empty(10L, Translation.State.PAUSED)
 
         // No durable failures at all.
         paused.withDurablePause(storeWithDurableFailures()) shouldBe paused
-        // A retryable failure on a different stage does not qualify.
-        val ocrFailure = translationFailure().copy(stage = ArtifactStage.OCR)
-        paused.withDurablePause(storeWithDurableFailures(ocrFailure)) shouldBe paused
+        // OCR checkpoint failures must be visible as page/manifest truth, not
+        // the generic provider-unavailable fallback.
+        val ocrFailure = translationFailure().copy(
+            stage = ArtifactStage.OCR,
+            category = FailureCategory.PROTOCOL,
+            lastFailureMessage = "page missing: pageKey=001.jpg",
+            nextEligibleRetryAtEpochMs = null,
+        )
+        val projected = paused.withDurablePause(storeWithDurableFailures(ocrFailure))
+        projected.pauseReason shouldBe
+            "Page manifest mismatch: page missing: pageKey=001.jpg"
+        TranslationUiTruth.batchStatusLine(projected).fallback shouldBe
+            "Paused — Page manifest mismatch: page missing: pageKey=001.jpg"
         // A terminal translation failure is not retryable.
         val terminalFailure = translationFailure().copy(status = ArtifactStageStatus.FAILED_TERMINAL)
         paused.withDurablePause(storeWithDurableFailures(terminalFailure)) shouldBe paused

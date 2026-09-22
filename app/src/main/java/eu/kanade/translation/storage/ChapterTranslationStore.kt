@@ -34,6 +34,7 @@ import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.SourceIdentity
 import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.artifact.toUiPauseReason
 import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.PageStage
@@ -2957,15 +2958,23 @@ class ChapterTranslationStore(
             expectedPageCountTrusted = artifactManifest?.expectedPageCountTrusted == true,
         )
         if (projectedState != Translation.State.PAUSED) return snapshot
+        // A protocol rejection can occur before translation (for example, an
+        // OCR checkpoint whose manifest page was not registered yet). Project
+        // every retryable stage failure here so the UI cannot misclassify a
+        // store/manifest failure as generic provider unavailability.
         val failure = durableFailuresSnapshot().values
-            .firstOrNull {
-                it.stage == ArtifactStage.TRANSLATION &&
-                    it.status == ArtifactStageStatus.FAILED_RETRYABLE
-            }
+            .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
+            .minWithOrNull(
+                compareBy<DurableFailureMetadata>(
+                    { if (it.category == FailureCategory.PROTOCOL) 0 else 1 },
+                    { it.stage.ordinal },
+                    { it.pageKey },
+                ),
+            )
             ?: return snapshot
         return snapshot.copy(
             pauseAnchorPageKey = snapshot.pauseAnchorPageKey ?: failure.pageKey,
-            pauseReason = snapshot.pauseReason ?: failure.lastFailureMessage,
+            pauseReason = snapshot.pauseReason ?: failure.toUiPauseReason(),
             nextEligibleRetryAtEpochMs = snapshot.nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
         )
     }

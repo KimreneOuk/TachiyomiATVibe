@@ -23,18 +23,21 @@ class ChapterTranslationStoreLazyPersistenceTest {
 
     private val layout = ChapterArtifactLayout("lazy-persistence")
 
-    private fun store(io: FakeChapterDocumentIo): ChapterTranslationStore {
+    private fun store(
+        io: FakeChapterDocumentIo,
+        pageKey: String = "p0.jpg",
+    ): ChapterTranslationStore {
         val documents = AtomicChapterDocuments(io)
         val manifest = ChapterArtifactManifest(
             chapterKey = layout.chapterKey,
-            pages = mapOf("p0.jpg" to PageArtifactRecord(pageKey = "p0.jpg")),
+            pages = mapOf(pageKey to PageArtifactRecord(pageKey = pageKey)),
         )
         documents.publishJson(layout.manifestFileName, manifest) shouldBe true
         val artifact = ChapterArtifactEngine(documents, layout)
         return ChapterTranslationStore(
             translationFile = null,
             fileCreator = null,
-            initialPages = mapOf("p0.jpg" to PageTranslation(sourceFileName = "p0.jpg")),
+            initialPages = mapOf(pageKey to PageTranslation(sourceFileName = pageKey)),
             artifactStore = artifact,
             initialArtifactManifest = manifest,
         ).also { it.enableLazyPersistence() }
@@ -180,5 +183,55 @@ class ChapterTranslationStoreLazyPersistenceTest {
 
         ChapterArtifactEngine(AtomicChapterDocuments(io), layout).readManifest()
             ?.pages?.getValue("p0.jpg")?.candidate shouldBe null
+    }
+
+    @Test
+    fun `zero padded page keeps one candidate dependency across repeated lazy flushes`() = runTest {
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val store = store(io, pageKey = "001.jpg")
+        val page = PageTranslation(
+            sourceFileName = "001.jpg",
+            blocks = mutableListOf(
+                TranslationBlock(
+                    text = "source",
+                    width = 10f,
+                    height = 10f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            ),
+            ocrStatus = StageStatus.READY,
+        )
+
+        store.updatePageGuarded(
+            pageKey = "001.jpg",
+            expected = store.snapshot("001.jpg").toPrecondition(),
+            description = "lazy padded OCR publication",
+        ) { page }
+        store.flush()
+
+        val first = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
+            .readManifest()?.pages?.getValue("001.jpg")?.candidate
+            ?: error("candidate was not published")
+        first.dependencyFingerprint shouldNotBe null
+
+        // A second submission of the same page content must reuse the same
+        // content+generation identity; retries must not manufacture a new
+        // dependency fingerprint and reject their own candidate.
+        store.updatePageGuarded(
+            pageKey = "001.jpg",
+            expected = store.snapshot("001.jpg").toPrecondition(),
+            description = "repeat lazy padded OCR publication",
+        ) { current -> current ?: page }
+        store.flush()
+
+        val second = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
+            .readManifest()?.pages?.getValue("001.jpg")?.candidate
+            ?: error("candidate disappeared after repeat flush")
+        second.generationId shouldBe first.generationId
+        second.dependencyFingerprint shouldBe first.dependencyFingerprint
     }
 }

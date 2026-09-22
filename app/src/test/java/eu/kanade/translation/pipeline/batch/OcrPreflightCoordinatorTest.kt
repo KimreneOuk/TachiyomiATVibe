@@ -370,4 +370,27 @@ class OcrPreflightCoordinatorTest {
         worker.ocrPages shouldContainExactly emptyList()
         artifactStore().readManifest().shouldNotBeNull().activeRun.shouldBeNull()
     }
+
+    @Test
+    fun `lazy preflight drains exact zero padded registration before checkpoint`() = runTest {
+        val store = lazyStore().also { it.enableLazyPersistence() }
+        store.preRegisterPages(listOf("001.jpg"))
+        val worker = FakePreflightOcrWorker(store)
+
+        // The checkpoint is the first durable boundary after OCR. It must
+        // flush the active-store registration/candidate before asking the
+        // artifact manifest to validate the exact source filename.
+        val outcome = coordinator(store, worker, orderedPages("001.jpg"))
+            .runPass1(orderedPages("001.jpg"), TranslatorComputeClass.REMOTE_IO)
+
+        outcome.status shouldBe BatchPass1Status.PAUSED
+        worker.ocrPages shouldContainExactly listOf("001.jpg")
+        val manifest = artifactStore().readManifest().shouldNotBeNull()
+        manifest.pages.keys shouldBe setOf("001.jpg")
+        manifest.ocrCheckpoints.keys shouldBe setOf("001.jpg")
+        val checkpoint = artifactStore().readOcrCheckpoint(
+            manifest.ocrCheckpoints.getValue("001.jpg"),
+        ).shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>().checkpoint
+        checkpoint.pageKey shouldBe "001.jpg"
+    }
 }
