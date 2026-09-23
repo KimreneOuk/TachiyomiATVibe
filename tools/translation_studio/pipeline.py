@@ -25,8 +25,6 @@ import math
 import sys
 import threading
 import time
-import urllib.parse
-import urllib.request
 from collections import deque
 from pathlib import Path
 
@@ -61,6 +59,11 @@ from panel_detector import (PANEL_MODEL, PanelDetector, assign_panel,  # noqa: E
 from sliding_detector import (calculate_windows, is_tall_image,  # noqa: E402
                               merge_window_detections, run_text_detector,
                               window_images)
+from translation_providers import (AI_DEFAULT_OUTPUT_TOKENS,  # noqa: E402
+                                   cache_valid_translations,
+                                   stable_openai_block_indexes,
+                                   translate_google_batch,
+                                   translate_openai_compat_batch)
 
 DETECTOR_PATH = (REPO_ROOT / "app/src/main/assets/models/detection"
                  / "detector-v4-s_int8.onnx")
@@ -1226,36 +1229,97 @@ class Pipeline:
     def translate_page(self, page: str) -> dict:
         """Fill missing translations. Backend from settings.translate_backend:
         'google' (free gtx web endpoint) or 'lm-studio' (OpenAI-compatible).
-        Results are cached in translations.json either way — only regions with
-        no cached translation hit the network."""
+        Only validated provider results are cached; failed/source-equal blocks
+        remain untranslated so a later run can retry them."""
         with self.lock:
             ocr = self._cache["ocr"].get(page)
             if not ocr or not ocr["regions"]:
                 raise ValueError(f"no OCR regions for {page} — run OCR first")
-            tr = self._cache["translations"].setdefault(page, {})
-            targets = [r for r in ocr["regions"]
-                       if r.get("text") and not tr.get(r["id"])]
+            page_cache = self._cache["translations"].get(page, {})
+            cache_changed = False
+            for region in ocr["regions"]:
+                cached = page_cache.get(region["id"])
+                source = str(region.get("text") or "").strip()
+                if isinstance(cached, str) and source and cached.strip() == source:
+                    # Android validation treats a source echo as untranslated.
+                    # Clear legacy failures so they can be retried; no region
+                    # identity or carry/prune mapping is changed here.
+                    page_cache.pop(region["id"], None)
+                    cache_changed = True
+            targets = [(index, region) for index, region in enumerate(ocr["regions"])
+                       if region.get("text") and not page_cache.get(region["id"])]
             if not targets:
+                if cache_changed:
+                    self._save_json("translations.json", self._cache["translations"])
+                    self._render_dirty[page] = True
                 return {"page": page, "translated": 0, "message": "nothing to translate"}
             backend = self.settings.get("translate_backend", "lm-studio")
-            out = []
+            target_lang = self.settings.get("target_lang", "English")
+            source_lang = self.settings.get("source_lang", "Japanese")
+            region_targets = [(region["id"], region["text"])
+                              for _, region in targets]
+            result_by_region: dict[str, str | None]
             if backend == "google":
-                texts = [r["text"] for r in targets]
-                translated = translate_google_batch(texts, self.settings.get("target_lang", "English"))
-                for r, text in zip(targets, translated):
-                    tr[r["id"]] = text
-                    out.append({"id": r["id"], "text": text})
+                translated = translate_google_batch(
+                    [region["text"] for _, region in targets],
+                    target_lang,
+                    source_lang,
+                )
+                result_by_region = {
+                    region["id"]: text
+                    for (_, region), text in zip(targets, translated)
+                }
             else:
-                for r in targets:
-                    text = translate_one(
-                        r["text"], self.settings["target_lang"],
-                        self.settings["endpoint"], self.settings["model"])
-                    tr[r["id"]] = text
-                    out.append({"id": r["id"], "text": text})
-            self._save_json("translations.json", self._cache["translations"])
-            self._render_dirty[page] = True
-            self.log(f"translate {page}: {len(out)} regions via {backend}")
-            return {"page": page, "translated": len(out), "regions": out}
+                try:
+                    page_index = self.pages.index(page)
+                except ValueError:
+                    page_index = 0
+                geometries = []
+                for region in ocr["regions"]:
+                    box = region.get("box") or [0, 0, 0, 0]
+                    x1, y1, x2, y2 = (list(box) + [0, 0, 0, 0])[:4]
+                    geometries.append((float(x1), float(y1),
+                                       float(x2) - float(x1), float(y2) - float(y1)))
+                stable_indexes = stable_openai_block_indexes(geometries)
+                protocol_blocks = [
+                    (f"p{page_index}_b{stable_indexes[region_index]}", region["text"])
+                    for region_index, region in targets
+                ]
+                try:
+                    requested_output_tokens = int(self.settings.get(
+                        "translation_output_tokens", AI_DEFAULT_OUTPUT_TOKENS))
+                except (TypeError, ValueError):
+                    requested_output_tokens = AI_DEFAULT_OUTPUT_TOKENS
+                translated = translate_openai_compat_batch(
+                    protocol_blocks,
+                    target_lang,
+                    self.settings.get("endpoint", "http://127.0.0.1:1234/v1"),
+                    self.settings.get("model", "local-model"),
+                    source_language=source_lang,
+                    temperature=float(self.settings.get("temperature", 0.2)),
+                    requested_output_tokens=requested_output_tokens,
+                )
+                region_by_protocol_id = {
+                    f"p{page_index}_b{stable_indexes[region_index]}": region
+                    for region_index, region in targets
+                }
+                result_by_region = {
+                    region["id"]: translated.get(protocol_id)
+                    for protocol_id, region in region_by_protocol_id.items()
+                }
+
+            out = cache_valid_translations(page_cache, region_targets, result_by_region)
+            cache_changed = cache_changed or bool(out)
+            if cache_changed:
+                self._cache["translations"][page] = page_cache
+                self._save_json("translations.json", self._cache["translations"])
+                self._render_dirty[page] = True
+            translated_ids = {entry["id"] for entry in out}
+            untranslated = [region["id"] for _, region in targets
+                            if region["id"] not in translated_ids]
+            self.log(f"translate {page}: {len(out)}/{len(targets)} regions via {backend}")
+            return {"page": page, "translated": len(out), "regions": out,
+                    "untranslated": untranslated}
 
     # ----------------------------------------------------------------- render
     def _inpaint_paddle_det(self):
@@ -2461,111 +2525,6 @@ def _page_of(img: Image.Image) -> str:
 def _erase_one(img: Image.Image, box: Box, settings: dict) -> None:
     fill = _erase_fill_color(img, box, settings)
     ImageDraw.Draw(img).rectangle(box.as_list(), fill=fill)
-
-
-# ================================================================ translate
-def translate_google_batch(texts: list[str], target_lang: str = "English") -> list[str]:
-    """Robust multi-endpoint Google Translate client with page-level batching.
-    Batches texts using delimiters to reduce HTTP requests by 90-95%, avoiding 429s,
-    and falls back across multiple endpoints (clients5 Chrome dict proxy, gtx, and MyMemory)."""
-    if not texts:
-        return []
-    lang_map = {"English": "en", "Japanese": "ja", "Spanish": "es",
-                "French": "fr", "German": "de", "Portuguese": "pt",
-                "Italian": "it", "Russian": "ru", "Korean": "ko",
-                "Chinese": "zh-CN"}
-    tl = lang_map.get(target_lang, "en")
-    cleaned_texts = [t.replace("\n", " ").strip() for t in texts]
-
-    # Strategy 1: Batch translation via clients5 (Chrome dict endpoint) with ||| delimiter
-    if len(cleaned_texts) > 1:
-        delim = " ||| "
-        combined = delim.join(cleaned_texts)
-        try:
-            q = urllib.parse.quote(combined)
-            url = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ja&tl={tl}&q={q}"
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                res_str = data[0] if isinstance(data, list) and data else str(data)
-                parts = [p.strip() for p in res_str.split("|||")]
-                if len(parts) == len(texts):
-                    return parts
-        except Exception:
-            pass
-
-    # Strategy 2: Per-item fallback with multi-endpoint failover
-    results = []
-    for t in cleaned_texts:
-        if not t:
-            results.append("")
-            continue
-        res = None
-        q = urllib.parse.quote(t)
-        # Attempt A: clients5
-        try:
-            url = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ja&tl={tl}&q={q}"
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                res = data[0] if isinstance(data, list) and data else str(data)
-        except Exception:
-            pass
-
-        # Attempt B: gtx endpoint
-        if not res:
-            try:
-                url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl={tl}&dt=t&q={q}"
-                req = urllib.request.Request(url, headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    res = "".join(seg[0] for seg in data[0] if seg and seg[0]).strip()
-            except Exception:
-                pass
-
-        # Attempt C: MyMemory free API fallback
-        if not res:
-            try:
-                url = f"https://api.mymemory.translated.net/get?q={q}&langpair=ja|{tl}"
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    res = data.get("responseData", {}).get("translatedText", "")
-            except Exception:
-                pass
-
-        results.append(res or t)
-        time.sleep(0.04)
-
-    return results
-
-
-def translate_google(text: str, target_lang: str) -> str:
-    res = translate_google_batch([text], target_lang)
-    return res[0] if res else text
-
-
-def translate_one(text: str, target_lang: str, endpoint: str, model: str) -> str:
-    url = endpoint.rstrip("/") + "/chat/completions"
-    payload = {
-        "model": model,
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system",
-             "content": f"You translate manga dialogue to {target_lang}. "
-                        f"Reply with ONLY the translation, no notes, no quotes."},
-            {"role": "user", "content": text},
-        ],
-    }
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return data["choices"][0]["message"]["content"].strip()
 
 
 DEFAULT_SETTINGS = {
