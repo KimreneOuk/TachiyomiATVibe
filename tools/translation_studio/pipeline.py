@@ -24,6 +24,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 import sys
 import threading
 import time
@@ -98,6 +99,305 @@ def _stable_fingerprint(value) -> str:
     payload = json.dumps(value, sort_keys=True, separators=(",", ":"),
                          ensure_ascii=False, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+_STABLE_BLOCK_ID = re.compile(r"(?:p\d+_)?b(\d+)$")
+_TRANSLATION_SCHEMA = "stable-block-v1"
+_TRANSLATION_META_KEYS = {"_schema", "_pruned"}
+
+
+def _stable_block_index(value) -> int | None:
+    match = _STABLE_BLOCK_ID.fullmatch(str(value or ""))
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _region_cache_id(region: dict) -> str:
+    """Return the persistent translation key, falling back for legacy callers."""
+    for value in (region.get("stable_id"), region.get("block_id"), region.get("id")):
+        index = _stable_block_index(value)
+        if index is not None:
+            return f"b{index}"
+    return str(region.get("id") or "")
+
+
+def _region_box(region: dict) -> list | None:
+    raw = region.get("box")
+    if not isinstance(raw, (list, tuple)) or len(raw) < 4:
+        return None
+    try:
+        box = [float(value) for value in raw[:4]]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return box if all(math.isfinite(value) for value in box) else None
+
+
+def _region_sort_key(region: dict, original_index: int) -> tuple:
+    box = _region_box(region)
+    if box is None:
+        return (math.inf, math.inf, math.inf, math.inf, original_index)
+    x1, y1, x2, y2 = box
+    return (y1, x1, max(0.0, x2 - x1), max(0.0, y2 - y1), original_index)
+
+
+def _assign_stable_block_ids(regions: list[dict],
+                             previous_regions: list[dict] | None = None) -> None:
+    """Apply Android StableBlockIds ordering and reuse valid persisted ids.
+
+    Existing per-region ids win. On an OCR refresh, a detector artifact id
+    links the new OCR result to its persisted stable id where that link is
+    unique. New blocks receive the next unused spatially ordered ``bN`` id.
+    """
+    previous_by_artifact: dict[str, list[int]] = {}
+    for previous in previous_regions or []:
+        artifact_id = str(previous.get("artifact_id") or "")
+        index = next((parsed for value in (previous.get("stable_id"),
+                                            previous.get("block_id"),
+                                            previous.get("id"))
+                      if (parsed := _stable_block_index(value)) is not None), None)
+        if artifact_id and index is not None:
+            previous_by_artifact.setdefault(artifact_id, []).append(index)
+
+    ordered = sorted(enumerate(regions),
+                     key=lambda item: _region_sort_key(item[1], item[0]))
+    planned = []
+    for original_index, region in ordered:
+        existing = next((parsed for value in (region.get("stable_id"),
+                                               region.get("block_id"),
+                                               region.get("id"))
+                         if (parsed := _stable_block_index(value)) is not None), None)
+        inherited = False
+        if existing is None:
+            candidates = previous_by_artifact.get(str(region.get("artifact_id") or ""), [])
+            if len(candidates) == 1:
+                existing = candidates[0]
+                inherited = True
+        planned.append((original_index, region, existing, inherited))
+
+    # Reserve every valid ID before assigning any new spatial slot. Otherwise
+    # an earlier new block can consume b0 before a later persisted b0 appears.
+    owner_by_id: dict[int, int] = {}
+    for original_index, _region, existing, inherited in sorted(
+            planned, key=lambda item: (item[3], _region_sort_key(item[1], item[0]))):
+        if existing is not None:
+            owner_by_id.setdefault(existing, original_index)
+    reserved = set(owner_by_id)
+    used: set[int] = set()
+    next_index = 0
+    for original_index, region, existing, _inherited in planned:
+        if existing is not None and owner_by_id.get(existing) == original_index:
+            index = existing
+        else:
+            while next_index in reserved or next_index in used:
+                next_index += 1
+            index = next_index
+            next_index += 1
+        used.add(index)
+        region["stable_id"] = f"b{index}"
+
+
+def _region_fingerprint(region: dict) -> str:
+    assignment = region.get("segmenter_assignment")
+    assignment = assignment if isinstance(assignment, dict) else {}
+    parent_box = (region.get("parent_box") or region.get("parent_bubble_box")
+                  or region.get("parent"))
+    if isinstance(parent_box, dict):
+        parent_box = parent_box.get("box")
+    return _stable_fingerprint({
+        "schema": "studio-ocr-region-v1",
+        "text": str(region.get("text") or ""),
+        "box": _region_box(region),
+        "parent": parent_box,
+        "label": region.get("label"),
+        "score": region.get("score"),
+        "mask_ref": assignment.get("mask_ref") or region.get("mask_ref"),
+    })
+
+
+def _translation_text(value) -> str:
+    if isinstance(value, dict):
+        value = value.get("text", "")
+    return str(value or "")
+
+
+def _translation_origin(value) -> str:
+    if isinstance(value, dict):
+        return str(value.get("origin") or "legacy")
+    return "legacy"
+
+
+def _region_snapshot(region: dict | None) -> dict | None:
+    if not isinstance(region, dict):
+        return None
+    keys = ("id", "stable_id", "box", "ocr_box", "parent_box", "label",
+            "score", "text", "segmenter_assignment")
+    return {key: copy.deepcopy(region[key]) for key in keys if key in region}
+
+
+def _translation_record(value, *, origin: str = "legacy",
+                        fingerprint: str | None = None,
+                        region: dict | None = None) -> dict:
+    if isinstance(value, dict):
+        record = copy.deepcopy(value)
+        record["text"] = _translation_text(value)
+        record.setdefault("origin", origin)
+        record.setdefault("ocr_fingerprint", fingerprint)
+        if region is not None:
+            record["region"] = _region_snapshot(region)
+        return record
+    return {"text": _translation_text(value), "origin": origin,
+            "ocr_fingerprint": fingerprint,
+            "region": _region_snapshot(region)}
+
+
+def _append_pruned_translation(page_cache: dict, stable_id: str,
+                               record: dict, reason: str) -> dict:
+    pruned = page_cache.setdefault("_pruned", [])
+    if not isinstance(pruned, list):
+        pruned = page_cache["_pruned"] = []
+    row = {
+        "stable_id": stable_id,
+        "text": _translation_text(record),
+        "origin": str(record.get("origin") or "legacy"),
+        "ocr_fingerprint": record.get("ocr_fingerprint"),
+        "reason": reason,
+        "region": copy.deepcopy(record.get("region")),
+        "pruned_at": time.time(),
+    }
+    pruned.append(row)
+    return row
+
+
+def _carry_prune_translation_page(page_cache: dict,
+                                 regions: list[dict]) -> list[dict]:
+    """Reconcile active translations against one persisted OCR generation."""
+    if not isinstance(page_cache, dict):
+        return []
+    by_stable_id = {}
+    for region in regions:
+        stable_id = _region_cache_id(region)
+        if stable_id:
+            by_stable_id[stable_id] = region
+    pruned = []
+    for stable_id, value in list(page_cache.items()):
+        if stable_id in _TRANSLATION_META_KEYS:
+            continue
+        record = _translation_record(value)
+        region = by_stable_id.get(str(stable_id))
+        if region is None:
+            pruned.append(_append_pruned_translation(
+                page_cache, str(stable_id), record, "unmapped-region"))
+            page_cache.pop(stable_id, None)
+            continue
+        current_fingerprint = (region.get("ocr_fingerprint")
+                               or _region_fingerprint(region))
+        record["region"] = _region_snapshot(region)
+        origin = _translation_origin(record)
+        if origin == "auto":
+            record["ocr_fingerprint"] = current_fingerprint
+            page_cache[stable_id] = record
+        elif record.get("ocr_fingerprint") == current_fingerprint:
+            page_cache[stable_id] = record
+        else:
+            pruned.append(_append_pruned_translation(
+                page_cache, str(stable_id), record,
+                "user-edit-fingerprint-mismatch" if origin == "user"
+                else "legacy-fingerprint-mismatch"))
+            page_cache.pop(stable_id, None)
+    page_cache["_schema"] = _TRANSLATION_SCHEMA
+    return pruned
+
+
+def _migrate_translation_page(page_cache: dict,
+                              old_id_to_stable: dict[str, str],
+                              regions: list[dict] | None) -> bool:
+    """Upgrade ordinal-keyed entries; retain ambiguous values for audit."""
+    if not isinstance(page_cache, dict):
+        return False
+    changed = page_cache.get("_schema") != _TRANSLATION_SCHEMA
+    current_by_id = {_region_cache_id(region): region for region in (regions or [])}
+    current_by_fingerprint: dict[str, list[dict]] = {}
+    for region in regions or []:
+        fingerprint = region.get("ocr_fingerprint") or _region_fingerprint(region)
+        current_by_fingerprint.setdefault(fingerprint, []).append(region)
+
+    migrated: dict[str, dict] = {}
+    untouched: dict[str, object] = {}
+    entries = list(page_cache.items())
+    entries.sort(key=lambda item: 0 if _stable_block_index(item[0]) is not None else 1)
+    for old_key, value in entries:
+        if old_key in _TRANSLATION_META_KEYS:
+            if old_key == "_pruned" and isinstance(value, list):
+                untouched[old_key] = value
+            continue
+        old_key = str(old_key)
+        record = _translation_record(value)
+        region = None
+        target = None
+        # An exact OCR fingerprint is stronger evidence than an old ordinal.
+        # Use the position key only when the legacy value has no fingerprint.
+        if regions is not None and record.get("ocr_fingerprint"):
+            matches = current_by_fingerprint.get(str(record["ocr_fingerprint"]), [])
+            if len(matches) == 1:
+                region = matches[0]
+                target = _region_cache_id(region)
+        if target is None:
+            target = old_id_to_stable.get(old_key)
+        if target is None and _stable_block_index(old_key) is not None:
+            target = f"b{_stable_block_index(old_key)}"
+        if region is None:
+            region = current_by_id.get(target) if target else None
+        if target and region is not None:
+            record = _translation_record(value, region=region)
+            if not record.get("ocr_fingerprint"):
+                record["ocr_fingerprint"] = (region.get("ocr_fingerprint")
+                                             or _region_fingerprint(region))
+            existing = migrated.get(target)
+            if existing is not None and _translation_text(existing) != _translation_text(record):
+                # When both records have unknown legacy provenance, a mapped
+                # ordinal alias can be a late edit made by an older caller.
+                # Keep that edit active and retain the prior stable value in
+                # the audit list. Explicit auto/user stable records take
+                # precedence over ambiguous legacy aliases.
+                if (_translation_origin(existing) == "legacy"
+                        and _translation_origin(record) == "legacy"
+                        and _stable_block_index(old_key) is None):
+                    _append_pruned_translation(
+                        page_cache, target, existing,
+                        "migration-conflict-superseded")
+                    migrated[target] = record
+                else:
+                    _append_pruned_translation(page_cache, old_key, record,
+                                               "migration-collision")
+            elif existing is None:
+                migrated[target] = record
+            changed = True
+        elif regions is None:
+            # OCR was reset or has not run. Keep the old key and text pending;
+            # a later OCR run will map it only if the old region identity exists.
+            untouched[old_key] = record
+            changed = True
+        else:
+            _append_pruned_translation(page_cache, old_key, record,
+                                       "migration-unmapped")
+            changed = True
+
+    old_active = {key: value for key, value in page_cache.items()
+                  if key not in _TRANSLATION_META_KEYS}
+    new_page = {**migrated, **untouched,
+                "_schema": _TRANSLATION_SCHEMA}
+    if page_cache.get("_pruned") is not None:
+        new_page["_pruned"] = page_cache["_pruned"]
+    if old_active != {key: value for key, value in new_page.items()
+                      if key not in _TRANSLATION_META_KEYS}:
+        changed = True
+    page_cache.clear()
+    page_cache.update(new_page)
+    return changed
 
 
 @lru_cache(maxsize=32)
@@ -421,6 +721,52 @@ class Pipeline:
                 "ocr": self._load_json("ocr.json", {}),
                 "translations": self._load_json("translations.json", {}),
             }
+            ocr_cache_changed = False
+            translation_cache_changed = False
+            for page, ocr_entry in self._cache["ocr"].items():
+                if not isinstance(ocr_entry, dict) or not isinstance(ocr_entry.get("regions"), list):
+                    continue
+                regions = ocr_entry["regions"]
+                before = copy.deepcopy(regions)
+                previous_ocr_fingerprint = ocr_entry.get("ocr_fingerprint")
+                self._prepare_region_identity(page, regions)
+                old_id_to_stable = {}
+                for old_region, region in zip(before, regions):
+                    old_id = old_region.get("id")
+                    if old_id is not None:
+                        old_id_to_stable[str(old_id)] = region["stable_id"]
+                    old_stable_id = old_region.get("stable_id")
+                    if old_stable_id is not None:
+                        old_id_to_stable[str(old_stable_id)] = region["stable_id"]
+                if regions != before:
+                    ocr_cache_changed = True
+                # Do not rewrite a fingerprintless empty legacy cache just by
+                # opening a chapter.  It has no region identities to migrate;
+                # the next OCR operation will persist the current schema.
+                if regions or previous_ocr_fingerprint is not None:
+                    self._refresh_page_ocr_fingerprint(ocr_entry)
+                    if ocr_entry.get("ocr_fingerprint") != previous_ocr_fingerprint:
+                        ocr_cache_changed = True
+                page_translations = self._cache["translations"].setdefault(page, {})
+                if not isinstance(page_translations, dict):
+                    page_translations = self._cache["translations"][page] = {}
+                translation_cache_changed |= _migrate_translation_page(
+                    page_translations, old_id_to_stable, regions)
+                pruned = _carry_prune_translation_page(page_translations, regions)
+                if pruned:
+                    translation_cache_changed = True
+            # An ordinal-keyed file may outlive a reset that removed ocr.json.
+            # Keep those values pending; the next OCR refresh will either map
+            # them from persisted evidence or move them to the audit list.
+            for page, page_translations in self._cache["translations"].items():
+                if page in self._cache["ocr"] or not isinstance(page_translations, dict):
+                    continue
+                translation_cache_changed |= _migrate_translation_page(
+                    page_translations, {}, None)
+            if ocr_cache_changed:
+                self._save_json("ocr.json", self._cache["ocr"])
+            if translation_cache_changed:
+                self._save_json("translations.json", self._cache["translations"])
             self._dims = {}
             self._page_fingerprints = {}
             self._crop_cache = {}
@@ -432,6 +778,61 @@ class Pipeline:
             self.log(f"opened chapter: {ch} ({len(self.pages)} pages)"
                      + (f", reference: {self.reference}" if self.reference else ""))
             return self.state()
+
+    def _parent_box_for_region(self, page: str, region: dict) -> list | None:
+        """Resolve the OCR region's parent bubble from the cached detection set."""
+        raw = self._cache.get("detections", {}).get(page) or {}
+        model = (raw.get("models", {}).get("text-detector", {})
+                 if isinstance(raw, dict) else {})
+        bubbles = []
+        for row in model.get("derived_outputs", []) or []:
+            attrs = row.get("attrs", {}) if isinstance(row, dict) else {}
+            geometry = row.get("geometry", {}) if isinstance(row, dict) else {}
+            if attrs.get("label") != 0 or not all(
+                    key in geometry for key in ("x1", "y1", "x2", "y2")):
+                continue
+            try:
+                bubbles.append(Box(*(float(geometry[key]) for key in
+                                     ("x1", "y1", "x2", "y2"))))
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if not bubbles:
+            for row in raw.get("boxes", []) if isinstance(raw, dict) else []:
+                if not isinstance(row, (list, tuple)) or len(row) < 6:
+                    continue
+                try:
+                    if int(row[0]) == 0:
+                        bubbles.append(Box(*(float(value) for value in row[2:6])))
+                except (TypeError, ValueError, OverflowError):
+                    continue
+        box = _region_box(region)
+        if box is None or not bubbles:
+            return None
+        try:
+            parent = select_parent(Box(*box), bubbles)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return parent.as_list() if parent is not None else None
+
+    def _prepare_region_identity(self, page: str, regions: list[dict],
+                                 previous_regions: list[dict] | None = None) -> None:
+        for region in regions:
+            if "parent_box" not in region:
+                region["parent_box"] = self._parent_box_for_region(page, region)
+        _assign_stable_block_ids(regions, previous_regions)
+        for region in regions:
+            region["ocr_fingerprint"] = _region_fingerprint(region)
+
+    @staticmethod
+    def _refresh_page_ocr_fingerprint(ocr_entry: dict) -> None:
+        ocr_entry["ocr_fingerprint"] = _stable_fingerprint({
+            "schema": "studio-ocr-region-set-v1",
+            "cache_fingerprint": ocr_entry.get("cache_fingerprint"),
+            "engine": ocr_entry.get("engine"),
+            "regions": [{"stable_id": region.get("stable_id"),
+                         "ocr_fingerprint": region.get("ocr_fingerprint")}
+                        for region in ocr_entry.get("regions", [])],
+        })
 
     def save_settings(self, patch: dict) -> dict:
         with self.lock:
@@ -1340,14 +1741,18 @@ class Pipeline:
 
         kept_regions = []
         panel_assignment_records = []
+        parent_bubbles = [item["box"] for item in canonical
+                          if item["label"] == 0]
         for index, item in enumerate(texts):
             box = item["box"]
+            parent = select_parent(box, parent_bubbles) if parent_bubbles else None
             region = {"id": f"r{index:02d}",
                       "artifact_id": item["artifact_id"],
                       "label": item["label"],
                       "class": N_CLASSES.get(item["label"], str(item["label"])),
                       "score": round(item["score"], 3),
                       "box": box.as_list(),
+                      "parent_box": parent.as_list() if parent is not None else None,
                       "ocr_box": clamp_pad(box, page_wh).as_list()}
             if item["merged_with"]:
                 region["merged_from"] = list(item["merged_with"])
@@ -1591,15 +1996,25 @@ class Pipeline:
             if (not force
                     and prev_entry.get("cache_fingerprint") == cache_fingerprint
                     and isinstance(prev_entry.get("regions"), list)):
+                self._prepare_region_identity(
+                    page, prev_entry["regions"], prev_entry["regions"])
+                self._refresh_page_ocr_fingerprint(prev_entry)
+                self._cache["ocr"][page] = prev_entry
+                pruned = self.carry_translations(page)
+                self._save_json("ocr.json", self._cache["ocr"])
                 return {"page": page, "regions": prev_entry["regions"],
                         "runs": prev_entry.get("runs", {}),
                         "ms": prev_entry.get("ms", 0),
                         "infer_ms": prev_entry.get("infer_ms", prev_entry.get("ms", 0)),
                         "load_ms": prev_entry.get("load_ms", 0),
                         "engine": engine_name, "cache_hit": True,
-                        "cache_fingerprint": cache_fingerprint}
+                        "cache_fingerprint": cache_fingerprint,
+                        "pruned": pruned}
 
             # Cached results from a different engine are not reusable.
+            previous_regions = copy.deepcopy(
+                prev_entry.get("regions", [])
+                if isinstance(prev_entry.get("regions"), list) else [])
             if prev_entry.get("engine", "mangaocr") != engine_name:
                 prev_entry = {}
             if regions:
@@ -1614,35 +2029,24 @@ class Pipeline:
             else:
                 results, runs, ms = [], {}, 0
 
-            prev = {row["id"]: row for row in prev_entry.get("regions", [])}
             for region, result in zip(regions, results):
                 region.update(result)
-                # Keep the existing translation carry behavior on OCR reruns.
-                for previous_id, previous_region in prev.items():
-                    if iou_at_least(region["box"], previous_region["box"], 0.7):
-                        region["carried_from"] = previous_id
-                        break
+            self._prepare_region_identity(page, regions, previous_regions)
             load_ms = self._load_times.get(f"ocr_{engine_name}", 0)
-            ocr_fingerprint = _stable_fingerprint({
-                "inputs": cache_inputs,
-                "regions": [{key: region.get(key) for key in
-                             ("id", "artifact_id", "label", "score", "box", "ocr_box",
-                              "text", "raw_text", "confidence", "lines", "engine",
-                              "error", "position_limit")}
-                            for region in regions],
-            })
-            self._cache["ocr"][page] = {
+            ocr_entry = {
                 "regions": regions, "runs": runs,
                 "ms": ms, "infer_ms": ms, "load_ms": load_ms,
                 "engine": engine_name,
                 "page_fingerprint": self._current_page_fingerprint(page),
                 "detection_fingerprint": detection["decision_fingerprint"],
                 "cache_fingerprint": cache_fingerprint,
-                "ocr_fingerprint": ocr_fingerprint,
                 "cache_inputs": cache_inputs,
             }
+            self._refresh_page_ocr_fingerprint(ocr_entry)
+            self._cache["ocr"][page] = ocr_entry
             self._crop_cache.pop(page, None)
             self._save_json("ocr.json", self._cache["ocr"])
+            pruned = self.carry_translations(page)
             self._render_dirty[page] = True
             texts = [r.get("text", "") for r in regions]
             self.log(f"ocr[{engine_name}] {page}: {len(regions)} regions, "
@@ -1650,34 +2054,67 @@ class Pipeline:
             return {"page": page, "regions": regions, "runs": runs,
                     "ms": ms, "infer_ms": ms, "load_ms": load_ms,
                     "engine": engine_name, "cache_hit": False,
-                    "cache_fingerprint": cache_fingerprint}
+                    "cache_fingerprint": cache_fingerprint,
+                    "pruned": pruned}
 
     # -------------------------------------------------------------- translate
     def translations(self, page: str) -> dict:
-        return self._cache["translations"].get(page, {})
+        """Return display-region ids mapped to the stable-keyed cache text."""
+        page_cache = self._cache.get("translations", {}).get(page, {})
+        if not isinstance(page_cache, dict):
+            return {}
+        regions = self._cache.get("ocr", {}).get(page, {}).get("regions", [])
+        result = {}
+        for region in regions:
+            stable_id = _region_cache_id(region)
+            display_id = str(region.get("id") or stable_id)
+            # Keep an in-memory legacy alias readable until the next OCR
+            # reconciliation can map it from persisted region evidence.  New
+            # writes always use stable keys; stable data wins if both exist.
+            cache_id = stable_id if stable_id in page_cache else display_id
+            if cache_id in page_cache:
+                result[display_id] = _translation_text(page_cache[cache_id])
+        return result
 
     def set_translation(self, page: str, region_id: str, text: str) -> dict:
         with self.lock:
-            self._cache["translations"].setdefault(page, {})[region_id] = text
+            regions = self._cache.get("ocr", {}).get(page, {}).get("regions", [])
+            region = next((item for item in regions
+                           if str(item.get("id")) == str(region_id)
+                           or _region_cache_id(item) == str(region_id)), None)
+            stable_id = _region_cache_id(region) if region else str(region_id)
+            fingerprint = ((region.get("ocr_fingerprint") or _region_fingerprint(region))
+                           if region else None)
+            page_cache = self._cache["translations"].setdefault(page, {})
+            page_cache[stable_id] = _translation_record(
+                text, origin="user", fingerprint=fingerprint, region=region)
+            page_cache["_schema"] = _TRANSLATION_SCHEMA
             self._save_json("translations.json", self._cache["translations"])
             self._render_dirty[page] = True
-            return {"page": page, "region_id": region_id, "saved": True}
+            return {"page": page, "region_id": region_id,
+                    "stable_id": stable_id, "saved": True}
 
-    def carry_translations(self, page: str) -> None:
-        """After re-OCR: copy translations onto regions whose box survived."""
+    def carry_translations(self, page: str) -> list[dict]:
+        """Reconcile stable translation keys after OCR, retaining an audit trail."""
         regs = self._cache["ocr"].get(page, {}).get("regions", [])
-        page_tr = self._cache["translations"].get(page, {})
-        if not page_tr or not regs:
-            return
-        by_old_id = {}
-        for r in regs:
-            src = r.get("carried_from")
-            if src and src in page_tr and not page_tr.get(r["id"]):
-                by_old_id[r["id"]] = page_tr[src]
-        if by_old_id:
-            page_tr.update(by_old_id)
+        page_tr = self._cache["translations"].setdefault(page, {})
+        before_pruned = len(page_tr.get("_pruned", [])) if isinstance(
+            page_tr.get("_pruned"), list) else 0
+        old_id_to_stable = {
+            str(region.get("id")): _region_cache_id(region)
+            for region in regs if region.get("id")
+        }
+        migrated = _migrate_translation_page(page_tr, old_id_to_stable, regs)
+        _carry_prune_translation_page(page_tr, regs)
+        audit = page_tr.get("_pruned", [])
+        pruned = audit[before_pruned:] if isinstance(audit, list) else []
+        if migrated or page_tr:
             self._save_json("translations.json", self._cache["translations"])
+        if pruned:
             self._render_dirty[page] = True
+            self.log(f"translation prune {page}: {len(pruned)} unmappable entr"
+                     f"{'y' if len(pruned) == 1 else 'ies'} (audit retained)")
+        return pruned
 
     def translate_page(self, page: str) -> dict:
         """Fill missing translations. Backend from settings.translate_backend:
@@ -1690,17 +2127,22 @@ class Pipeline:
                 raise ValueError(f"no OCR regions for {page} — run OCR first")
             page_cache = self._cache["translations"].get(page, {})
             cache_changed = False
+            cache_ids = {}
             for region in ocr["regions"]:
-                cached = page_cache.get(region["id"])
+                cache_id = _region_cache_id(region)
+                cache_ids[region["id"]] = cache_id
+                cached = page_cache.get(cache_id)
                 source = str(region.get("text") or "").strip()
-                if isinstance(cached, str) and source and cached.strip() == source:
+                cached_text = _translation_text(cached)
+                if cached_text and source and cached_text.strip() == source:
                     # Android validation treats a source echo as untranslated.
-                    # Clear legacy failures so they can be retried; no region
-                    # identity or carry/prune mapping is changed here.
-                    page_cache.pop(region["id"], None)
+                    # Clear stale values so they can be retried. Metadata is
+                    # removed with the rejected text, as with the old cache.
+                    page_cache.pop(cache_id, None)
                     cache_changed = True
             targets = [(index, region) for index, region in enumerate(ocr["regions"])
-                       if region.get("text") and not page_cache.get(region["id"])]
+                       if region.get("text")
+                       and not _translation_text(page_cache.get(cache_ids[region["id"]]))]
             if not targets:
                 if cache_changed:
                     self._save_json("translations.json", self._cache["translations"])
@@ -1709,7 +2151,7 @@ class Pipeline:
             backend = self.settings.get("translate_backend", "lm-studio")
             target_lang = self.settings.get("target_lang", "English")
             source_lang = self.settings.get("source_lang", "Japanese")
-            region_targets = [(region["id"], region["text"])
+            region_targets = [(cache_ids[region["id"]], region["text"])
                               for _, region in targets]
             result_by_region: dict[str, str | None]
             if backend == "google":
@@ -1719,7 +2161,7 @@ class Pipeline:
                     source_lang,
                 )
                 result_by_region = {
-                    region["id"]: text
+                    cache_ids[region["id"]]: text
                     for (_, region), text in zip(targets, translated)
                 }
             else:
@@ -1734,6 +2176,11 @@ class Pipeline:
                     geometries.append((float(x1), float(y1),
                                        float(x2) - float(x1), float(y2) - float(y1)))
                 stable_indexes = stable_openai_block_indexes(geometries)
+                for region_index, region in enumerate(ocr["regions"]):
+                    persisted_index = _stable_block_index(
+                        cache_ids[region["id"]])
+                    if persisted_index is not None:
+                        stable_indexes[region_index] = persisted_index
                 protocol_blocks = [
                     (f"p{page_index}_b{stable_indexes[region_index]}", region["text"])
                     for region_index, region in targets
@@ -1757,21 +2204,47 @@ class Pipeline:
                     for region_index, region in targets
                 }
                 result_by_region = {
-                    region["id"]: translated.get(protocol_id)
+                    cache_ids[region["id"]]: translated.get(protocol_id)
                     for protocol_id, region in region_by_protocol_id.items()
                 }
 
-            out = cache_valid_translations(page_cache, region_targets, result_by_region)
+            provider_cache = {
+                key: _translation_text(value)
+                for key, value in page_cache.items()
+                if key not in _TRANSLATION_META_KEYS
+            }
+            out = cache_valid_translations(provider_cache, region_targets,
+                                           result_by_region)
             cache_changed = cache_changed or bool(out)
             if cache_changed:
+                region_by_cache_id = {cache_ids[region["id"]]: region
+                                      for region in ocr["regions"]}
+                for entry in out:
+                    stable_id = entry["id"]
+                    region = region_by_cache_id.get(stable_id)
+                    page_cache[stable_id] = _translation_record(
+                        entry.get("text", ""), origin="auto",
+                        fingerprint=((region.get("ocr_fingerprint")
+                                      or _region_fingerprint(region))
+                                     if region else None),
+                        region=region)
+                if page_cache:
+                    page_cache["_schema"] = _TRANSLATION_SCHEMA
                 self._cache["translations"][page] = page_cache
                 self._save_json("translations.json", self._cache["translations"])
                 self._render_dirty[page] = True
             translated_ids = {entry["id"] for entry in out}
             untranslated = [region["id"] for _, region in targets
-                            if region["id"] not in translated_ids]
+                            if cache_ids[region["id"]] not in translated_ids]
+            output_regions = []
+            for entry in out:
+                stable_id = entry["id"]
+                region = next((row for row in ocr["regions"]
+                               if cache_ids[row["id"]] == stable_id), None)
+                output_regions.append({**entry, "stable_id": stable_id,
+                                       "id": region.get("id") if region else stable_id})
             self.log(f"translate {page}: {len(out)}/{len(targets)} regions via {backend}")
-            return {"page": page, "translated": len(out), "regions": out,
+            return {"page": page, "translated": len(out), "regions": output_regions,
                     "untranslated": untranslated}
 
     # ----------------------------------------------------------------- render
@@ -2638,7 +3111,6 @@ class Pipeline:
                 det = self.detect_page(page, conf)
                 ocr = self.ocr_page(page, conf)
                 inpaint = self.inpaint_page(page)
-                self.carry_translations(page)
                 if translate:
                     try:
                         self.translate_page(page)
@@ -2650,6 +3122,7 @@ class Pipeline:
                     "inpaint": inpaint["path"],
                     "render": rend["path"],
                     "translations": self.translations(page),
+                    "pruned": ocr.get("pruned", []),
                     "total_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
     @_page_operation

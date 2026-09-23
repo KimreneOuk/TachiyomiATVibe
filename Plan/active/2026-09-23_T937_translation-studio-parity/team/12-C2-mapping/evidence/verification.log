@@ -1,0 +1,697 @@
+
+=== selftest_cache_fingerprints.py: passed ===
+[00:45:21] opened chapter: C:\Users\User\AppData\Local\Temp\t937-a5-legacy-adoption-w2f4gsz1 (1 pages)
+[00:45:21] detect page.png: 1 raw (infer 1.0ms, load 0.0ms)
+[00:45:21] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[00:45:21] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (2.4ms)
+[00:45:22] render page.png: 1/1 regions translated -> page.png (13.3ms)
+[00:45:22] translation prune page.png: 1 unmappable entry (audit retained)
+[00:45:22] render page.png: 1/1 regions translated -> page.png (5.9ms)
+[00:45:22] detect page.png: stale capture; recapturing model outputs
+[00:45:22] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[00:45:22] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (1.0ms)
+[00:45:22] render page.png: 1/1 regions translated -> page.png (9.5ms)
+[00:45:22] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[00:45:22] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (1.5ms)
+[00:45:22] render page.png: 1/1 regions translated -> page.png (11.1ms)
+[00:45:22] translation prune page.png: 1 unmappable entry (audit retained)
+[00:45:22] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[00:45:23] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.9ms)
+[00:45:23] render page.png: 0/1 regions translated -> page.png (7.8ms)
+[00:45:23] detect page.png: stale capture; recapturing model outputs
+[00:45:23] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[00:45:23] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.9ms)
+[00:45:23] render page.png: 0/1 regions translated -> page.png (7.1ms)
+[00:45:23] detect page.png: 1 raw (infer 1.0ms, load 0.0ms)
+[00:45:23] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[00:45:23] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.9ms)
+[00:45:23] render page.png: 0/1 regions translated -> page.png (7.8ms)
+{
+  "status": "ok",
+  "evidence": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-c2-translation-mapping\\Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\12-C2-mapping\\evidence\\baseline\\cache_fingerprints.json",
+  "counts": {
+    "capture": 4,
+    "ocr": 6,
+    "inpaint": 6,
+    "render": 7
+  }
+}
+
+=== selftest_mask_planner.py: passed ===
+[00:45:24] inpaint[android android-fill+opencv] normal.png: 784 mask pixels -> normal.png (62.4ms)
+[00:45:24] render normal.png: 1/2 regions translated -> normal.png (47.0ms)
+[00:45:24] inpaint[android android-fill+opencv] normal.png: 2190 mask pixels -> normal.png (142.4ms)
+[00:45:24] render normal.png: 2/2 regions translated -> normal.png (61.8ms)
+[00:45:25] inpaint[android android-fill+opencv] normal.png: 784 mask pixels -> normal.png (57.7ms)
+[00:45:25] render normal.png: 1/2 regions translated -> normal.png (48.1ms)
+[00:45:25] inpaint[android android-fill+opencv] normal.png: 1140 mask pixels -> normal.png (49.4ms)
+[00:45:25] inpaint[android android-fill+opencv] normal.png: 784 mask pixels -> normal.png (75.9ms)
+[00:45:25] inpaint[android android-fill+opencv] union-scope.png: 1350 mask pixels -> union-scope.png (201.2ms)
+[00:45:26] inpaint[android android-fill+opencv] tall.png: 660 mask pixels -> tall.png (236.2ms)
+[00:45:26] inpaint[android android-fill+opencv] missing-mask.png: 1042 mask pixels -> missing-mask.png (103.6ms)
+{
+  "ticket": "T937 A4",
+  "status": "passed",
+  "normal_page": {
+    "page": "normal.png",
+    "captured_mask_ref": "bs0000",
+    "captured_segmenter_component_id": 1,
+    "inpaint_mask_ref": "bs0000",
+    "render_mask_ref": "bs0000",
+    "erase_mask_component_id": "c001",
+    "mask_component_id_alias": "c001",
+    "schema_version": 3,
+    "threshold_0_6": {
+      "parity": "android-production",
+      "candidate_ids": [
+        "dt-td0001"
+      ],
+      "raw_low_candidate_state": "raw",
+      "low_label_0_excluded_from_parent": true,
+      "low_label_2_excluded_from_erase": true
+    },
+    "threshold_0_3": {
+      "parity": "experimental/non-parity",
+      "candidate_ids": [
+        "dt-td0001",
+        "dt-td0002",
+        "dt-td0003",
+        "dt-td0000"
+      ],
+      "parent_bubble_artifact_id": "dt-td0000",
+      "detector_only_artifact_id": "dt-td0002",
+      "mask_pixels": 2190
+    },
+    "confidence_raise_render": {
+      "excluded_region_status": "not-in-current-execution-projection",
+      "excluded_region_drawn": false
+    },
+    "segmentation_setting_cache": {
+      "disabled_union_pixels": 0,
+      "reenabled_union_pixels": 1444
+    },
+    "expected_union_sha256": "8fe76eb722108be4a400b8ed4be7f48f6d8da2b32335d201a695f24a8489f932",
+    "actual_union_sha256": "8fe76eb722108be4a400b8ed4be7f48f6d8da2b32335d201a695f24a8489f932"
+  },
+  "bubble_union_scope": {
+    "page": "union-scope.png",
+    "selected_bubble_union_pixels": 16,
+    "expected_bubble_union_pixels": 16,
+    "blank_ocr_mask_status": "not-selected-for-bubble-leg",
+    "free_detector_mask_status": "not-selected-for-bubble-leg",
+    "bubble_mask_status": "resolved",
+    "union_sha256": "0f44c27b540748184ea2eddf2520f124b86639af1cfe73f3addb8754bb3b20b4"
+  },
+  "synthetic_tall_page": {
+    "page": "tall.png",
+    "mask_ref": "bs0000",
+    "window": 2,
+    "segmenter_union_pixels": 1280,
+    "expected_union_sha256": "f7456e04e7f856e66f4429c200fb2563eee88ea4911603023a75ee1f775f699b",
+    "actual_union_sha256": "f7456e04e7f856e66f4429c200fb2563eee88ea4911603023a75ee1f775f699b",
+    "full_page_segmenter_reruns": 0,
+    "captured_rle_overlay_pixels": 1428
+  },
+  "missing_current_reference": {
+    "status": "degraded-missing-references",
+    "degraded": true,
+    "missing_mask_refs": [
+      "bs0000"
+    ],
+    "fallback_segmenter_rerun": false
+  },
+  "row_crossing_rle": {
+    "flat_run": [
+      6,
+      4
+    ],
+    "width": 8,
+    "decoded_row_spans": [
+      [
+        0,
+        6,
+        8
+      ],
+      [
+        1,
+        0,
+        2
+      ]
+    ]
+  }
+}
+Evidence: Plan\active\2026-09-23_T937_translation-studio-parity\team\12-C2-mapping\evidence\baseline\mask_planner.json
+
+=== selftest_ocr: passed ===
+test_batch_results_reassemble_across_regions_and_apply_confidence (selftest_ocr.OcrParitySelfTest.test_batch_results_reassemble_across_regions_and_apply_confidence) ... ok
+test_detector_missing_whole_region_disables_confidence_but_keeps_usability (selftest_ocr.OcrParitySelfTest.test_detector_missing_whole_region_disables_confidence_but_keeps_usability) ... ok
+test_empty_vertical_result_rereads_unpadded_roi (selftest_ocr.OcrParitySelfTest.test_empty_vertical_result_rereads_unpadded_roi) ... ok
+test_ink_gap_fallback_reads_columns_right_to_left (selftest_ocr.OcrParitySelfTest.test_ink_gap_fallback_reads_columns_right_to_left) ... ok
+test_korean_detector_vertical_line_splits_each_glyph (selftest_ocr.OcrParitySelfTest.test_korean_detector_vertical_line_splits_each_glyph) ... ok
+test_language_specific_separators_join_detector_lines (selftest_ocr.OcrParitySelfTest.test_language_specific_separators_join_detector_lines) ... ok
+test_manga_batch_setting_and_serial_timing_override (selftest_ocr.OcrParitySelfTest.test_manga_batch_setting_and_serial_timing_override) ... ok
+test_manga_decoder_contract_and_preprocessing (selftest_ocr.OcrParitySelfTest.test_manga_decoder_contract_and_preprocessing) ... ok
+test_ocr_crop_padding_remains_twelve_pixels (selftest_ocr.OcrParitySelfTest.test_ocr_crop_padding_remains_twelve_pixels) ... ok
+test_ocr_usability_filter_matches_android_language_rules (selftest_ocr.OcrParitySelfTest.test_ocr_usability_filter_matches_android_language_rules) ... ok
+test_paddle_batch_failure_retries_ordered_single_crops (selftest_ocr.OcrParitySelfTest.test_paddle_batch_failure_retries_ordered_single_crops) ... ok
+test_paddle_batch_plans_only_android_batch_sizes (selftest_ocr.OcrParitySelfTest.test_paddle_batch_plans_only_android_batch_sizes) ... ok
+test_paddle_width_buckets_gray_padding_and_order (selftest_ocr.OcrParitySelfTest.test_paddle_width_buckets_gray_padding_and_order) ... ok
+test_pipeline_passes_paddle_batch_and_vertical_policy (selftest_ocr.OcrParitySelfTest.test_pipeline_passes_paddle_batch_and_vertical_policy) ... ok
+test_switching_ocr_engine_invalidates_cached_input_crops (selftest_ocr.OcrParitySelfTest.test_switching_ocr_engine_invalidates_cached_input_crops) ... ok
+test_vertical_detector_lines_split_and_rotate_glyphs (selftest_ocr.OcrParitySelfTest.test_vertical_detector_lines_split_and_rotate_glyphs) ... ok
+test_webtoon_mode_does_not_use_vertical_heuristic (selftest_ocr.OcrParitySelfTest.test_webtoon_mode_does_not_use_vertical_heuristic) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 0.142s
+
+OK
+
+=== selftest_translation_mapping: passed ===
+[00:45:27] opened chapter: C:\Users\User\AppData\Local\Temp\c2-translation-migration-46mqtxuc (1 pages)
+test_block_ids_use_android_sort_and_reuse_persisted_ids (selftest_translation_mapping.StableTranslationMappingTests.test_block_ids_use_android_sort_and_reuse_persisted_ids) ... ok
+test_legacy_ordinal_cache_migrates_by_old_position_and_fingerprint (selftest_translation_mapping.StableTranslationMappingTests.test_legacy_ordinal_cache_migrates_by_old_position_and_fingerprint) ... ok
+test_ocr_refresh_keeps_exact_user_edit_remaps_auto_and_prunes (selftest_translation_mapping.StableTranslationMappingTests.test_ocr_refresh_keeps_exact_user_edit_remaps_auto_and_prunes) ... ok
+test_open_folders_persists_legacy_cache_migration (selftest_translation_mapping.StableTranslationMappingTests.test_open_folders_persists_legacy_cache_migration) ... ok
+test_region_fingerprint_covers_translation_identity_fields (selftest_translation_mapping.StableTranslationMappingTests.test_region_fingerprint_covers_translation_identity_fields) ... ok
+test_user_edit_with_changed_fingerprint_is_pruned (selftest_translation_mapping.StableTranslationMappingTests.test_user_edit_with_changed_fingerprint_is_pruned) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.180s
+
+OK
+
+=== test_translation_providers: passed ===
+test_governor_enforces_minimum_spacing_and_rolling_minute_limit (test_translation_providers.GoogleProtocolTests.test_governor_enforces_minimum_spacing_and_rolling_minute_limit) ... ok
+test_gtx_chunk_boundaries_count_unicode_codepoints (test_translation_providers.GoogleProtocolTests.test_gtx_chunk_boundaries_count_unicode_codepoints) ... ok
+test_gtx_envelope_request_and_ordered_id_match (test_translation_providers.GoogleProtocolTests.test_gtx_envelope_request_and_ordered_id_match) ... ok
+test_gtx_parser_requires_exact_ids_and_order (test_translation_providers.GoogleProtocolTests.test_gtx_parser_requires_exact_ids_and_order) ... ok
+test_invalid_envelope_falls_back_to_android_gtx_single_path (test_translation_providers.GoogleProtocolTests.test_invalid_envelope_falls_back_to_android_gtx_single_path) ... ok
+test_pipeline_clears_and_retries_legacy_source_echo (test_translation_providers.GoogleProtocolTests.test_pipeline_clears_and_retries_legacy_source_echo) ... ok
+test_pipeline_never_persists_a_google_source_echo_on_failure (test_translation_providers.GoogleProtocolTests.test_pipeline_never_persists_a_google_source_echo_on_failure) ... ok
+test_retry_after_beyond_inline_cap_fails_without_waiting (test_translation_providers.GoogleProtocolTests.test_retry_after_beyond_inline_cap_fails_without_waiting) ... ok
+test_retry_uses_three_attempts_one_second_base_and_inline_cap (test_translation_providers.GoogleProtocolTests.test_retry_uses_three_attempts_one_second_base_and_inline_cap) ... ok
+test_source_equal_provider_echo_is_not_cached (test_translation_providers.GoogleProtocolTests.test_source_equal_provider_echo_is_not_cached) ... ok
+test_total_google_failure_never_caches_source_text (test_translation_providers.GoogleProtocolTests.test_total_google_failure_never_caches_source_text) ... ok
+test_openai_requests_retry_and_share_provider_pacing (test_translation_providers.OpenAiCompatibilityTests.test_openai_requests_retry_and_share_provider_pacing) ... ok
+test_prompt_and_payload_use_android_id_protocol (test_translation_providers.OpenAiCompatibilityTests.test_prompt_and_payload_use_android_id_protocol) ... ok
+test_response_validation_rejects_unknown_duplicate_blank_and_missing_ids (test_translation_providers.OpenAiCompatibilityTests.test_response_validation_rejects_unknown_duplicate_blank_and_missing_ids) ... ok
+test_stable_request_block_indexes_follow_android_geometry_order (test_translation_providers.OpenAiCompatibilityTests.test_stable_request_block_indexes_follow_android_geometry_order) ... ok
+test_token_planner_splits_and_respects_context_ceiling (test_translation_providers.OpenAiCompatibilityTests.test_token_planner_splits_and_respects_context_ceiling) ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 0.031s
+
+OK
+
+=== selftest_inpaint.py: passed ===
+[00:45:27] opened chapter: C:\Users\User\AppData\Local\Temp\t937-c2-baseline-inpaint-ci_8jjkx\demo_chapter (2 pages)
+[selftest] detect p001.jpg
+[00:45:27] loading detector: detector-v4-s_int8.onnx
+[00:45:30] detector loaded in 2480.7ms
+[00:45:34] loading bubble segmenter (manga109 YOLO11-seg, 640 int8)…
+[00:45:34] bubble segmenter loaded in 0.1ms
+[00:45:38] detect p001.jpg: 7 raw (infer 1972.7ms, load 2480.7ms)
+[selftest] OCR p001.jpg
+[00:45:38] initializing OCR (derived graphs + B=1 gate)…
+[00:45:43] OCR ready in 4873.0ms — gate PASS (enc 1.2e-05, dec 1.9e-05)
+[00:45:45] ocr[mangaocr] p001.jpg: 3 regions, infer 1841.3ms (load 4873.0ms, 3 non-empty)
+[selftest] detect p002.jpg
+[00:45:55] detect p002.jpg: 10 raw (infer 3593.1ms, load 2480.7ms)
+[selftest] OCR p002.jpg
+[00:45:59] ocr[mangaocr] p002.jpg: 3 regions, infer 2352.4ms (load 4873.0ms, 3 non-empty)
+[selftest] android-fast p001.jpg
+[00:45:59] loading PaddleOCR v6 det (free-text line refinement)…
+[00:46:24] inpaint[android android-fill+opencv] p001.jpg: 192256 mask pixels -> p001.png (24735.3ms)
+[00:46:25] loading AOT inpainting sessions (QUALITY leg)…
+[00:46:25] AOT wrapper ready in 0.1ms
+[00:46:48] inpaint[android android-fill+aot] p001.jpg: 192256 mask pixels -> p001.png (23521.7ms)
+[selftest] android-fast p002.jpg
+[00:47:07] inpaint[android android-fill+opencv] p002.jpg: 211010 mask pixels -> p002.png (17717.3ms)
+[selftest] android-quality p001.jpg
+[00:47:21] inpaint[android android-fill+aot] p001.jpg: 192256 mask pixels -> p001.png (13185.5ms)
+[selftest] android-quality p002.jpg
+[00:47:32] inpaint[android android-fill+aot] p002.jpg: 211010 mask pixels -> p002.png (10142.7ms)
+[
+  {
+    "page": "p001.jpg",
+    "preset": "android-fast",
+    "mask_pixels": 192256,
+    "regions": 3,
+    "routes": [
+      "bubble/android-fill"
+    ],
+    "inpainted_png": "p001_android-fast_inpainted.png",
+    "mask_png": "p001_android-fast_mask.png",
+    "routes_json": "p001_android-fast_routes.json",
+    "b1_provenance": "p001_android-fast/provenance.json",
+    "b1_crop_triples": 9
+  },
+  {
+    "page": "p002.jpg",
+    "preset": "android-fast",
+    "mask_pixels": 211010,
+    "regions": 3,
+    "routes": [
+      "bubble/android-fill"
+    ],
+    "inpainted_png": "p002_android-fast_inpainted.png",
+    "mask_png": "p002_android-fast_mask.png",
+    "routes_json": "p002_android-fast_routes.json",
+    "b1_provenance": "p002_android-fast/provenance.json",
+    "b1_crop_triples": 9
+  },
+  {
+    "page": "p001.jpg",
+    "preset": "android-quality",
+    "mask_pixels": 192256,
+    "regions": 3,
+    "routes": [
+      "bubble/android-fill"
+    ],
+    "inpainted_png": "p001_android-quality_inpainted.png",
+    "mask_png": "p001_android-quality_mask.png",
+    "routes_json": "p001_android-quality_routes.json",
+    "b1_provenance": "p001_android-quality/provenance.json",
+    "b1_crop_triples": 9
+  },
+  {
+    "page": "p002.jpg",
+    "preset": "android-quality",
+    "mask_pixels": 211010,
+    "regions": 3,
+    "routes": [
+      "bubble/android-fill"
+    ],
+    "inpainted_png": "p002_android-quality_inpainted.png",
+    "mask_png": "p002_android-quality_mask.png",
+    "routes_json": "p002_android-quality_routes.json",
+    "b1_provenance": "p002_android-quality/provenance.json",
+    "b1_crop_triples": 9
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "free-opencv",
+    "routes": [
+      "freetext/opencv"
+    ],
+    "mask_pixels": 2648,
+    "inpainted_png": "p001_probe-free-opencv_inpainted.png",
+    "mask_png": "p001_probe-free-opencv_mask.png",
+    "routes_json": "p001_probe-free-opencv_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "free-aot",
+    "routes": [
+      "freetext/aot-fixed512"
+    ],
+    "mask_pixels": 2648,
+    "inpainted_png": "p001_probe-free-aot_inpainted.png",
+    "mask_png": "p001_probe-free-aot_mask.png",
+    "routes_json": "p001_probe-free-aot_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "free-aot-dynamic",
+    "routes": [
+      "freetext/aot-fixed512-uniformity-rejected->aot-dynamic"
+    ],
+    "mask_pixels": 2648,
+    "inpainted_png": "p001_probe-free-aot-dynamic_inpainted.png",
+    "mask_png": "p001_probe-free-aot-dynamic_mask.png",
+    "routes_json": "p001_probe-free-aot-dynamic_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "free-pushpull",
+    "routes": [
+      "freetext/pushpull"
+    ],
+    "mask_pixels": 2648,
+    "inpainted_png": "p001_probe-free-pushpull_inpainted.png",
+    "mask_png": "p001_probe-free-pushpull_mask.png",
+    "routes_json": "p001_probe-free-pushpull_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "bubble-opencv",
+    "routes": [
+      "bubble/opencv"
+    ],
+    "mask_pixels": 4896,
+    "inpainted_png": "p001_probe-bubble-opencv_inpainted.png",
+    "mask_png": "p001_probe-bubble-opencv_mask.png",
+    "routes_json": "p001_probe-bubble-opencv_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "bubble-aot",
+    "routes": [
+      "bubble/aot-fixed512"
+    ],
+    "mask_pixels": 4896,
+    "inpainted_png": "p001_probe-bubble-aot_inpainted.png",
+    "mask_png": "p001_probe-bubble-aot_mask.png",
+    "routes_json": "p001_probe-bubble-aot_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "bubble-pushpull",
+    "routes": [
+      "bubble/pushpull"
+    ],
+    "mask_pixels": 4896,
+    "inpainted_png": "p001_probe-bubble-pushpull_inpainted.png",
+    "mask_png": "p001_probe-bubble-pushpull_mask.png",
+    "routes_json": "p001_probe-bubble-pushpull_routes.json"
+  }
+]
+
+=== selftest_provenance.py: passed ===
+[00:48:30] detect page.png: 1 raw (infer 1.0ms, load 0.0ms)
+[00:48:30] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[00:48:30] detect free.png: 1 raw (infer 1.0ms, load 0.0ms)
+[00:48:30] ocr[mangaocr] free.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[00:48:31] inpaint[android android-fill+opencv] page.png: 3412 mask pixels -> page.png (116.0ms)
+[00:48:31] inpaint[android android-fill+opencv] free.png: 2564 mask pixels -> free.png (181.0ms)
+[00:48:32] detect page.png: 1 raw (infer 1.0ms, load 0.0ms)
+[00:48:32] inpaint[android android-fill+opencv] page.png: 2340 mask pixels -> page.png (89.7ms)
+{
+  "status": "ok",
+  "page": "page.png",
+  "provenance_schema_version": 3,
+  "first_fingerprint": "3b8ae9f107c2220763a67bce19d7eb4c7cd48a150a0414363fe027a3202133bf",
+  "refreshed_fingerprint": "2bce06f7c0694065e433bdb3c4cb772a319413b232a18d1e9b815d59c1520a8b",
+  "android_fill_window_tradeoff": {
+    "route_context_bbox_preserved": [
+      0,
+      0,
+      96,
+      72
+    ],
+    "region_crop_bbox": [
+      1,
+      0,
+      91,
+      71
+    ],
+    "basis": "region-mask-union",
+    "note": "android-fill operates on the page-space mask; these files show the associated region component in a compact window"
+  },
+  "regions": [
+    {
+      "id": "r00",
+      "route_taken": "bubble/android-fill",
+      "a4_context_crop_bbox": [
+        0,
+        0,
+        96,
+        72
+      ],
+      "crop_bbox": [
+        1,
+        0,
+        91,
+        71
+      ],
+      "basis": "region-mask-union",
+      "triples": {
+        "input": {
+          "path": ".studio/inpaint_crops/page.png/r00/3b8ae9f107c2220763a67bce19d7eb4c7cd48a150a0414363fe027a3202133bf/input.png",
+          "size": [
+            90,
+            71
+          ],
+          "mode": "RGB"
+        },
+        "output": {
+          "path": ".studio/inpaint_crops/page.png/r00/3b8ae9f107c2220763a67bce19d7eb4c7cd48a150a0414363fe027a3202133bf/output.png",
+          "size": [
+            90,
+            71
+          ],
+          "mode": "RGB"
+        },
+        "mask": {
+          "path": ".studio/inpaint_crops/page.png/r00/3b8ae9f107c2220763a67bce19d7eb4c7cd48a150a0414363fe027a3202133bf/mask.png",
+          "size": [
+            90,
+            71
+          ],
+          "mode": "L"
+        }
+      }
+    }
+  ],
+  "free_text_route_context": [
+    {
+      "id": "r00",
+      "route_taken": "freetext/opencv",
+      "a4_context_crop_bbox": [
+        36,
+        16,
+        214,
+        184
+      ],
+      "crop_bbox": [
+        36,
+        16,
+        214,
+        184
+      ],
+      "basis": "route-context",
+      "triples": {
+        "input": {
+          "path": ".studio/inpaint_crops/free.png/r00/1a8d57fcdf6319e5453a3747be15c3fe9596382b137dc99649f48a8f1e273508/input.png",
+          "size": [
+            178,
+            168
+          ],
+          "mode": "RGB"
+        },
+        "output": {
+          "path": ".studio/inpaint_crops/free.png/r00/1a8d57fcdf6319e5453a3747be15c3fe9596382b137dc99649f48a8f1e273508/output.png",
+          "size": [
+            178,
+            168
+          ],
+          "mode": "RGB"
+        },
+        "mask": {
+          "path": ".studio/inpaint_crops/free.png/r00/1a8d57fcdf6319e5453a3747be15c3fe9596382b137dc99649f48a8f1e273508/mask.png",
+          "size": [
+            178,
+            168
+          ],
+          "mode": "L"
+        }
+      }
+    }
+  ],
+  "api": {
+    "provenance_route": "GET /api/inpaint_provenance?p=page.png",
+    "crop_route": "GET /img/inpaint_crop?p=page.png&id=r00&kind=mask&representation=exact",
+    "served_png_content_type": "image/png"
+  },
+  "fingerprint_invalidation": {
+    "changed_page_bytes": true,
+    "fingerprint_changed": true,
+    "all_old_crop_paths_removed": true,
+    "new_crop_paths_exist": true
+  }
+}
+
+=== selftest_server_concurrency.py: passed ===
+[00:48:33] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-1-2sivy4vu (1 pages)
+[00:48:33] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-2-y4x30ahy (1 pages)
+[00:48:34] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-3-l0270kyp (1 pages)
+[00:48:35] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-4-qr7a33wz (1 pages)
+[00:48:35] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-5-d7uyhxh6 (1 pages)
+[00:48:36] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-6-6c20nwvg (1 pages)
+[00:48:36] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-7-13zb6on_ (1 pages)
+[00:48:37] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-8-wwnu1dh7 (1 pages)
+[00:48:38] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-9-crrm7_ef (1 pages)
+[00:48:38] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-10-1vmmw6be (1 pages)
+[00:48:39] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-11-agbxhl50 (1 pages)
+[00:48:40] opened chapter: C:\Users\User\AppData\Local\Temp\t937-boot-race-12-in4yl7g5 (1 pages)
+{
+  "status": "ok",
+  "pattern": "browser boot: GET /api/artifacts overlaps POST /api/settings and GET /api/page",
+  "race_seed": "held .studio/inpaint/p001.json handle until both concurrent handlers start",
+  "rounds": 12,
+  "all_statuses_200": true,
+  "round_results": [
+    {
+      "round": 1,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 2,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 3,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 4,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 5,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 6,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 7,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 8,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 9,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 10,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 11,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 12,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    }
+  ]
+}
+
+=== B2 smoke: passed ===
+{
+  "checks": [
+    "open temporary demo_chapter with current A1/A4 cache fixtures",
+    "GET /api/artifacts reads existing A1/A4/OCR/translation JSON",
+    "missing cache source returns empty data with reason",
+    "GET /img/seg_overlay composites cached page-space RLE over the original",
+    "Text badges show cached OCR/translation and the layer toggle hides them",
+    "All raw preset exposes every cached candidate",
+    "suppression view dims survivor; inspector exposes loser/winner/rule/threshold",
+    "lowered detector score slider adds cached no-downstream hatch",
+    "Original | Inpainted compare displays saved image without a model POST",
+    "compare without an inpaint cache falls back to Original without requesting /img/inpainted",
+    "filter changes posted settings only; no model stage or process POST"
+  ],
+  "export": {
+    "source_path": ".studio/exports/p001-production-20260923T174850_507241Z.json",
+    "evidence_path": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\12-C2-mapping\\evidence\\b2_smoke\\filtered_view.json",
+    "record_count": 7,
+    "screenshot_path": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\12-C2-mapping\\evidence\\b2_smoke\\smoke_ui.png"
+  },
+  "browser_posts": [
+    "/api/settings",
+    "/api/settings",
+    "/api/export-filtered"
+  ],
+  "image_gets": [
+    "/img/render?p=p001.jpg",
+    "/img/render?p=p002.jpg",
+    "/img/thumb?p=p001.jpg&s=128",
+    "/img/thumb?p=p002.jpg&s=128",
+    "/img/render?p=p001.jpg",
+    "/img/render?p=p002.jpg",
+    "/img/original?p=p001.jpg",
+    "/img/original?p=p002.jpg",
+    "/img/inpainted?p=p001.jpg"
+  ],
+  "browser_errors": []
+}

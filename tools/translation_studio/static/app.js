@@ -394,7 +394,8 @@ function buildArtifactRecords(page, payload) {
   const regionById = new Map(regions.map((r) => [String(r.id), r]));
   const inpaintRegions = Array.isArray(inpaintData.regions) ? inpaintData.regions : [];
   const routeById = new Map(inpaintRegions.map((r) => [String(r.id), r]));
-  const translationKeys = new Set(Object.keys(translationData || {}));
+  const translationKeys = new Set(Object.keys(translationData || {})
+    .filter((key) => !key.startsWith("_")));
   const translationText = (id) => {
     const value = translationData?.[id];
     return typeof value === "string" ? value : String(value?.text || "");
@@ -411,8 +412,12 @@ function buildArtifactRecords(page, payload) {
     const route = routeById.get(String(region.id));
     const consumed = !!route && !String(route.route_taken || "").startsWith("skipped:");
     const state = blank ? "blank" : (consumed ? "consumed" : "kept");
-    const translation = translationText(region.id);
-    const cachedTranslation = translationKeys.has(String(region.id));
+    const stableId = String(region.stable_id || region.id);
+    const translationRecord = translationData?.[stableId];
+    const translation = translationText(stableId);
+    const cachedTranslation = translationKeys.has(stableId);
+    const translationOrigin = typeof translationRecord === "object"
+      ? String(translationRecord?.origin || "legacy") : "legacy";
     const detector = byArtifactId.get(region.artifact_id);
     const window = detector?.source?.window ?? null;
     const commonAttrs = {
@@ -420,6 +425,7 @@ function buildArtifactRecords(page, payload) {
       text, engine, outcome: out, region_id: region.id,
       artifact_id: region.artifact_id,
       translation, translation_cached: cachedTranslation,
+      translation_id: stableId, translation_origin: translationOrigin,
       translation_status: translation.trim() ? "translated" : (cachedTranslation ? "cached" : "missing"),
       shape: boxShape(region.box),
     };
@@ -434,6 +440,34 @@ function buildArtifactRecords(page, payload) {
       geometry: ocrBox, attrs: { ...commonAttrs, shape: boxShape(region.ocr_box || region.box), role: "ocr-input-box" },
       lifecycle: { state, trace: [...trace, { step: "ocr-box", kept: true }] } });
   }
+
+  const prunedTranslations = Array.isArray(translationData?._pruned)
+    ? translationData._pruned : [];
+  prunedTranslations.forEach((entry, index) => {
+    const snapshot = entry?.region || {};
+    const box = boxGeometry(snapshot.box);
+    const score = Number(snapshot.score);
+    const recordId = `translation-pruned-${index}-${String(entry?.stable_id || "unknown")}`;
+    add({ id: recordId, page, kind: "region", _group: "ocr",
+      _regionId: snapshot.id || entry?.stable_id || recordId,
+      source: { model: "ocr:translation-cache", asset: "translations.json",
+        asset_sha: null, window: null },
+      geometry: box || { x1: 0, y1: 0, x2: 0, y2: 0 },
+      attrs: {
+        label: snapshot.label ?? 1,
+        score: Number.isFinite(score) ? score : null,
+        text: String(snapshot.text || ""),
+        translation: String(entry?.text || ""),
+        translation_cached: false,
+        translation_origin: String(entry?.origin || "legacy"),
+        translation_status: "pruned", translation_id: entry?.stable_id || "",
+        prune_reason: String(entry?.reason || "unmapped-region"),
+        shape: box ? boxShape(snapshot.box) : { w: 0, h: 0, ar: null },
+      },
+      lifecycle: { state: "pruned", trace: [{ step: "translation-prune",
+        kept: false, reason: String(entry?.reason || "unmapped-region") }] },
+    });
+  });
 
   const detectionByArtifact = new Map();
   for (const row of modelRecords.get("text-detector") || []) {
@@ -513,7 +547,11 @@ function artifactGroupAvailability(page, group, payload, records) {
     if (src.detections?.status !== "ready") return { ok: false, reason: src.detections?.reason || "missing source: .studio/detections.json" };
     if (!entries.length) return { ok: false, reason: `.studio/detections.json has no ${group} outputs (${model.reason || model.status || "outputs empty"})` };
   } else if (group === "ocr") {
-    if (src.ocr?.status !== "ready") return { ok: false, reason: src.ocr?.reason || "missing source: .studio/ocr.json" };
+    const hasPrunedTranslations = Array.isArray(src.translations?.data?._pruned)
+      && src.translations.data._pruned.length > 0;
+    if (src.ocr?.status !== "ready" && !hasPrunedTranslations) {
+      return { ok: false, reason: src.ocr?.reason || "missing source: .studio/ocr.json" };
+    }
     if (!entries.length) return { ok: false, reason: "no OCR regions in .studio/ocr.json" };
   } else if (group === "inpaint") {
     if (src.inpaint?.status !== "ready") return { ok: false, reason: src.inpaint?.reason || "missing source: .studio/inpaint/<page>.json" };
@@ -539,8 +577,17 @@ function renderFilterControls(page) {
   const ocrRegions = Array.isArray(payload.sources?.ocr?.data?.regions) ? payload.sources.ocr.data.regions : [];
   const inpaintRegions = Array.isArray(payload.sources?.inpaint?.data?.regions) ? payload.sources.inpaint.data.regions : [];
   const translationData = payload.sources?.translations?.data;
+  const activeTranslationEntries = Object.entries(translationData || {})
+    .filter(([key]) => !key.startsWith("_"));
+  const prunedTranslations = Array.isArray(translationData?._pruned)
+    ? translationData._pruned : [];
+  const hasUserEdited = activeTranslationEntries.some(([, value]) =>
+    value && typeof value === "object" && value.origin === "user");
+  const hasTranslatedText = activeTranslationEntries.some(([, value]) =>
+    String(typeof value === "string" ? value : value?.text || "").trim());
   const translationReady = payload.sources?.translations?.status === "ready"
-    && translationData && typeof translationData === "object" && Object.keys(translationData).length > 0;
+    && translationData && typeof translationData === "object"
+    && (activeTranslationEntries.length > 0 || prunedTranslations.length > 0);
   const groups = $("artifactModelGroups");
   if (!groups) return;
   groups.innerHTML = FILTER_MODELS.map(({ id, title }) => {
@@ -586,7 +633,7 @@ function renderFilterControls(page) {
     const supports = {
       raw: detectionReady, kept: detectionReady, suppressed: detectionReady,
       merged: detectionReady, context: detectionReady, blank: ocrReady,
-      consumed: inpaintReady, pruned: false,
+      consumed: inpaintReady, pruned: prunedTranslations.length > 0,
     };
     const reasons = {
       raw: detectionReady ? "" : sourceMissingReason(payload, "detections", ".studio/detections.json (capture_version 1 lifecycle)"),
@@ -596,12 +643,14 @@ function renderFilterControls(page) {
       context: detectionReady ? "" : sourceMissingReason(payload, "detections", ".studio/detections.json context_ids"),
       blank: ocrReady ? "" : sourceMissingReason(payload, "ocr", ".studio/ocr.json regions"),
       consumed: inpaintReady ? "" : sourceMissingReason(payload, "inpaint", ".studio/inpaint/<page>.json"),
-      pruned: "C2 prune records are not present in the current translation cache.",
+      pruned: prunedTranslations.length
+        ? `${prunedTranslations.length} translation record(s) were pruned and retained for audit.`
+        : "No pruned translation records are present in this cache.",
     };
     stateRoot.innerHTML = FILTER_STATES.map((state) => `<label title="${esc(reasons[state] || "Lifecycle state from cached records")}"><input type="checkbox" data-filter-state="${state}" ${filters.states.includes(state) ? "checked" : ""} ${supports[state] ? "" : "disabled"}>${FILTER_STATE_LABELS[state]}</label>`).join("");
     if (reasons.pruned) stateRoot.querySelector('[data-filter-state="pruned"]')?.setAttribute("title", reasons.pruned);
     if (!translationReady) $("filterTranslationNote").textContent = sourceMissingReason(payload, "translations", ".studio/translations.json");
-    else $("filterTranslationNote").textContent = "User edit and prune provenance unavailable: translations.json stores text without origin metadata.";
+    else $("filterTranslationNote").textContent = `${hasUserEdited ? "User edits are recorded" : "No user edits recorded"}; ${prunedTranslations.length} pruned translation(s) retained for audit.`;
   }
 
   const suppression = $("filterSuppression");
@@ -659,12 +708,14 @@ function renderFilterControls(page) {
   }
   const translationInputs = $("filterTranslations")?.querySelectorAll("input[type=checkbox]") || [];
   translationInputs.forEach((input) => {
-    if (input.value === "cached" || input.value === "translated") {
-      const ready = translationReady;
-      input.disabled = !ready;
-      input.title = ready ? "Filter by cached translation state" : sourceMissingReason(payload, "translations", ".studio/translations.json");
-      input.checked = filters.translation.includes(input.value);
-    }
+    const available = input.value === "cached" ? activeTranslationEntries.length > 0
+      : (input.value === "translated" ? hasTranslatedText
+        : (input.value === "user-edited" ? hasUserEdited : prunedTranslations.length > 0));
+    input.disabled = !available;
+    input.title = available ? `Filter by ${input.value} translation records`
+      : (translationReady ? `No ${input.value} translation records in this cache`
+        : sourceMissingReason(payload, "translations", ".studio/translations.json"));
+    input.checked = filters.translation.includes(input.value);
   });
   const preset = $("filterPreset");
   if (preset) preset.value = filters.preset;
@@ -722,13 +773,17 @@ function matchesArtifactFilters(record, page) {
   const group = record._group || modelGroupFor(record.source?.model);
   const groupState = f.models[group];
   if (!groupState || !groupState.enabled) return false;
+  const prunedTranslation = group === "ocr" && record.attrs?.translation_status === "pruned";
   if (f.preset === "production" && group === "text-detector" && record._phase === "raw-output") return false;
   const label = artifactLabel(record);
-  if (Array.isArray(groupState.labels) && !groupState.labels.map(String).includes(String(label))) return false;
+  if (!prunedTranslation && Array.isArray(groupState.labels)
+      && !groupState.labels.map(String).includes(String(label))) return false;
 
   const score = artifactScore(record);
-  if (score !== null && (score < groupState.scoreMin || score > groupState.scoreMax)) return false;
-  if (score === null && (groupState.scoreMin > 0 || groupState.scoreMax < 1)) return false;
+  if (!prunedTranslation && score !== null
+      && (score < groupState.scoreMin || score > groupState.scoreMax)) return false;
+  if (!prunedTranslation && score === null
+      && (groupState.scoreMin > 0 || groupState.scoreMax < 1)) return false;
 
   const state = String(record.lifecycle?.state || "kept");
   const noDownstream = isDisplayNoDownstream(record, page);
@@ -781,6 +836,8 @@ function matchesArtifactFilters(record, page) {
     const states = [];
     if (attrs.translation_cached) states.push("cached");
     if (String(attrs.translation || "").trim()) states.push("translated");
+    if (attrs.translation_origin === "user") states.push("user-edited");
+    if (attrs.translation_status === "pruned") states.push("pruned");
     if (!f.translation.some((value) => states.includes(value))) return false;
   }
 
@@ -1727,14 +1784,36 @@ function wireTranslationEditor(page, id) {
         await api("/api/translation", { page, region_id: id, text: ta.value });
         const d = S.pageData.get(page);
         if (d) d.translations[id] = ta.value;
+        const artifactPayload = S.artifactData.get(page);
+        const translationSource = artifactPayload?.sources?.translations;
+        if (translationSource && (!translationSource.data || typeof translationSource.data !== "object")) {
+          translationSource.status = "ready";
+          translationSource.reason = null;
+          translationSource.data = {};
+        }
+        const artifactTranslations = translationSource?.data;
+        const ocrRegion = artifactPayload?.sources?.ocr?.data?.regions?.find(
+          (region) => String(region.id) === String(id));
+        const translationId = String(ocrRegion?.stable_id || id);
+        if (artifactTranslations && typeof artifactTranslations === "object") {
+          artifactTranslations[translationId] = {
+            ...(artifactTranslations[translationId] && typeof artifactTranslations[translationId] === "object"
+              ? artifactTranslations[translationId] : {}),
+            text: ta.value, origin: "user",
+            ocr_fingerprint: ocrRegion?.ocr_fingerprint || null,
+          };
+        }
         const records = S.artifactRecords.get(page) || [];
         const translated = String(ta.value).trim();
         records.forEach((record) => {
           if (String(record._regionId || record.attrs?.region_id || "") !== String(id)) return;
           record.attrs.translation = ta.value;
           record.attrs.translation_cached = true;
+          record.attrs.translation_id = translationId;
+          record.attrs.translation_origin = "user";
           record.attrs.translation_status = translated ? "translated" : "cached";
         });
+        renderFilterControls(page);
         applyArtifactFilters();
         refreshRenderedImages(page);
         refreshOverview();
