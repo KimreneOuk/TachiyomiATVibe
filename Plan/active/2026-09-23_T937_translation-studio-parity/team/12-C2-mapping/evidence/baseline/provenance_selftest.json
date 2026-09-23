@@ -1,0 +1,124 @@
+{
+  "status": "ok",
+  "page": "page.png",
+  "provenance_schema_version": 3,
+  "first_fingerprint": "3b8ae9f107c2220763a67bce19d7eb4c7cd48a150a0414363fe027a3202133bf",
+  "refreshed_fingerprint": "2bce06f7c0694065e433bdb3c4cb772a319413b232a18d1e9b815d59c1520a8b",
+  "android_fill_window_tradeoff": {
+    "route_context_bbox_preserved": [
+      0,
+      0,
+      96,
+      72
+    ],
+    "region_crop_bbox": [
+      1,
+      0,
+      91,
+      71
+    ],
+    "basis": "region-mask-union",
+    "note": "android-fill operates on the page-space mask; these files show the associated region component in a compact window"
+  },
+  "regions": [
+    {
+      "id": "r00",
+      "route_taken": "bubble/android-fill",
+      "a4_context_crop_bbox": [
+        0,
+        0,
+        96,
+        72
+      ],
+      "crop_bbox": [
+        1,
+        0,
+        91,
+        71
+      ],
+      "basis": "region-mask-union",
+      "triples": {
+        "input": {
+          "path": ".studio/inpaint_crops/page.png/r00/3b8ae9f107c2220763a67bce19d7eb4c7cd48a150a0414363fe027a3202133bf/input.png",
+          "size": [
+            90,
+            71
+          ],
+          "mode": "RGB"
+        },
+        "output": {
+          "path": ".studio/inpaint_crops/page.png/r00/3b8ae9f107c2220763a67bce19d7eb4c7cd48a150a0414363fe027a3202133bf/output.png",
+          "size": [
+            90,
+            71
+          ],
+          "mode": "RGB"
+        },
+        "mask": {
+          "path": ".studio/inpaint_crops/page.png/r00/3b8ae9f107c2220763a67bce19d7eb4c7cd48a150a0414363fe027a3202133bf/mask.png",
+          "size": [
+            90,
+            71
+          ],
+          "mode": "L"
+        }
+      }
+    }
+  ],
+  "free_text_route_context": [
+    {
+      "id": "r00",
+      "route_taken": "freetext/opencv",
+      "a4_context_crop_bbox": [
+        36,
+        16,
+        214,
+        184
+      ],
+      "crop_bbox": [
+        36,
+        16,
+        214,
+        184
+      ],
+      "basis": "route-context",
+      "triples": {
+        "input": {
+          "path": ".studio/inpaint_crops/free.png/r00/1a8d57fcdf6319e5453a3747be15c3fe9596382b137dc99649f48a8f1e273508/input.png",
+          "size": [
+            178,
+            168
+          ],
+          "mode": "RGB"
+        },
+        "output": {
+          "path": ".studio/inpaint_crops/free.png/r00/1a8d57fcdf6319e5453a3747be15c3fe9596382b137dc99649f48a8f1e273508/output.png",
+          "size": [
+            178,
+            168
+          ],
+          "mode": "RGB"
+        },
+        "mask": {
+          "path": ".studio/inpaint_crops/free.png/r00/1a8d57fcdf6319e5453a3747be15c3fe9596382b137dc99649f48a8f1e273508/mask.png",
+          "size": [
+            178,
+            168
+          ],
+          "mode": "L"
+        }
+      }
+    }
+  ],
+  "api": {
+    "provenance_route": "GET /api/inpaint_provenance?p=page.png",
+    "crop_route": "GET /img/inpaint_crop?p=page.png&id=r00&kind=mask&representation=exact",
+    "served_png_content_type": "image/png"
+  },
+  "fingerprint_invalidation": {
+    "changed_page_bytes": true,
+    "fingerprint_changed": true,
+    "all_old_crop_paths_removed": true,
+    "new_crop_paths_exist": true
+  }
+}

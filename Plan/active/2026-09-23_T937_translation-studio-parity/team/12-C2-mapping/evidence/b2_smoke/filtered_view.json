@@ -1,0 +1,425 @@
+{
+  "schema": "T937-FILTER_SPEC-1",
+  "page": "p001.jpg",
+  "preset": "production",
+  "created_at": "2026-09-23T17:48:50.510248+00:00",
+  "filters": {
+    "preset": "production",
+    "models": {
+      "text-detector": {
+        "enabled": true,
+        "dimFiltered": true,
+        "labels": null,
+        "scoreMin": 0.6,
+        "scoreMax": 1
+      },
+      "panel-detector": {
+        "enabled": true,
+        "dimFiltered": true,
+        "labels": null,
+        "scoreMin": 0.5,
+        "scoreMax": 1
+      },
+      "bubble-segmenter": {
+        "enabled": true,
+        "dimFiltered": true,
+        "labels": null,
+        "scoreMin": 0,
+        "scoreMax": 1
+      },
+      "paddle-det": {
+        "enabled": true,
+        "dimFiltered": false,
+        "labels": null,
+        "scoreMin": 0,
+        "scoreMax": 1
+      },
+      "ocr": {
+        "enabled": true,
+        "dimFiltered": true,
+        "labels": null,
+        "scoreMin": 0.6,
+        "scoreMax": 1
+      },
+      "inpaint": {
+        "enabled": true,
+        "dimFiltered": false,
+        "labels": null,
+        "scoreMin": 0.6,
+        "scoreMax": 1
+      }
+    },
+    "states": [
+      "kept",
+      "consumed",
+      "context"
+    ],
+    "suppressionRule": "",
+    "geometry": {
+      "widthMin": "",
+      "widthMax": "",
+      "heightMin": "",
+      "heightMax": "",
+      "aspectMin": "",
+      "aspectMax": "",
+      "tall": ""
+    },
+    "ocr": {
+      "text": "",
+      "confidenceMin": 0,
+      "confidenceMax": 1,
+      "engine": "",
+      "outcome": ""
+    },
+    "route": "",
+    "window": "",
+    "translation": []
+  },
+  "records": [
+    {
+      "id": "dt-td0001",
+      "page": "p001.jpg",
+      "kind": "box",
+      "source": {
+        "model": "text-detector",
+        "asset": "text-detector.onnx",
+        "asset_sha": "1234567890ab",
+        "window": null
+      },
+      "geometry": {
+        "x1": 90,
+        "y1": 140,
+        "x2": 202,
+        "y2": 210
+      },
+      "attrs": {
+        "label": 1,
+        "score": 0.92,
+        "shape": {
+          "w": 112,
+          "h": 70,
+          "ar": 1.6
+        },
+        "artifact_id": "dt-td0001"
+      },
+      "lifecycle": {
+        "state": "kept",
+        "trace": [
+          {
+            "step": "floor",
+            "kept": true,
+            "threshold": 0.6
+          },
+          {
+            "step": "det-dedup",
+            "kept": true
+          },
+          {
+            "step": "ocr-dedup",
+            "kept": true
+          },
+          {
+            "step": "xlabel",
+            "kept": true
+          },
+          {
+            "step": "ocr-dedup",
+            "kept": true,
+            "loser_id": "dt-td0002",
+            "winner_id": "dt-td0001",
+            "rule": "ocr-dedup",
+            "threshold": 0.62,
+            "decision_record": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "pd0001",
+      "page": "p001.jpg",
+      "kind": "box",
+      "source": {
+        "model": "panel-detector",
+        "asset": "panel-detector.onnx",
+        "asset_sha": "1234567890ab",
+        "window": null
+      },
+      "geometry": {
+        "x1": 1,
+        "y1": 1,
+        "x2": 899,
+        "y2": 1399
+      },
+      "attrs": {
+        "label": "panel",
+        "score": 0.88,
+        "shape": {
+          "w": 898,
+          "h": 1398,
+          "ar": 0.642346208869814
+        }
+      },
+      "lifecycle": {
+        "state": "kept",
+        "trace": [
+          {
+            "step": "floor",
+            "kept": true,
+            "threshold": 0.6
+          }
+        ]
+      }
+    },
+    {
+      "id": "bs0001-c4",
+      "page": "p001.jpg",
+      "kind": "mask",
+      "source": {
+        "model": "bubble-segmenter",
+        "asset": "segmenter.onnx",
+        "asset_sha": "abcdef123456",
+        "window": null
+      },
+      "mask_ref": "mask-1",
+      "attrs": {
+        "label": "mask-component",
+        "score": 1,
+        "component_count": 1,
+        "component_id": "4",
+        "shape": {
+          "w": 112,
+          "h": 70,
+          "ar": 1.6
+        }
+      },
+      "lifecycle": {
+        "state": "kept",
+        "trace": [
+          {
+            "step": "segmenter",
+            "kept": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "ocr-r00",
+      "page": "p001.jpg",
+      "kind": "region",
+      "source": {
+        "model": "ocr:mangaocr",
+        "asset": "mangaocr",
+        "asset_sha": null,
+        "window": null
+      },
+      "geometry": {
+        "x1": 90,
+        "y1": 140,
+        "x2": 202,
+        "y2": 210
+      },
+      "attrs": {
+        "label": 1,
+        "score": 0.92,
+        "confidence": 0.98,
+        "text": "cached source line",
+        "engine": "mangaocr",
+        "outcome": "ok",
+        "region_id": "r00",
+        "artifact_id": "dt-td0001",
+        "translation": "cached translation",
+        "translation_cached": true,
+        "translation_id": "b0",
+        "translation_origin": "legacy",
+        "translation_status": "translated",
+        "shape": {
+          "w": 112,
+          "h": 70,
+          "ar": 1.6
+        }
+      },
+      "lifecycle": {
+        "state": "consumed",
+        "trace": [
+          {
+            "step": "ocr",
+            "kept": true,
+            "engine": "mangaocr",
+            "text": "cached source line",
+            "conf": 0.98,
+            "outcome": "ok"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ocr-box-r00",
+      "page": "p001.jpg",
+      "kind": "box",
+      "source": {
+        "model": "ocr:mangaocr",
+        "asset": "mangaocr",
+        "asset_sha": null,
+        "window": null
+      },
+      "geometry": {
+        "x1": 84,
+        "y1": 134,
+        "x2": 208,
+        "y2": 216
+      },
+      "attrs": {
+        "label": 1,
+        "score": 0.92,
+        "confidence": 0.98,
+        "text": "cached source line",
+        "engine": "mangaocr",
+        "outcome": "ok",
+        "region_id": "r00",
+        "artifact_id": "dt-td0001",
+        "translation": "cached translation",
+        "translation_cached": true,
+        "translation_id": "b0",
+        "translation_origin": "legacy",
+        "translation_status": "translated",
+        "shape": {
+          "w": 124,
+          "h": 82,
+          "ar": 1.5121951219512195
+        },
+        "role": "ocr-input-box"
+      },
+      "lifecycle": {
+        "state": "consumed",
+        "trace": [
+          {
+            "step": "ocr",
+            "kept": true,
+            "engine": "mangaocr",
+            "text": "cached source line",
+            "conf": 0.98,
+            "outcome": "ok"
+          },
+          {
+            "step": "ocr-box",
+            "kept": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "inpaint-r00",
+      "page": "p001.jpg",
+      "kind": "region",
+      "source": {
+        "model": "inpaint:bubble",
+        "asset": "android inpaint provenance",
+        "asset_sha": null,
+        "window": null
+      },
+      "geometry": {
+        "x1": 90,
+        "y1": 140,
+        "x2": 202,
+        "y2": 210
+      },
+      "mask_ref": "mask-1",
+      "attrs": {
+        "label": 1,
+        "leg": "bubble",
+        "score": 0.92,
+        "route": "bubble/android-fill",
+        "route_taken": "bubble/android-fill",
+        "artifact_id": "dt-td0001",
+        "parent_region": "r00",
+        "text": "cached source line",
+        "mask_ref": "mask-1",
+        "segmenter_component_id": 4,
+        "erase_mask_component_id": 1,
+        "mask_component_id": 1,
+        "context_crop_bbox": [
+          90,
+          140,
+          202,
+          210
+        ],
+        "timing_ms": {
+          "fill": 1.2
+        },
+        "timing_scope": "region",
+        "source_boxes": [
+          {
+            "role": "ocr-origin",
+            "box": [
+              90,
+              140,
+              202,
+              210
+            ]
+          },
+          {
+            "role": "refined-line",
+            "source": "paddle-refined",
+            "box": [
+              94,
+              150,
+              198,
+              200
+            ]
+          }
+        ],
+        "shape": {}
+      },
+      "lifecycle": {
+        "state": "consumed",
+        "trace": [
+          {
+            "step": "inpaint-plan",
+            "kept": true,
+            "route": "bubble/android-fill",
+            "mask_component_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "paddle-r00-1",
+      "page": "p001.jpg",
+      "kind": "line",
+      "source": {
+        "model": "paddle-det",
+        "asset": "Paddle detector",
+        "asset_sha": null,
+        "window": null
+      },
+      "geometry": {
+        "x1": 94,
+        "y1": 150,
+        "x2": 198,
+        "y2": 200
+      },
+      "attrs": {
+        "label": "refined-line",
+        "score": 0.92,
+        "parent_region": "r00",
+        "artifact_id": "dt-td0001",
+        "shape": {
+          "w": 104,
+          "h": 50,
+          "ar": 2.08
+        },
+        "route": "bubble/android-fill"
+      },
+      "lifecycle": {
+        "state": "consumed",
+        "trace": [
+          {
+            "step": "paddle-refine",
+            "kept": true,
+            "parent_region": "r00"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "branch": "t937-c2-translation-mapping",
+  "results": [
+    {
+      "name": "selftest_cache_fingerprints.py",
+      "command": "python selftest_cache_fingerprints.py (evidence redirected)",
+      "status": "passed",
+      "elapsed_seconds": 2.907
+    },
+    {
+      "name": "selftest_mask_planner.py",
+      "command": "python selftest_mask_planner.py (evidence redirected)",
+      "status": "passed",
+      "elapsed_seconds": 3.172
+    },
+    {
+      "name": "selftest_ocr",
+      "command": "python -m unittest selftest_ocr -v",
+      "status": "passed",
+      "elapsed_seconds": 0.156
+    },
+    {
+      "name": "selftest_translation_mapping",
+      "command": "python -m unittest selftest_translation_mapping -v",
+      "status": "passed",
+      "elapsed_seconds": 0.235
+    },
+    {
+      "name": "test_translation_providers",
+      "command": "python -m unittest test_translation_providers -v",
+      "status": "passed",
+      "elapsed_seconds": 0.047
+    },
+    {
+      "name": "selftest_inpaint.py",
+      "command": "python selftest_inpaint.py (temporary demo/evidence)",
+      "status": "passed",
+      "elapsed_seconds": 183.015
+    },
+    {
+      "name": "selftest_provenance.py",
+      "command": "python selftest_provenance.py (evidence redirected)",
+      "status": "passed",
+      "elapsed_seconds": 2.391
+    },
+    {
+      "name": "selftest_server_concurrency.py",
+      "command": "python selftest_server_concurrency.py (evidence redirected)",
+      "status": "passed",
+      "elapsed_seconds": 7.641
+    },
+    {
+      "name": "B2 smoke",
+      "command": "python Plan/active/2026-09-23_T937_translation-studio-parity/team/08-B2-visualization/evidence/smoke_b2.py (output redirected)",
+      "status": "passed",
+      "elapsed_seconds": 11.547
+    }
+  ],
+  "all_passed": true
+}

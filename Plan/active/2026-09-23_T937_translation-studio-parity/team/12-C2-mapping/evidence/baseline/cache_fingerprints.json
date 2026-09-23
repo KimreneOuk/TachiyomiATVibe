@@ -1,0 +1,89 @@
+{
+  "page": "page.png",
+  "same_size_source_replacement": {
+    "dimensions": [
+      80,
+      64
+    ],
+    "compressed_bytes_before": 185,
+    "compressed_bytes_after": 185,
+    "fingerprint_changed": true,
+    "dependent_cache_counts": {
+      "capture": 4,
+      "ocr": 6,
+      "inpaint": 6,
+      "render": 7
+    }
+  },
+  "upstream_detection_change": {
+    "capture_reused": true,
+    "decision_fingerprint_changed": true,
+    "ocr_inpaint_render_recomputed": true
+  },
+  "translation_only_edit": {
+    "inpaint_reused": true,
+    "render_recomputed": true
+  },
+  "direct_inpaint_validates_upstream": {
+    "detector_identity_change_recaptured": true,
+    "ocr_setting_change_recomputed": true,
+    "force_required": false
+  },
+  "direct_render_uses_refreshed_ocr": {
+    "previous_ocr_fingerprint": "9286d05b574f49dddd06a845d0f7207a37a0280a06c9b4003eb6ebfcbbf18e59",
+    "refreshed_ocr_fingerprint": "4ef65d473e61fc60eb350c51966d219088739c60a994d65cb03268fd1d9751fa",
+    "rendered_regions": [
+      {
+        "id": "r00",
+        "box": [
+          18,
+          20,
+          55,
+          44
+        ]
+      }
+    ],
+    "render_cache_fingerprint": "79ba3d209f806774947064298e268bc5e1a338a6d3191c07b116154ed91ecf9c",
+    "render_used_refreshed_ocr": true
+  },
+  "skipped_model_asset_change": {
+    "panel_inference_eligible": false,
+    "text_detector_recaptured": false
+  },
+  "asset_stat_cache_spot_check": {
+    "same_size": true,
+    "mtime_restored": true,
+    "sample_changed": true,
+    "full_digest_changed": true
+  },
+  "legacy_cache_fingerprint_adoption": {
+    "fingerprintless_legacy_records_preserved_on_first_touch": true,
+    "page_fingerprint_adopted": "7d5687b65d8b951530fb70aec70fc8cad314b12beba3c5547bfca9d79c200437",
+    "cache_json_unchanged_on_adoption": true,
+    "changed_source_fingerprint": "756ae28cfdc0193d16acfd7649d6c8cd42a4f4a9d5c3cba0c6f0e98a9ccf39d4",
+    "changed_page_invalidated_detection_ocr_and_inpaint_files": true,
+    "translations_preserved": true
+  },
+  "unchanged_inputs": {
+    "capture_count": 4,
+    "ocr_count": 6,
+    "inpaint_count": 6,
+    "render_count": 7,
+    "process_page_hash_calls": 1
+  },
+  "initial_cache_fingerprints": {
+    "ocr": "5fcdde12b972d70e40460ff53ec9c18eba7585fd8faab92ef80af76015d20341",
+    "inpaint": "ae78ff10027efae9c87d65c2d4413989dd5d20a90dd91b6e928df1f47a28d2bb",
+    "render": "99c5e0d841c2ba7ccff52989cefd267ce756aac54c5b630e3ef98a45a10d1b7f"
+  },
+  "changed_upstream_fingerprints": {
+    "ocr": "484531e0e78e2c953d356b29752e2b7ad5590171981c131001f2470b92c76e38",
+    "inpaint": "b217c270c05f774b21f4b995be9fbaf81784e2fa3409d7703d8697faf1dfbc35",
+    "render": "c20a19046e7251efd12cd99ae5de9853af20fe5b4d45a7f4b809af7d4d6bc2fd"
+  },
+  "changed_page_fingerprints": {
+    "ocr": "d3eea955d540e92b8a0f8d4026b5ca5b97d8c66ad13072432804d894bf6614aa",
+    "inpaint": "67241f20bdbaf6d38f3670531dcf6b51578457d9d4a17bfb877850d82f114468",
+    "render": "0a9c76c747c9984b6af3544380e776c88706fc5bbd4c7e854b46ba19a08025db"
+  }
+}
