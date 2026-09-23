@@ -1,0 +1,25 @@
+Verification commands run from tools/translation_studio/:
+python -m py_compile translation_providers.py pipeline.py test_translation_providers.py
+python -m unittest test_translation_providers -v
+
+test_governor_enforces_minimum_spacing_and_rolling_minute_limit (test_translation_providers.GoogleProtocolTests.test_governor_enforces_minimum_spacing_and_rolling_minute_limit) ... ok
+test_gtx_chunk_boundaries_count_unicode_codepoints (test_translation_providers.GoogleProtocolTests.test_gtx_chunk_boundaries_count_unicode_codepoints) ... ok
+test_gtx_envelope_request_and_ordered_id_match (test_translation_providers.GoogleProtocolTests.test_gtx_envelope_request_and_ordered_id_match) ... ok
+test_gtx_parser_requires_exact_ids_and_order (test_translation_providers.GoogleProtocolTests.test_gtx_parser_requires_exact_ids_and_order) ... ok
+test_invalid_envelope_falls_back_to_android_gtx_single_path (test_translation_providers.GoogleProtocolTests.test_invalid_envelope_falls_back_to_android_gtx_single_path) ... ok
+test_pipeline_clears_and_retries_legacy_source_echo (test_translation_providers.GoogleProtocolTests.test_pipeline_clears_and_retries_legacy_source_echo) ... ok
+test_pipeline_never_persists_a_google_source_echo_on_failure (test_translation_providers.GoogleProtocolTests.test_pipeline_never_persists_a_google_source_echo_on_failure) ... ok
+test_retry_after_beyond_inline_cap_fails_without_waiting (test_translation_providers.GoogleProtocolTests.test_retry_after_beyond_inline_cap_fails_without_waiting) ... ok
+test_retry_uses_three_attempts_one_second_base_and_inline_cap (test_translation_providers.GoogleProtocolTests.test_retry_uses_three_attempts_one_second_base_and_inline_cap) ... ok
+test_source_equal_provider_echo_is_not_cached (test_translation_providers.GoogleProtocolTests.test_source_equal_provider_echo_is_not_cached) ... ok
+test_total_google_failure_never_caches_source_text (test_translation_providers.GoogleProtocolTests.test_total_google_failure_never_caches_source_text) ... ok
+test_openai_requests_retry_and_share_provider_pacing (test_translation_providers.OpenAiCompatibilityTests.test_openai_requests_retry_and_share_provider_pacing) ... ok
+test_prompt_and_payload_use_android_id_protocol (test_translation_providers.OpenAiCompatibilityTests.test_prompt_and_payload_use_android_id_protocol) ... ok
+test_response_validation_rejects_unknown_duplicate_blank_and_missing_ids (test_translation_providers.OpenAiCompatibilityTests.test_response_validation_rejects_unknown_duplicate_blank_and_missing_ids) ... ok
+test_stable_request_block_indexes_follow_android_geometry_order (test_translation_providers.OpenAiCompatibilityTests.test_stable_request_block_indexes_follow_android_geometry_order) ... ok
+test_token_planner_splits_and_respects_context_ceiling (test_translation_providers.OpenAiCompatibilityTests.test_token_planner_splits_and_respects_context_ceiling) ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 0.481s
+
+OK
