@@ -2,6 +2,7 @@ package eu.kanade.translation.inpainting.bubble
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import eu.kanade.translation.inpainting.opencv.OpenCvInpaintEngine
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import kotlin.math.abs
@@ -92,8 +93,7 @@ class SmartBubbleTextCleaner(
     /**
      * TachiyomiAT: body of [fillSolidBoxes] for one padded SOLID box. The erase
      * mask is the solid padded box; the fill is the **Telea Fast Marching Method**
-     * ([FastMarchingMethod.inpaintTelea]) — same as the prototype's
-     * `cv2.inpaint(INPAINT_TELEA)`.
+     * ([OpenCvInpaintEngine.inpaintTelea]) — powered by OpenCV native `Photo.inpaint`.
      *
      * Telea reconstructs each hole pixel from its known neighbours in fast-
      * marching arrival order, so surrounding gradient/texture flows in rather
@@ -151,7 +151,7 @@ class SmartBubbleTextCleaner(
         // Telea reconstructs in place; copy so contextPixels stays original for the blend.
         // radius=3 matches the prototype (cv2.inpaint flag 3) and cleanBubbleGroupFmm.
         val reconstructed = contextPixels.copyOf()
-        FastMarchingMethod.inpaintTelea(reconstructed, solidMask, contextW, contextH, radius = 3)
+        OpenCvInpaintEngine.inpaintTelea(reconstructed, solidMask, contextW, contextH, radius = 3)
 
         // Feather-blend so the hole boundary is a soft ramp; alpha covers mask core + ring.
         val alpha = BubbleMaskBuilder.featherAlpha(solidMask, contextW, contextH, scaledFeather)

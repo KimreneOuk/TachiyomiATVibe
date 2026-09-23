@@ -3,6 +3,7 @@ package eu.kanade.translation.inpainting.bubble
 import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.comparables.shouldBeLessThan
 import io.kotest.matchers.shouldBe
+import eu.kanade.translation.inpainting.opencv.OpenCvInpaintEngine
 import org.junit.jupiter.api.Test
 
 /**
@@ -307,7 +308,7 @@ class BubbleMaskBuilderTest {
         val pixels = IntArray(w * h) { grayPixel((it % w) * 10) }
         val mask = ByteArray(w * h)
         val before = pixels.copyOf()
-        FastMarchingMethod.inpaintTelea(pixels, mask, w, h)
+        OpenCvInpaintEngine.inpaintTelea(pixels, mask, w, h)
         pixels.toList() shouldBe before.toList()
     }
 
@@ -320,7 +321,7 @@ class BubbleMaskBuilderTest {
         val pixels = IntArray(w * h) { grayPixel((it % w) * 10) } // 0..70 L→R
         val mask = ByteArray(w * h)
         for (y in 0 until h) for (x in 3..5) mask[y * w + x] = 1
-        FastMarchingMethod.inpaintTelea(pixels, mask, w, h)
+        OpenCvInpaintEngine.inpaintTelea(pixels, mask, w, h)
         val midY = 4
         // Linearly-interpolated gradient at column 4 is ~40; allow ±15 tolerance.
         val midHole = redOf(pixels[midY * w + 4])
@@ -338,7 +339,7 @@ class BubbleMaskBuilderTest {
         val mask = ByteArray(w * h)
         for (y in 2..5) for (x in 2..5) mask[y * w + x] = 1
         val before = pixels.copyOf()
-        FastMarchingMethod.inpaintTelea(pixels, mask, w, h)
+        OpenCvInpaintEngine.inpaintTelea(pixels, mask, w, h)
         var minVal = 255
         var maxVal = 0
         for (i in before.indices) {

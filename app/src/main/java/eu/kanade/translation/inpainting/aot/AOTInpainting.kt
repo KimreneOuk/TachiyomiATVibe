@@ -2,6 +2,7 @@ package eu.kanade.translation.inpainting.aot
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.bubble.BubbleMaskBuilder
 import eu.kanade.translation.inpainting.bubble.SmartBubbleTextCleaner
+import eu.kanade.translation.inpainting.opencv.OpenCvInpaintEngine
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
@@ -45,8 +46,8 @@ class AOTInpainting(
         private const val PADDLE_THRESH = 0.18f
         private const val PADDLE_BOX_THRESH = 0.34f
         private const val MASK_PAD = 8
-        private const val REPORT_FREE_TEXT_PAD = 16
-        private const val REPORT_FREE_TEXT_DILATE = 8
+        private const val REPORT_FREE_TEXT_PAD = 1
+        private const val REPORT_FREE_TEXT_DILATE = 2
         private const val REPORT_AOT_CONTEXT = 512
         private const val REPORT_FREE_TEXT_FEATHER = 3
         private const val REPORT_BUBBLE_SMOOTH_PASSES = 12
@@ -664,8 +665,7 @@ class AOTInpainting(
         val original = IntArray(cropW * cropH)
         image.getPixels(original, 0, cropW, bounds[0], bounds[1], cropW, cropH)
         val work = original.copyOf()
-        val bg = PushPullGradient.localRingMedian(work, cropW, cropH, mask, PushPullGradient.DEFAULT_RING)
-        PushPullGradient.pushPullFill(work, cropW, cropH, mask, bg)
+        OpenCvInpaintEngine.inpaintPixels(work, mask, cropW, cropH)
         val alpha = BubbleMaskBuilder.featherAlphaField(mask, cropW, cropH, REPORT_FREE_TEXT_FEATHER)
         for (i in work.indices) {
             val a = alpha[i]

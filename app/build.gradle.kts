@@ -386,6 +386,7 @@ dependencies {
     implementation(libs.mlkit.text.translate)
     implementation(libs.onnxruntime.android)
     implementation(libs.jtokkit)
+    implementation(libs.opencv)
 }
 
 androidComponents {
