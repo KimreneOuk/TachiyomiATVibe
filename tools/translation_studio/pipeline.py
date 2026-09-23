@@ -54,7 +54,8 @@ from boxgeom import (Box, DET_THRESHOLDS, intersection_area,  # noqa: E402
                      dedupe_within_parents_with_suppressions,
                      suppress_cross_label_with_suppressions)
 from detection_artifacts import (asset_sha12, assign_mask_center,  # noqa: E402
-                                 box_artifact, mask_artifact)
+                                 box_artifact, iter_rle_row_spans,
+                                 mask_artifact, resolve_mask_component)
 from panel_detector import (PANEL_MODEL, PanelDetector, assign_panel,  # noqa: E402
                             panel_nms, reading_order_panel_indices)
 from sliding_detector import (calculate_windows, is_tall_image,  # noqa: E402
@@ -103,6 +104,7 @@ class Pipeline:
         self._seg_times: dict[str, float] = {}
         self._inpaint_times: dict[str, float] = {}
         self._render_times: dict[str, float] = {}
+        self._render_assignments: dict[str, list[dict]] = {}
         self._cache: dict = {}
         self._render_dirty: dict[str, bool] = {}
         self._crop_cache: dict = {}
@@ -194,6 +196,7 @@ class Pipeline:
             self._dims = {}
             self._crop_cache = {}
             self._bubble_mask_cache = {}
+            self._render_assignments = {}
             self.settings = dict(DEFAULT_SETTINGS)
             self.settings.update(self._load_json("settings.json", {}))
             self._render_dirty = {p: True for p in self.pages}
@@ -907,6 +910,22 @@ class Pipeline:
             derived_records.append(record)
             derived_by_id[derived_id] = record
 
+        segmenter_model = models.get("bubble-segmenter", {})
+        segmenter_enabled = (segmenter_model.get("status") == "ready"
+                             and self.settings.get("bubble_segmentation", True))
+        mask_cache = raw.get("mask_cache", {}).get("bubble-segmenter", {})
+        segmenter_outputs = segmenter_model.get("outputs", []) if segmenter_enabled else []
+        if segmenter_enabled:
+            # Bind the complete confidence-projected detector set to A1's
+            # captured page-space artifacts before OCR-stage deduplication.
+            # Detector-only planner proposals use these same stable references.
+            for item in canonical:
+                record = derived_by_id[item["artifact_id"]]
+                assignment = assign_mask_center(segmenter_outputs, mask_cache,
+                                                item["box"].as_list())
+                if assignment is not None:
+                    record["segmenter_assignment"] = assignment
+
         canonical_texts = [item for item in canonical if item["label"] in (1, 2)]
         same_label_kept_indices, ocr_suppressions = dedupe_within_parents_with_suppressions(
             [item["box"] for item in canonical_texts],
@@ -961,11 +980,6 @@ class Pipeline:
         panel_views = [dict(panel, panel_index=index)
                        for index, panel in enumerate(ordered_panels)]
 
-        segmenter_model = models.get("bubble-segmenter", {})
-        segmenter_enabled = (segmenter_model.get("status") == "ready"
-                             and self.settings.get("bubble_segmentation", True))
-        mask_cache = raw.get("mask_cache", {}).get("bubble-segmenter", {})
-        segmenter_outputs = segmenter_model.get("outputs", []) if segmenter_enabled else []
         kept_regions = []
         panel_assignment_records = []
         for index, item in enumerate(texts):
@@ -991,13 +1005,11 @@ class Pipeline:
                                                  **assignment})
                 add_trace(item["artifact_id"], "panel", kept=True,
                           assignment=assignment)
-            if segmenter_enabled:
-                assignment = assign_mask_center(segmenter_outputs, mask_cache,
-                                                box.as_list())
-                if assignment is not None:
-                    region["segmenter_assignment"] = assignment
-                    add_trace(item["artifact_id"], "segmenter-assignment",
-                              kept=True, **assignment)
+            assignment = record.get("segmenter_assignment")
+            if assignment is not None:
+                region["segmenter_assignment"] = assignment
+                add_trace(item["artifact_id"], "segmenter-assignment",
+                          kept=True, **assignment)
             kept_regions.append(region)
 
         panel_suppressions = panel_model.get("suppression_records", [])
@@ -1310,15 +1322,43 @@ class Pipeline:
         return self._segmenter
 
     def bubble_masks(self, page: str) -> list:
-        """Cached bubble masks for a page, run on the PRISTINE page_image.
-        Sharing the mask across inpaint, segmentation viewer, and render
-        avoids redundant ONNX passes and guarantees render sees the same
-        bubble boundaries as inpaint (running segmentation on an already-
-        inpainted image fails to detect smoothed bubbles)."""
+        """Return masks for legacy callers, preferring the captured A1 output.
+
+        Android inpaint and render consume the RLE resolver directly. This
+        adapter exists for the legacy engine and the segmentation overlay; a
+        current capture is never replaced with a fresh segmenter inference.
+        """
         if not self.settings.get("bubble_segmentation", True):
             return []
         with self.lock:
             if page not in self._bubble_mask_cache:
+                capture = self._cache.get("detections", {}).get(page) or {}
+                if capture.get("capture_version") == 1:
+                    # Tall captures intentionally stay as page-space RLEs.
+                    # The A4 Android consumer reads selected runs directly.
+                    if capture.get("is_tall"):
+                        self._bubble_mask_cache[page] = []
+                        return []
+                    model = (capture.get("models", {})
+                             .get("bubble-segmenter", {}))
+                    mask_cache = (capture.get("mask_cache", {})
+                                  .get("bubble-segmenter", {}))
+                    width, height = capture.get("page_wh", self.page_dims(page))
+                    masks = []
+                    if model.get("status") == "ready":
+                        from segmentation import BubbleMask
+                        for output in model.get("outputs", []):
+                            ref = output.get("mask_ref")
+                            entry = mask_cache.get(ref, {})
+                            runs = entry.get("runs", [])
+                            dense = np.zeros((height, width), dtype=bool)
+                            for y, x1, x2 in iter_rle_row_spans(runs, width, height):
+                                dense[y, x1:x2] = True
+                            if dense.any():
+                                masks.append(BubbleMask.build(
+                                    dense, float(output.get("attrs", {}).get("score", 0.0))))
+                    self._bubble_mask_cache[page] = masks
+                    return masks
                 segmenter = self._bubble_segmenter()
                 if segmenter is None:
                     return []
@@ -1336,6 +1376,81 @@ class Pipeline:
                     self._seg_times[page] = 0
             return self._bubble_mask_cache[page]
 
+    def _inpaint_execution_projection(self, page: str, conf: float) -> dict:
+        """Join cached OCR text to the current A1 execution projection."""
+        raw = self._cache.get("detections", {}).get(page) or {}
+        ocr_data = self._cache.get("ocr", {}).get(page) or {}
+        if raw.get("capture_version") != 1:
+            def meets_confidence(score) -> bool:
+                try:
+                    value = float(score)
+                except (TypeError, ValueError, OverflowError):
+                    return False
+                return math.isfinite(value) and value >= conf
+
+            raw_boxes = [row for row in raw.get("boxes", [])
+                         if len(row) >= 6 and meets_confidence(row[1])]
+            regions = [region for region in ocr_data.get("regions", [])
+                       if meets_confidence(region.get("score", 1.0))]
+            return {"current_capture": False, "regions": regions,
+                    "detections": raw_boxes,
+                    "candidate_ids": [],
+                    "mask_capture_integrity": {
+                        "status": "legacy-schema", "degraded": False,
+                        "missing_mask_refs": []},
+                    "ocr_join": {"status": "legacy-schema-fallback",
+                                 "matched": len(regions), "unmatched": 0}}
+
+        projected = self._regions_at_conf(page, conf)
+        raw = self._cache["detections"][page]
+        text_model = raw.get("models", {}).get("text-detector", {})
+        candidates = text_model.get("derived_outputs", [])
+        segmenter_model = raw.get("models", {}).get("bubble-segmenter", {})
+        mask_cache = raw.get("mask_cache", {}).get("bubble-segmenter", {})
+        if segmenter_model.get("status") == "ready":
+            missing_mask_refs = [
+                item.get("mask_ref") or item.get("id")
+                for item in segmenter_model.get("outputs", [])
+                if not mask_cache.get(item.get("mask_ref"))
+            ]
+            mask_status = ("degraded-missing-references" if missing_mask_refs
+                           else "complete")
+        else:
+            missing_mask_refs = []
+            mask_status = segmenter_model.get("status", "unknown")
+        region_by_artifact = {region.get("artifact_id"): region
+                              for region in projected.get("regions", [])
+                              if region.get("artifact_id")}
+        joined = []
+        unmatched = 0
+        for cached_region in ocr_data.get("regions", []):
+            artifact_id = cached_region.get("artifact_id")
+            current_region = region_by_artifact.get(artifact_id)
+            if not artifact_id or current_region is None:
+                unmatched += 1
+                continue
+            region = dict(current_region)
+            for key in ("id", "text", "raw_text", "confidence", "lines",
+                        "engine", "error", "carried_from"):
+                if key in cached_region:
+                    region[key] = cached_region[key]
+            region["artifact_id"] = artifact_id
+            joined.append(region)
+        join_status = "joined" if unmatched == 0 else "degraded-unjoined-ocr"
+        if not ocr_data.get("regions"):
+            join_status = "no-cached-ocr"
+        return {
+            "current_capture": True,
+            "regions": joined,
+            "detections": candidates,
+            "candidate_ids": [record.get("id") for record in candidates],
+            "mask_capture_integrity": {
+                "status": mask_status, "degraded": bool(missing_mask_refs),
+                "missing_mask_refs": missing_mask_refs},
+            "ocr_join": {"status": join_status, "matched": len(joined),
+                         "unmatched": unmatched},
+        }
+
     def inpaint_page(self, page: str, force: bool = False, mode: str | None = None) -> dict:
         with self.lock:
             mode = (mode or self.settings.get("inpaint_mode", "quality")).upper()
@@ -1344,16 +1459,24 @@ class Pipeline:
             free_leg = str(self.settings.get("inpaint_free_leg", "opencv")).lower()
             if engine not in ("legacy", "android"):
                 raise ValueError(f"unsupported inpaint engine: {engine}")
+            conf = float(self.settings.get("conf", DEFAULT_SETTINGS["conf"]))
+            if page not in self._cache.get("detections", {}):
+                self.detect_page(page, conf)
             det_data = self._cache["detections"].get(page) or {}
             raw_boxes = det_data.get("boxes", [])
-            ocr_data = self._cache["ocr"].get(page) or {}
-            regions = ocr_data.get("regions", [])
-            if not regions and not raw_boxes:
-                self.detect_page(page)
-                det_data = self._cache["detections"].get(page) or {}
-                raw_boxes = det_data.get("boxes", [])
-                conf = self.settings.get("conf", 0.45)
-                regions = self._regions_at_conf(page, conf).get("regions", [])
+            execution = self._inpaint_execution_projection(page, conf)
+            regions = execution["regions"]
+            planner_detections = execution["detections"]
+            current_capture = execution["current_capture"]
+            if current_capture:
+                legacy_raw_boxes = [
+                    [int(row[0]), float(row[1]),
+                     *[int(v) for v in row[2:6]]]
+                    for row in raw_boxes if len(row) >= 6
+                    and math.isfinite(float(row[1])) and float(row[1]) >= conf
+                ]
+            else:
+                legacy_raw_boxes = planner_detections
 
             out_dir = self.studio_dir / "inpaint"
             mask_dir = self.studio_dir / "inpaint_mask"
@@ -1368,6 +1491,9 @@ class Pipeline:
                 "engine": engine,
                 "leg_matrix": leg_matrix,
                 "legacy_mode": mode if engine == "legacy" else None,
+                "execution_confidence": conf,
+                "bubble_segmentation": bool(
+                    self.settings.get("bubble_segmentation", True)),
             }
             cached = {}
             if provenance_path.exists():
@@ -1381,20 +1507,59 @@ class Pipeline:
             if force or not out_path.exists() or not mask_path.exists() or not cache_matches:
                 img = self.page_image(page)
                 t0 = time.perf_counter()
+                parity = ("android-production"
+                          if engine == "android" and current_capture and conf == 0.6
+                          else "experimental/non-parity")
+                execution_provenance = {
+                    "confidence_threshold": conf,
+                    "parity": parity,
+                    "source": ("cached-detection-artifacts" if current_capture
+                               else "legacy-box-cache"),
+                    "candidate_artifact_ids": execution["candidate_ids"],
+                    "mask_capture_integrity": execution["mask_capture_integrity"],
+                    "ocr_region_join": execution["ocr_join"],
+                }
                 if engine == "android":
                     import inpaint_android
-                    seg_masks = self.bubble_masks(page)
+                    if current_capture:
+                        seg_masks = None
+                        mask_cache = (det_data.get("mask_cache", {})
+                                      .get("bubble-segmenter", {}))
+                        segmenter_outputs = (det_data.get("models", {})
+                                             .get("bubble-segmenter", {})
+                                             .get("outputs", []))
+                        segmenter_enabled = (
+                            det_data.get("models", {}).get("bubble-segmenter", {})
+                            .get("status") == "ready"
+                            and self.settings.get("bubble_segmentation", True))
+                    else:
+                        # Legacy caches have no stable RLE references; keep the
+                        # comparison path behind its explicit compatibility adapter.
+                        seg_masks = self.bubble_masks(page)
+                        mask_cache = None
+                        segmenter_outputs = None
+                        segmenter_enabled = False
                     paddle_det = self._inpaint_paddle_det()
                     needs_aot = bubble_leg == "aot" or free_leg == "aot"
                     aot = self._aot_inpainter(allow_dynamic=True) if needs_aot else None
                     cleaned, mask, region_routes, stats = inpaint_android.inpaint_page_android(
-                        img, regions, raw_detections=raw_boxes,
+                        img, regions, raw_detections=planner_detections,
                         seg_masks=seg_masks, bubble_leg=bubble_leg,
                         free_leg=free_leg, paddle_det=paddle_det, aot=aot,
+                        mask_cache=mask_cache,
+                        segmenter_outputs=segmenter_outputs,
+                        current_capture=current_capture,
+                        segmenter_enabled=segmenter_enabled,
+                        execution_confidence=conf,
                     )
                     provenance = {
+                        "provenance_schema_version": 2,
                         "engine": "android",
                         "cache_key": cache_key,
+                        "execution": execution_provenance,
+                        "mask_source": ("A1-cached-page-space-rle"
+                                        if current_capture
+                                        else "legacy-schema-fallback"),
                         "leg_matrix": leg_matrix,
                         "stats": stats,
                         "regions": region_routes,
@@ -1407,13 +1572,15 @@ class Pipeline:
                     import aot_inpaint
                     bubble_erosion = int(self.settings.get("bubble_mask_erosion", 5))
                     cleaned, mask, stats = aot_inpaint.inpaint_page_pipeline(
-                        img, regions, raw_detections=raw_boxes,
+                        img, regions, raw_detections=legacy_raw_boxes,
                         seg_masks=seg_masks, mode=mode,
                         paddle_det=paddle_det, aot=aot,
                         bubble_erosion=bubble_erosion,
                     )
                     provenance = {
+                        "provenance_schema_version": 2,
                         "engine": "legacy", "cache_key": cache_key,
+                        "execution": execution_provenance,
                         "leg_matrix": leg_matrix, "mode": mode,
                         "stats": stats, "regions": [],
                     }
@@ -1465,6 +1632,45 @@ class Pipeline:
 
     def segmentation_overlay_image(self, page: str) -> Image.Image:
         w, h = self.page_dims(page)
+        if not self.settings.get("bubble_segmentation", True):
+            return Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        capture = self._cache.get("detections", {}).get(page) or {}
+        if capture.get("capture_version") == 1:
+            overlay_np = np.zeros((h, w, 4), dtype=np.uint8)
+            colors = [
+                (56, 189, 248, 110), (168, 85, 247, 110),
+                (52, 211, 153, 110), (251, 146, 60, 110),
+                (244, 114, 182, 110),
+            ]
+            border_colors = [
+                (56, 189, 248, 240), (168, 85, 247, 240),
+                (52, 211, 153, 240), (251, 146, 60, 240),
+                (244, 114, 182, 240),
+            ]
+            mask_cache = (capture.get("mask_cache", {})
+                          .get("bubble-segmenter", {}))
+            outputs = (capture.get("models", {})
+                       .get("bubble-segmenter", {}).get("outputs", []))
+            for index, output in enumerate(outputs):
+                entry = mask_cache.get(output.get("mask_ref"), {})
+                for component_runs in entry.get("components", {}).values():
+                    spans = list(iter_rle_row_spans(component_runs, w, h))
+                    border = border_colors[index % len(border_colors)]
+                    fill = colors[index % len(colors)]
+                    for y, x1, x2 in spans:
+                        left, right = max(0, x1 - 1), min(w, x2 + 1)
+                        if y > 0:
+                            overlay_np[y - 1, left:right] = border
+                        if y + 1 < h:
+                            overlay_np[y + 1, left:right] = border
+                        if x1 > 0:
+                            overlay_np[y, x1 - 1] = border
+                        if x2 < w:
+                            overlay_np[y, x2] = border
+                    for y, x1, x2 in spans:
+                        overlay_np[y, x1:x2] = fill
+            return Image.fromarray(overlay_np, "RGBA")
+
         masks = self.bubble_masks(page)
         overlay_np = np.zeros((h, w, 4), dtype=np.uint8)
         colors = [
@@ -1522,16 +1728,20 @@ class Pipeline:
                 img = self.inpainted_image(page).copy()
                 img.studio_page = page      # for bubble lookups in render_regions
                 tr = self.translations(page)
+                render_assignments = []
                 n = render_regions(img, ocr["regions"], tr,
-                                   self.settings, self, page=page)
+                                   self.settings, self, page=page,
+                                   assignment_records=render_assignments)
                 img.save(out_path)
+                self._render_assignments[page] = render_assignments
                 self._render_dirty[page] = False
                 render_ms = round((time.perf_counter() - t0) * 1000, 1)
                 self._render_times[page] = render_ms
                 self.log(f"render {page}: {n}/{len(ocr['regions'])} regions "
                          f"translated -> {out_path.name} ({render_ms}ms)")
             return {"page": page, "path": str(out_path),
-                    "render_ms": self._render_times.get(page, 0)}
+                    "render_ms": self._render_times.get(page, 0),
+                    "mask_assignments": self._render_assignments.get(page, [])}
 
     def overlay_image(self, page: str, conf: float | None = None) -> Image.Image:
         conf = self.settings["conf"] if conf is None else conf
@@ -1953,9 +2163,15 @@ def _fit_text_in_mask(draw, text: str, box: Box, comp_mask, settings: dict):
             block_w = max(draw.textlength(l, font=font) for l in lines) + 2 * sw
             rx1 = int(box.cx - block_w / 2)
             ry1 = int(box.cy - total_h / 2)
-            sub = comp_mask[max(0, ry1):ry1 + int(total_h) + 1,
-                            max(0, rx1):rx1 + int(block_w) + 1]
-            if sub.size and bool(sub.all()):
+            test_rect = [rx1, ry1, rx1 + int(block_w) + 1,
+                         ry1 + int(total_h) + 1]
+            if hasattr(comp_mask, "contains_rect"):
+                inside = comp_mask.contains_rect(test_rect)
+            else:
+                sub = comp_mask[max(0, ry1):ry1 + int(total_h) + 1,
+                                max(0, rx1):rx1 + int(block_w) + 1]
+                inside = bool(sub.size and sub.all())
+            if inside:
                 return font, lines, line_h
         size -= 1
     scaled_size = max(8, int(round(8 * font_scale)))
@@ -1997,12 +2213,18 @@ def _draw_text_clipped(img: Image.Image, mask, comp: int, box: Box,
                 fill=fill + (255,), stroke_width=stroke_w,
                 stroke_fill=stroke + (255,))
         y += line_h
-    h, w = mask.labels.shape
     wy1, wx1 = max(0, ly1), max(0, lx1)
+    if hasattr(mask, "rasterize_crop"):
+        h, w = mask.height, mask.width
+    else:
+        h, w = mask.labels.shape
     wy2, wx2 = min(h, ly1 + lh_), min(w, lx1 + lw_)
     if wy2 > wy1 and wx2 > wx1:
-        comp_crop = Image.fromarray(
-            (mask.labels[wy1:wy2, wx1:wx2] == comp).astype(np.uint8) * 255, "L")
+        if hasattr(mask, "rasterize_crop"):
+            comp_pixels = mask.rasterize_crop([wx1, wy1, wx2, wy2])
+        else:
+            comp_pixels = mask.labels[wy1:wy2, wx1:wx2] == comp
+        comp_crop = Image.fromarray(comp_pixels.astype(np.uint8) * 255, "L")
         full = Image.new("L", (lw_, lh_), 0)
         full.paste(comp_crop, (wx1 - lx1, wy1 - ly1))
         layer.putalpha(ImageChops.multiply(layer.getchannel("A"), full))
@@ -2012,7 +2234,8 @@ def _draw_text_clipped(img: Image.Image, mask, comp: int, box: Box,
 def render_regions(img: Image.Image, regions: list[dict],
                    translations: dict[str, str], settings: dict,
                    pipe: "Pipeline | None" = None,
-                   page: str | None = None) -> int:
+                   page: str | None = None,
+                   assignment_records: list[dict] | None = None) -> int:
     """Draw translated text onto the pre-inpainted image.
 
     Layout and rendering mirror Android's TextLineBreaker and TextLayoutPlanner:
@@ -2028,20 +2251,86 @@ def render_regions(img: Image.Image, regions: list[dict],
 
     _seg = _seg_module()
     seg_masks: list | None = None
-    if pipe is not None and settings.get("bubble_segmentation", True):
+    assignment: dict[str, object] = {}
+    execution_bubble_records = None
+    if pipe is not None:
         p = page or getattr(img, "studio_page", None)
         if p:
-            seg_masks = pipe.bubble_masks(p)
-        else:
-            segmenter = pipe._bubble_segmenter()
-            if segmenter is not None:
-                try:
-                    seg_masks = segmenter.segment(img)
-                except Exception as e:
-                    log(f"!! bubble segmentation lookup error: {e}")
-                    seg_masks = None
-
-    assignment: dict[str, tuple] = {}
+            det_data = pipe._cache.get("detections", {}).get(p) or {}
+            if det_data.get("capture_version") == 1:
+                conf = float(settings.get("conf", DEFAULT_SETTINGS["conf"]))
+                projected = pipe._regions_at_conf(p, conf).get("regions", [])
+                projected_by_id = {r.get("artifact_id"): r for r in projected
+                                   if r.get("artifact_id")}
+                raw = pipe._cache["detections"][p]
+                execution_bubble_records = [
+                    record for record in raw.get("models", {})
+                    .get("text-detector", {}).get("derived_outputs", [])
+                    if int(record.get("attrs", {}).get("label", -1)) == 0
+                ]
+                mask_cache = (raw.get("mask_cache", {})
+                              .get("bubble-segmenter", {}))
+                seg_model = raw.get("models", {}).get("bubble-segmenter", {})
+                outputs = seg_model.get("outputs", [])
+                missing_mask_refs = [
+                    item.get("mask_ref") or item.get("id")
+                    for item in outputs if not mask_cache.get(item.get("mask_ref"))
+                ]
+                resolved_views = {}
+                eligible_todo = []
+                for region in todo:
+                    artifact_id = region.get("artifact_id")
+                    current_region = projected_by_id.get(artifact_id)
+                    source_assignment = ((current_region or {}).get(
+                         "segmenter_assignment"))
+                    audit = {"region_id": region.get("id"),
+                             "artifact_id": artifact_id,
+                             "mask_ref": (source_assignment or {}).get("mask_ref"),
+                             "segmenter_component_id": (source_assignment or {}).get(
+                                 "mask_component_id"),
+                             "status": "no-assignment"}
+                    if current_region is None:
+                        audit["status"] = "not-in-current-execution-projection"
+                        if assignment_records is not None:
+                            assignment_records.append(audit)
+                        continue
+                    eligible_todo.append(region)
+                    if not settings.get("bubble_segmentation", True):
+                        audit["status"] = "segmentation-disabled"
+                    elif source_assignment:
+                        key = (source_assignment.get("mask_ref"),
+                               source_assignment.get("mask_component_id"))
+                        if key not in resolved_views:
+                            resolved_views[key] = resolve_mask_component(
+                                key[0], key[1], mask_cache, outputs)
+                        view, error = resolved_views[key]
+                        if view is not None and (view.width, view.height) != img.size:
+                            view, error = None, "page-dimension-mismatch"
+                        if view is not None:
+                            assignment[region["id"]] = view
+                            audit.update({"status": "resolved",
+                                          "source": dict(view.source)})
+                        else:
+                            audit["status"] = error or "missing-reference"
+                            audit["degraded"] = True
+                            pipe.log(f"!! render mask reference degraded for {p}/"
+                                     f"{region.get('id')}: {audit['status']}")
+                    elif missing_mask_refs:
+                        audit.update({"status": "capture-missing-references",
+                                      "degraded": True,
+                                      "missing_mask_refs": missing_mask_refs})
+                    if assignment_records is not None:
+                        assignment_records.append(audit)
+                todo = eligible_todo
+            else:
+                if settings.get("bubble_segmentation", True):
+                    segmenter = pipe._bubble_segmenter()
+                    if segmenter is not None:
+                        try:
+                            seg_masks = segmenter.segment(img)
+                        except Exception as e:
+                            log(f"!! bubble segmentation lookup error: {e}")
+                            seg_masks = None
     if seg_masks:
         for r in todo:
             a = _seg.assign_region_component(seg_masks, Box(*r["box"]).as_list())
@@ -2052,15 +2341,27 @@ def render_regions(img: Image.Image, regions: list[dict],
     bubbles: list[Box] = []
     if pipe is not None and p:
         det_data = pipe._cache["detections"].get(p) or {}
-        raw_b = det_data.get("boxes", [])
-        bubbles = [Box(int(b[2]), int(b[3]), int(b[4]), int(b[5]))
-                   for b in raw_b if int(b[0]) == 0 and len(b) >= 6]
+        if execution_bubble_records is not None:
+            for record in execution_bubble_records:
+                geometry = record.get("geometry", {})
+                try:
+                    bubbles.append(Box(*(int(geometry[key]) for key in
+                                         ("x1", "y1", "x2", "y2"))))
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    continue
+        else:
+            raw_b = det_data.get("boxes", [])
+            conf = float(settings.get("conf", DEFAULT_SETTINGS["conf"]))
+            bubbles = [Box(int(b[2]), int(b[3]), int(b[4]), int(b[5]))
+                       for b in raw_b if int(b[0]) == 0 and len(b) >= 6
+                       and float(b[1]) >= conf]
 
     comp_counts: dict[tuple, int] = {}
     for r in todo:
         a = assignment.get(r["id"])
         if a is not None:
-            comp_counts[a] = comp_counts.get(a, 0) + 1
+            key = a.key if hasattr(a, "key") else a
+            comp_counts[key] = comp_counts.get(key, 0) + 1
 
     np_page = np.asarray(img)
     draw = ImageDraw.Draw(img)
@@ -2073,15 +2374,21 @@ def render_regions(img: Image.Image, regions: list[dict],
         anchor_cy = pbox.cy if pbox is not None else rbox.cy
         a = assignment.get(r["id"])
         if a is not None:
-            mask, comp = a
-            c_obj = next((c for c in mask.components if c.id == comp), None)
-            if c_obj is not None:
-                cb = c_obj.bounds
+            if hasattr(a, "component_bounds"):
+                mask, comp = a, a.component_id
+                cb = mask.component_bounds
             else:
-                cys, cxs = np.where(mask.labels == comp)
-                cb = (int(cxs.min()), int(cys.min()), int(cxs.max()) + 1, int(cys.max()) + 1)
+                mask, comp = a
+                c_obj = next((c for c in mask.components if c.id == comp), None)
+                if c_obj is not None:
+                    cb = c_obj.bounds
+                else:
+                    cys, cxs = np.where(mask.labels == comp)
+                    cb = (int(cxs.min()), int(cys.min()),
+                          int(cxs.max()) + 1, int(cys.max()) + 1)
 
-            if comp_counts.get(a, 0) == 1:
+            assignment_key = a.key if hasattr(a, "key") else a
+            if comp_counts.get(assignment_key, 0) == 1:
                 # Expand symmetrically from the anchor center within the bubble mask bounds
                 half_w = max(rbox.w / 2.0, min(anchor_cx - cb[0], cb[2] - anchor_cx))
                 half_h = max(rbox.h / 2.0, min(anchor_cy - cb[1], cb[3] - anchor_cy))
@@ -2089,7 +2396,12 @@ def render_regions(img: Image.Image, regions: list[dict],
                               int(anchor_cx + half_w), int(anchor_cy + half_h))
             else:
                 gx1, gy1 = max(0, rbox.x1), max(0, rbox.y1)
-                inter = mask.labels[gy1:rbox.y2, gx1:rbox.x2] == comp
+                if hasattr(mask, "rasterize_crop"):
+                    inter = mask.rasterize_crop(
+                        [gx1, gy1, min(mask.width, rbox.x2),
+                         min(mask.height, rbox.y2)])
+                else:
+                    inter = mask.labels[gy1:rbox.y2, gx1:rbox.x2] == comp
                 if inter.any():
                     ys, xs = np.where(inter)
                     fit_box = Box(gx1 + int(xs.min()), gy1 + int(ys.min()),
@@ -2101,8 +2413,10 @@ def render_regions(img: Image.Image, regions: list[dict],
             fit_box = pbox if pbox is not None else rbox
 
         if mask is not None:
+            component_mask = (mask if hasattr(mask, "contains_rect")
+                              else mask.component_mask(comp))
             font, lines, line_h = _fit_text_in_mask(
-                draw, text, fit_box, mask.component_mask(comp), settings)
+                draw, text, fit_box, component_mask, settings)
         else:
             font, lines, line_h = _fit_text(draw, text, fit_box, settings)
 
