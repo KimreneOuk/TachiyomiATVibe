@@ -1,0 +1,53 @@
+{
+  "model_path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-a3-ocr-parity\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+  "model_bytes": 21159378,
+  "model_sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+  "dictionary_path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-a3-ocr-parity\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\PP-OCRv6_small_rec.txt",
+  "dictionary_bytes": 74947,
+  "provider_names": [
+    "CPUExecutionProvider"
+  ],
+  "requested_max_batch": 4,
+  "results": [
+    {
+      "language": "ja",
+      "text": "日本語テスト",
+      "font_path": "C:\\WINDOWS\\Fonts\\YuGothB.ttc",
+      "fixture": "paddle_rec_ja.png",
+      "fixture_sha256": "47301fee40eb12146980986c11593b7afee042f2199fa1c4d403a0126f6c13cb",
+      "recognized_text": "日本語テスト",
+      "confidence": 0.9992887377738953
+    },
+    {
+      "language": "zh",
+      "text": "中文测试",
+      "font_path": "C:\\WINDOWS\\Fonts\\msyh.ttc",
+      "fixture": "paddle_rec_zh.png",
+      "fixture_sha256": "0293145711f68694af29ff4956e4b3e90d258e0c765971a68b742b58d16285f5",
+      "recognized_text": "中文测试",
+      "confidence": 0.9998660534620285
+    },
+    {
+      "language": "en",
+      "text": "FREE TEXT",
+      "font_path": "C:\\WINDOWS\\Fonts\\arialbd.ttf",
+      "fixture": "paddle_rec_en.png",
+      "fixture_sha256": "4f80f23d0cda2ee3489731d7e5e6b12ae6f9d1f2d9acc4bacfc0fc93d3b00742",
+      "recognized_text": "FREE TEXT",
+      "confidence": 0.9928533699777391
+    }
+  ],
+  "batch_trace": [
+    {
+      "width": 640,
+      "batch": 2,
+      "fallback": false
+    },
+    {
+      "width": 640,
+      "batch": 1,
+      "fallback": false
+    }
+  ],
+  "useful_output_count": 3
+}

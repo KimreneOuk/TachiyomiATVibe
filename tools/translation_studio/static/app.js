@@ -1951,6 +1951,7 @@ $("btnSettings")?.addEventListener("click", async () => {
   $("setTranslateBackend").value = s.translate_backend || "google";
   $("setConf").value = s.conf;
   $("setMaxBatch").value = s.max_batch;
+  $("setMangaOcrSerial").checked = Boolean(s.mangaocr_serial_timing);
   $("setErase").value = s.erase;
   $("setFont").value = s.font_path || "";
   $("setFontScale").value = s.font_scale;
@@ -1983,6 +1984,7 @@ $("setSave")?.addEventListener("click", async () => {
     translate_backend: $("setTranslateBackend").value,
     conf: parseFloat($("setConf").value),
     max_batch: parseInt($("setMaxBatch").value),
+    mangaocr_serial_timing: $("setMangaOcrSerial").checked,
     erase: $("setErase").value,
     font_path: $("setFont").value.trim(),
     font_scale: parseFloat($("setFontScale").value) || 1.0,

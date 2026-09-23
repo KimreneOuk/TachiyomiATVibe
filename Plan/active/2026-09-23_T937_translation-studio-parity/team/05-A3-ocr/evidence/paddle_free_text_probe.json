@@ -1,0 +1,128 @@
+{
+  "fixture": {
+    "text": "FREE TEXT",
+    "page_size": [
+      800,
+      360
+    ],
+    "label": 2,
+    "region_box": [
+      188,
+      96,
+      611,
+      191
+    ],
+    "font_path": "C:\\WINDOWS\\Fonts\\arialbd.ttf"
+  },
+  "detector": {
+    "model_path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-a3-ocr-parity\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+    "model_size_bytes": 9880512,
+    "model_sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+    "engine": "A3 paddle_ocr.PaddleDet",
+    "direct_detect_lines": [
+      [
+        37,
+        32,
+        386,
+        62,
+        0.9445974449473197
+      ]
+    ]
+  },
+  "a2_refinement": {
+    "module_path": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-a2-inpaint-port\\tools\\translation_studio\\inpaint_android.py",
+    "entrypoint": "inpaint_page_android",
+    "paddle_detect_lines_calls": [
+      {
+        "crop_size": [
+          447,
+          119
+        ],
+        "thresh": 0.18,
+        "box_thresh": 0.34,
+        "lines": [
+          [
+            49,
+            43,
+            395,
+            74,
+            0.9376340302767382
+          ]
+        ]
+      }
+    ],
+    "record": {
+      "id": "synthetic-free-text",
+      "kind": "ocr-region",
+      "text": "FREE TEXT",
+      "label": 2,
+      "score": 0.99,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            188,
+            96,
+            611,
+            191
+          ],
+          "label": 2,
+          "score": 0.99
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            188,
+            96,
+            611,
+            191
+          ]
+        },
+        {
+          "source": "paddle-refined",
+          "parent_region": "synthetic-free-text",
+          "box": [
+            225,
+            127,
+            571,
+            158
+          ]
+        }
+      ],
+      "route_taken": "freetext/opencv",
+      "mask_component_id": "c001",
+      "context_crop_bbox": [
+        161,
+        63,
+        635,
+        222
+      ],
+      "timing_ms": {
+        "planning": 0.035,
+        "refinement": 279.896,
+        "fill": 196.281,
+        "total": 476.212
+      },
+      "timing_scope": "region"
+    },
+    "stats": {
+      "bubble_leg": "android-fill",
+      "free_leg": "opencv",
+      "bubble_boxes": 0,
+      "free_boxes": 1,
+      "free_groups": 1,
+      "bubble_components": 0,
+      "combined_components": 1,
+      "mask_pixels": 13012,
+      "total_ms": 488.296
+    },
+    "mask_pixels": 13012
+  },
+  "artifacts": {
+    "fixture": "paddle_free_text_fixture.png",
+    "inpainted": "paddle_free_text_inpainted.png",
+    "mask": "paddle_free_text_mask.png"
+  }
+}
