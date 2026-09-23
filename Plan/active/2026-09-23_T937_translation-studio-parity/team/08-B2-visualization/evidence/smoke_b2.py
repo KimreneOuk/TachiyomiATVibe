@@ -49,30 +49,25 @@ def _record(artifact_id: str, model: str, label: int | str, score: float,
 
 
 def _make_fixture(chapter: Path) -> tuple[int, int]:
-    shutil.copytree(DEMO, chapter)
-    # Determinism guard: the repo demo folder is gitignored and accumulates
-    # generated artifacts from interactive/automated runs. Strip every
-    # p002-stage artifact and generated cache so this fixture asserts against
-    # a known state (p001 caches are fully overwritten below; p002 must end
-    # with NO caches at all).
+    # Hermetic fixture: synthesize both demo pages instead of copying the
+    # repo demo_chapter (which is gitignored and accumulates generated
+    # artifacts from interactive/automated runs — an environmental coupling
+    # that produced order-dependent assertion failures across worktrees).
+    chapter.mkdir(parents=True, exist_ok=True)
+    width, height = 640, 960
+    for name in (PAGE, "p002.jpg"):
+        page = Image.new("RGB", (width, height), (236, 232, 224))
+        draw = ImageDraw.Draw(page)
+        draw.rectangle((24, 24, width - 24, height // 2 - 12), outline=(60, 60, 64), width=3)
+        draw.rectangle((24, height // 2 + 12, width - 24, height - 24), outline=(60, 60, 64), width=3)
+        draw.rectangle((60, 60, width - 60, 140), fill=(250, 250, 250), outline=(30, 30, 30))
+        draw.rectangle((60, height - 220, width - 60, height - 80), fill=(250, 250, 250), outline=(30, 30, 30))
+        page.save(chapter / name, format="JPEG", quality=92)
     _studio = chapter / ".studio"
-    for _sub in ("inpaint", "inpaint_mask", "render", "thumbs", "inpaint_crops"):
-        _dir = _studio / _sub
-        if _dir.is_dir():
-            for _f in _dir.glob("p002*"):
-                if _f.is_dir():
-                    shutil.rmtree(_f, ignore_errors=True)
-                else:
-                    _f.unlink()
-    for _name in ("detections.json", "ocr.json", "translations.json"):
-        _file = _studio / _name
-        if _file.is_file():
-            _data = json.loads(_file.read_text(encoding="utf-8"))
-            _data.pop("p002.jpg", None)
-            _write_json(_file, _data)
+    _studio.mkdir(parents=True, exist_ok=True)
+    _write_json(_studio / "settings.json", {})
     page_path = chapter / PAGE
     with Image.open(page_path) as source:
-        width, height = source.size
         original = source.convert("RGB")
 
     top = min(150, max(12, height // 10))
