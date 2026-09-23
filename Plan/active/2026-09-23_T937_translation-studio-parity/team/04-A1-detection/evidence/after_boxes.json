@@ -1,0 +1,926 @@
+{
+  "p001.jpg": {
+    "mode": "windowed detector with replayed Android stages",
+    "page_wh": [
+      900,
+      1400
+    ],
+    "is_tall": false,
+    "windows": [
+      {
+        "index": null,
+        "top": 0,
+        "bottom": 1400,
+        "height": 1400
+      }
+    ],
+    "raw_boxes": [
+      [
+        0,
+        0.9742,
+        85,
+        585,
+        516,
+        834
+      ],
+      [
+        0,
+        0.9737,
+        395,
+        1040,
+        806,
+        1279
+      ],
+      [
+        0,
+        0.9602,
+        465,
+        135,
+        835,
+        364
+      ],
+      [
+        1,
+        0.8923,
+        180,
+        665,
+        421,
+        751
+      ],
+      [
+        1,
+        0.8743,
+        512,
+        1115,
+        691,
+        1201
+      ],
+      [
+        1,
+        0.8456,
+        589,
+        206,
+        710,
+        291
+      ],
+      [
+        0,
+        0.0797,
+        466,
+        135,
+        835,
+        364
+      ]
+    ],
+    "regions": [
+      {
+        "id": "r00",
+        "artifact_id": "dt-td0005",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.846,
+        "box": [
+          589,
+          206,
+          710,
+          291
+        ],
+        "ocr_box": [
+          577,
+          194,
+          722,
+          303
+        ],
+        "panel_assignment": {
+          "panel_index": 1,
+          "panel_id": "pd0000",
+          "best_panel_index": 1,
+          "best_panel_id": "pd0000",
+          "best_containment": 1.0,
+          "category": "owned"
+        },
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "r01",
+        "artifact_id": "dt-td0003",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.892,
+        "box": [
+          180,
+          665,
+          421,
+          751
+        ],
+        "ocr_box": [
+          168,
+          653,
+          433,
+          763
+        ],
+        "panel_assignment": {
+          "panel_index": 2,
+          "panel_id": "pd0003",
+          "best_panel_index": 2,
+          "best_panel_id": "pd0003",
+          "best_containment": 1.0,
+          "category": "owned"
+        },
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "r02",
+        "artifact_id": "dt-td0004",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.874,
+        "box": [
+          512,
+          1115,
+          691,
+          1201
+        ],
+        "ocr_box": [
+          500,
+          1103,
+          703,
+          1213
+        ],
+        "panel_assignment": {
+          "panel_index": 4,
+          "panel_id": "pd0002",
+          "best_panel_index": 4,
+          "best_panel_id": "pd0002",
+          "best_containment": 1.0,
+          "category": "owned"
+        },
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      }
+    ],
+    "panels": [
+      {
+        "id": "pd0001",
+        "box": [
+          604.2508792877197,
+          216.79126024246216,
+          691.2289047241211,
+          278.2306170463562
+        ],
+        "score": 0.8517786264419556,
+        "panel_index": 0
+      },
+      {
+        "id": "pd0000",
+        "box": [
+          48.94644737243652,
+          31.53421640396118,
+          858.9108467102051,
+          468.0513668060303
+        ],
+        "score": 0.9292062520980835,
+        "panel_index": 1
+      },
+      {
+        "id": "pd0003",
+        "box": [
+          37.51677989959717,
+          491.4657211303711,
+          859.3242740631104,
+          926.0193252563477
+        ],
+        "score": 0.7492348551750183,
+        "panel_index": 2
+      },
+      {
+        "id": "pd0004",
+        "box": [
+          526.9076538085938,
+          1125.789451599121,
+          676.0989856719971,
+          1192.3530578613281
+        ],
+        "score": 0.7218310832977295,
+        "panel_index": 3
+      },
+      {
+        "id": "pd0002",
+        "box": [
+          31.97763442993164,
+          946.7633247375488,
+          859.468936920166,
+          1367.1797561645508
+        ],
+        "score": 0.8470004200935364,
+        "panel_index": 4
+      }
+    ],
+    "model_counts": {
+      "text-detector": 7,
+      "panel-detector": 7,
+      "bubble-segmenter": 3
+    },
+    "model_status": {
+      "text-detector": "ready",
+      "panel-detector": "ready",
+      "bubble-segmenter": "ready"
+    }
+  },
+  "p002.jpg": {
+    "mode": "windowed detector with replayed Android stages",
+    "page_wh": [
+      900,
+      1400
+    ],
+    "is_tall": false,
+    "windows": [
+      {
+        "index": null,
+        "top": 0,
+        "bottom": 1400,
+        "height": 1400
+      }
+    ],
+    "raw_boxes": [
+      [
+        0,
+        0.9701,
+        393,
+        166,
+        847,
+        434
+      ],
+      [
+        0,
+        0.9607,
+        75,
+        675,
+        486,
+        924
+      ],
+      [
+        1,
+        0.8542,
+        523,
+        255,
+        719,
+        342
+      ],
+      [
+        1,
+        0.8054,
+        201,
+        773,
+        361,
+        824
+      ],
+      [
+        1,
+        0.7845,
+        361,
+        1184,
+        536,
+        1228
+      ],
+      [
+        0,
+        0.4601,
+        320,
+        1144,
+        858,
+        1295
+      ],
+      [
+        2,
+        0.1896,
+        361,
+        1184,
+        536,
+        1228
+      ],
+      [
+        0,
+        0.1159,
+        320,
+        1143,
+        858,
+        1294
+      ],
+      [
+        0,
+        0.1078,
+        320,
+        1144,
+        609,
+        1293
+      ],
+      [
+        0,
+        0.0973,
+        393,
+        166,
+        847,
+        434
+      ]
+    ],
+    "regions": [
+      {
+        "id": "r00",
+        "artifact_id": "dt-td0002",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.854,
+        "box": [
+          523,
+          255,
+          719,
+          342
+        ],
+        "ocr_box": [
+          511,
+          243,
+          731,
+          354
+        ],
+        "panel_assignment": {
+          "panel_index": null,
+          "panel_id": null,
+          "best_panel_index": null,
+          "best_panel_id": null,
+          "best_containment": 0.0,
+          "category": "orphan"
+        },
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "r01",
+        "artifact_id": "dt-td0003",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.805,
+        "box": [
+          201,
+          773,
+          361,
+          824
+        ],
+        "ocr_box": [
+          189,
+          761,
+          373,
+          836
+        ],
+        "panel_assignment": {
+          "panel_index": null,
+          "panel_id": null,
+          "best_panel_index": null,
+          "best_panel_id": null,
+          "best_containment": 0.0,
+          "category": "orphan"
+        },
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "r02",
+        "artifact_id": "dt-td0004",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.784,
+        "box": [
+          361,
+          1184,
+          536,
+          1228
+        ],
+        "ocr_box": [
+          349,
+          1172,
+          548,
+          1240
+        ],
+        "panel_assignment": {
+          "panel_index": null,
+          "panel_id": null,
+          "best_panel_index": null,
+          "best_panel_id": null,
+          "best_containment": 0.0,
+          "category": "orphan"
+        },
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      }
+    ],
+    "panels": [],
+    "model_counts": {
+      "text-detector": 10,
+      "panel-detector": 1,
+      "bubble-segmenter": 3
+    },
+    "model_status": {
+      "text-detector": "ready",
+      "panel-detector": "ready",
+      "bubble-segmenter": "ready"
+    }
+  },
+  "tall_synthetic.jpg": {
+    "mode": "windowed detector with replayed Android stages",
+    "page_wh": [
+      900,
+      2800
+    ],
+    "is_tall": true,
+    "windows": [
+      {
+        "index": 0,
+        "top": 0,
+        "bottom": 1260,
+        "height": 1260
+      },
+      {
+        "index": 1,
+        "top": 1010,
+        "bottom": 2270,
+        "height": 1260
+      },
+      {
+        "index": 2,
+        "top": 2020,
+        "bottom": 2800,
+        "height": 780
+      }
+    ],
+    "raw_boxes": [
+      [
+        0,
+        0.9724,
+        85,
+        586,
+        516,
+        834
+      ],
+      [
+        0,
+        0.9618,
+        394,
+        1041,
+        806,
+        1259
+      ],
+      [
+        0,
+        0.9298,
+        465,
+        135,
+        836,
+        364
+      ],
+      [
+        1,
+        0.8741,
+        180,
+        665,
+        420,
+        751
+      ],
+      [
+        1,
+        0.867,
+        513,
+        1117,
+        691,
+        1200
+      ],
+      [
+        1,
+        0.8065,
+        588,
+        207,
+        712,
+        291
+      ],
+      [
+        0,
+        0.1139,
+        465,
+        136,
+        835,
+        364
+      ],
+      [
+        1,
+        0.0972,
+        583,
+        205,
+        714,
+        293
+      ],
+      [
+        0,
+        0.0507,
+        84,
+        585,
+        517,
+        834
+      ],
+      [
+        0,
+        0.9624,
+        394,
+        1566,
+        846,
+        1833
+      ],
+      [
+        0,
+        0.9604,
+        394,
+        1042,
+        806,
+        1278
+      ],
+      [
+        0,
+        0.9352,
+        75,
+        2075,
+        485,
+        2269
+      ],
+      [
+        1,
+        0.8602,
+        509,
+        1116,
+        694,
+        1201
+      ],
+      [
+        1,
+        0.8527,
+        522,
+        1656,
+        719,
+        1742
+      ],
+      [
+        1,
+        0.778,
+        200,
+        2175,
+        362,
+        2223
+      ],
+      [
+        0,
+        0.2974,
+        394,
+        1042,
+        806,
+        1279
+      ],
+      [
+        0,
+        0.1609,
+        394,
+        1566,
+        846,
+        1834
+      ],
+      [
+        0,
+        0.1052,
+        75,
+        2076,
+        486,
+        2269
+      ],
+      [
+        1,
+        0.0795,
+        191,
+        2171,
+        382,
+        2267
+      ],
+      [
+        0,
+        0.9604,
+        73,
+        2078,
+        488,
+        2324
+      ],
+      [
+        1,
+        0.8412,
+        359,
+        2585,
+        539,
+        2627
+      ],
+      [
+        1,
+        0.8111,
+        195,
+        2176,
+        361,
+        2220
+      ],
+      [
+        0,
+        0.7791,
+        321,
+        2545,
+        857,
+        2693
+      ],
+      [
+        0,
+        0.2984,
+        73,
+        2078,
+        488,
+        2325
+      ],
+      [
+        2,
+        0.1049,
+        359,
+        2585,
+        539,
+        2627
+      ],
+      [
+        0,
+        0.0839,
+        321,
+        2546,
+        560,
+        2693
+      ],
+      [
+        1,
+        0.0553,
+        153,
+        2164,
+        420,
+        2312
+      ],
+      [
+        1,
+        0.054,
+        175,
+        2163,
+        398,
+        2279
+      ]
+    ],
+    "regions": [
+      {
+        "id": "r00",
+        "artifact_id": "dt-td0005",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.806,
+        "box": [
+          588,
+          207,
+          712,
+          291
+        ],
+        "ocr_box": [
+          576,
+          195,
+          724,
+          303
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 0
+          }
+        }
+      },
+      {
+        "id": "r01",
+        "artifact_id": "dt-td0003",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.874,
+        "box": [
+          180,
+          665,
+          420,
+          751
+        ],
+        "ocr_box": [
+          168,
+          653,
+          432,
+          763
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 0
+          }
+        }
+      },
+      {
+        "id": "r02",
+        "artifact_id": "dt-td0004",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.867,
+        "box": [
+          509,
+          1116,
+          694,
+          1201
+        ],
+        "ocr_box": [
+          497,
+          1104,
+          706,
+          1213
+        ],
+        "merged_from": [
+          "td0012"
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 0
+          }
+        }
+      },
+      {
+        "id": "r03",
+        "artifact_id": "dt-td0013",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.853,
+        "box": [
+          522,
+          1656,
+          719,
+          1742
+        ],
+        "ocr_box": [
+          510,
+          1644,
+          731,
+          1754
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0004",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 1
+          }
+        }
+      },
+      {
+        "id": "r04",
+        "artifact_id": "dt-td0021",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.811,
+        "box": [
+          195,
+          2175,
+          362,
+          2223
+        ],
+        "ocr_box": [
+          183,
+          2163,
+          374,
+          2235
+        ],
+        "merged_from": [
+          "td0014"
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0005",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 1
+          }
+        }
+      },
+      {
+        "id": "r05",
+        "artifact_id": "dt-td0020",
+        "label": 1,
+        "class": "text_bubble",
+        "score": 0.841,
+        "box": [
+          359,
+          2585,
+          539,
+          2627
+        ],
+        "ocr_box": [
+          347,
+          2573,
+          551,
+          2639
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0007",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 2
+          }
+        }
+      }
+    ],
+    "panels": [],
+    "model_counts": {
+      "text-detector": 28,
+      "panel-detector": 0,
+      "bubble-segmenter": 8
+    },
+    "model_status": {
+      "text-detector": "ready",
+      "panel-detector": "skipped",
+      "bubble-segmenter": "ready"
+    },
+    "lower_conf_region_count": 6
+  }
+}
