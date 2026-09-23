@@ -1,6 +1,6 @@
 # A3 — OCR provider parity
 
-**Status:** Implemented. Model-backed Paddle detector verification is blocked by the absent LFS model payload.
+**Status:** Implemented. Real Paddle detector and A2 free-text refiner behavior are verified using temporary detector-model hydration. PaddleRec and end-to-end OCR remain unverified because the recognition model was not hydrated.
 
 ## Changes
 
