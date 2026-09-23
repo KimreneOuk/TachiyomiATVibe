@@ -489,7 +489,7 @@
         }
       }
     ],
-    "total_ms": 6083.782
+    "total_ms": 5406.12
   },
   "regions": [
     {
@@ -572,10 +572,10 @@
         1400
       ],
       "timing_ms": {
-        "planning": 4.984,
+        "planning": 7.092,
         "refinement": 0.0,
-        "fill": 6000.575,
-        "total": 6005.559
+        "fill": 5312.327,
+        "total": 5319.419
       },
       "timing_scope": "bubble-leg-shared",
       "parent_bubble": [
@@ -611,7 +611,7 @@
         "mask_component_id": "c001",
         "mask_ref": "bs0000",
         "note": "android-fill operates on the page-space mask; these files show the associated region component in a compact window",
-        "capture_ms": 38.404,
+        "capture_ms": 35.737,
         "input": {
           "debug": {
             "path": "crops/r00/input.png",
@@ -748,10 +748,10 @@
         1400
       ],
       "timing_ms": {
-        "planning": 4.984,
+        "planning": 7.092,
         "refinement": 0.0,
-        "fill": 6000.575,
-        "total": 6005.559
+        "fill": 5312.327,
+        "total": 5319.419
       },
       "timing_scope": "bubble-leg-shared",
       "parent_bubble": [
@@ -787,7 +787,7 @@
         "mask_component_id": "c002",
         "mask_ref": "bs0001",
         "note": "android-fill operates on the page-space mask; these files show the associated region component in a compact window",
-        "capture_ms": 40.557,
+        "capture_ms": 34.229,
         "input": {
           "debug": {
             "path": "crops/r01/input.png",
@@ -908,10 +908,10 @@
         1400
       ],
       "timing_ms": {
-        "planning": 4.984,
+        "planning": 7.092,
         "refinement": 0.0,
-        "fill": 6000.575,
-        "total": 6005.559
+        "fill": 5312.327,
+        "total": 5319.419
       },
       "timing_scope": "bubble-leg-shared",
       "mask_resolution": {
@@ -940,7 +940,7 @@
         "mask_component_id": "c003",
         "mask_ref": "bs0002",
         "note": "android-fill operates on the page-space mask; these files show the associated region component in a compact window",
-        "capture_ms": 30.603,
+        "capture_ms": 24.799,
         "input": {
           "debug": {
             "path": "crops/r02/input.png",
@@ -998,7 +998,7 @@
       }
     }
   ],
-  "infer_ms": 6239.1,
+  "infer_ms": 5545.3,
   "evidence": {
     "crop_root": "crops/",
     "crop_triples": 9

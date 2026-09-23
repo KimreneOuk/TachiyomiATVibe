@@ -2,7 +2,7 @@
   "schema": "T937-FILTER_SPEC-1",
   "page": "p001.jpg",
   "preset": "production",
-  "created_at": "2026-09-23T15:46:55.857082+00:00",
+  "created_at": "2026-09-23T16:18:10.616481+00:00",
   "filters": {
     "preset": "production",
     "models": {
@@ -382,42 +382,21 @@
         "text": "cached source line",
         "mask_ref": "mask-1",
         "segmenter_component_id": 4,
-        "erase_mask_component_id": "c001",
-        "mask_component_id": "c001",
+        "erase_mask_component_id": 1,
+        "mask_component_id": 1,
         "context_crop_bbox": [
-          0,
-          0,
-          900,
-          1400
+          90,
+          140,
+          202,
+          210
         ],
         "timing_ms": {
-          "planning": 0.585,
-          "refinement": 0,
-          "fill": 1452.502,
-          "total": 1453.087
+          "fill": 1.2
         },
-        "timing_scope": "bubble-leg-shared",
+        "timing_scope": "region",
         "source_boxes": [
           {
-            "source": "detector",
             "role": "ocr-origin",
-            "box": [
-              90,
-              140,
-              202,
-              210
-            ],
-            "label": 1,
-            "score": 0.92,
-            "artifact_id": "dt-td0001",
-            "model": "text-detector",
-            "asset": "detector-v4-s_int8.onnx",
-            "asset_sha": "5fe9e4f576e4",
-            "window": null
-          },
-          {
-            "source": "ocr",
-            "role": "text-rect",
             "box": [
               90,
               140,
@@ -426,20 +405,13 @@
             ]
           },
           {
-            "source": "bubble-segmenter",
-            "role": "assigned-mask",
-            "artifact_id": "mask-1",
-            "mask_ref": "mask-1",
-            "segmenter_component_id": 4,
-            "model": "bubble-segmenter",
-            "asset": "segmenter.onnx",
-            "asset_sha": "abcdef123456",
-            "window": null,
+            "role": "refined-line",
+            "source": "paddle-refined",
             "box": [
-              90,
-              140,
-              202,
-              210
+              94,
+              150,
+              198,
+              200
             ]
           }
         ],
@@ -452,7 +424,46 @@
             "step": "inpaint-plan",
             "kept": true,
             "route": "bubble/android-fill",
-            "mask_component_id": "c001"
+            "mask_component_id": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "paddle-r00-1",
+      "page": "p001.jpg",
+      "kind": "line",
+      "source": {
+        "model": "paddle-det",
+        "asset": "Paddle detector",
+        "asset_sha": null,
+        "window": null
+      },
+      "geometry": {
+        "x1": 94,
+        "y1": 150,
+        "x2": 198,
+        "y2": 200
+      },
+      "attrs": {
+        "label": "refined-line",
+        "score": 0.92,
+        "parent_region": "r00",
+        "artifact_id": "dt-td0001",
+        "shape": {
+          "w": 104,
+          "h": 50,
+          "ar": 2.08
+        },
+        "route": "bubble/android-fill"
+      },
+      "lifecycle": {
+        "state": "consumed",
+        "trace": [
+          {
+            "step": "paddle-refine",
+            "kept": true,
+            "parent_region": "r00"
           }
         ]
       }

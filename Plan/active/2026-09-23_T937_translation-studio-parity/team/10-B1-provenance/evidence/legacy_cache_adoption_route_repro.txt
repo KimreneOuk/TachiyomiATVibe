@@ -1,0 +1,5 @@
+files before /api/page: ['detections.json', 'inpaint', 'inpaint_crops', 'inpaint_mask', 'ocr.json', 'render', 'settings.json', 'translations.json']
+/api/page status 200; keys: ['detected', 'has_reference', 'metrics', 'ocr_ms', 'page', 'raw_boxes', 'regions', 'runs']
+files after /api/page:  ['detections.json', 'inpaint', 'inpaint_crops', 'inpaint_mask', 'ocr.json', 'render', 'settings.json', 'translations.json']
+detections pages now: ['p001.jpg']
+api detections after page GET: ready
