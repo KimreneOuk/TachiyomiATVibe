@@ -7,6 +7,7 @@ current Kotlin sources in app/src/main/java/eu/kanade/translation/inpainting.
 from __future__ import annotations
 
 import math
+import hashlib
 import time
 from collections import deque
 from pathlib import Path
@@ -16,6 +17,8 @@ from PIL import Image
 from scipy import ndimage
 
 import aot_inpaint
+from detection_artifacts import (iter_rle_row_spans,
+                                 resolve_mask_component)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AOT_DYNAMIC_MODEL = REPO_ROOT / "app/src/main/assets/models/inpainting/aot.onnx"
@@ -82,21 +85,41 @@ def _iou(a, b) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _raw_detections(raw_detections) -> list[dict]:
+def _raw_detections(raw_detections, min_confidence: float | None = None) -> list[dict]:
     out = []
     for index, row in enumerate(raw_detections or []):
-        if not isinstance(row, (list, tuple)) or len(row) < 6:
-            continue
-        box = _valid_box(row[2:6])
-        if box is None:
-            continue
+        artifact_id = None
+        source = None
+        assignment = None
         try:
-            label = int(row[0])
-            score = float(row[1])
+            if isinstance(row, dict):
+                attrs = row.get("attrs", {})
+                geometry = row.get("geometry", {})
+                if all(key in geometry for key in ("x1", "y1", "x2", "y2")):
+                    raw_box = [geometry[key] for key in ("x1", "y1", "x2", "y2")]
+                else:
+                    raw_box = row.get("box")
+                label = int(attrs.get("label", row.get("label")))
+                score = float(attrs.get("score", row.get("score")))
+                artifact_id = row.get("artifact_id") or row.get("id")
+                source = row.get("source")
+                assignment = row.get("segmenter_assignment")
+            elif isinstance(row, (list, tuple)) and len(row) >= 6:
+                label, score, raw_box = int(row[0]), float(row[1]), row[2:6]
+            else:
+                continue
         except (TypeError, ValueError, OverflowError):
             continue
-        out.append({"id": f"d{index:03d}", "label": label,
-                    "score": score, "box": box})
+        box = _valid_box(raw_box)
+        if box is None or not math.isfinite(score):
+            continue
+        if min_confidence is not None and score < float(min_confidence):
+            continue
+        out.append({"id": str(artifact_id or f"d{index:03d}"),
+                    "artifact_id": artifact_id, "label": label,
+                    "score": score, "box": box,
+                    "source": dict(source) if isinstance(source, dict) else None,
+                    "segmenter_assignment": assignment})
     return out
 
 
@@ -148,8 +171,14 @@ def _trim_parent(parent: list[int], text_box: list[int], siblings: list[list[int
 def _select_parent(text_box: list[int], label: int,
                    bubble_detections: list[dict]) -> list[int] | None:
     """OcrBlockDeduplication.selectParentBubble + trimParentBbox."""
+    return _select_parent_with_source(text_box, label, bubble_detections)[0]
+
+
+def _select_parent_with_source(text_box: list[int], label: int,
+                               bubble_detections: list[dict]
+                               ) -> tuple[list[int] | None, dict | None]:
     if label not in (1, 2) or not bubble_detections:
-        return None
+        return None, None
     cx, cy = (text_box[0] + text_box[2]) / 2.0, (text_box[1] + text_box[3]) / 2.0
     containing = [d for d in bubble_detections
                   if cx >= d["box"][0] and cx <= d["box"][2]
@@ -163,21 +192,23 @@ def _select_parent(text_box: list[int], label: int,
         if overlaps:
             parent = max(overlaps, key=lambda pair: (pair[1], pair[0]["score"]))[0]
     if parent is None:
-        return None
-    parent_box = parent["box"]
+        return None, None
     siblings = [d["box"] for d in bubble_detections if d is not parent]
-    return _trim_parent(parent_box, text_box, siblings)
+    return _trim_parent(parent["box"], text_box, siblings), parent
 
 
-def plan_erase_regions(regions: list[dict], raw_detections) -> tuple[list[dict], list[dict]]:
+def plan_erase_regions(regions: list[dict], raw_detections,
+                       min_confidence: float | None = None) -> tuple[list[dict], list[dict]]:
     """PageInpaintingPlanner.computeMask port, retaining audit records.
 
     Kotlin truncates block geometry to Int and stores the detector bbox in
     TranslationBlock.x/y/width/height. ``ocr_box`` is only the padded OCR crop
     in this studio, so the planner deliberately uses ``box`` here.
     """
-    detections = _raw_detections(raw_detections)
+    detections = _raw_detections(raw_detections, min_confidence)
     bubble_dets = [d for d in detections if d["label"] == 0]
+    detection_by_artifact = {d["artifact_id"]: d for d in detections
+                             if d.get("artifact_id")}
     ocr_boxes = []
     region_entries = []
     records = []
@@ -188,21 +219,33 @@ def plan_erase_regions(regions: list[dict], raw_detections) -> tuple[list[dict],
         label = int(region.get("label", 2))
         text = region.get("text") or ""
         readable = bool(str(text).strip())
+        detector_source = detection_by_artifact.get(region.get("artifact_id"), {})
+        source_meta = detector_source.get("source") or {}
         if box is not None:
             ocr_boxes.append(box)
         rec = {
             "id": rid,
+            "artifact_id": region.get("artifact_id"),
             "kind": "ocr-region",
             "text": str(text),
             "label": label,
             "score": region.get("score"),
             "source_boxes": ([{"source": "detector", "role": "ocr-origin",
                                "box": box, "label": label,
-                               "score": region.get("score")},
+                               "score": region.get("score"),
+                               "artifact_id": region.get("artifact_id"),
+                               "model": source_meta.get("model"),
+                               "asset": source_meta.get("asset"),
+                               "asset_sha": source_meta.get("asset_sha"),
+                               "window": source_meta.get("window")},
                               {"source": "ocr", "role": "text-rect",
                                "box": box}] if box else []),
             "route_taken": "skipped:blank-ocr" if not readable else "",
             "mask_component_id": None,
+            "segmenter_component_id": None,
+            "erase_mask_component_id": None,
+            "_segmenter_assignment": (region.get("segmenter_assignment")
+                                      or detector_source.get("segmenter_assignment")),
             "context_crop_bbox": None,
             "timing_ms": {"planning": 0.0, "refinement": 0.0,
                           "fill": 0.0, "total": 0.0},
@@ -221,11 +264,21 @@ def plan_erase_regions(regions: list[dict], raw_detections) -> tuple[list[dict],
     for entry in region_entries:
         if not entry["readable"] or entry["box"] is None:
             continue
-        parent = _select_parent(entry["box"], entry["label"], bubble_dets)
+        parent, parent_detection = _select_parent_with_source(
+            entry["box"], entry["label"], bubble_dets)
         if parent:
             entry["record"]["parent_bubble"] = parent
+            if parent_detection and parent_detection.get("artifact_id"):
+                entry["record"]["parent_bubble_artifact_id"] = parent_detection["artifact_id"]
             entry["record"]["source_boxes"].append({
-                "source": "detector", "role": "parent-bubble", "box": parent})
+                "source": "detector", "role": "parent-bubble", "box": parent,
+                "artifact_id": (parent_detection or {}).get("artifact_id"),
+                "score": (parent_detection or {}).get("score"),
+                "model": ((parent_detection or {}).get("source") or {}).get("model"),
+                "asset": ((parent_detection or {}).get("source") or {}).get("asset"),
+                "asset_sha": ((parent_detection or {}).get("source") or {}).get(
+                    "asset_sha"),
+                "window": ((parent_detection or {}).get("source") or {}).get("window")})
             key = tuple(parent)
             if key not in parent_by_key:
                 item = {"box": parent, "label": 0, "kind": "parent-bubble",
@@ -258,17 +311,26 @@ def plan_erase_regions(regions: list[dict], raw_detections) -> tuple[list[dict],
             continue
         rec = {
             "id": f"detector-{detection['id']}",
+            "artifact_id": detection.get("artifact_id"),
             "kind": "detector-only",
             "label": 2,
             "score": detection["score"],
             "text": "",
             "source_boxes": [
                 {"source": "detector", "role": "proposal", "box": raw_box,
-                 "label": detection["label"], "score": detection["score"]},
+                 "label": detection["label"], "score": detection["score"],
+                 "artifact_id": detection.get("artifact_id"),
+                 "model": ((detection.get("source") or {}).get("model")),
+                 "asset": ((detection.get("source") or {}).get("asset")),
+                 "asset_sha": ((detection.get("source") or {}).get("asset_sha")),
+                 "window": ((detection.get("source") or {}).get("window"))},
                 {"source": "detector", "role": "erase-box-plus-3px", "box": expanded},
             ],
             "route_taken": "",
             "mask_component_id": None,
+            "segmenter_component_id": None,
+            "erase_mask_component_id": None,
+            "_segmenter_assignment": detection.get("segmenter_assignment"),
             "context_crop_bbox": None,
             "timing_ms": {"planning": 0.0, "refinement": 0.0,
                           "fill": 0.0, "total": 0.0},
@@ -368,6 +430,113 @@ def _assigned_segmentations(regions, records, seg_masks, shape):
     return arrays, bounds, assigned
 
 
+def _captured_segmenter_union(records, mask_cache, segmenter_outputs,
+                              shape: tuple[int, int], enabled: bool,
+                              selected_record_ids: set[str]):
+    """Resolve bubble-plan assignments into one union, without per-component pages."""
+    height, width = shape
+    raw_union = np.zeros((height, width), dtype=bool)
+    output_bounds = []
+    seen = set()
+    selected = []
+    resolved = {}
+    for rec in records:
+        assignment = rec.get("_segmenter_assignment")
+        if not assignment:
+            rec["mask_resolution"] = {
+                "status": "no-assignment" if enabled else "disabled"}
+            continue
+        mask_ref = assignment.get("mask_ref")
+        component_id = assignment.get("mask_component_id")
+        source = assignment.get("source") or {}
+        if not enabled:
+            rec["segmenter_component_id"] = component_id
+            rec["mask_resolution"] = {
+                "status": "disabled", "mask_ref": mask_ref,
+                "segmenter_component_id": component_id,
+            }
+            rec["source_boxes"].append({
+                "source": "bubble-segmenter", "role": "assigned-mask-disabled",
+                "artifact_id": mask_ref, "mask_ref": mask_ref,
+                "segmenter_component_id": component_id,
+                "model": source.get("model"), "asset": source.get("asset"),
+                "asset_sha": source.get("asset_sha"),
+                "window": source.get("window"),
+            })
+            continue
+        if str(rec.get("id")) not in selected_record_ids:
+            rec["segmenter_component_id"] = component_id
+            rec["mask_resolution"] = {
+                "status": "not-selected-for-bubble-leg",
+                "mask_ref": mask_ref,
+                "segmenter_component_id": component_id,
+            }
+            rec["source_boxes"].append({
+                "source": "bubble-segmenter", "role": "assigned-mask-unused",
+                "artifact_id": mask_ref, "mask_ref": mask_ref,
+                "segmenter_component_id": component_id,
+                "model": source.get("model"), "asset": source.get("asset"),
+                "asset_sha": source.get("asset_sha"),
+                "window": source.get("window"),
+            })
+            continue
+        cache_key = (mask_ref, component_id)
+        if cache_key not in resolved:
+            resolved[cache_key] = resolve_mask_component(
+                mask_ref, component_id, mask_cache, segmenter_outputs)
+        view, error = resolved[cache_key]
+        if view is None:
+            rec["segmenter_component_id"] = component_id
+            rec["mask_resolution"] = {
+                "status": error or "missing-reference", "degraded": True,
+                "mask_ref": mask_ref, "segmenter_component_id": component_id,
+            }
+            rec["source_boxes"].append({
+                "source": "bubble-segmenter", "role": "assigned-mask",
+                "artifact_id": mask_ref, "mask_ref": mask_ref,
+                "segmenter_component_id": component_id,
+                "model": source.get("model"), "asset": source.get("asset"),
+                "asset_sha": source.get("asset_sha"),
+                "window": source.get("window"), "resolution": error,
+            })
+            continue
+        if view.width != width or view.height != height:
+            rec["segmenter_component_id"] = component_id
+            rec["mask_resolution"] = {
+                "status": "page-dimension-mismatch", "degraded": True,
+                "mask_ref": mask_ref, "segmenter_component_id": component_id,
+            }
+            continue
+        rec["segmenter_component_id"] = view.component_id
+        rec["mask_resolution"] = {
+            "status": "resolved", "mask_ref": view.mask_ref,
+            "segmenter_component_id": view.component_id,
+        }
+        rec["source_boxes"].append({
+            "source": "bubble-segmenter", "role": "assigned-mask",
+            "artifact_id": view.mask_ref, "mask_ref": view.mask_ref,
+            "segmenter_component_id": view.component_id,
+            "model": view.source.get("model"), "asset": view.source.get("asset"),
+            "asset_sha": view.source.get("asset_sha"),
+            "window": view.source.get("window"),
+            "box": list(view.bounds),
+        })
+        if view.key in seen:
+            continue
+        seen.add(view.key)
+        selected.append({"mask_ref": view.mask_ref,
+                         "segmenter_component_id": view.component_id,
+                         "source": dict(view.source)})
+        output_bounds.append(list(view.bounds))
+        # Split any flat run at page-row boundaries while writing directly to
+        # the one page union required by Android's erosion operation.
+        for y, x1, x2 in iter_rle_row_spans(view.runs, width, height):
+            raw_union[y, x1:x2] = True
+    for rec in records:
+        rec.pop("_segmenter_assignment", None)
+    return raw_union, output_bounds, selected
+
+
 def _disk(radius: int) -> np.ndarray:
     yy, xx = np.mgrid[-radius:radius + 1, -radius:radius + 1]
     return (xx * xx + yy * yy) <= radius * radius
@@ -408,16 +577,21 @@ def _erode_segmentation_union(raw_union: np.ndarray, bounds_list: list[list[int]
 
 
 def _bubble_erase_mask(bubble_text: list[dict], assigned_masks, all_masks,
-                       mask_bounds, height: int, width: int) -> np.ndarray:
-    raw_union = np.zeros((height, width), dtype=bool)
+                       mask_bounds, height: int, width: int,
+                       raw_union_override: np.ndarray | None = None) -> np.ndarray:
+    raw_union = (raw_union_override if raw_union_override is not None
+                 else np.zeros((height, width), dtype=bool))
     seg_bounds = []
-    for idx in assigned_masks:
-        arr = all_masks[idx]
-        if arr is None:
-            continue
-        raw_union |= arr
-        if mask_bounds[idx] is not None:
-            seg_bounds.append(mask_bounds[idx])
+    if raw_union_override is None:
+        for idx in assigned_masks:
+            arr = all_masks[idx]
+            if arr is None:
+                continue
+            raw_union |= arr
+            if mask_bounds[idx] is not None:
+                seg_bounds.append(mask_bounds[idx])
+    else:
+        seg_bounds = list(mask_bounds or [])
     out = _erode_segmentation_union(raw_union, seg_bounds, width, height)
 
     fallback_boxes = []
@@ -842,7 +1016,11 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
                          raw_detections=None, seg_masks=None,
                          bubble_leg: str = "android-fill",
                          free_leg: str = "opencv", paddle_det=None,
-                         aot=None) -> tuple[Image.Image, np.ndarray, list[dict], dict]:
+                         aot=None, mask_cache=None, segmenter_outputs=None,
+                         current_capture: bool = False,
+                         segmenter_enabled: bool = True,
+                         execution_confidence: float | None = None
+                         ) -> tuple[Image.Image, np.ndarray, list[dict], dict]:
     """Planner, partition, refinement, mask and composable Android legs."""
     if bubble_leg not in BUBBLE_LEGS:
         raise ValueError(f"invalid bubble inpaint leg: {bubble_leg}")
@@ -852,20 +1030,32 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
     image = page.convert("RGB").copy()
     width, height = image.size
     plan_started = time.perf_counter()
-    items, records = plan_erase_regions(regions, raw_detections)
+    items, records = plan_erase_regions(
+        regions, raw_detections,
+        min_confidence=(execution_confidence if current_capture else None))
     record_map = {r["id"]: r for r in records}
     # All input labels are carried with items; this explicit argument also
     # preserves Android's all-label-2 behavior for a malformed/missing label list.
     labels = [item["label"] for item in items]
     bubble_items, free_items = partition_erase_items(items, labels)
-    arrays, bounds, assigned = _assigned_segmentations(regions, records, seg_masks,
-                                                        (height, width))
+    bubble_record_ids = {rid for item in bubble_items for rid in item["record_ids"]}
+    segmenter_selected = []
+    if current_capture:
+        captured_union, bounds, segmenter_selected = _captured_segmenter_union(
+            records, mask_cache or {}, segmenter_outputs or [],
+            (height, width), segmenter_enabled, bubble_record_ids)
+        arrays, assigned = [], []
+    else:
+        arrays, bounds, assigned = _assigned_segmentations(
+            regions, records, seg_masks, (height, width))
+        captured_union = None
     plan_ms = round((time.perf_counter() - plan_started) * 1000, 3)
     for rec in records:
         rec["timing_ms"]["planning"] = plan_ms
 
-    bubble_mask = _bubble_erase_mask(bubble_items, assigned, arrays, bounds,
-                                     height, width)
+    bubble_mask = _bubble_erase_mask(
+        bubble_items, assigned, arrays, bounds, height, width,
+        raw_union_override=captured_union)
     free_groups, _ = _refine_free_text(image, free_items, paddle_det, record_map)
     free_mask = np.zeros((height, width), dtype=bool)
     for group in free_groups:
@@ -889,15 +1079,17 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
     component_labels, component_count = _connected_components(combined_mask)
     bubble_component_labels, _ = _connected_components(bubble_mask)
     for rec in records:
-        rec["mask_component_id"] = _mask_component_for_boxes(
+        erase_component_id = _mask_component_for_boxes(
             component_labels, rec.get("_mask_boxes", []))
         rec["_bubble_component_id"] = _mask_component_for_boxes(
             bubble_component_labels, rec.get("_mask_boxes", []))
-        if rec["mask_component_id"] is not None:
-            rec["mask_component_id"] = f"c{rec['mask_component_id']:03d}"
+        if erase_component_id is not None:
+            erase_component_id = f"c{erase_component_id:03d}"
+        rec["erase_mask_component_id"] = erase_component_id
+        # Older consumers read this field as the final erase-mask component.
+        rec["mask_component_id"] = erase_component_id
 
     # Bubble leg is applied first, as in AOTInpainting.inpaintRegions.
-    bubble_record_ids = {rid for item in bubble_items for rid in item["record_ids"]}
     bubble_started = time.perf_counter()
     bubble_crop_by_comp = {}
     bubble_route_by_comp = {}
@@ -957,7 +1149,8 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
         tm = rec["timing_ms"]
         tm["total"] = round(tm.get("planning", 0.0) + tm.get("refinement", 0.0)
                              + tm.get("fill", 0.0), 3)
-        for private in ("_mask_boxes", "_readable", "_segmentation_indices"):
+        for private in ("_mask_boxes", "_readable", "_segmentation_indices",
+                        "_segmenter_assignment"):
             rec.pop(private, None)
         rec.pop("_bubble_component_id", None)
     elapsed = round((time.perf_counter() - started_all) * 1000, 3)
@@ -970,6 +1163,12 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
         "bubble_components": int(ndimage.label(bubble_mask, structure=_STRUCT_8)[1]),
         "combined_components": int(component_count),
         "mask_pixels": int(combined_mask.sum()),
+        "segmenter_union_pixels": (int(captured_union.sum())
+                                   if captured_union is not None else None),
+        "segmenter_union_sha256": (
+            hashlib.sha256(memoryview(captured_union)).hexdigest()
+            if captured_union is not None else None),
+        "segmenter_components": segmenter_selected,
         "total_ms": elapsed,
     }
     return image, combined_mask, records, stats

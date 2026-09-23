@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import hashlib
 from functools import lru_cache
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -117,6 +118,139 @@ def _contains(runs: list[int], width: int, height: int,
     starts = runs[0::2]
     idx = bisect_right(starts, pixel) - 1
     return idx >= 0 and pixel < starts[idx] + runs[idx * 2 + 1]
+
+
+def iter_rle_row_spans(runs, width: int, height: int):
+    """Yield page-space (y, x1, x2) spans, splitting runs at row edges.
+
+    The cache stores flat row-major RLE pairs. Adjacent foreground pixels at
+    the end and start of consecutive rows can therefore be one flat run. Keep
+    each yielded span inside one page row so consumers can write directly into
+    a crop or a shared union without materializing one dense mask per component.
+    """
+    width, height = int(width), int(height)
+    if width <= 0 or height <= 0 or not isinstance(runs, (list, tuple)):
+        return
+    total = width * height
+    for index in range(0, len(runs) - 1, 2):
+        try:
+            start = int(runs[index])
+            length = int(runs[index + 1])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if length <= 0:
+            continue
+        end = min(total, start + length)
+        start = max(0, start)
+        while start < end:
+            y, x1 = divmod(start, width)
+            count = min(end - start, width - x1)
+            if y >= height:
+                break
+            yield y, x1, x1 + count
+            start += count
+
+
+def rle_bounds(runs, width: int, height: int) -> tuple[int, int, int, int] | None:
+    """Return the tight page-space bounds of flat row-major RLE pairs."""
+    left, top, right, bottom = int(width), int(height), -1, -1
+    for y, x1, x2 in iter_rle_row_spans(runs, width, height):
+        left, top = min(left, x1), min(top, y)
+        right, bottom = max(right, x2), max(bottom, y + 1)
+    return (left, top, right, bottom) if right > left and bottom > top else None
+
+
+@dataclass(frozen=True)
+class RleComponentView:
+    """A selected segmenter component backed by cached page-space RLE."""
+
+    mask_ref: str
+    component_id: int
+    width: int
+    height: int
+    runs: tuple[int, ...]
+    row_spans: tuple[tuple[int, int, int], ...]
+    bounds: tuple[int, int, int, int]
+    component_bounds: tuple[int, int, int, int]
+    source: dict
+
+    @property
+    def key(self) -> tuple[str, int]:
+        return self.mask_ref, self.component_id
+
+    def rasterize_crop(self, box) -> np.ndarray:
+        """Decode only the requested page-space crop of this component."""
+        x1, y1, x2, y2 = (int(v) for v in box[:4])
+        x1c, y1c = max(0, x1), max(0, y1)
+        x2c, y2c = min(self.width, x2), min(self.height, y2)
+        if x2c <= x1c or y2c <= y1c:
+            return np.zeros((0, 0), dtype=bool)
+        out = np.zeros((y2c - y1c, x2c - x1c), dtype=bool)
+        start = bisect_left(self.row_spans, (y1c, -1, -1))
+        end = bisect_left(self.row_spans, (y2c, -1, -1))
+        for y, sx1, sx2 in self.row_spans[start:end]:
+            left, right = max(sx1, x1c), min(sx2, x2c)
+            if right > left:
+                out[y - y1c, left - x1c:right - x1c] = True
+        return out
+
+    def contains_rect(self, box) -> bool:
+        """Return whether the full non-empty page-space rectangle is inside."""
+        x1, y1, x2, y2 = (int(v) for v in box[:4])
+        if x1 < 0 or y1 < 0 or x2 > self.width or y2 > self.height:
+            return False
+        if x2 <= x1 or y2 <= y1:
+            return False
+        crop = self.rasterize_crop((x1, y1, x2, y2))
+        return crop.shape == (y2 - y1, x2 - x1) and bool(crop.all())
+
+
+def resolve_mask_component(mask_ref, component_id, mask_cache: dict,
+                           outputs: list[dict]):
+    """Resolve an A1 mask_ref/component pair without dense page allocation.
+
+    Returns ``(view, None)`` on success, or ``(None, status)`` when the
+    current capture has an incomplete reference. Callers must not substitute a
+    fresh model run for a failed current-capture lookup.
+    """
+    if not isinstance(mask_ref, str) or not mask_ref:
+        return None, "missing-mask-ref"
+    entry = (mask_cache or {}).get(mask_ref)
+    if not isinstance(entry, dict):
+        return None, "missing-reference"
+    try:
+        component = int(component_id)
+        width, height = int(entry["width"]), int(entry["height"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None, "invalid-reference"
+    components = entry.get("components")
+    if not isinstance(components, dict):
+        return None, "missing-components"
+    runs = components.get(str(component))
+    if not isinstance(runs, (list, tuple)) or not runs:
+        return None, "missing-component"
+    row_spans = tuple(iter_rle_row_spans(runs, width, height))
+    component_bounds = rle_bounds(runs, width, height)
+    if component_bounds is None:
+        return None, "empty-component"
+    output = next((item for item in (outputs or [])
+                   if item.get("mask_ref") == mask_ref), None)
+    if not isinstance(output, dict) or not isinstance(output.get("source"), dict):
+        return None, "missing-source-record"
+    bounds = entry.get("bounds") or component_bounds
+    try:
+        bounds = tuple(int(v) for v in bounds[:4])
+    except (TypeError, ValueError, OverflowError):
+        return None, "invalid-bounds"
+    if len(bounds) != 4:
+        return None, "invalid-bounds"
+    return RleComponentView(
+        mask_ref=mask_ref, component_id=component, width=width, height=height,
+        runs=tuple(int(v) for v in runs), bounds=bounds,
+        row_spans=row_spans,
+        component_bounds=component_bounds,
+        source=dict(output["source"]),
+    ), None
 
 
 def assign_mask_center(
