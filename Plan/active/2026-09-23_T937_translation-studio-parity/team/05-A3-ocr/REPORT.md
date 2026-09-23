@@ -17,10 +17,14 @@
 - `node --check tools/translation_studio/static/app.js` — passed.
 - `git diff --check` — passed.
 
-## Paddle detector evidence gap
+## Real Paddle detector and A2 refiner evidence
 
-The focused vertical-line tests use `FixedDetector` fixtures; they exercise region planning but do not establish real `PaddleDet.detect_lines` behavior ([`selftest_ocr.py`](../../../../../tools/translation_studio/selftest_ocr.py#L51), [`selftest_ocr.py`](../../../../../tools/translation_studio/selftest_ocr.py#L122)). A real free-text detector case could not run in this worktree: `PaddleDet` loads `app/src/main/assets/models/ocr/paddle-v6-small/det/inference.onnx` ([`paddle_ocr.py`](../../../../../tools/translation_studio/paddle_ocr.py#L174)), but that file is 132 bytes and contains only a Git LFS pointer (`oid sha256:d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e`, declared payload size 9,880,512 bytes). No real Paddle `detect_lines` inference or free-text refiner path is claimed as verified. The demo page files also have no cached OCR/detection region to use as a real free-text input.
+The original A3 worktree held only a 132-byte Git LFS pointer for the detector, with payload oid `sha256:d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e` and expected payload size 9,880,512 bytes. For this probe, that one ONNX asset was copied temporarily from the A2 worktree into the A3 model path, then the original pointer bytes were restored. The model file is not part of the commit.
+
+The reproducible [probe script](evidence/paddle_detector_probe.py) drew `FREE TEXT` using Arial Bold onto an 800×360 synthetic page, then invoked the real A3 `PaddleDet.detect_lines` at A2's `.18/.34` thresholds. The detector returned `[37, 32, 386, 62, 0.9445974449473197]`. The script next called A2 `inpaint_page_android` from worktree commit `bcc6846b398322d2aa1188380a3c58e9807185b1` with the synthetic region labeled 2 and the same real detector. A2 called it on a 447×119 padded crop at `.18/.34`; it returned `[49, 43, 395, 74, 0.9376340302767382]`, recorded a `paddle-refined` source box `[225, 127, 571, 158]`, and routed the region as `freetext/opencv`. The inpaint mask contained 13,012 pixels.
+
+Machine-readable output and visual inputs/results are saved as [`paddle_free_text_probe.json`](evidence/paddle_free_text_probe.json), [`paddle_free_text_fixture.png`](evidence/paddle_free_text_fixture.png), [`paddle_free_text_inpainted.png`](evidence/paddle_free_text_inpainted.png), and [`paddle_free_text_mask.png`](evidence/paddle_free_text_mask.png). The JSON records the detector model SHA-256, the A2 module path, crop dimensions, thresholds, lines, provenance, and route.
 
 ## Scope and remaining risk
 
-No A1 detection or A2 inpaint files were changed. CPU ONNX inference and real-image refiner behavior remain unverified until the detector LFS payload is present; the model-free checks cover the surrounding ordering and region-planning behavior only.
+No A1 detection or A2 inpaint source files were changed. The real detector and A2 free-text refiner route are now verified on the synthetic crop. The Paddle recognition ONNX is a separate LFS pointer and was not hydrated, so this evidence does not verify full Paddle recognition or end-to-end OCR output. Model-free OCR planning/batching behavior remains covered by the 13 focused tests above.
