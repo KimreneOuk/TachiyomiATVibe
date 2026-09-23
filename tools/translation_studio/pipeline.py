@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import sys
 import threading
 import time
@@ -47,13 +48,22 @@ import lab.graphs as lab_graphs                      # noqa: E402
 import lab.sessions as lab_sessions                  # noqa: E402
 from lab.preprocessing import preprocess as lab_preprocess  # noqa: E402
 
-from boxgeom import (Box, DET_THRESHOLDS, greedy_dedup,  # noqa: E402
-                     intersection_area, dedupe_within_parents,
-                     reading_order_rtl, select_parent, suppress_cross_label,
-                     overlaps_any_bubble)
+from boxgeom import (Box, DET_THRESHOLDS, intersection_area,  # noqa: E402
+                     reading_order_rtl, select_parent,
+                     overlaps_any_bubble, greedy_dedup_with_suppressions,
+                     dedupe_within_parents_with_suppressions,
+                     suppress_cross_label_with_suppressions)
+from detection_artifacts import (asset_sha12, assign_mask_center,  # noqa: E402
+                                 box_artifact, mask_artifact)
+from panel_detector import (PANEL_MODEL, PanelDetector, assign_panel,  # noqa: E402
+                            panel_nms, reading_order_panel_indices)
+from sliding_detector import (calculate_windows, is_tall_image,  # noqa: E402
+                              merge_window_detections, run_text_detector,
+                              window_images)
 
 DETECTOR_PATH = (REPO_ROOT / "app/src/main/assets/models/detection"
                  / "detector-v4-s_int8.onnx")
+PANEL_DETECTOR_PATH = PANEL_MODEL
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 OCR_PAD = 12                # RoiPageRecognitionEngine pad around text boxes
 CONF_FLOOR = 0.05           # what we persist (slider re-filters above this)
@@ -80,6 +90,8 @@ class Pipeline:
         self.pages: list[str] = []
         self.settings: dict = {}
         self._detector = None
+        self._panel_detector_model = None
+        self._panel_detector_unavailable = False
         self._ocr = None
         self._paddle = None      # (PaddleDet, PaddleRec), lazy
         self._paddle_det = None  # det-only singleton for free-text refinement
@@ -376,7 +388,7 @@ class Pipeline:
         total_chapter_infer_ms = 0.0
         pages_with_data = 0
 
-        conf = float(self.settings.get("conf", 0.45))
+        conf = float(self.settings.get("conf", DEFAULT_SETTINGS["conf"]))
         for p in self.pages:
             det = self._cache["detections"].get(p)
             ocr = self._cache["ocr"].get(p)
@@ -474,70 +486,541 @@ class Pipeline:
             self.log(f"detector loaded in {self._load_times['detector']}ms")
         return self._detector
 
+    def _panel_detector(self):
+        if self._panel_detector_unavailable:
+            return None
+        if self._panel_detector_model is None:
+            model = PanelDetector(PANEL_DETECTOR_PATH)
+            if not model.ready:
+                self._panel_detector_unavailable = True
+                return None
+            self._panel_detector_model = model
+        return self._panel_detector_model
+
+    def _reading_order_is_rtl(self) -> bool:
+        explicit = self.settings.get("reading_order_rtl")
+        if explicit is not None:
+            if isinstance(explicit, str):
+                return explicit.strip().lower() not in {"false", "0", "ltr", "left-to-right"}
+            return bool(explicit)
+        language = str(self.settings.get(
+            "source_language", self.settings.get("source_lang", "ja"))).strip().lower()
+        order = str(self.settings.get("reading_order", "auto")).strip().lower()
+        if order in {"ltr", "ltr_comic", "left-to-right"}:
+            return False
+        if order in {"rtl", "rtl_manga", "right-to-left"}:
+            return True
+        return language in {"ja", "jpn", "japanese"}
+
+    def _panel_skip_reason(self, width: int, height: int) -> str | None:
+        if is_tall_image(width, height):
+            return "tall-page"
+        language = str(self.settings.get(
+            "source_language", self.settings.get("source_lang", "ja"))).strip().lower()
+        if language in {"ko", "kor", "korean"} or language.startswith("ko-"):
+            return "korean-source"
+        if not self._reading_order_is_rtl():
+            return "ltr-reading-order"
+        return None
+
+    def _detection_cache_is_current(self, raw: dict, page_wh: list[int]) -> bool:
+        if not isinstance(raw, dict) or raw.get("capture_version") != 1:
+            return False
+        models = raw.get("models")
+        if not isinstance(models, dict):
+            return False
+        text_model = models.get("text-detector")
+        text_sha = asset_sha12(DETECTOR_PATH)
+        if (not isinstance(text_model, dict)
+                or text_model.get("asset_sha") != text_sha
+                or not isinstance(text_model.get("outputs"), list)):
+            return False
+
+        panel_model = models.get("panel-detector")
+        panel_sha = asset_sha12(PANEL_DETECTOR_PATH)
+        if not isinstance(panel_model, dict) or panel_model.get("asset_sha") != panel_sha:
+            return False
+        if panel_sha is None and panel_model.get("status") != "disabled":
+            return False
+        if panel_sha is not None and self._panel_skip_reason(*page_wh) is None:
+            if panel_model.get("status") not in {"ready", "error", "disabled"}:
+                return False
+
+        try:
+            from segmentation import SEGMENTER_MODEL
+            seg_path = SEGMENTER_MODEL
+        except Exception:
+            seg_path = None
+        segmenter_model = models.get("bubble-segmenter")
+        segmenter_sha = asset_sha12(seg_path)
+        if (not isinstance(segmenter_model, dict)
+                or segmenter_model.get("asset_sha") != segmenter_sha):
+            return False
+        if segmenter_sha is None and segmenter_model.get("status") != "disabled":
+            return False
+        if (segmenter_sha is not None
+                and self.settings.get("bubble_segmentation", True)
+                and segmenter_model.get("status") not in {"ready", "error", "disabled"}):
+            return False
+        return True
+
+    def _capture_detection_models(self, page: str, img: Image.Image) -> dict:
+        """Run optional detection-phase models and persist raw per-model outputs."""
+        detector = self._detector_model()
+        detector_start = time.perf_counter()
+        text_outputs, windows, tall = run_text_detector(img, detector.detect)
+        detector_ms = round((time.perf_counter() - detector_start) * 1000, 1)
+        text_sha = asset_sha12(DETECTOR_PATH)
+        text_records = [box_artifact(
+            f"td{index:04d}", page, "text-detector", DETECTOR_PATH.name,
+            text_sha, output["window"], output["box"], output["raw_score"],
+            output["label"],
+        ) for index, output in enumerate(text_outputs)]
+        for index, output in enumerate(text_outputs):
+            output["id"] = text_records[index]["id"]
+
+        panel_sha = asset_sha12(PANEL_DETECTOR_PATH)
+        panel_cache = {"asset": PANEL_DETECTOR_PATH.name, "asset_sha": panel_sha,
+                       "outputs": [], "kept_ids": [], "suppression_records": [],
+                       "status": "disabled" if panel_sha is None else "skipped"}
+        panel_reason = self._panel_skip_reason(img.width, img.height)
+        if panel_sha is None:
+            panel_cache["reason"] = "asset-missing"
+        elif panel_reason is not None:
+            panel_cache["reason"] = panel_reason
+        else:
+            try:
+                panel_detector = self._panel_detector()
+                if panel_detector is None:
+                    panel_cache["status"] = "disabled"
+                    panel_cache["reason"] = "asset-missing"
+                else:
+                    t0 = time.perf_counter()
+                    panel_candidates = panel_detector.detect_candidates(img)
+                    panel_ids = [f"pd{index:04d}" for index in range(len(panel_candidates))]
+                    kept_panel_indices, panel_suppressions = panel_nms(
+                        panel_candidates, panel_ids)
+                    panel_records = []
+                    suppressed_ids = {event["loser_id"] for event in panel_suppressions}
+                    for index, candidate in enumerate(panel_candidates):
+                        record = box_artifact(
+                            panel_ids[index], page, "panel-detector",
+                            PANEL_DETECTOR_PATH.name, panel_sha, None,
+                            candidate["box"], candidate["score"], "panel")
+                        passed = candidate["score"] >= 0.5
+                        trace = [{"step": "floor", "kept": passed,
+                                  "threshold": 0.5}]
+                        if not passed:
+                            state = "raw"
+                        elif panel_ids[index] in suppressed_ids:
+                            state = "suppressed"
+                            event = next(e for e in panel_suppressions
+                                         if e["loser_id"] == panel_ids[index])
+                            trace.append({"step": "panel-nms", "kept": False,
+                                          "suppressed_by": event["winner_id"],
+                                          "threshold": event["threshold"]})
+                        elif not candidate["page_box_valid"]:
+                            state = "raw"
+                            trace.extend([
+                                {"step": "panel-nms", "kept": True,
+                                 "threshold": 0.45},
+                                {"step": "unletterbox", "kept": False,
+                                 "reason": "empty-page-box"},
+                            ])
+                        else:
+                            state = "kept"
+                            trace.append({"step": "panel-nms", "kept": True,
+                                          "threshold": 0.45})
+                        record["lifecycle"] = {"state": state, "trace": trace}
+                        panel_records.append(record)
+                    panel_cache.update({
+                        "status": "ready",
+                        "outputs": panel_records,
+                        "kept_ids": [panel_ids[i] for i in kept_panel_indices
+                                     if panel_candidates[i]["page_box_valid"]],
+                        "suppression_records": panel_suppressions,
+                        "confidence_threshold": 0.5,
+                        "nms_iou_threshold": 0.45,
+                        "inference_ms": round((time.perf_counter() - t0) * 1000, 1),
+                    })
+            except Exception as exc:
+                panel_cache.update({"status": "error", "reason": str(exc),
+                                    "outputs": [], "kept_ids": [],
+                                    "suppression_records": []})
+                self.log(f"!! panel detector disabled for {page}: {exc}")
+
+        segmenter_cache = {"asset": "manga109_bubble_int8.onnx",
+                           "asset_sha": None, "outputs": [], "status": "disabled"}
+        mask_cache: dict[str, dict] = {}
+        segmenter_ms = 0.0
+        try:
+            from segmentation import SEGMENTER_MODEL
+            segmenter_cache["asset"] = SEGMENTER_MODEL.name
+            segmenter_cache["asset_sha"] = asset_sha12(SEGMENTER_MODEL)
+            if segmenter_cache["asset_sha"] is None:
+                segmenter_cache["reason"] = "asset-missing"
+            elif not self.settings.get("bubble_segmentation", True):
+                segmenter_cache["status"] = "skipped"
+                segmenter_cache["reason"] = "bubble-segmentation-disabled"
+            else:
+                segmenter = self._bubble_segmenter()
+                if segmenter is None:
+                    segmenter_cache["status"] = "disabled"
+                    segmenter_cache["reason"] = "asset-missing-or-invalid"
+                else:
+                    t0 = time.perf_counter()
+                    segmenter_records = []
+                    full_page_masks = []
+                    segment_windows = calculate_windows(img.width, img.height)
+                    for window, crop in window_images(img, segment_windows):
+                        full = window.top == 0 and window.height == img.height
+                        window_index = None if full else window.index
+                        for mask in segmenter.segment(crop):
+                            artifact_id = f"bs{len(segmenter_records):04d}"
+                            record, encoded = mask_artifact(
+                                artifact_id, page, SEGMENTER_MODEL.name,
+                                segmenter_cache["asset_sha"], window_index,
+                                window.top, img.size, mask)
+                            segmenter_records.append(record)
+                            mask_cache[record["mask_ref"]] = encoded
+                            if not tall and window_index is None:
+                                full_page_masks.append(mask)
+                    segmenter_ms = round((time.perf_counter() - t0) * 1000, 1)
+                    segmenter_cache.update({
+                        "status": "ready", "outputs": segmenter_records,
+                        "windows": [{"index": None if w.top == 0 and w.height == img.height else w.index,
+                                     "top": w.top, "bottom": w.bottom, "height": w.height}
+                                    for w in segment_windows],
+                        "inference_ms": segmenter_ms,
+                    })
+                    self._seg_times[page] = segmenter_ms
+                    # Reuse the full-page masks for later legacy inpaint/render
+                    # consumers. Tall-page callers retain their own window-space
+                    # RLE cache and do not materialize page-sized dense masks.
+                    if not tall:
+                        self._bubble_mask_cache[page] = full_page_masks
+        except Exception as exc:
+            segmenter_cache.update({"status": "error", "reason": str(exc),
+                                    "outputs": []})
+            self.log(f"!! bubble segmenter capture degraded for {page}: {exc}")
+
+        legacy_boxes = [[int(output["label"]), float(output["score"]),
+                         *[int(v) for v in output["box"]]]
+                        for output in text_outputs]
+        return {
+            "capture_version": 1,
+            "boxes": legacy_boxes,
+            "page_wh": [img.width, img.height],
+            "model_ms": detector_ms,
+            "infer_ms": detector_ms,
+            "load_ms": self._load_times.get("detector", 0),
+            "is_tall": tall,
+            "windows": windows,
+            "models": {
+                "text-detector": {"asset": DETECTOR_PATH.name,
+                                  "asset_sha": text_sha, "status": "ready",
+                                  "raw_score_floor": CONF_FLOOR,
+                                  "outputs": text_records,
+                                  "inference_ms": detector_ms},
+                "panel-detector": panel_cache,
+                "bubble-segmenter": segmenter_cache,
+            },
+            "mask_cache": {"bubble-segmenter": mask_cache},
+            "decisions": {"conf": None, "suppression_records": [],
+                          "merge_records": [], "kept_ids": []},
+        }
+
     def detect_page(self, page: str, conf: float | None = None,
                     force: bool = False) -> dict:
         """Runs (or reuses) the detector; re-filters at the requested conf."""
         with self.lock:
-            conf = self.settings["conf"] if conf is None else conf
+            conf = float(self.settings["conf"] if conf is None else conf)
             raw = self._cache["detections"].get(page)
             if raw is None or force:
-                det = self._detector_model()
-                t0 = time.perf_counter()
                 img = self.page_image(page)
-                raw_all = det.detect(img)
-                infer_ms = round((time.perf_counter() - t0) * 1000, 1)
-                raw = {"boxes": [[d["label"], round(d["score"], 4), *d["box"]]
-                                 for d in raw_all],
-                       "page_wh": [img.width, img.height],
-                       "model_ms": infer_ms,
-                       "infer_ms": infer_ms,
-                       "load_ms": self._load_times.get("detector", 0)}
+                raw = self._capture_detection_models(page, img)
                 self._cache["detections"][page] = raw
-                self._save_json("detections.json", self._cache["detections"])
                 self.log(f"detect {page}: {len(raw['boxes'])} raw "
                          f"(infer {raw['infer_ms']}ms, load {raw['load_ms']}ms)")
+            elif not self._detection_cache_is_current(raw, self.page_dims(page)):
+                self.log(f"detect {page}: stale capture; recapturing model outputs")
+                img = self.page_image(page)
+                raw = self._capture_detection_models(page, img)
+                self._cache["detections"][page] = raw
             regions = self._regions_at_conf(page, conf)
+            raw = self._cache["detections"][page]
             return {"page": page, "conf": conf, **regions,
                     "model_ms": raw.get("infer_ms", raw.get("model_ms", 0)),
                     "infer_ms": raw.get("infer_ms", raw.get("model_ms", 0)),
                     "load_ms": raw.get("load_ms", self._load_times.get("detector", 0))}
 
     def _regions_at_conf(self, page: str, conf: float) -> dict:
-        """Filter + dedupe raw detections exactly like the app's stages."""
+        """Lock and replay the Android detection decisions from cached outputs."""
+        with self.lock:
+            return self._regions_at_conf_locked(page, conf)
+
+    def _regions_at_conf_locked(self, page: str, conf: float) -> dict:
+        """Replay detection decisions while holding the pipeline cache lock."""
         raw = self._cache["detections"].get(page)
         if raw is None:
             raise ValueError(f"page not detected yet: {page}")
-        items = [(Box(*[int(v) for v in r[2:]]), int(r[0]), float(r[1]))
-                 for r in raw["boxes"]]
+        previous_decisions = raw.get("decisions") or {}
+        previous_replay_context = (
+            previous_decisions.get("conf"),
+            previous_decisions.get("panel_assignments_enabled"),
+            previous_decisions.get("segmenter_assignments_enabled"),
+        )
+        models = raw.setdefault("models", {})
+        text_model = models.setdefault("text-detector", {"outputs": []})
+        records = text_model.setdefault("outputs", [])
+        record_by_id = {record["id"]: record for record in records}
+        if not records and raw.get("boxes") and raw.get("capture_version") != 1:
+            # Compatibility for callers that load an old cache without first
+            # passing through detect_page's schema refresh.
+            for index, row in enumerate(raw["boxes"]):
+                artifact_id = f"tdlegacy{index:04d}"
+                record = box_artifact(
+                    artifact_id, page, "text-detector", DETECTOR_PATH.name,
+                    asset_sha12(DETECTOR_PATH), None,
+                    [int(v) for v in row[2:6]], float(row[1]), int(row[0]))
+                records.append(record)
+                record_by_id[artifact_id] = record
+
+        candidates = []
+        for record in records:
+            geometry = record["geometry"]
+            score = float(record["attrs"]["score"])
+            label = int(record["attrs"]["label"])
+            passed = math.isfinite(score) and score >= conf
+            raw_state = "context" if passed and label == 0 else ("kept" if passed else "raw")
+            floor_trace = {"step": "floor", "kept": passed,
+                           "threshold": conf}
+            if passed and label == 0:
+                floor_trace["reason"] = "label-0 bubble context"
+            record["lifecycle"] = {
+                "state": raw_state,
+                "trace": [floor_trace],
+            }
+            if not passed:
+                continue
+            candidates.append({
+                "id": record["id"],
+                "label": label,
+                "score": math.floor(score * 10000.0 + 0.5) / 10000.0,
+                "raw_score": score,
+                "box": Box(int(geometry["x1"]), int(geometry["y1"]),
+                           int(geometry["x2"]), int(geometry["y2"])),
+                "window": record["source"].get("window"),
+            })
+
+        def mark_suppressed(event: dict) -> None:
+            record = record_by_id.get(event["loser_id"])
+            if not record:
+                return
+            lifecycle = record.setdefault("lifecycle", {"state": "kept", "trace": []})
+            lifecycle["state"] = "suppressed"
+            lifecycle["trace"].append({"step": event["rule"], "kept": False,
+                                       "suppressed_by": event["winner_id"],
+                                       "threshold": event["threshold"]})
+
+        def add_trace(artifact_id: str, step: str, **entry) -> None:
+            record = derived_by_id.get(artifact_id)
+            if record:
+                record["lifecycle"]["trace"].append({"step": step, **entry})
+
         page_wh = raw.get("page_wh") or [1, 1]
-        kept = []
-        bubbles = [it for it in items if it[1] == 0 and it[2] >= conf]
-        texts = [it for it in items if it[1] in (1, 2) and it[2] >= conf]
-        if texts:
-            boxes = [t[0] for t in texts]
-            scores = [t[2] for t in texts]
-            labels = [t[1] for t in texts]
-            kept_idx = greedy_dedup(boxes, scores, DET_THRESHOLDS)
-            texts = [texts[i] for i in kept_idx]
-            # re-sync boxes/labels/scores after dedup
-            boxes = [texts[i][0] for i in range(len(texts))]
-            kept_idx = suppress_cross_label(boxes, [t[1] for t in texts],
-                                            [t[2] for t in texts], [b[0] for b in bubbles])
-            texts = [texts[i] for i in kept_idx]
-            boxes = [t[0] for t in texts]
-            kept_idx = dedupe_within_parents(boxes, [t[1] for t in texts],
-                                             [t[2] for t in texts],
-                                             [b[0] for b in bubbles])
-            texts = [texts[i] for i in kept_idx]
-            order = reading_order_rtl([t[0] for t in texts], page_wh[1])
-            texts = [texts[i] for i in order]
-        for n, (box, label, score) in enumerate(texts):
-            kept.append({"id": f"r{n:02d}", "label": label,
-                         "class": N_CLASSES.get(label, str(label)),
-                         "score": round(score, 3),
-                         "box": box.as_list(),
-                         "ocr_box": clamp_pad(box, page_wh).as_list()})
-        return {"bubbles": len(bubbles), "regions": kept}
+        text_candidates = [item for item in candidates if item["label"] in (1, 2)]
+        groups = [(item["window"], item["label"]) for item in text_candidates]
+        detector_kept_indices, detector_suppressions = greedy_dedup_with_suppressions(
+            [item["box"] for item in text_candidates],
+            [item["score"] for item in text_candidates],
+            [item["id"] for item in text_candidates],
+            DET_THRESHOLDS, groups=groups, rule="det-dedup")
+        for event in detector_suppressions:
+            mark_suppressed(event)
+        detector_kept = [text_candidates[i] for i in detector_kept_indices]
+        bubbles = [item for item in candidates if item["label"] == 0]
+        survivors = detector_kept + bubbles
+
+        tall = bool(raw.get("is_tall"))
+        merge_candidates = [dict(item, box=item["box"].as_list())
+                            for item in survivors]
+        if tall:
+            canonical, merge_records = merge_window_detections(merge_candidates)
+        else:
+            canonical = [dict(item, merged_with=[]) for item in merge_candidates]
+            merge_records = []
+        for item in canonical:
+            item["box"] = Box(*[int(v) for v in item["box"]])
+        for event in merge_records:
+            raw_loser = record_by_id.get(event["loser_id"])
+            raw_winner = record_by_id.get(event["winner_id"])
+            if raw_loser:
+                raw_loser["lifecycle"] = {
+                    "state": "merged",
+                    "trace": raw_loser.get("lifecycle", {}).get("trace", []) + [
+                        {"step": "merge", "kept": False,
+                         "merged_with": [event["winner_id"]],
+                         "rule": event["rule"], "threshold": event["threshold"]}],
+                }
+            if raw_winner:
+                raw_winner["lifecycle"]["trace"].append(
+                    {"step": "merge", "kept": True,
+                     "merged_with": [event["loser_id"]],
+                     "rule": event["rule"], "threshold": event["threshold"]})
+
+        derived_records = []
+        derived_by_id = {}
+        for item in canonical:
+            raw_id = item["id"]
+            derived_id = f"dt-{raw_id}"
+            item["artifact_id"] = derived_id
+            label = item["label"]
+            record = box_artifact(
+                derived_id, page, "text-detector", DETECTOR_PATH.name,
+                text_model.get("asset_sha"), item.get("window"),
+                item["box"].as_list(), item["raw_score"], label)
+            trace = [{"step": "floor", "kept": True, "threshold": conf}]
+            if label in (1, 2):
+                trace.append({"step": "det-dedup", "kept": True,
+                              "threshold": {"iou": 0.75, "containment": 0.88,
+                                            "center": 0.12, "size": 0.18}})
+            else:
+                trace.append({"step": "context", "kept": True,
+                              "reason": "label-0 bubble context"})
+            if item["merged_with"]:
+                trace.append({"step": "merge", "kept": True,
+                              "merged_with": list(item["merged_with"]),
+                              "rule": "win-merge",
+                              "threshold": {"iou": 0.40, "containment": 0.70,
+                                            "horizontal_overlap": 0.60,
+                                            "vertical_gap_px": 20}})
+            record["lifecycle"] = {
+                "state": "context" if label == 0 else "kept",
+                "trace": trace,
+            }
+            derived_records.append(record)
+            derived_by_id[derived_id] = record
+
+        canonical_texts = [item for item in canonical if item["label"] in (1, 2)]
+        same_label_kept_indices, ocr_suppressions = dedupe_within_parents_with_suppressions(
+            [item["box"] for item in canonical_texts],
+            [item["label"] for item in canonical_texts],
+            [item["score"] for item in canonical_texts],
+            [item["artifact_id"] for item in canonical_texts],
+            [item["box"] for item in canonical if item["label"] == 0])
+        for event in ocr_suppressions:
+            record = derived_by_id.get(event["loser_id"])
+            if record:
+                record["lifecycle"]["state"] = "suppressed"
+                record["lifecycle"]["trace"].append({
+                    "step": event["rule"], "kept": False,
+                    "suppressed_by": event["winner_id"],
+                    "threshold": event["threshold"]})
+        after_ocr = [canonical_texts[i] for i in same_label_kept_indices]
+        cross_kept_indices, cross_suppressions = suppress_cross_label_with_suppressions(
+            [item["box"] for item in after_ocr],
+            [item["label"] for item in after_ocr],
+            [item["score"] for item in after_ocr],
+            [item["artifact_id"] for item in after_ocr],
+            [item["box"] for item in canonical if item["label"] == 0])
+        for event in cross_suppressions:
+            record = derived_by_id.get(event["loser_id"])
+            if record:
+                record["lifecycle"]["state"] = "suppressed"
+                record["lifecycle"]["trace"].append({
+                    "step": event["rule"], "kept": False,
+                    "suppressed_by": event["winner_id"],
+                    "threshold": event["threshold"]})
+        texts = [after_ocr[i] for i in cross_kept_indices]
+        order = reading_order_rtl([item["box"] for item in texts], page_wh[1])
+        texts = [texts[i] for i in order]
+
+        panel_model = models.get("panel-detector", {})
+        panel_assignments_enabled = (
+            panel_model.get("status") == "ready"
+            and self._panel_skip_reason(*page_wh) is None)
+        panel_records = panel_model.get("outputs", []) if panel_assignments_enabled else []
+        panel_by_id = {item["id"]: item for item in panel_records}
+        active_panel_records = [panel_by_id[artifact_id]
+                                for artifact_id in panel_model.get("kept_ids", [])
+                                if artifact_id in panel_by_id]
+        panel_boxes = [[float(rec["geometry"][key]) for key in ("x1", "y1", "x2", "y2")]
+                       for rec in active_panel_records]
+        panel_order = reading_order_panel_indices(panel_boxes, self._reading_order_is_rtl())
+        ordered_panels = [
+            {"id": active_panel_records[index]["id"],
+             "box": panel_boxes[index], "score": active_panel_records[index]["attrs"]["score"]}
+            for index in panel_order
+        ]
+        panel_views = [dict(panel, panel_index=index)
+                       for index, panel in enumerate(ordered_panels)]
+
+        segmenter_model = models.get("bubble-segmenter", {})
+        segmenter_enabled = (segmenter_model.get("status") == "ready"
+                             and self.settings.get("bubble_segmentation", True))
+        mask_cache = raw.get("mask_cache", {}).get("bubble-segmenter", {})
+        segmenter_outputs = segmenter_model.get("outputs", []) if segmenter_enabled else []
+        kept_regions = []
+        panel_assignment_records = []
+        for index, item in enumerate(texts):
+            box = item["box"]
+            region = {"id": f"r{index:02d}",
+                      "artifact_id": item["artifact_id"],
+                      "label": item["label"],
+                      "class": N_CLASSES.get(item["label"], str(item["label"])),
+                      "score": round(item["score"], 3),
+                      "box": box.as_list(),
+                      "ocr_box": clamp_pad(box, page_wh).as_list()}
+            if item["merged_with"]:
+                region["merged_from"] = list(item["merged_with"])
+            record = derived_by_id[item["artifact_id"]]
+            add_trace(item["artifact_id"], "ocr-dedup", kept=True,
+                      threshold={"iou": 0.62, "containment": 0.86,
+                                 "center": 0.12, "size": 0.20})
+            add_trace(item["artifact_id"], "xlabel", kept=True, threshold=0.3)
+            if panel_assignments_enabled:
+                assignment = assign_panel(box.as_list(), ordered_panels)
+                region["panel_assignment"] = assignment
+                panel_assignment_records.append({"artifact_id": item["artifact_id"],
+                                                 **assignment})
+                add_trace(item["artifact_id"], "panel", kept=True,
+                          assignment=assignment)
+            if segmenter_enabled:
+                assignment = assign_mask_center(segmenter_outputs, mask_cache,
+                                                box.as_list())
+                if assignment is not None:
+                    region["segmenter_assignment"] = assignment
+                    add_trace(item["artifact_id"], "segmenter-assignment",
+                              kept=True, **assignment)
+            kept_regions.append(region)
+
+        panel_suppressions = panel_model.get("suppression_records", [])
+        suppressions = (detector_suppressions + ocr_suppressions
+                        + cross_suppressions + panel_suppressions)
+        text_model["derived_outputs"] = derived_records
+        text_model["decisions"] = {
+            "conf": conf,
+            "suppression_records": detector_suppressions + ocr_suppressions + cross_suppressions,
+            "merge_records": merge_records,
+            "kept_ids": [item["artifact_id"] for item in texts],
+            "context_ids": [item["artifact_id"] for item in canonical if item["label"] == 0],
+        }
+        raw["decisions"] = {
+            "conf": conf,
+            "suppression_records": suppressions,
+            "merge_records": merge_records,
+            "kept_ids": [item["artifact_id"] for item in texts],
+            "context_ids": [item["artifact_id"] for item in canonical if item["label"] == 0],
+            "panel_assignments": panel_assignment_records,
+            "panel_assignments_enabled": panel_assignments_enabled,
+            "segmenter_assignments_enabled": segmenter_enabled,
+        }
+        current_replay_context = (conf, panel_assignments_enabled, segmenter_enabled)
+        if previous_replay_context != current_replay_context:
+            self._save_json("detections.json", self._cache["detections"])
+        return {"bubbles": sum(1 for item in canonical if item["label"] == 0),
+                "regions": kept_regions, "panels": panel_views}
 
     # --------------------------------------------------------------------- OCR
     def _ocr_engine(self):
@@ -1050,7 +1533,7 @@ class Pipeline:
             "total_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
     def page_data(self, page: str) -> dict:
-        conf = float(self.settings.get("conf", 0.45))
+        conf = float(self.settings.get("conf", DEFAULT_SETTINGS["conf"]))
         ocr = self._cache["ocr"].get(page, {})
         det = self._cache["detections"].get(page)
         raw_boxes = []
@@ -1155,8 +1638,10 @@ class Detector:
             s = float(score)
             if np.isnan(s) or s < CONF_FLOOR:
                 continue
-            out.append({"label": int(lab), "score": s,
-                        "box": [int(round(v)) for v in box[:4]]})
+            out.append({"label": int(lab),
+                        "score": math.floor(s * 10000.0 + 0.5) / 10000.0,
+                        "raw_score": s,
+                        "box": [int(v) for v in box[:4]]})
         return out
 
 
@@ -1695,7 +2180,7 @@ def translate_one(text: str, target_lang: str, endpoint: str, model: str) -> str
 
 
 DEFAULT_SETTINGS = {
-    "conf": 0.45,
+    "conf": 0.6,
     "max_batch": 8,
     "target_lang": "English",
     "endpoint": "http://127.0.0.1:1234/v1",

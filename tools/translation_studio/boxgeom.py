@@ -92,6 +92,41 @@ def greedy_dedup(boxes: list[Box], scores: list[float], t: DedupThresholds) -> l
     return sorted(kept)
 
 
+def threshold_record(t: DedupThresholds) -> dict[str, float]:
+    return {"iou": t.iou, "containment": t.containment,
+            "center": t.center, "size": t.size}
+
+
+def greedy_dedup_with_suppressions(
+        boxes: list[Box], scores: list[float], ids: list[str],
+        t: DedupThresholds, groups: list[object] | None = None,
+        rule: str = "det-dedup",
+) -> tuple[list[int], list[dict]]:
+    """Greedy geometric dedup with winner IDs for the filter trace.
+
+    ``groups`` scopes comparisons. Android's detector stage supplies one group
+    for each (window, label), while its OCR stage uses parent and label groups.
+    Input order breaks score ties, matching Kotlin's stable descending sort.
+    """
+    if len(boxes) != len(scores) or len(boxes) != len(ids):
+        raise ValueError("boxes, scores, and ids must have equal lengths")
+    if groups is not None and len(groups) != len(boxes):
+        raise ValueError("groups must have the same length as boxes")
+    order = sorted(range(len(boxes)), key=lambda i: -scores[i])
+    kept: list[int] = []
+    suppressed: list[dict] = []
+    for i in order:
+        winner = next((k for k in kept
+                       if (groups is None or groups[i] == groups[k])
+                       and is_geometric_duplicate(boxes[i], boxes[k], t)), None)
+        if winner is None:
+            kept.append(i)
+        else:
+            suppressed.append({"loser_id": ids[i], "winner_id": ids[winner],
+                               "rule": rule, "threshold": threshold_record(t)})
+    return sorted(kept), suppressed
+
+
 def select_parent(text: Box, bubbles: list[Box]) -> Box | None:
     """Smallest bubble containing the text center
     (OcrBlockDeduplication parent map)."""
@@ -122,26 +157,85 @@ def suppress_cross_label(texts: list[Box], labels: list[int], scores: list[float
     return [i for i in range(len(texts)) if i not in removed]
 
 
+def suppress_cross_label_with_suppressions(
+        texts: list[Box], labels: list[int], scores: list[float],
+        ids: list[str], bubbles: list[Box],
+) -> tuple[list[int], list[dict]]:
+    """Same-parent, cross-label IoU suppression with decision provenance."""
+    if not (len(texts) == len(labels) == len(scores) == len(ids)):
+        raise ValueError("texts, labels, scores, and ids must have equal lengths")
+    if len(texts) < 2:
+        return list(range(len(texts))), []
+    parents = [select_parent(t, bubbles) for t in texts]
+    removed: set[int] = set()
+    suppressed: list[dict] = []
+    for i in range(len(texts)):
+        if i in removed or parents[i] is None:
+            continue
+        for j in range(i + 1, len(texts)):
+            if j in removed or parents[j] is not parents[i] or labels[i] == labels[j]:
+                continue
+            if iou(texts[i], texts[j]) > 0.3:
+                loser, winner = (i, j) if scores[i] < scores[j] else (j, i)
+                removed.add(loser)
+                suppressed.append({"loser_id": ids[loser], "winner_id": ids[winner],
+                                   "rule": "xlabel", "threshold": 0.3})
+    return [i for i in range(len(texts)) if i not in removed], suppressed
+
+
 def dedupe_within_parents(texts: list[Box], labels: list[int], scores: list[float],
                           bubbles: list[Box]) -> list[int]:
-    """Text-stage dedup: within same-parent groups drop geometric duplicates
-    (TEXT_THRESHOLDS), keeping higher parent-containment then higher score."""
+    """OCR-stage dedup drops same-label geometric duplicates across the page.
+
+    Candidate priority is parent-bubble containment, then confidence; parent
+    identity does not restrict the duplicate comparison in Android.
+    """
     parents = [select_parent(t, bubbles) for t in texts]
 
     def containment(i: int) -> float:
         p = parents[i]
-        if p is None or p.area == 0:
+        if p is None or texts[i].area == 0:
             return 0.0
-        return intersection_area(texts[i], p) / p.area
+        return intersection_area(texts[i], p) / texts[i].area
 
     kept: list[int] = []
     for i in sorted(range(len(texts)),
                     key=lambda i: (-containment(i), -scores[i])):
-        group = [k for k in kept if parents[k] is parents[i] and labels[k] == labels[i]]
+        group = [k for k in kept if labels[k] == labels[i]]
         if not any(is_geometric_duplicate(texts[i], texts[k], TEXT_THRESHOLDS)
                    for k in group):
             kept.append(i)
     return sorted(kept)
+
+
+def dedupe_within_parents_with_suppressions(
+        texts: list[Box], labels: list[int], scores: list[float],
+        ids: list[str], bubbles: list[Box],
+) -> tuple[list[int], list[dict]]:
+    """OCR-stage same-label dedup plus auditable loser/winner records."""
+    if not (len(texts) == len(labels) == len(scores) == len(ids)):
+        raise ValueError("texts, labels, scores, and ids must have equal lengths")
+    parents = [select_parent(t, bubbles) for t in texts]
+
+    def containment(i: int) -> float:
+        parent = parents[i]
+        if parent is None or texts[i].area == 0:
+            return 0.0
+        return intersection_area(texts[i], parent) / texts[i].area
+
+    kept: list[int] = []
+    suppressed: list[dict] = []
+    for i in sorted(range(len(texts)), key=lambda i: (-containment(i), -scores[i])):
+        winner = next((k for k in kept
+                       if labels[k] == labels[i]
+                       and is_geometric_duplicate(texts[i], texts[k], TEXT_THRESHOLDS)), None)
+        if winner is None:
+            kept.append(i)
+        else:
+            suppressed.append({"loser_id": ids[i], "winner_id": ids[winner],
+                               "rule": "ocr-dedup",
+                               "threshold": threshold_record(TEXT_THRESHOLDS)})
+    return sorted(kept), suppressed
 
 
 def reading_order_rtl(texts: list[Box], page_height: int) -> list[int]:
@@ -170,4 +264,3 @@ def overlaps_any_bubble(text: Box, bubbles: list[Box], min_overlap_fraction: flo
 
 
 find_parent_bubble = select_parent
-

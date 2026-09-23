@@ -431,7 +431,7 @@ function applyOverlays(p) {
   const media = sec?.querySelector(".pg-media");
   if (!media || !media._overlays || media._hasOverlays) return;
   const [w, h] = S.dims[p] || [1000, 1400];
-  const conf = S.settings?.conf ?? 0.45;
+  const conf = S.settings?.conf ?? 0.6;
 
   // 1. Parent Speech Bubbles (detector label 0)
   (d.raw_boxes || [])
@@ -923,7 +923,7 @@ function syncSettingsUI() {
     b.classList.toggle("active", b.dataset.backend === tr));
 
   // Confidence
-  const conf = s.conf ?? 0.45;
+  const conf = s.conf ?? 0.6;
   if ($("confSlider")) $("confSlider").value = conf;
   if ($("confVal")) $("confVal").textContent = conf;
 
@@ -1404,7 +1404,7 @@ function buildFocus(page) {
 function applyFocusOverlays(media, page, d) {
   if (media._hasOverlays) return;
   const [w, h] = S.dims[page] || [1000, 1400];
-  const conf = S.settings?.conf ?? 0.45;
+  const conf = S.settings?.conf ?? 0.6;
 
   // 1. Parent Speech Bubbles
   (d.raw_boxes || [])

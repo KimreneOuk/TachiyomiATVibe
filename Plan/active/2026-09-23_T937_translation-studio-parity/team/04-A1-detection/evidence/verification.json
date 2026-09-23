@@ -1,0 +1,150 @@
+{
+  "status": "passed",
+  "conf_default": 0.6,
+  "raw_cache_floor": 0.05,
+  "pages": {
+    "p001.jpg": {
+      "artifact_ids": 23,
+      "suppression_records": 0,
+      "merge_records": 0,
+      "model_counts": {
+        "text-detector": 7,
+        "panel-detector": 7,
+        "bubble-segmenter": 3
+      },
+      "model_status": {
+        "text-detector": "ready",
+        "panel-detector": "ready",
+        "bubble-segmenter": "ready"
+      }
+    },
+    "p002.jpg": {
+      "artifact_ids": 19,
+      "suppression_records": 0,
+      "merge_records": 0,
+      "model_counts": {
+        "text-detector": 10,
+        "panel-detector": 1,
+        "bubble-segmenter": 3
+      },
+      "model_status": {
+        "text-detector": "ready",
+        "panel-detector": "ready",
+        "bubble-segmenter": "ready"
+      }
+    },
+    "tall_synthetic.jpg": {
+      "artifact_ids": 48,
+      "suppression_records": 0,
+      "merge_records": 4,
+      "model_counts": {
+        "text-detector": 28,
+        "panel-detector": 0,
+        "bubble-segmenter": 8
+      },
+      "model_status": {
+        "text-detector": "ready",
+        "panel-detector": "skipped",
+        "bubble-segmenter": "ready"
+      }
+    }
+  },
+  "replay_save_behavior": {
+    "on_context_change": 1,
+    "same_context_cache_hits": 0
+  },
+  "decision_fixture_checks": {
+    "det_thresholds": {
+      "iou": 0.75,
+      "containment": 0.88,
+      "center": 0.12,
+      "size": 0.18
+    },
+    "ocr_thresholds": {
+      "iou": 0.62,
+      "containment": 0.86,
+      "center": 0.12,
+      "size": 0.2
+    },
+    "det_dedup": [
+      {
+        "loser_id": "d1",
+        "winner_id": "d0",
+        "rule": "det-dedup",
+        "threshold": {
+          "iou": 0.75,
+          "containment": 0.88,
+          "center": 0.12,
+          "size": 0.18
+        }
+      }
+    ],
+    "ocr_dedup": [
+      {
+        "loser_id": "o1",
+        "winner_id": "o0",
+        "rule": "ocr-dedup",
+        "threshold": {
+          "iou": 0.62,
+          "containment": 0.86,
+          "center": 0.12,
+          "size": 0.2
+        }
+      }
+    ],
+    "cross_parent_ocr_dedup": [
+      {
+        "loser_id": "p1",
+        "winner_id": "p0",
+        "rule": "ocr-dedup",
+        "threshold": {
+          "iou": 0.62,
+          "containment": 0.86,
+          "center": 0.12,
+          "size": 0.2
+        }
+      }
+    ],
+    "xlabel": [
+      {
+        "loser_id": "x1",
+        "winner_id": "x0",
+        "rule": "xlabel",
+        "threshold": 0.3
+      }
+    ],
+    "win_merge": [
+      {
+        "loser_id": "w1",
+        "winner_id": "w0",
+        "merged_with": "w0",
+        "rule": "win-merge",
+        "criterion": "horizontal-overlap>=0.60 and vertical-overlap-or-gap<=20px",
+        "threshold": {
+          "iou": 0.4,
+          "containment": 0.7,
+          "horizontal_overlap": 0.6,
+          "vertical_gap_px": 20
+        }
+      }
+    ],
+    "panel_nms": [
+      {
+        "loser_id": "pd1",
+        "winner_id": "pd0",
+        "rule": "panel-nms",
+        "threshold": 0.45
+      }
+    ],
+    "mask_center_assignment": {
+      "mask_ref": "m0",
+      "mask_component_id": 7,
+      "source": {
+        "model": "bubble-segmenter",
+        "asset": "seg.onnx",
+        "asset_sha": "0123456789ab",
+        "window": 2
+      }
+    }
+  }
+}
