@@ -1,0 +1,33 @@
+{
+  "status": "reproduced-before-fix",
+  "integration_base": "main@e00f0c38d95f9317a9591adce11eff93684b9aa1",
+  "scenario": "30 fresh B2 browser boots; concurrent POST /api/settings plus page, artifact, overview, and thumbnail loads",
+  "failed_rounds": [16],
+  "failed_requests": ["500 /api/page?p=p001.jpg"],
+  "exception": "PermissionError [WinError 32]",
+  "deleted_path": ".studio/inpaint/p001.json",
+  "race": {
+    "reader": "GET /api/artifacts -> _artifact_payload -> _read_artifact_source -> path.read_text(.studio/inpaint/p001.json), outside PIPELINE.lock",
+    "invalidator": "GET /api/page -> Pipeline.page_data -> _page_operation_scope -> _accept_page_fingerprint -> _invalidate_page_artifacts -> path.unlink()",
+    "cause": "Windows refuses unlink while the uncoordinated JSON reader has an open handle"
+  },
+  "server_traceback_lines": [
+    "Traceback (most recent call last):",
+    "  File \"...\\tools\\translation_studio\\server.py\", line 194, in do_GET",
+    "    return self._send_json(PIPELINE.page_data(get(\"p\")))",
+    "  File \"...\\tools\\translation_studio\\pipeline.py\", line 148, in wrapped",
+    "    with self._page_operation_scope(str(page)):",
+    "  File \"...\\contextlib.py\", line 137, in __enter__",
+    "    return next(self.gen)",
+    "  File \"...\\tools\\translation_studio\\pipeline.py\", line 195, in _page_operation_scope",
+    "    self._accept_page_fingerprint(page, info)",
+    "  File \"...\\tools\\translation_studio\\pipeline.py\", line 288, in _accept_page_fingerprint",
+    "    self._invalidate_page_artifacts(page)",
+    "  File \"...\\tools\\translation_studio\\pipeline.py\", line 322, in _invalidate_page_artifacts",
+    "    path.unlink()",
+    "  File \"...\\pathlib.py\", line 1147, in unlink",
+    "    os.unlink(self)",
+    "PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: '...\\demo_chapter\\.studio\\inpaint\\p001.json'"
+  ],
+  "regression": "selftest_server_concurrency.py holds the same JSON open while both the page GET and settings POST handlers start; 12/12 rounds completed with all three requests returning 200"
+}

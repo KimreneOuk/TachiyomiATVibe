@@ -1,0 +1,141 @@
+{
+  "status": "ok",
+  "pattern": "browser boot: GET /api/artifacts overlaps POST /api/settings and GET /api/page",
+  "race_seed": "held .studio/inpaint/p001.json handle until both concurrent handlers start",
+  "rounds": 12,
+  "all_statuses_200": true,
+  "round_results": [
+    {
+      "round": 1,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 2,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 3,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 4,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 5,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 6,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 7,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 8,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 9,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 10,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 11,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    },
+    {
+      "round": 12,
+      "statuses": {
+        "artifacts": 200,
+        "page": 200,
+        "settings": 200
+      },
+      "reader_and_page_overlap": true,
+      "reader_and_settings_overlap": true,
+      "invalidation_removed_stale_json": true
+    }
+  ]
+}

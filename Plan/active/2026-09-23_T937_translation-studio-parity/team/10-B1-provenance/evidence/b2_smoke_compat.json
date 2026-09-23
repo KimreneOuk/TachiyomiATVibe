@@ -1,0 +1,13 @@
+{
+  "smoke": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\08-B2-visualization\\evidence\\smoke_b2.py",
+  "static_ui": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-b2-visualization\\tools\\translation_studio\\static",
+  "server_and_pipeline": "this B1 worktree",
+  "fixture_adaptation": [
+    "stamp current A5 detection-capture and OCR cache fingerprints",
+    "shift td0002 so real replay preserves the expected OCR-dedup loser",
+    "remove inherited p002 inpaint outputs so p002 remains the no-cache control",
+    "wait for asynchronous text-badge overlay before its assertion"
+  ],
+  "reason": "B2 fixture predates A5 and demo cache contents; a short overlay wait stabilizes its browser assertion",
+  "smoke_results": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\10-B1-provenance\\evidence\\smoke_results.json"
+}

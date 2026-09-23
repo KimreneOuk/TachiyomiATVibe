@@ -17,7 +17,7 @@ from segmentation import BubbleMask
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_PATH = (REPO_ROOT / "Plan/active/2026-09-23_T937_translation-studio-parity"
-                 / "team/06-A4-mask-planner/evidence/selftest_mask_planner.json")
+                 / "team/10-B1-provenance/evidence/mask_planner_selftest.json")
 
 
 def _sha(mask: np.ndarray) -> str:
@@ -141,7 +141,7 @@ def _normal_page_checks() -> dict:
                             if item["kind"] == "ocr-region")
         assigned_source = next(item for item in first_region["source_boxes"]
                                if item["source"] == "bubble-segmenter")
-        assert first_json["provenance_schema_version"] == 2
+        assert first_json["provenance_schema_version"] == 3
         assert first_json["execution"]["confidence_threshold"] == 0.6
         assert first_json["execution"]["parity"] == "android-production"
         assert first_json["stats"]["segmenter_union_sha256"] == expected_sha

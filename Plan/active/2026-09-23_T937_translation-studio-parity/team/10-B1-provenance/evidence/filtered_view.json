@@ -1,0 +1,461 @@
+{
+  "schema": "T937-FILTER_SPEC-1",
+  "page": "p001.jpg",
+  "preset": "production",
+  "created_at": "2026-09-23T15:46:55.857082+00:00",
+  "filters": {
+    "preset": "production",
+    "models": {
+      "text-detector": {
+        "enabled": true,
+        "dimFiltered": true,
+        "labels": null,
+        "scoreMin": 0.6,
+        "scoreMax": 1
+      },
+      "panel-detector": {
+        "enabled": true,
+        "dimFiltered": true,
+        "labels": null,
+        "scoreMin": 0.5,
+        "scoreMax": 1
+      },
+      "bubble-segmenter": {
+        "enabled": true,
+        "dimFiltered": true,
+        "labels": null,
+        "scoreMin": 0,
+        "scoreMax": 1
+      },
+      "paddle-det": {
+        "enabled": true,
+        "dimFiltered": false,
+        "labels": null,
+        "scoreMin": 0,
+        "scoreMax": 1
+      },
+      "ocr": {
+        "enabled": true,
+        "dimFiltered": true,
+        "labels": null,
+        "scoreMin": 0.6,
+        "scoreMax": 1
+      },
+      "inpaint": {
+        "enabled": true,
+        "dimFiltered": false,
+        "labels": null,
+        "scoreMin": 0.6,
+        "scoreMax": 1
+      }
+    },
+    "states": [
+      "kept",
+      "consumed",
+      "context"
+    ],
+    "suppressionRule": "",
+    "geometry": {
+      "widthMin": "",
+      "widthMax": "",
+      "heightMin": "",
+      "heightMax": "",
+      "aspectMin": "",
+      "aspectMax": "",
+      "tall": ""
+    },
+    "ocr": {
+      "text": "",
+      "confidenceMin": 0,
+      "confidenceMax": 1,
+      "engine": "",
+      "outcome": ""
+    },
+    "route": "",
+    "window": "",
+    "translation": []
+  },
+  "records": [
+    {
+      "id": "dt-td0001",
+      "page": "p001.jpg",
+      "kind": "box",
+      "source": {
+        "model": "text-detector",
+        "asset": "detector-v4-s_int8.onnx",
+        "asset_sha": "5fe9e4f576e4",
+        "window": null
+      },
+      "geometry": {
+        "x1": 90,
+        "y1": 140,
+        "x2": 202,
+        "y2": 210
+      },
+      "attrs": {
+        "label": 1,
+        "score": 0.92,
+        "shape": {
+          "w": 112,
+          "h": 70,
+          "ar": 1.6
+        }
+      },
+      "lifecycle": {
+        "state": "kept",
+        "trace": [
+          {
+            "step": "floor",
+            "kept": true,
+            "threshold": 0.6
+          },
+          {
+            "step": "det-dedup",
+            "kept": true,
+            "threshold": {
+              "iou": 0.75,
+              "containment": 0.88,
+              "center": 0.12,
+              "size": 0.18
+            }
+          },
+          {
+            "step": "ocr-dedup",
+            "kept": true,
+            "threshold": {
+              "iou": 0.62,
+              "containment": 0.86,
+              "center": 0.12,
+              "size": 0.2
+            }
+          },
+          {
+            "step": "xlabel",
+            "kept": true,
+            "threshold": 0.3
+          },
+          {
+            "step": "panel",
+            "kept": true,
+            "assignment": {
+              "panel_index": null,
+              "panel_id": null,
+              "best_panel_index": null,
+              "best_panel_id": null,
+              "best_containment": 0,
+              "category": "orphan"
+            }
+          },
+          {
+            "step": "segmenter-assignment",
+            "kept": true,
+            "mask_ref": "mask-1",
+            "mask_component_id": 4,
+            "source": {
+              "model": "bubble-segmenter",
+              "asset": "segmenter.onnx",
+              "asset_sha": "abcdef123456",
+              "window": null
+            }
+          },
+          {
+            "step": "ocr-dedup",
+            "kept": true,
+            "loser_id": "dt-td0002",
+            "winner_id": "dt-td0001",
+            "rule": "ocr-dedup",
+            "threshold": {
+              "iou": 0.62,
+              "containment": 0.86,
+              "center": 0.12,
+              "size": 0.2
+            },
+            "decision_record": true
+          }
+        ]
+      },
+      "segmenter_assignment": {
+        "mask_ref": "mask-1",
+        "mask_component_id": 4,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "segmenter.onnx",
+          "asset_sha": "abcdef123456",
+          "window": null
+        }
+      }
+    },
+    {
+      "id": "pd0001",
+      "page": "p001.jpg",
+      "kind": "box",
+      "source": {
+        "model": "panel-detector",
+        "asset": "panel-detector.onnx",
+        "asset_sha": "1234567890ab",
+        "window": null
+      },
+      "geometry": {
+        "x1": 1,
+        "y1": 1,
+        "x2": 899,
+        "y2": 1399
+      },
+      "attrs": {
+        "label": "panel",
+        "score": 0.88,
+        "shape": {
+          "w": 898,
+          "h": 1398,
+          "ar": 0.642346208869814
+        }
+      },
+      "lifecycle": {
+        "state": "kept",
+        "trace": [
+          {
+            "step": "floor",
+            "kept": true,
+            "threshold": 0.6
+          }
+        ]
+      }
+    },
+    {
+      "id": "bs0001-c4",
+      "page": "p001.jpg",
+      "kind": "mask",
+      "source": {
+        "model": "bubble-segmenter",
+        "asset": "segmenter.onnx",
+        "asset_sha": "abcdef123456",
+        "window": null
+      },
+      "mask_ref": "mask-1",
+      "attrs": {
+        "label": "mask-component",
+        "score": 1,
+        "component_count": 1,
+        "component_id": "4",
+        "shape": {
+          "w": 112,
+          "h": 70,
+          "ar": 1.6
+        }
+      },
+      "lifecycle": {
+        "state": "kept",
+        "trace": [
+          {
+            "step": "segmenter",
+            "kept": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "ocr-r00",
+      "page": "p001.jpg",
+      "kind": "region",
+      "source": {
+        "model": "ocr:mangaocr",
+        "asset": "mangaocr",
+        "asset_sha": null,
+        "window": null
+      },
+      "geometry": {
+        "x1": 90,
+        "y1": 140,
+        "x2": 202,
+        "y2": 210
+      },
+      "attrs": {
+        "label": 1,
+        "score": 0.92,
+        "confidence": 0.98,
+        "text": "cached source line",
+        "engine": "mangaocr",
+        "outcome": "ok",
+        "region_id": "r00",
+        "artifact_id": "dt-td0001",
+        "translation": "cached translation",
+        "translation_cached": true,
+        "translation_status": "translated",
+        "shape": {
+          "w": 112,
+          "h": 70,
+          "ar": 1.6
+        }
+      },
+      "lifecycle": {
+        "state": "consumed",
+        "trace": [
+          {
+            "step": "ocr",
+            "kept": true,
+            "engine": "mangaocr",
+            "text": "cached source line",
+            "conf": 0.98,
+            "outcome": "ok"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ocr-box-r00",
+      "page": "p001.jpg",
+      "kind": "box",
+      "source": {
+        "model": "ocr:mangaocr",
+        "asset": "mangaocr",
+        "asset_sha": null,
+        "window": null
+      },
+      "geometry": {
+        "x1": 84,
+        "y1": 134,
+        "x2": 208,
+        "y2": 216
+      },
+      "attrs": {
+        "label": 1,
+        "score": 0.92,
+        "confidence": 0.98,
+        "text": "cached source line",
+        "engine": "mangaocr",
+        "outcome": "ok",
+        "region_id": "r00",
+        "artifact_id": "dt-td0001",
+        "translation": "cached translation",
+        "translation_cached": true,
+        "translation_status": "translated",
+        "shape": {
+          "w": 124,
+          "h": 82,
+          "ar": 1.5121951219512195
+        },
+        "role": "ocr-input-box"
+      },
+      "lifecycle": {
+        "state": "consumed",
+        "trace": [
+          {
+            "step": "ocr",
+            "kept": true,
+            "engine": "mangaocr",
+            "text": "cached source line",
+            "conf": 0.98,
+            "outcome": "ok"
+          },
+          {
+            "step": "ocr-box",
+            "kept": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "inpaint-r00",
+      "page": "p001.jpg",
+      "kind": "region",
+      "source": {
+        "model": "inpaint:bubble",
+        "asset": "android inpaint provenance",
+        "asset_sha": null,
+        "window": null
+      },
+      "geometry": {
+        "x1": 90,
+        "y1": 140,
+        "x2": 202,
+        "y2": 210
+      },
+      "mask_ref": "mask-1",
+      "attrs": {
+        "label": 1,
+        "leg": "bubble",
+        "score": 0.92,
+        "route": "bubble/android-fill",
+        "route_taken": "bubble/android-fill",
+        "artifact_id": "dt-td0001",
+        "parent_region": "r00",
+        "text": "cached source line",
+        "mask_ref": "mask-1",
+        "segmenter_component_id": 4,
+        "erase_mask_component_id": "c001",
+        "mask_component_id": "c001",
+        "context_crop_bbox": [
+          0,
+          0,
+          900,
+          1400
+        ],
+        "timing_ms": {
+          "planning": 0.585,
+          "refinement": 0,
+          "fill": 1452.502,
+          "total": 1453.087
+        },
+        "timing_scope": "bubble-leg-shared",
+        "source_boxes": [
+          {
+            "source": "detector",
+            "role": "ocr-origin",
+            "box": [
+              90,
+              140,
+              202,
+              210
+            ],
+            "label": 1,
+            "score": 0.92,
+            "artifact_id": "dt-td0001",
+            "model": "text-detector",
+            "asset": "detector-v4-s_int8.onnx",
+            "asset_sha": "5fe9e4f576e4",
+            "window": null
+          },
+          {
+            "source": "ocr",
+            "role": "text-rect",
+            "box": [
+              90,
+              140,
+              202,
+              210
+            ]
+          },
+          {
+            "source": "bubble-segmenter",
+            "role": "assigned-mask",
+            "artifact_id": "mask-1",
+            "mask_ref": "mask-1",
+            "segmenter_component_id": 4,
+            "model": "bubble-segmenter",
+            "asset": "segmenter.onnx",
+            "asset_sha": "abcdef123456",
+            "window": null,
+            "box": [
+              90,
+              140,
+              202,
+              210
+            ]
+          }
+        ],
+        "shape": {}
+      },
+      "lifecycle": {
+        "state": "consumed",
+        "trace": [
+          {
+            "step": "inpaint-plan",
+            "kept": true,
+            "route": "bubble/android-fill",
+            "mask_component_id": "c001"
+          }
+        ]
+      }
+    }
+  ]
+}

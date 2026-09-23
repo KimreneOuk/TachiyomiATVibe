@@ -69,6 +69,7 @@ from translation_providers import (AI_DEFAULT_OUTPUT_TOKENS,  # noqa: E402
                                    stable_openai_block_indexes,
                                    translate_google_batch,
                                    translate_openai_compat_batch)
+import inpaint_provenance  # noqa: E402
 
 DETECTOR_PATH = (REPO_ROOT / "app/src/main/assets/models/detection"
                  / "detector-v4-s_int8.onnx")
@@ -321,6 +322,7 @@ class Pipeline:
                     path.unlink()
                 except FileNotFoundError:
                     pass
+        inpaint_provenance.remove_page_crop_artifacts(self.studio_dir, page)
         thumb_dir = self.studio_dir / "thumbs"
         if thumb_dir.is_dir():
             for path in list(thumb_dir.glob(f"{stem}_*.jpg")) + list(
@@ -497,6 +499,9 @@ class Pipeline:
                 _rm_tree(self.studio_dir / "segmentation")
                 _rm_tree(self.studio_dir / "seg_overlay")
                 _rm_tree(self.studio_dir / "thumbs")
+                if inpaint_provenance.remove_page_crop_artifacts(
+                        self.studio_dir, page):
+                    deleted.append(f"inpaint_crops/{inpaint_provenance.page_key(page)}")
                 self._render_dirty[page] = True
                 self._bubble_mask_cache.pop(page, None)
                 self._crop_cache.pop(page, None)
@@ -515,6 +520,8 @@ class Pipeline:
                 _rm_tree(self.studio_dir / "segmentation")
                 _rm_tree(self.studio_dir / "seg_overlay")
                 _rm_tree(self.studio_dir / "thumbs")
+                if inpaint_provenance.remove_all_crop_artifacts(self.studio_dir):
+                    deleted.append("inpaint_crops")
                 self._cache["detections"] = {}
                 self._cache["ocr"] = {}
                 if not keep_translations:
@@ -596,6 +603,7 @@ class Pipeline:
             }, indent=2), encoding="utf-8")
         return out
 
+    @_page_operation
     def thumbnail(self, page: str, size: int = 160) -> Image.Image:
         """Small cached JPEG for the navigator rail / overview."""
         return Image.open(self.thumbnail_path(page, size)).convert("RGB")
@@ -2179,7 +2187,9 @@ class Pipeline:
                         cached = json.load(f)
                 except Exception:
                     cached = {}
-            cache_matches = cached.get("cache_key") == cache_key
+            cache_matches = (cached.get("cache_key") == cache_key
+                             and inpaint_provenance.crop_artifacts_are_current(
+                                 cached, cache_key["fingerprint"], self.studio_dir))
 
             if force or not out_path.exists() or not mask_path.exists() or not cache_matches:
                 img = self.page_image(page)
@@ -2230,7 +2240,7 @@ class Pipeline:
                         execution_confidence=conf,
                     )
                     provenance = {
-                        "provenance_schema_version": 2,
+                        "provenance_schema_version": 3,
                         "engine": "android",
                         "cache_key": cache_key,
                         "page_fingerprint": self._current_page_fingerprint(page),
@@ -2256,13 +2266,17 @@ class Pipeline:
                         bubble_erosion=bubble_erosion,
                     )
                     provenance = {
-                        "provenance_schema_version": 2,
+                        "provenance_schema_version": 3,
                         "engine": "legacy", "cache_key": cache_key,
                         "page_fingerprint": self._current_page_fingerprint(page),
                         "execution": execution_provenance,
                         "leg_matrix": leg_matrix, "mode": mode,
                         "stats": stats, "regions": [],
                     }
+                if engine == "android":
+                    inpaint_provenance.save_region_crop_artifacts(
+                        img, cleaned, mask, provenance["regions"],
+                        self.studio_dir, page, cache_key["fingerprint"])
                 inp_ms = round((time.perf_counter() - t0) * 1000, 1)
                 self._inpaint_times[page] = inp_ms
 
@@ -2271,10 +2285,22 @@ class Pipeline:
                 mask_img.save(mask_path)
                 provenance["infer_ms"] = inp_ms
                 try:
-                    with open(provenance_path, "w", encoding="utf-8") as f:
-                        json.dump(provenance, f, indent=2, ensure_ascii=False)
+                    pending_path = provenance_path.with_name(
+                        provenance_path.name + ".pending")
+                    pending_path.write_text(
+                        json.dumps(provenance, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
+                    pending_path.replace(provenance_path)
                 except Exception as e:
-                    self.log(f"warning: failed to save inpaint provenance for {page}: {e}")
+                    try:
+                        pending_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        f"failed to save inpaint provenance for {page}: {e}") from e
+                if provenance_path.exists():
+                    inpaint_provenance.prune_stale_crop_runs(
+                        self.studio_dir, page, cache_key["fingerprint"])
                 self._render_dirty[page] = True
                 if engine == "android":
                     self.log(f"inpaint[android {bubble_leg}+{free_leg}] {page}: "
@@ -2305,6 +2331,52 @@ class Pipeline:
         if not out_path.exists():
             self.inpaint_page(page)
         return Image.open(out_path).convert("RGB")
+
+    @_page_operation
+    def inpaint_provenance(self, page: str) -> dict:
+        """Return current persisted inpaint provenance after fingerprint validation."""
+        self.inpaint_page(page, force=False)
+        path = self.studio_dir / "inpaint" / (Path(page).stem + ".json")
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise FileNotFoundError(f"inpaint provenance is unavailable for {page}") from exc
+        if not inpaint_provenance.crop_artifacts_are_current(
+                document, document.get("cache_key", {}).get("fingerprint", ""),
+                self.studio_dir):
+            raise FileNotFoundError(f"inpaint crop artifacts are stale for {page}")
+        return document
+
+    @_page_operation
+    def inpaint_crop_path(self, page: str, region_id: str, kind: str,
+                          representation: str = "debug") -> Path:
+        """Resolve an image route only through the current page provenance map."""
+        if kind not in ("input", "output", "mask"):
+            raise ValueError(f"unsupported inpaint crop kind: {kind}")
+        if representation not in ("debug", "exact"):
+            raise ValueError(f"unsupported inpaint crop representation: {representation}")
+        provenance = self.inpaint_provenance(page)
+        matches = [record for record in provenance.get("regions", [])
+                   if str(record.get("id", "")) == str(region_id)]
+        if not matches:
+            matches = [record for record in provenance.get("regions", [])
+                       if str(record.get("artifact_id", "")) == str(region_id)]
+        if len(matches) != 1:
+            raise FileNotFoundError(region_id)
+        entry = (matches[0].get("crops", {}).get(kind, {})
+                 .get(representation, {}))
+        relative_path = entry.get("path") if isinstance(entry, dict) else None
+        if not relative_path:
+            raise FileNotFoundError(region_id)
+        candidate = (self.chapter / Path(relative_path)).resolve()
+        crop_root = (self.studio_dir / "inpaint_crops").resolve()
+        try:
+            candidate.relative_to(crop_root)
+        except ValueError as exc:
+            raise FileNotFoundError(region_id) from exc
+        if not candidate.is_file():
+            raise FileNotFoundError(candidate)
+        return candidate
 
     @_page_operation
     def inpaint_mask_image(self, page: str) -> Image.Image:
@@ -2454,6 +2526,11 @@ class Pipeline:
             out_path = out_dir / (Path(page).stem + ".png")
             cache_path = out_dir / (Path(page).stem + ".json")
             inpaint = self.inpaint_page(page)
+            # inpaint_page validates upstream detection/OCR fingerprints and
+            # may refresh the OCR cache; rendering must use that same lineage.
+            ocr = self._cache["ocr"].get(page)
+            if not ocr:
+                raise ValueError(f"no current OCR data for {page} — run OCR first")
             cache_inputs = self._render_cache_inputs(
                 page, ocr, inpaint["cache_fingerprint"])
             cache_key = {**cache_inputs,

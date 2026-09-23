@@ -18,7 +18,7 @@ from detection_artifacts import box_artifact
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_PATH = (REPO_ROOT / "Plan/active/2026-09-23_T937_translation-studio-parity"
-                 / "team/07-A5-fingerprints/evidence/cache_selftest.json")
+                 / "team/10-B1-provenance/evidence/cache_selftest.json")
 
 
 def _asset_spot_check() -> dict:
@@ -97,11 +97,12 @@ def _run_checks() -> dict:
         p._cache = {"detections": {}, "ocr": {}, "translations": {}}
         p._render_dirty = {page: True}
         p._inpaint_paddle_det = lambda: None
+        detector_box = {"value": [12, 14, 48, 36]}
 
         def capture(page_name, image):
             counts["capture"] += 1
             return _capture(page_name, image.width, image.height,
-                            [12, 14, 48, 36])
+                            detector_box["value"])
 
         p._capture_detection_models = capture
 
@@ -114,6 +115,7 @@ def _run_checks() -> dict:
             return inputs
 
         p._detection_capture_inputs = capture_inputs
+        render_observations = []
 
         def recognize(crops, regions=None, page_image=None):
             counts["ocr"] += 1
@@ -131,6 +133,12 @@ def _run_checks() -> dict:
         def render(image, regions, translations, settings, pipe=None,
                    page=None, assignment_records=None):
             counts["render"] += 1
+            render_observations.append({
+                "regions": [(region.get("id"), tuple(region.get("box", [])))
+                            for region in regions],
+                "ocr_fingerprint": ((pipe._cache.get("ocr", {}).get(page) or {})
+                                    .get("ocr_fingerprint")) if pipe else None,
+            })
             return sum(bool((translations.get(region["id"]) or "").strip())
                        for region in regions)
 
@@ -242,6 +250,39 @@ def _run_checks() -> dict:
             assert counts == {"capture": 2, "ocr": 4, "inpaint": 4,
                               "render": 5}
 
+            # Regression: render_page is the first stage called after a
+            # detector-input change. Its nested inpaint validation refreshes
+            # OCR, and both drawing and persisted lineage must use that entry.
+            previous_ocr_fingerprint = p._cache["ocr"][page]["ocr_fingerprint"]
+            capture_revision["value"] = "detector-rev-3"
+            detector_box["value"] = [18, 20, 55, 44]
+            direct_render = p.render_page(page)
+            refreshed_ocr = p._cache["ocr"][page]
+            refreshed_fingerprint = refreshed_ocr["ocr_fingerprint"]
+            assert refreshed_fingerprint != previous_ocr_fingerprint
+            expected_regions = [(region.get("id"), tuple(region.get("box", [])))
+                                for region in refreshed_ocr["regions"]]
+            assert render_observations[-1]["regions"] == expected_regions
+            assert render_observations[-1]["ocr_fingerprint"] == refreshed_fingerprint
+            render_metadata = json.loads(
+                (p.studio_dir / "render" / "page.json").read_text(encoding="utf-8"))
+            assert render_metadata["cache_key"]["ocr_fingerprint"] == refreshed_fingerprint
+            assert render_metadata["cache_key"]["render_regions"] == [
+                {key: region.get(key) for key in
+                 ("id", "artifact_id", "box", "label", "score",
+                  "segmenter_assignment", "panel_assignment")}
+                for region in refreshed_ocr["regions"]]
+            render_lineage_regression = {
+                "previous_ocr_fingerprint": previous_ocr_fingerprint,
+                "refreshed_ocr_fingerprint": refreshed_fingerprint,
+                "rendered_regions": [{"id": region_id, "box": list(box)}
+                                     for region_id, box in expected_regions],
+                "render_cache_fingerprint": direct_render["cache_fingerprint"],
+                "render_used_refreshed_ocr": True,
+            }
+            assert counts == {"capture": 3, "ocr": 5, "inpaint": 5,
+                              "render": 6}
+
             # Replace bytes at the same relative path and dimensions. This
             # clears dimensions, masks, stage records, and derived image files.
             p._dims[page] = [999, 999]
@@ -262,8 +303,8 @@ def _run_checks() -> dict:
             assert page_changed_ocr["cache_hit"] is False
             assert page_changed_inpaint["cache_hit"] is False
             assert page_changed_render["cache_hit"] is False
-            assert counts == {"capture": 3, "ocr": 5, "inpaint": 5,
-                              "render": 6}
+            assert counts == {"capture": 4, "ocr": 6, "inpaint": 6,
+                              "render": 7}
 
             # process_page computes the compressed source digest once and
             # shares it across its nested detection/OCR/inpaint/render calls.
@@ -271,8 +312,8 @@ def _run_checks() -> dict:
                               wraps=p._compute_page_fingerprint) as hash_page:
                 p.process_page(page, translate=False)
                 assert hash_page.call_count == 1
-            assert counts == {"capture": 3, "ocr": 5, "inpaint": 5,
-                              "render": 6}
+            assert counts == {"capture": 4, "ocr": 6, "inpaint": 6,
+                              "render": 7}
 
         evidence = {
             "page": page,
@@ -297,6 +338,7 @@ def _run_checks() -> dict:
                 "ocr_setting_change_recomputed": True,
                 "force_required": False,
             },
+            "direct_render_uses_refreshed_ocr": render_lineage_regression,
             "skipped_model_asset_change": {
                 "panel_inference_eligible": False,
                 "text_detector_recaptured": False,

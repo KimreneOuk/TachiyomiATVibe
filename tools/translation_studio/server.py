@@ -20,8 +20,10 @@ Endpoints:
   GET  /img/crop?p=&id=<region>
   GET  /img/thumb?p=&s=<px>        cached navigator thumbnail (UI support)
   GET  /img/ocr_input?p=&id=       exact 224x224 tensor OCR consumed
+  GET  /img/inpaint_crop?p=&id=&kind=&representation=  current region crop PNG
   GET  /img/render_crop?p=&id=     region box cropped from the render
   GET  /api/overview               chapter-level aggregate of existing caches
+  GET  /api/inpaint_provenance?p=  current page provenance and crop paths
   POST /api/reset                  {page?, keep_translations?}  delete artifacts
   POST /api/export-filtered        {page, preset, filters, records} -> .studio/exports JSON
   GET  /img/seg_overlay?p=<page>   saved or dynamically rendered cached mask outlines
@@ -187,101 +189,127 @@ class Handler(BaseHTTPRequestHandler):
                                                                           "application/octet-stream")
                 return self._send_file(STATIC / name, ctype, cache_seconds=0)
             if url.path == "/api/state":
-                return self._send_json(PIPELINE.state())
+                with PIPELINE.lock:
+                    return self._send_json(PIPELINE.state())
             if url.path == "/api/fs":
                 return self._send_json(list_dir(get("path")))
             if url.path == "/api/page":
                 return self._send_json(PIPELINE.page_data(get("p")))
             if url.path == "/api/artifacts":
-                payload = _artifact_payload(get("p"))
-                return self._send_json(payload, 404 if payload.get("error") else 200)
+                # Cache invalidation unlinks these files under the same lock.
+                # Keep it through the reads so Windows readers cannot race it.
+                with PIPELINE.lock:
+                    payload = _artifact_payload(get("p"))
+                    return self._send_json(payload, 404 if payload.get("error") else 200)
             if url.path == "/api/log":
                 return self._send_json({"lines": list(PIPELINE.logs)[-80:]})
             if url.path == "/api/overview":
-                return self._send_json(PIPELINE.overview())
+                with PIPELINE.lock:
+                    return self._send_json(PIPELINE.overview())
+            if url.path == "/api/inpaint_provenance":
+                with PIPELINE.lock:
+                    return self._send_json(PIPELINE.inpaint_provenance(get("p")))
             if url.path == "/img/original":
-                page = get("p")
-                orig = PIPELINE.chapter / page
-                if orig.exists():
-                    ctype = "image/jpeg" if orig.suffix.lower() in (".jpg", ".jpeg") else ("image/png" if orig.suffix.lower() == ".png" else "image/webp")
-                    return self._send_file(orig, ctype)
-                return self._send_image(PIPELINE.page_image(page), "JPEG")
+                with PIPELINE.lock:
+                    page = get("p")
+                    orig = PIPELINE.chapter / page
+                    if orig.exists():
+                        ctype = "image/jpeg" if orig.suffix.lower() in (".jpg", ".jpeg") else ("image/png" if orig.suffix.lower() == ".png" else "image/webp")
+                        return self._send_file(orig, ctype)
+                    return self._send_image(PIPELINE.page_image(page), "JPEG")
             if url.path == "/img/goal":
-                try:
-                    if PIPELINE.reference:
-                        ref = PIPELINE.reference / get("p")
-                        if ref.exists():
-                            ctype = "image/jpeg" if ref.suffix.lower() in (".jpg", ".jpeg") else "image/png"
-                            return self._send_file(ref, ctype)
-                    return self._send_image(PIPELINE.reference_image(get("p")), "JPEG")
-                except FileNotFoundError:
-                    return self._send_json({"error": "page not in reference folder"}, 404)
+                with PIPELINE.lock:
+                    try:
+                        if PIPELINE.reference:
+                            ref = PIPELINE.reference / get("p")
+                            if ref.exists():
+                                ctype = "image/jpeg" if ref.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+                                return self._send_file(ref, ctype)
+                        return self._send_image(PIPELINE.reference_image(get("p")), "JPEG")
+                    except FileNotFoundError:
+                        return self._send_json({"error": "page not in reference folder"}, 404)
             if url.path == "/img/render":
-                page = get("p")
-                stem = Path(page).stem
-                out = PIPELINE.studio_dir / "render" / (stem + ".png")
-                try:
-                    PIPELINE.render_page(page)
-                except Exception:
-                    pass
-                if out.exists():
-                    return self._send_file(out, "image/png", cache_seconds=0)
-                # Fallback to original image if render does not exist yet (prevents 500 error & blank display!)
-                orig = PIPELINE.chapter / page
-                if orig.exists():
-                    ctype = "image/jpeg" if orig.suffix.lower() in (".jpg", ".jpeg") else "image/png"
-                    return self._send_file(orig, ctype, cache_seconds=0)
-                return self._send_image(PIPELINE.page_image(page), "JPEG")
+                with PIPELINE.lock:
+                    page = get("p")
+                    stem = Path(page).stem
+                    out = PIPELINE.studio_dir / "render" / (stem + ".png")
+                    try:
+                        PIPELINE.render_page(page)
+                    except Exception:
+                        pass
+                    if out.exists():
+                        return self._send_file(out, "image/png", cache_seconds=0)
+                    # Fallback to original image if render does not exist yet (prevents 500 error & blank display!)
+                    orig = PIPELINE.chapter / page
+                    if orig.exists():
+                        ctype = "image/jpeg" if orig.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+                        return self._send_file(orig, ctype, cache_seconds=0)
+                    return self._send_image(PIPELINE.page_image(page), "JPEG")
             if url.path == "/img/inpainted":
-                page = get("p")
-                out = PIPELINE.studio_dir / "inpaint" / (Path(page).stem + ".png")
-                try:
-                    PIPELINE.inpaint_page(page)
-                except Exception:
-                    pass
-                if out.exists():
-                    return self._send_file(out, "image/png", cache_seconds=0)
-                orig = PIPELINE.chapter / page
-                if orig.exists():
-                    return self._send_file(orig, "image/jpeg", cache_seconds=0)
-                return self._send_image(PIPELINE.page_image(page), "JPEG")
+                with PIPELINE.lock:
+                    page = get("p")
+                    out = PIPELINE.studio_dir / "inpaint" / (Path(page).stem + ".png")
+                    try:
+                        PIPELINE.inpaint_page(page)
+                    except Exception:
+                        pass
+                    if out.exists():
+                        return self._send_file(out, "image/png", cache_seconds=0)
+                    orig = PIPELINE.chapter / page
+                    if orig.exists():
+                        return self._send_file(orig, "image/jpeg", cache_seconds=0)
+                    return self._send_image(PIPELINE.page_image(page), "JPEG")
             if url.path == "/img/inpaint_mask":
-                return self._send_image(PIPELINE.inpaint_mask_image(get("p")), "PNG")
+                with PIPELINE.lock:
+                    return self._send_image(PIPELINE.inpaint_mask_image(get("p")), "PNG")
             if url.path == "/img/segmentation":
-                return self._send_image(PIPELINE.segmentation_image(get("p")), "PNG")
+                with PIPELINE.lock:
+                    return self._send_image(PIPELINE.segmentation_image(get("p")), "PNG")
             if url.path == "/img/seg_overlay":
-                page = get("p")
-                if page not in PIPELINE.pages:
-                    return self._send_json({"error": f"unknown page: {page}"}, 404)
-                path = PIPELINE.segmentation_overlay_path(page)
-                if path and path.exists():
-                    return self._send_file(path, "image/png", cache_seconds=0)
-                from PIL import Image
-                capture = (PIPELINE._cache.get("detections", {}).get(page) or {})
-                if capture.get("capture_version") == 1:
-                    # A1/A4 captures already contain page-space RLE masks.
-                    # Composite their cached component outlines over the page
-                    # without loading or running a segmenter model here.
-                    return self._send_image(
-                        PIPELINE.segmentation_image(page), "PNG")
-                # No current capture means there is no cached mask to render.
-                # Keep the endpoint transparent rather than invoking legacy
-                # segmentation as a side effect of viewing the overlay.
-                w, h = PIPELINE.page_dims(page)
-                return self._send_image(Image.new("RGBA", (w, h), (0, 0, 0, 0)), "PNG")
+                with PIPELINE.lock:
+                    page = get("p")
+                    if page not in PIPELINE.pages:
+                        return self._send_json({"error": f"unknown page: {page}"}, 404)
+                    path = PIPELINE.segmentation_overlay_path(page)
+                    if path and path.exists():
+                        return self._send_file(path, "image/png", cache_seconds=0)
+                    from PIL import Image
+                    capture = (PIPELINE._cache.get("detections", {}).get(page) or {})
+                    if capture.get("capture_version") == 1:
+                        # A1/A4 captures already contain page-space RLE masks.
+                        # Composite their cached component outlines over the page
+                        # without loading or running a segmenter model here.
+                        return self._send_image(
+                            PIPELINE.segmentation_image(page), "PNG")
+                    # No current capture means there is no cached mask to render.
+                    # Keep the endpoint transparent rather than invoking legacy
+                    # segmentation as a side effect of viewing the overlay.
+                    w, h = PIPELINE.page_dims(page)
+                    return self._send_image(Image.new("RGBA", (w, h), (0, 0, 0, 0)), "PNG")
 
             if url.path == "/img/overlay":
-                return self._send_image(PIPELINE.overlay_image(get("p")), "JPEG")
+                with PIPELINE.lock:
+                    return self._send_image(PIPELINE.overlay_image(get("p")), "JPEG")
             if url.path == "/img/crop":
-                return self._send_image(PIPELINE.region_crop(get("p"), get("id")))
+                with PIPELINE.lock:
+                    return self._send_image(PIPELINE.region_crop(get("p"), get("id")))
             if url.path == "/img/thumb":
-                size = max(48, min(480, int(get("s") or 160)))
-                path = PIPELINE.thumbnail_path(get("p"), size)
-                return self._send_file(path, "image/jpeg")
+                with PIPELINE.lock:
+                    size = max(48, min(480, int(get("s") or 160)))
+                    path = PIPELINE.thumbnail_path(get("p"), size)
+                    return self._send_file(path, "image/jpeg")
             if url.path == "/img/ocr_input":
-                return self._send_image(PIPELINE.ocr_input_image(get("p"), get("id")))
+                with PIPELINE.lock:
+                    return self._send_image(PIPELINE.ocr_input_image(get("p"), get("id")))
             if url.path == "/img/render_crop":
-                return self._send_image(PIPELINE.render_crop(get("p"), get("id")))
+                with PIPELINE.lock:
+                    return self._send_image(PIPELINE.render_crop(get("p"), get("id")))
+            if url.path == "/img/inpaint_crop":
+                with PIPELINE.lock:
+                    crop = PIPELINE.inpaint_crop_path(
+                        get("p"), get("id"), get("kind"),
+                        get("representation") or "debug")
+                    return self._send_file(crop, "image/png", cache_seconds=0)
             return self._send_json({"error": f"no route {url.path}"}, 404)
         except FileNotFoundError as e:
             return self._send_json({"error": str(e)}, 404)
