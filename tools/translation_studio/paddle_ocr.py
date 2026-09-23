@@ -13,6 +13,7 @@ Pure numpy + onnxruntime; no Android dependencies.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -222,25 +223,109 @@ class PaddleRec:
         self.sess = ort.InferenceSession(str(model), opts,
                                          providers=["CPUExecutionProvider"])
         self.input_name = self.sess.get_inputs()[0].name
+        self.last_batch_trace: list[dict] = []
 
     def _align_width(self, width: int) -> int:
         return BUCKET_WIDTH_SMALL if width <= BUCKET_WIDTH_SMALL \
             else MAX_RECOGNITION_WIDTH
 
-    def recognize(self, crop: Image.Image) -> tuple[str, float]:
+    def _scaled_width(self, crop: Image.Image) -> int:
         w = max(1, crop.width)
         h = max(1, crop.height)
         scaled_w = int(math.ceil(w * (REC_HEIGHT / float(h))))
-        scaled_w = max(1, min(MAX_RECOGNITION_WIDTH, scaled_w))
-        input_w = self._align_width(scaled_w)
+        return max(1, min(MAX_RECOGNITION_WIDTH, scaled_w))
+
+    def _preprocess(self, crop: Image.Image, input_w: int | None = None) -> np.ndarray:
+        scaled_w = self._scaled_width(crop)
+        bucket = self._align_width(scaled_w)
+        input_w = bucket if input_w is None else input_w
+        if input_w != bucket:
+            raise ValueError(f"crop requires width bucket {bucket}, got {input_w}")
         canvas = Image.new("RGB", (input_w, REC_HEIGHT), (128, 128, 128))
-        canvas.paste(crop.resize((scaled_w, REC_HEIGHT), Image.BILINEAR),
-                     (0, 0))
+        resized = crop.resize((scaled_w, REC_HEIGHT), Image.BILINEAR)
+        canvas.paste(resized, (0, 0))
         arr = np.asarray(canvas, np.float32)
         x = (arr / 255.0 - 0.5) / 0.5
-        x = np.ascontiguousarray(x.transpose(2, 0, 1))[None]
+        return np.ascontiguousarray(x.transpose(2, 0, 1), dtype=np.float32)
+
+    def recognize(self, crop: Image.Image) -> tuple[str, float]:
+        x = self._preprocess(crop)[None]
         out = self.sess.run(None, {self.input_name: x})[0]  # [1, T, C]
         return self._ctc_decode(out[0])
+
+    @staticmethod
+    def _batch_limit(max_batch: int) -> int:
+        """Return Android's supported B1/B2/B4/B8 cap, rounded down."""
+        requested = max(1, min(8, int(max_batch)))
+        return next(size for size in (8, 4, 2, 1) if size <= requested)
+
+    def recognize_batch(self, crops: list[Image.Image],
+                        max_batch: int = 8) -> list[tuple[str, float] | Exception]:
+        """Recognize same-width microbatches and restore original crop order.
+
+        Batch preprocessing/allocation/runtime failures fall back to the
+        established single-crop path for each member. Individual single-crop
+        failures are returned at their original positions so one bad region
+        cannot shift the remaining page results.
+        """
+        self.last_batch_trace = []
+        if not crops:
+            return []
+        cap = self._batch_limit(max_batch)
+        results: list[tuple[str, float] | Exception | None] = [None] * len(crops)
+        buckets: dict[int, list[tuple[int, Image.Image]]] = {}
+        for index, crop in enumerate(crops):
+            width = self._align_width(self._scaled_width(crop))
+            buckets.setdefault(width, []).append((index, crop))
+
+        for width, members in buckets.items():
+            start = 0
+            while start < len(members):
+                remaining = min(cap, len(members) - start)
+                chunk_size = next(size for size in (8, 4, 2, 1)
+                                  if size <= remaining)
+                chunk = members[start:start + chunk_size]
+                start += chunk_size
+                indices = [index for index, _ in chunk]
+                batch_size = len(chunk)
+                if batch_size == 1:
+                    index, crop = chunk[0]
+                    try:
+                        results[index] = self.recognize(crop)
+                    except Exception as error:
+                        results[index] = error
+                    self.last_batch_trace.append({
+                        "width": width, "batch": 1, "fallback": False,
+                    })
+                    continue
+
+                try:
+                    tensor = np.stack([self._preprocess(crop, width)
+                                       for _, crop in chunk], axis=0)
+                    logits = self.sess.run(None, {self.input_name: tensor})[0]
+                    if logits.ndim != 3 or logits.shape[0] != batch_size:
+                        raise ValueError(
+                            f"expected [B,T,C] output for B={batch_size}, got {logits.shape}")
+                    decoded = [self._ctc_decode(logits[row])
+                               for row in range(batch_size)]
+                    for index, result in zip(indices, decoded):
+                        results[index] = result
+                    self.last_batch_trace.append({
+                        "width": width, "batch": batch_size, "fallback": False,
+                    })
+                except Exception as batch_error:
+                    self.last_batch_trace.append({
+                        "width": width, "batch": batch_size, "fallback": True,
+                        "reason": str(batch_error),
+                    })
+                    for index, crop in chunk:
+                        try:
+                            results[index] = self.recognize(crop)
+                        except Exception as error:
+                            results[index] = error
+
+        return [result if result is not None else RuntimeError(
+            "Paddle OCR batch left a crop unresolved") for result in results]
 
     def _ctc_decode(self, logits: np.ndarray) -> tuple[str, float]:
         """PaddleCtcDecoder.decodeWithConf: greedy argmax, ignore blank=0 and
@@ -270,6 +355,20 @@ class PaddleRec:
 
 
 # ============================================================== line assembly
+@dataclass
+class PaddleLineGroup:
+    bbox: tuple[int, int, int, int] | None
+    vertical: bool
+    score: float | None
+    leaf_indices: list[int]
+
+
+@dataclass
+class PaddleRegionPlan:
+    leaves: list[Image.Image]
+    groups: list[PaddleLineGroup]
+
+
 def _detect_vertical_glyph_rows(crop: Image.Image) -> list[tuple[int, int]]:
     """VerticalLineOcr.detectVerticalGlyphRows: row ink-gap analysis."""
     w, h = crop.size
@@ -297,15 +396,100 @@ def _detect_vertical_glyph_rows(crop: Image.Image) -> list[tuple[int, int]]:
     return rows
 
 
-def assemble_region_text(det: PaddleDet, rec: PaddleRec,
-                         crop: Image.Image) -> tuple[str, list[dict]]:
-    """VerticalLineOcr.recognizeDetColumns for Japanese:
-    det lines -> manga reading order (vertical cols right-to-left first, then
-    horizontal top-to-bottom) -> per-glyph CCW-rotated rec -> join('')."""
-    lines = det.detect_lines(crop)
+def _detect_vertical_columns(crop: Image.Image) -> list[tuple[int, int]]:
+    """Mirror VerticalLineOcr.detectVerticalColumns's x-axis ink-gap pass."""
+    w, h = crop.size
+    if w < 2 or h < 2:
+        return [(0, w)]
+    lum = np.asarray(crop.convert("L"))
+    ink = (lum < INK_LUMINANCE_THRESHOLD).mean(axis=0)
+    columns, in_run, run_start, gap = [], False, 0, 0
+    for x in range(w):
+        if ink[x] >= COLUMN_GAP_INK_FRACTION:
+            if not in_run:
+                run_start, in_run = x, True
+            gap = 0
+        elif in_run:
+            gap += 1
+            if gap >= MIN_COLUMN_GAP_PX:
+                end = x - gap
+                if end - run_start >= MIN_COLUMN_WIDTH_PX:
+                    columns.append((run_start, end))
+                in_run, gap = False, 0
+    if in_run:
+        end = w - gap if gap > 0 else w
+        if end - run_start >= MIN_COLUMN_WIDTH_PX:
+            columns.append((run_start, end))
+    return columns
+
+
+def _vertical_cjk(language: str) -> bool:
+    value = str(language or "").strip().lower().replace("_", "-")
+    return (value in {"ja", "jpn", "japanese", "zh", "chi", "zho", "chinese"}
+            or value.startswith(("ja-", "zh-")))
+
+
+def _add_group(plan: PaddleRegionPlan, image: Image.Image,
+               bbox: tuple[int, int, int, int] | None, vertical: bool,
+               score: float | None) -> None:
+    plan.groups.append(PaddleLineGroup(
+        bbox=bbox,
+        vertical=vertical,
+        score=score,
+        leaf_indices=[len(plan.leaves)],
+    ))
+    plan.leaves.append(image)
+
+
+def _add_vertical_cell(plan: PaddleRegionPlan, cell: Image.Image,
+                       bbox: tuple[int, int, int, int] | None,
+                       score: float | None, split_glyphs: bool) -> None:
+    """Add one rotated vertical line or its top-to-bottom glyph crops."""
+    try:
+        rows = _detect_vertical_glyph_rows(cell) if split_glyphs else []
+        if len(rows) <= 1:
+            _add_group(plan, _rotate_ccw(cell), bbox, True, score)
+            return
+        leaf_indices = []
+        for gy0, gy1 in rows:
+            if gy1 - gy0 < MIN_COLUMN_WIDTH_PX:
+                continue
+            glyph = cell.crop((0, gy0, cell.width, gy1))
+            try:
+                leaf_indices.append(len(plan.leaves))
+                plan.leaves.append(_rotate_ccw(glyph))
+            finally:
+                glyph.close()
+        if leaf_indices:
+            plan.groups.append(PaddleLineGroup(bbox, True, score, leaf_indices))
+        else:
+            _add_group(plan, _rotate_ccw(cell), bbox, True, score)
+    finally:
+        cell.close()
+
+
+def plan_region(det: PaddleDet | None, crop: Image.Image, *,
+                vertical_fallback: bool, language: str = "ja",
+                force_heuristic: bool = False) -> PaddleRegionPlan:
+    """Plan Android's detector-line or ink-gap recognition leaves for one ROI."""
+    plan = PaddleRegionPlan([], [])
+    vertical_cjk = _vertical_cjk(language)
+    lines = []
+    if det is not None and not force_heuristic:
+        try:
+            lines = det.detect_lines(crop)
+        except Exception:
+            # Android degrades a detector failure to the same fallback as no lines.
+            lines = []
+
     items = []
-    for b in lines:
-        x1, y1, x2, y2, score = b
+    for line in lines:
+        if len(line) < 5:
+            continue
+        x1, y1, x2, y2, score = line[:5]
+        x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(crop.width, x2), min(crop.height, y2)
         bw, bh = x2 - x1, y2 - y1
         if bw < MIN_DET_LINE_PX or bh < MIN_DET_LINE_PX:
             continue
@@ -313,40 +497,167 @@ def assemble_region_text(det: PaddleDet, rec: PaddleRec,
             continue
         vertical = bh > bw * 1.5
         key = -((x1 + x2) / 2) if vertical else (y1 + y2) / 2
-        items.append((b, vertical, key))
-    items.sort(key=lambda it: it[2])
+        items.append(((x1, y1, x2, y2), vertical, float(score), key))
 
-    def read(img: Image.Image) -> str:
-        text, conf = rec.recognize(img)
-        if conf < OCR_MIN_CONFIDENCE and conf < 1.0:
-            return ""
-        return text
-
-    parts, line_info = [], []
-    for b, vertical, _key in items:
-        x1, y1, x2, y2, score = b
-        cell = crop.crop((x1, y1, x2, y2))
-        if vertical:
-            rows = _detect_vertical_glyph_rows(cell)
-            if len(rows) <= 1:
-                text = read(_rotate_ccw(cell))
+    if items:
+        items.sort(key=lambda item: item[3])
+        for bbox, vertical, score, _ in items:
+            x1, y1, x2, y2 = bbox
+            cell = crop.crop((x1, y1, x2, y2))
+            if vertical:
+                _add_vertical_cell(plan, cell, bbox, score, vertical_cjk)
             else:
-                glyphs = []
-                for (gy0, gy1) in rows:
-                    if gy1 - gy0 < MIN_COLUMN_WIDTH_PX:
-                        continue
-                    g = cell.crop((0, gy0, cell.width, gy1))
-                    t = read(_rotate_ccw(g))
-                    if t:
-                        glyphs.append(t)
-                text = "".join(glyphs)
-        else:
-            text = read(cell)
+                _add_group(plan, cell, bbox, False, score)
+        return plan
+
+    if vertical_fallback:
+        columns = _detect_vertical_columns(crop)
+        if len(columns) <= 1:
+            _add_group(plan, _rotate_ccw(crop), None, True, None)
+            return plan
+        # The detector returns left-to-right columns; manga reads right-to-left.
+        for x0, x1 in reversed(columns):
+            if x1 - x0 < MIN_COLUMN_WIDTH_PX:
+                continue
+            cell = crop.crop((x0, 0, x1, crop.height))
+            _add_vertical_cell(plan, cell, (x0, 0, x1, crop.height), None,
+                               vertical_cjk)
+        if plan.leaves:
+            return plan
+
+    _add_group(plan, crop.copy(), None, False, None)
+    return plan
+
+
+def _recognize_plans(rec: PaddleRec, plans: list[PaddleRegionPlan],
+                     max_batch: int) -> list[list[tuple[str, float] | Exception]]:
+    owners = []
+    crops = []
+    for region_index, plan in enumerate(plans):
+        for leaf_index, crop in enumerate(plan.leaves):
+            owners.append((region_index, leaf_index))
+            crops.append(crop)
+    per_region: list[list[tuple[str, float] | Exception | None]] = [
+        [None] * len(plan.leaves) for plan in plans]
+    try:
+        flat = rec.recognize_batch(crops, max_batch=max_batch)
+        for (region_index, leaf_index), result in zip(owners, flat):
+            per_region[region_index][leaf_index] = result
+    finally:
+        for plan in plans:
+            for leaf in plan.leaves:
+                leaf.close()
+    return [[result if result is not None else RuntimeError(
+        "Paddle OCR plan left a leaf unresolved") for result in region]
+        for region in per_region]
+
+
+def _compose_plan(plan: PaddleRegionPlan,
+                  results: list[tuple[str, float] | Exception]) -> tuple[str, list[dict], str | None]:
+    parts, line_info = [], []
+    for group in plan.groups:
+        group_parts = []
+        for index in group.leaf_indices:
+            result = results[index]
+            if isinstance(result, Exception):
+                return "", [], str(result)
+            text, confidence = result
+            if confidence >= OCR_MIN_CONFIDENCE:
+                group_parts.append(text)
+        text = "".join(group_parts)
         if text:
             parts.append(text)
-            line_info.append({"bbox": [x1, y1, x2, y2], "vertical": vertical,
-                              "score": round(score, 3), "text": text})
-    return "".join(parts), line_info
+            if group.bbox is not None and group.score is not None:
+                line_info.append({
+                    "bbox": list(group.bbox), "vertical": group.vertical,
+                    "score": round(group.score, 3), "text": text,
+                })
+    return "".join(parts), line_info, None
+
+
+def recognize_regions(det: PaddleDet | None, rec: PaddleRec,
+                      crops: list[Image.Image], *, max_batch: int = 8,
+                      region_boxes: list[list[int] | tuple[int, ...]] | None = None,
+                      language: str = "ja", webtoon_mode: bool = False,
+                      unpadded_crop_factory=None) -> list[dict]:
+    """Plan all region leaves, bucket/batch them, then restore region order.
+
+    ``crops`` are Android's 12px-padded ROIs. The optional factory is called
+    only for an empty vertical result and supplies its unpadded page-space ROI
+    for the Android reread path.
+    """
+    if region_boxes is None:
+        region_boxes = [(0, 0, crop.width, crop.height) for crop in crops]
+    vertical_allowed = _vertical_cjk(language) and not webtoon_mode
+    plans = []
+    needs_unpadded = []
+    for index, crop in enumerate(crops):
+        box = region_boxes[index] if index < len(region_boxes) else (0, 0, crop.width, crop.height)
+        tall_vertical = False
+        taller_than_wide = False
+        if len(box) >= 4:
+            box_width = max(0, int(box[2]) - int(box[0]))
+            box_height = max(0, int(box[3]) - int(box[1]))
+            tall_vertical = vertical_allowed and box_height > box_width * 1.5
+            taller_than_wide = vertical_allowed and box_height > box_width
+        else:
+            tall_vertical = vertical_allowed and crop.height > crop.width * 1.5
+            taller_than_wide = vertical_allowed and crop.height > crop.width
+        if (det is None and tall_vertical and unpadded_crop_factory is not None):
+            unpadded = unpadded_crop_factory(index)
+            try:
+                plans.append(plan_region(None, unpadded, vertical_fallback=True,
+                                         language=language, force_heuristic=True))
+            finally:
+                unpadded.close()
+        else:
+            plans.append(plan_region(det, crop, vertical_fallback=tall_vertical,
+                                     language=language))
+        needs_unpadded.append(det is not None and taller_than_wide)
+
+    initial_results = _recognize_plans(rec, plans, max_batch)
+    batch_trace = list(getattr(rec, "last_batch_trace", []))
+    outputs = []
+    empty_vertical_indices = []
+    for index, (plan, recognition) in enumerate(zip(plans, initial_results)):
+        text, line_info, error = _compose_plan(plan, recognition)
+        outputs.append({"text": text, "lines": line_info, "error": error})
+        if needs_unpadded[index] and not text and unpadded_crop_factory is not None:
+            empty_vertical_indices.append(index)
+
+    if empty_vertical_indices:
+        fallback_plans = []
+        for index in empty_vertical_indices:
+            unpadded = unpadded_crop_factory(index)
+            try:
+                fallback_plans.append(plan_region(
+                    None, unpadded, vertical_fallback=True, language=language,
+                    force_heuristic=True))
+            finally:
+                unpadded.close()
+        fallback_results = _recognize_plans(rec, fallback_plans, max_batch)
+        batch_trace.extend(getattr(rec, "last_batch_trace", []))
+        for index, plan, recognition in zip(
+                empty_vertical_indices, fallback_plans, fallback_results):
+            text, line_info, error = _compose_plan(plan, recognition)
+            if text:
+                outputs[index] = {"text": text, "lines": line_info, "error": None}
+            elif error and outputs[index].get("error") is None:
+                outputs[index]["error"] = error
+    rec.last_batch_trace = batch_trace
+    return outputs
+
+
+def assemble_region_text(det: PaddleDet | None, rec: PaddleRec,
+                         crop: Image.Image) -> tuple[str, list[dict]]:
+    """Compatibility wrapper for callers that recognize one standalone ROI."""
+    result = recognize_regions(
+        det, rec, [crop], max_batch=1,
+        region_boxes=[(0, 0, crop.width, crop.height)],
+    )[0]
+    if result.get("error"):
+        raise RuntimeError(result["error"])
+    return result["text"], result["lines"]
 
 
 def _rotate_ccw(img: Image.Image) -> Image.Image:

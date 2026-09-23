@@ -203,6 +203,7 @@ class Pipeline:
 
     def save_settings(self, patch: dict) -> dict:
         with self.lock:
+            previous_ocr_engine = self.settings.get("ocr_engine", "mangaocr")
             for k, v in patch.items():
                 if k == "conf" and v is not None:
                     self.settings[k] = float(v)
@@ -214,6 +215,8 @@ class Pipeline:
                     self.settings[k] = int(v)
                 else:
                     self.settings[k] = v
+            if self.settings.get("ocr_engine", "mangaocr") != previous_ocr_engine:
+                self._crop_cache.clear()
             self._save_json("settings.json", self.settings)
             return self.settings
 
@@ -358,11 +361,13 @@ class Pipeline:
     def ocr_input_image(self, page: str, region_id: str) -> Image.Image:
         """The EXACT 224x224 normalized tensor OCR consumed, un-normalized
         for display — reuses lab.preprocessing.preprocess, nothing new."""
-        regions = self._cache["ocr"].get(page, {}).get("regions", [])
+        ocr_entry = self._cache["ocr"].get(page, {})
+        regions = ocr_entry.get("regions", [])
         r = next((x for x in regions if x["id"] == region_id), None)
         if r is None:
             raise FileNotFoundError(region_id)
-        img = self.page_image(page).crop(tuple(r["ocr_box"]))
+        img = self.page_image(page).crop(tuple(recognition_input_box(
+            r, ocr_entry.get("engine", "mangaocr"))))
         px = lab_preprocess(img)
         arr = np.clip((px[0] * np.float32(0.5) + np.float32(0.5)) * 255.0,
                       0, 255).astype("uint8")
@@ -1023,11 +1028,25 @@ class Pipeline:
                 "regions": kept_regions, "panels": panel_views}
 
     # --------------------------------------------------------------------- OCR
+    def _mangaocr_batch_size(self) -> int:
+        try:
+            requested = int(self.settings.get("max_batch", 8))
+        except (TypeError, ValueError):
+            requested = 8
+        requested = max(1, requested)
+        return 1 if self.settings.get("mangaocr_serial_timing", False) else requested
+
+    def _ocr_batch_setting(self) -> int:
+        try:
+            return max(1, int(self.settings.get("max_batch", 8)))
+        except (TypeError, ValueError):
+            return 8
+
     def _ocr_engine(self):
         if self._ocr is None:
             t0 = time.perf_counter()
             log("initializing OCR (derived graphs + B=1 gate)…")
-            self._ocr = OcrEngine()
+            self._ocr = OcrEngine(max_batch=self._mangaocr_batch_size())
             self._load_times["ocr_mangaocr"] = round((time.perf_counter() - t0) * 1000, 1)
             g = self._ocr.gate
             log(f"OCR ready in {self._load_times['ocr_mangaocr']}ms — gate {'PASS' if g['pass'] else 'FAILED'} "
@@ -1041,40 +1060,82 @@ class Pipeline:
             t0 = time.perf_counter()
             import paddle_ocr
             log("initializing PaddleOCR v6 small (det + rec)…")
-            self._paddle = (paddle_ocr.PaddleDet(), paddle_ocr.PaddleRec())
+            try:
+                detector = paddle_ocr.PaddleDet()
+            except Exception as error:
+                detector = None
+                log(f"PaddleOCR detector unavailable — using single-line/ink-gap fallback: {error}")
+            self._paddle = (detector, paddle_ocr.PaddleRec())
             self._load_times["ocr_paddle"] = round((time.perf_counter() - t0) * 1000, 1)
-            log(f"PaddleOCR ready in {self._load_times['ocr_paddle']}ms — dict={len(self._paddle[1].dictionary)} "
-                f"classes")
+            log(f"PaddleOCR ready in {self._load_times['ocr_paddle']}ms — det={'ready' if detector else 'fallback'}, "
+                f"dict={len(self._paddle[1].dictionary)} classes")
         return self._paddle
 
     def _ocr_engine_name(self) -> str:
         return self.settings.get("ocr_engine", "mangaocr")
 
-    def _recognize_crops(self, crops: list[Image.Image]) -> tuple[list[dict], dict, float]:
+    def _recognize_crops(self, crops: list[Image.Image], regions: list[dict] | None = None,
+                         page_image: Image.Image | None = None) -> tuple[list[dict], dict, float]:
         """Dispatch on settings['ocr_engine']: mangaocr (T927 lab stack) or
         paddle (v6 small det+rec). Both return the same region dicts."""
         if self._ocr_engine_name() == "paddle":
             import paddle_ocr
             det, rec = self._paddle_engines()
             t0 = time.perf_counter()
+            region_boxes = [r.get("box", (0, 0, crop.width, crop.height))
+                            for r, crop in zip(regions or [], crops)]
+            if len(region_boxes) < len(crops):
+                region_boxes.extend((0, 0, crops[i].width, crops[i].height)
+                                    for i in range(len(region_boxes), len(crops)))
+
+            def unpadded_crop(index: int):
+                if page_image is None or regions is None:
+                    raise ValueError("page image and regions are required for unpadded Paddle reread")
+                return page_image.crop(tuple(regions[index]["box"]))
+
+            language = str(self.settings.get(
+                "source_language", self.settings.get("source_lang", "ja")))
+            normalized_language = language.strip().lower().replace("_", "-")
+            webtoon_mode = bool(self.settings.get("webtoon_mode", False))
+            webtoon_mode = webtoon_mode or bool(
+                page_image is not None
+                and is_tall_image(page_image.width, page_image.height))
+            webtoon_mode = webtoon_mode or normalized_language in {
+                "ko", "kor", "korean"} or normalized_language.startswith("ko-")
+            webtoon_mode = webtoon_mode or not self._reading_order_is_rtl()
+            recognized = paddle_ocr.recognize_regions(
+                det, rec, crops,
+                max_batch=self._ocr_batch_setting(),
+                region_boxes=region_boxes,
+                language=language,
+                webtoon_mode=webtoon_mode,
+                unpadded_crop_factory=unpadded_crop if page_image is not None and regions is not None else None,
+            )
             out = []
-            for c in crops:
-                try:
-                    text, line_info = paddle_ocr.assemble_region_text(det, rec, c)
-                    out.append({
-                        "text": text,
-                        "raw_text": text,
-                        "confidence": None,
-                        "lines": line_info,
-                        "engine": "paddle",
-                    })
-                except Exception as e:
-                    log(f"!! paddle rec failed: {e}")
-                    out.append({"text": "", "raw_text": "", "confidence": None,
-                                "lines": [], "engine": "paddle", "error": str(e)})
+            for result in recognized:
+                text = result.get("text", "")
+                error = result.get("error")
+                if error:
+                    log(f"!! paddle rec failed: {error}")
+                row = {
+                    "text": text,
+                    "raw_text": text,
+                    "confidence": None,
+                    "lines": result.get("lines", []),
+                    "engine": "paddle",
+                }
+                if error:
+                    row["error"] = error
+                out.append(row)
             ms = round((time.perf_counter() - t0) * 1000, 1)
-            return out, {"engine": "paddle", "regions": len(out)}, ms
+            trace = getattr(rec, "last_batch_trace", [])
+            return out, {
+                "engine": "paddle", "regions": len(out),
+                "batches": len(trace),
+                "fallback_batches": sum(bool(row.get("fallback")) for row in trace),
+            }, ms
         engine = self._ocr_engine()
+        engine.max_batch = self._mangaocr_batch_size()
         results, runs, ms = engine.decode_regions(crops)
         return results, runs, ms
 
@@ -1097,10 +1158,12 @@ class Pipeline:
             img = self.page_image(page)
             crops, err = [], []
             for r in regions:
-                b = Box(*r["ocr_box"])
+                b = Box(*recognition_input_box(r, engine_name,
+                                               [img.width, img.height]))
                 crops.append(img.crop((b.x1, b.y1, b.x2, b.y2)))
 
-            results, runs, ms = self._recognize_crops(crops)
+            results, runs, ms = self._recognize_crops(crops, regions=regions,
+                                                      page_image=img)
 
             prev = {r0["id"]: r0 for r0 in prev_entry.get("regions", [])}
             for r, res in zip(regions, results):
@@ -1505,7 +1568,8 @@ class Pipeline:
         r = next((x for x in regions if x["id"] == region_id), None)
         if r is None:
             raise FileNotFoundError(region_id)
-        img = self.page_image(page).crop(tuple(r["ocr_box"]))
+        engine_name = self._cache["ocr"].get(page, {}).get("engine", "mangaocr")
+        img = self.page_image(page).crop(tuple(recognition_input_box(r, engine_name)))
         if scale > 1 and min(img.size) < 300:
             img = img.resize((img.width * scale, img.height * scale), Image.NEAREST)
         self._crop_cache[key] = img
@@ -1611,6 +1675,17 @@ def clamp_pad(box: Box, page_wh: list) -> Box:
     return Box(max(0, box.x1 - OCR_PAD), max(0, box.y1 - OCR_PAD),
                min(page_wh[0], box.x2 + OCR_PAD),
                min(page_wh[1], box.y2 + OCR_PAD))
+
+
+def recognition_input_box(region: dict, engine_name: str,
+                          page_wh: list[int] | None = None) -> list[int]:
+    """Paddle needs 12px context; MangaOCR consumes Android's tight ROI."""
+    if engine_name == "paddle":
+        if region.get("ocr_box") is not None:
+            return region["ocr_box"]
+        if page_wh is not None:
+            return clamp_pad(Box(*region["box"]), page_wh).as_list()
+    return region["box"]
 
 
 # ================================================================== detector
@@ -2182,6 +2257,7 @@ def translate_one(text: str, target_lang: str, endpoint: str, model: str) -> str
 DEFAULT_SETTINGS = {
     "conf": 0.6,
     "max_batch": 8,
+    "mangaocr_serial_timing": False,
     "target_lang": "English",
     "endpoint": "http://127.0.0.1:1234/v1",
     "model": "local-model",
