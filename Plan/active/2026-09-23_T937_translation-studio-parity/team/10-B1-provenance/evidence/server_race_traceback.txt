@@ -1,0 +1,21 @@
+Reproduced on the vulnerable integrated-test worktree at main@e00f0c38d95f9317a9591adce11eff93684b9aa1. The browser boot repro ran 30 rounds; round 16 returned HTTP 500 for GET /api/page?p=p001.jpg.
+
+TRACEBACK FOR RESPONSE 500
+Traceback (most recent call last):
+  File "C:\Users\User\.traycer\worktrees\kimreneouk__tachiyomiatvibe\t937-b1-integrated-test\tools\translation_studio\server.py", line 194, in do_GET
+    return self._send_json(PIPELINE.page_data(get("p")))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\.traycer\worktrees\kimreneouk__tachiyomiatvibe\t937-b1-integrated-test\tools\translation_studio\pipeline.py", line 148, in wrapped
+    with self._page_operation_scope(str(page)):
+  File "C:\Users\User\AppData\Local\Programs\Python\Python311\Lib\contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "C:\Users\User\.traycer\worktrees\kimreneouk__tachiyomiatvibe\t937-b1-integrated-test\tools\translation_studio\pipeline.py", line 195, in _page_operation_scope
+    self._accept_page_fingerprint(page, info)
+  File "C:\Users\User\.traycer\worktrees\kimreneouk__tachiyomiatvibe\t937-b1-integrated-test\tools\translation_studio\pipeline.py", line 288, in _accept_page_fingerprint
+    self._invalidate_page_artifacts(page)
+  File "C:\Users\User\.traycer\worktrees\kimreneouk__tachiyomiatvibe\t937-b1-integrated-test\tools\translation_studio\pipeline.py", line 322, in _invalidate_page_artifacts
+    path.unlink()
+  File "C:\Users\User\AppData\Local\Programs\Python\Python311\Lib\pathlib.py", line 1147, in unlink
+    os.unlink(self)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\User\\AppData\\Local\\Temp\\t937-post-race-15-u2f0onye\\demo_chapter\\.studio\\inpaint\\p001.json'

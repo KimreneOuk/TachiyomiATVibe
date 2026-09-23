@@ -21,6 +21,9 @@ DEMO_CHAPTER = HERE / "demo_chapter"
 EVIDENCE = (HERE.parents[1] / "Plan" / "active" /
             "2026-09-23_T937_translation-studio-parity" / "team" /
             "03-A2-inpaint" / "evidence")
+B1_EVIDENCE = (HERE.parents[1] / "Plan" / "active" /
+               "2026-09-23_T937_translation-studio-parity" / "team" /
+               "10-B1-provenance" / "evidence" / "demo")
 PRESETS = {
     "android-fast": {"inpaint_bubble_leg": "android-fill",
                      "inpaint_free_leg": "opencv"},
@@ -33,6 +36,7 @@ def main() -> None:
     if not DEMO_CHAPTER.is_dir():
         raise SystemExit(f"demo chapter is missing: {DEMO_CHAPTER}")
     EVIDENCE.mkdir(parents=True, exist_ok=True)
+    B1_EVIDENCE.mkdir(parents=True, exist_ok=True)
     pipeline = Pipeline()
     pipeline.open_folders(str(DEMO_CHAPTER), None)
 
@@ -68,6 +72,37 @@ def main() -> None:
             shutil.copy2(result["mask_path"], EVIDENCE / mask_name)
             with open(result["provenance_path"], "r", encoding="utf-8") as src:
                 provenance = json.load(src)
+            b1_dir = B1_EVIDENCE / prefix
+            crop_root = b1_dir / "crops"
+            b1_dir.mkdir(parents=True, exist_ok=True)
+            provenance_copy = json.loads(json.dumps(provenance))
+            crop_triples = 0
+            for record in provenance_copy.get("regions", []):
+                crops = record.get("crops", {})
+                if crops.get("status") != "ready":
+                    continue
+                region_dir = crop_root / str(record.get("id", "region"))
+                region_dir.mkdir(parents=True, exist_ok=True)
+                for kind in ("input", "output", "mask"):
+                    entries = crops[kind]
+                    runtime_entry = entries["exact"]
+                    source_crop = DEMO_CHAPTER / Path(runtime_entry["path"])
+                    if not source_crop.is_file():
+                        raise AssertionError(f"missing persisted crop: {source_crop}")
+                    evidence_crop = region_dir / f"{kind}.png"
+                    shutil.copy2(source_crop, evidence_crop)
+                    relative = evidence_crop.relative_to(b1_dir).as_posix()
+                    for representation in ("debug", "exact"):
+                        entry = entries[representation]
+                        entry["runtime_path"] = entry["path"]
+                        entry["path"] = relative
+                    crop_triples += 1
+            provenance_copy["evidence"] = {
+                "crop_root": "crops/",
+                "crop_triples": crop_triples,
+            }
+            with open(b1_dir / "provenance.json", "w", encoding="utf-8") as f:
+                json.dump(provenance_copy, f, indent=2, ensure_ascii=False)
             route_dump = {
                 "page": page,
                 "preset": preset,
@@ -86,7 +121,10 @@ def main() -> None:
                             "routes": sorted({r["route_taken"] for r in records}),
                             "inpainted_png": image_name,
                             "mask_png": mask_name,
-                            "routes_json": route_name})
+                            "routes_json": route_name,
+                            "b1_provenance": (b1_dir / "provenance.json").relative_to(
+                                B1_EVIDENCE).as_posix(),
+                            "b1_crop_triples": crop_triples})
             if preset == "android-fast" and page == pipeline.pages[0]:
                 with open(result["provenance_path"], "r", encoding="utf-8") as f:
                     before = json.load(f)["cache_key"]
