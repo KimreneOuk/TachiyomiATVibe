@@ -322,6 +322,88 @@
         </div>
       </div>
 
+      <!-- Cached artifact filters: display-only, backed by detections/OCR/inpaint caches. -->
+      <div class="sb-card artifact-filter-card" id="artifactFilterCard">
+        <div class="sb-label-row">
+          <span class="sb-label">Artifact Filters</span>
+          <button id="btnFilterExport" class="sb-mini-btn" title="Export matching cached artifacts to .studio/exports">Export JSON</button>
+        </div>
+        <div class="filter-toolbar">
+          <label for="filterPreset">Preset</label>
+          <select id="filterPreset">
+            <option value="production">Production view</option>
+            <option value="all-raw">All raw candidates</option>
+            <option value="suppressed">Diagnosis: suppressed</option>
+            <option value="inpaint-audit">Inpaint audit</option>
+            <option value="custom">Custom filters</option>
+          </select>
+        </div>
+        <div class="filter-hint">Display-only · score changes read saved outputs and never rerun a model.</div>
+        <div id="filterExportStatus" class="filter-status" aria-live="polite"></div>
+
+        <details class="filter-section" open>
+          <summary>Source models <span id="filterTotalCount" class="filter-count">0/0</span></summary>
+          <div id="artifactModelGroups" class="artifact-model-groups"></div>
+        </details>
+        <details class="filter-section" open>
+          <summary>Lifecycle state</summary>
+          <div id="filterStates" class="filter-check-grid"></div>
+        </details>
+        <div class="filter-control-row">
+          <label for="filterSuppression">Suppression rule</label>
+          <select id="filterSuppression">
+            <option value="">All rules</option>
+            <option value="det-dedup">det-dedup</option>
+            <option value="ocr-dedup">ocr-dedup</option>
+            <option value="xlabel">xlabel</option>
+            <option value="win-merge">win-merge</option>
+          </select>
+        </div>
+        <details class="filter-section">
+          <summary>Geometry</summary>
+          <div class="filter-input-grid">
+            <label>Width min <input type="number" id="filterWidthMin" min="0" placeholder="px"></label>
+            <label>Width max <input type="number" id="filterWidthMax" min="0" placeholder="px"></label>
+            <label>Height min <input type="number" id="filterHeightMin" min="0" placeholder="px"></label>
+            <label>Height max <input type="number" id="filterHeightMax" min="0" placeholder="px"></label>
+            <label>Aspect min <input type="number" id="filterAspectMin" min="0" step="0.1" placeholder="ratio"></label>
+            <label>Aspect max <input type="number" id="filterAspectMax" min="0" step="0.1" placeholder="ratio"></label>
+            <label class="filter-span-two">Page shape
+              <select id="filterTall"><option value="">Any</option><option value="tall">Tall pages</option><option value="normal">Normal pages</option></select>
+            </label>
+          </div>
+        </details>
+        <details class="filter-section">
+          <summary>OCR</summary>
+          <div class="filter-input-stack">
+            <label>Text contains <input type="search" id="filterOcrText" placeholder="substring"></label>
+            <label>Engine <select id="filterOcrEngine"><option value="">All engines</option></select></label>
+            <label>Outcome <select id="filterOcrOutcome"><option value="">All outcomes</option><option value="ok">ok</option><option value="blank">blank</option><option value="filtered">filtered</option><option value="error">error</option></select></label>
+            <label>Confidence range
+              <span class="filter-score-sliders"><input type="range" id="filterOcrConfidenceMin" min="0" max="1" step="0.01" value="0"><input type="range" id="filterOcrConfidenceMax" min="0" max="1" step="0.01" value="1"></span>
+            </label>
+          </div>
+        </details>
+        <div class="filter-control-row">
+          <label for="filterRoute">Inpaint route</label>
+          <select id="filterRoute"><option value="">All routes</option></select>
+        </div>
+        <div class="filter-control-row">
+          <label for="filterWindow">Window</label>
+          <select id="filterWindow"><option value="">All windows</option></select>
+        </div>
+        <details class="filter-section">
+          <summary>Translation state</summary>
+          <div class="filter-check-grid" id="filterTranslations">
+            <label title="Translation cache entries"> <input type="checkbox" value="cached"> Cached</label>
+            <label title="Non-empty translation text"><input type="checkbox" value="translated"> Translated</label>
+            <label title="Missing origin metadata in translations.json"><input type="checkbox" value="user-edited" disabled> User edited</label>
+            <label title="Pruned records are added by C2"><input type="checkbox" value="pruned" disabled> Pruned</label>
+          </div>
+          <div class="filter-source-note" id="filterTranslationNote">User edit and prune provenance unavailable: translations.json has no origin metadata.</div>
+        </details>
+      </div>
+
       <!-- Pipeline Configuration (Directly Visible & Adjustable) -->
       <div class="sb-card">
         <div class="sb-label">Pipeline Configuration</div>
@@ -404,6 +486,7 @@
         <div class="sb-label">Compare Options</div>
         <div class="seg seg-grid small" id="cmpSeg">
           <button data-cmp="orig-ours" class="active">Orig | Ours</button>
+          <button data-cmp="orig-inpainted">Orig | Inpainted</button>
           <button data-cmp="goal-ours">Goal | Ours</button>
           <button data-cmp="all">All 3</button>
           <button data-cmp="overlay">A/B Overlay</button>
