@@ -1,0 +1,148 @@
+{
+  "cases": [
+    {
+      "page": "p001.jpg",
+      "preset": "android-fast",
+      "mask_pixels": 192256,
+      "regions": 3,
+      "routes": [
+        "bubble/android-fill"
+      ],
+      "inpainted_png": "p001_android-fast_inpainted.png",
+      "mask_png": "p001_android-fast_mask.png",
+      "routes_json": "p001_android-fast_routes.json"
+    },
+    {
+      "page": "p002.jpg",
+      "preset": "android-fast",
+      "mask_pixels": 211010,
+      "regions": 3,
+      "routes": [
+        "bubble/android-fill"
+      ],
+      "inpainted_png": "p002_android-fast_inpainted.png",
+      "mask_png": "p002_android-fast_mask.png",
+      "routes_json": "p002_android-fast_routes.json"
+    },
+    {
+      "page": "p001.jpg",
+      "preset": "android-quality",
+      "mask_pixels": 192256,
+      "regions": 3,
+      "routes": [
+        "bubble/android-fill"
+      ],
+      "inpainted_png": "p001_android-quality_inpainted.png",
+      "mask_png": "p001_android-quality_mask.png",
+      "routes_json": "p001_android-quality_routes.json"
+    },
+    {
+      "page": "p002.jpg",
+      "preset": "android-quality",
+      "mask_pixels": 211010,
+      "regions": 3,
+      "routes": [
+        "bubble/android-fill"
+      ],
+      "inpainted_png": "p002_android-quality_inpainted.png",
+      "mask_png": "p002_android-quality_mask.png",
+      "routes_json": "p002_android-quality_routes.json"
+    },
+    {
+      "page": "p001.jpg",
+      "probe": "free-opencv",
+      "routes": [
+        "freetext/opencv"
+      ],
+      "mask_pixels": 2648,
+      "inpainted_png": "p001_probe-free-opencv_inpainted.png",
+      "mask_png": "p001_probe-free-opencv_mask.png",
+      "routes_json": "p001_probe-free-opencv_routes.json"
+    },
+    {
+      "page": "p001.jpg",
+      "probe": "free-aot",
+      "routes": [
+        "freetext/aot-fixed512"
+      ],
+      "mask_pixels": 2648,
+      "inpainted_png": "p001_probe-free-aot_inpainted.png",
+      "mask_png": "p001_probe-free-aot_mask.png",
+      "routes_json": "p001_probe-free-aot_routes.json"
+    },
+    {
+      "page": "p001.jpg",
+      "probe": "free-aot-dynamic",
+      "routes": [
+        "freetext/aot-fixed512-uniformity-rejected->aot-dynamic"
+      ],
+      "mask_pixels": 2648,
+      "inpainted_png": "p001_probe-free-aot-dynamic_inpainted.png",
+      "mask_png": "p001_probe-free-aot-dynamic_mask.png",
+      "routes_json": "p001_probe-free-aot-dynamic_routes.json"
+    },
+    {
+      "page": "p001.jpg",
+      "probe": "free-pushpull",
+      "routes": [
+        "freetext/pushpull"
+      ],
+      "mask_pixels": 2648,
+      "inpainted_png": "p001_probe-free-pushpull_inpainted.png",
+      "mask_png": "p001_probe-free-pushpull_mask.png",
+      "routes_json": "p001_probe-free-pushpull_routes.json"
+    },
+    {
+      "page": "p001.jpg",
+      "probe": "bubble-opencv",
+      "routes": [
+        "bubble/opencv"
+      ],
+      "mask_pixels": 4896,
+      "inpainted_png": "p001_probe-bubble-opencv_inpainted.png",
+      "mask_png": "p001_probe-bubble-opencv_mask.png",
+      "routes_json": "p001_probe-bubble-opencv_routes.json"
+    },
+    {
+      "page": "p001.jpg",
+      "probe": "bubble-aot",
+      "routes": [
+        "bubble/aot-fixed512"
+      ],
+      "mask_pixels": 4896,
+      "inpainted_png": "p001_probe-bubble-aot_inpainted.png",
+      "mask_png": "p001_probe-bubble-aot_mask.png",
+      "routes_json": "p001_probe-bubble-aot_routes.json"
+    },
+    {
+      "page": "p001.jpg",
+      "probe": "bubble-pushpull",
+      "routes": [
+        "bubble/pushpull"
+      ],
+      "mask_pixels": 4896,
+      "inpainted_png": "p001_probe-bubble-pushpull_inpainted.png",
+      "mask_png": "p001_probe-bubble-pushpull_mask.png",
+      "routes_json": "p001_probe-bubble-pushpull_routes.json"
+    }
+  ],
+  "cache_switch_check": {
+    "before": {
+      "engine": "android",
+      "leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "opencv"
+      },
+      "legacy_mode": null
+    },
+    "after": {
+      "engine": "android",
+      "leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "aot"
+      },
+      "legacy_mode": null
+    },
+    "recomputed_infer_ms": 5577.6
+  }
+}

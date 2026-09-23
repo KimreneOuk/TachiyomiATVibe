@@ -1,0 +1,69 @@
+{
+  "page": "p001.jpg",
+  "probe": "free-pushpull",
+  "leg_matrix": {
+    "bubble": "android-fill",
+    "free_text": "pushpull"
+  },
+  "stats": {
+    "bubble_leg": "android-fill",
+    "free_leg": "pushpull",
+    "bubble_boxes": 0,
+    "free_boxes": 1,
+    "free_groups": 1,
+    "bubble_components": 0,
+    "combined_components": 1,
+    "mask_pixels": 2648,
+    "total_ms": 205.9
+  },
+  "regions": [
+    {
+      "id": "probe-free-pushpull",
+      "kind": "ocr-region",
+      "text": "probe",
+      "label": 2,
+      "score": null,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            418,
+            684,
+            482,
+            716
+          ],
+          "label": 2,
+          "score": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            418,
+            684,
+            482,
+            716
+          ]
+        }
+      ],
+      "route_taken": "freetext/pushpull",
+      "mask_component_id": "c001",
+      "context_crop_bbox": [
+        354,
+        620,
+        546,
+        780
+      ],
+      "timing_ms": {
+        "planning": 0.123,
+        "refinement": 0.014,
+        "fill": 153.118,
+        "total": 153.255
+      },
+      "timing_scope": "region"
+    }
+  ],
+  "inpainted_png": "p001_probe-free-pushpull_inpainted.png",
+  "mask_png": "p001_probe-free-pushpull_mask.png"
+}

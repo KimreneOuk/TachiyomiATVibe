@@ -1,0 +1,253 @@
+{
+  "page": "p001.jpg",
+  "preset": "android-fast",
+  "engine": "android",
+  "leg_matrix": {
+    "bubble": "android-fill",
+    "free_text": "opencv"
+  },
+  "mask_pixels": 192256,
+  "inpainted_png": "p001_android-fast_inpainted.png",
+  "mask_png": "p001_android-fast_mask.png",
+  "cache_key": {
+    "engine": "android",
+    "leg_matrix": {
+      "bubble": "android-fill",
+      "free_text": "opencv"
+    },
+    "legacy_mode": null
+  },
+  "stats": {
+    "bubble_leg": "android-fill",
+    "free_leg": "opencv",
+    "bubble_boxes": 3,
+    "free_boxes": 0,
+    "free_groups": 0,
+    "bubble_components": 3,
+    "combined_components": 3,
+    "mask_pixels": 192256,
+    "total_ms": 5464.607
+  },
+  "regions": [
+    {
+      "id": "r00",
+      "kind": "ocr-region",
+      "text": "お前は誰だ!",
+      "label": 1,
+      "score": 0.846,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            590,
+            207,
+            710,
+            292
+          ],
+          "label": 1,
+          "score": 0.846
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            590,
+            207,
+            710,
+            292
+          ]
+        },
+        {
+          "source": "detector",
+          "role": "parent-bubble",
+          "box": [
+            466,
+            135,
+            835,
+            365
+          ]
+        },
+        {
+          "source": "bubble-segmenter",
+          "role": "assigned-mask",
+          "mask_ref": "s000",
+          "box": [
+            470,
+            142,
+            822,
+            354
+          ]
+        }
+      ],
+      "route_taken": "bubble/android-fill",
+      "mask_component_id": "c001",
+      "context_crop_bbox": [
+        0,
+        0,
+        900,
+        1400
+      ],
+      "timing_ms": {
+        "planning": 0.536,
+        "refinement": 0.0,
+        "fill": 5339.288,
+        "total": 5339.824
+      },
+      "timing_scope": "bubble-leg-shared",
+      "parent_bubble": [
+        466,
+        135,
+        835,
+        365
+      ]
+    },
+    {
+      "id": "r01",
+      "kind": "ocr-region",
+      "text": "静かだ...何も間こえない",
+      "label": 1,
+      "score": 0.892,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            180,
+            666,
+            421,
+            752
+          ],
+          "label": 1,
+          "score": 0.892
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            180,
+            666,
+            421,
+            752
+          ]
+        },
+        {
+          "source": "detector",
+          "role": "parent-bubble",
+          "box": [
+            85,
+            585,
+            516,
+            834
+          ]
+        },
+        {
+          "source": "bubble-segmenter",
+          "role": "assigned-mask",
+          "mask_ref": "s002",
+          "box": [
+            92,
+            596,
+            504,
+            823
+          ]
+        }
+      ],
+      "route_taken": "bubble/android-fill",
+      "mask_component_id": "c002",
+      "context_crop_bbox": [
+        0,
+        0,
+        900,
+        1400
+      ],
+      "timing_ms": {
+        "planning": 0.536,
+        "refinement": 0.0,
+        "fill": 5339.288,
+        "total": 5339.824
+      },
+      "timing_scope": "bubble-leg-shared",
+      "parent_bubble": [
+        85,
+        585,
+        516,
+        834
+      ]
+    },
+    {
+      "id": "r02",
+      "kind": "ocr-region",
+      "text": "行こう。もう時間だ",
+      "label": 1,
+      "score": 0.874,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            512,
+            1116,
+            691,
+            1202
+          ],
+          "label": 1,
+          "score": 0.874
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            512,
+            1116,
+            691,
+            1202
+          ]
+        },
+        {
+          "source": "detector",
+          "role": "parent-bubble",
+          "box": [
+            395,
+            1041,
+            806,
+            1279
+          ]
+        },
+        {
+          "source": "bubble-segmenter",
+          "role": "assigned-mask",
+          "mask_ref": "s001",
+          "box": [
+            406,
+            1051,
+            795,
+            1266
+          ]
+        }
+      ],
+      "route_taken": "bubble/android-fill",
+      "mask_component_id": "c003",
+      "context_crop_bbox": [
+        0,
+        0,
+        900,
+        1400
+      ],
+      "timing_ms": {
+        "planning": 0.536,
+        "refinement": 0.0,
+        "fill": 5339.288,
+        "total": 5339.824
+      },
+      "timing_scope": "bubble-leg-shared",
+      "parent_bubble": [
+        395,
+        1041,
+        806,
+        1279
+      ]
+    }
+  ],
+  "infer_ms": 7252.7
+}

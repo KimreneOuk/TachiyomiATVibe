@@ -463,6 +463,26 @@
     <option value="fast">FAST — classical fill</option>
     <option value="quality">QUALITY — AOT-512 neural</option>
   </select></label>
+  <label>Inpaint engine <select id="setInpaintEngine">
+    <option value="legacy">Legacy (comparison)</option>
+    <option value="android">Android parity</option>
+  </select></label>
+  <div class="row" id="inpaintPresetButtons" aria-label="Android leg presets">
+    <button type="button" data-inpaint-preset="android-fast">Android FAST</button>
+    <button type="button" data-inpaint-preset="android-quality">Android QUALITY</button>
+  </div>
+  <label>Bubble-text leg <select id="setInpaintBubbleLeg">
+    <option value="android-fill">android-fill</option>
+    <option value="opencv">OpenCV Telea</option>
+    <option value="aot">AOT</option>
+    <option value="pushpull">PushPull</option>
+  </select></label>
+  <label>Free-text leg <select id="setInpaintFreeLeg">
+    <option value="opencv">OpenCV Telea</option>
+    <option value="aot">AOT</option>
+    <option value="pushpull">PushPull</option>
+  </select></label>
+  <div class="muted">Android FAST and QUALITY are production presets. Other leg pairs are experimental.</div>
   <label>Translate backend <select id="setTranslateBackend">
     <option value="google">Google Translate (cached)</option>
     <option value="lm-studio">LM Studio (OpenAI-compatible)</option>

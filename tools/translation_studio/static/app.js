@@ -1249,7 +1249,12 @@ async function runStage(stage) {
     if (stage === "all") await api("/api/process", { page, translate: $("chkTranslate").checked });
     else if (stage === "detect") await api("/api/detect", { page, conf: S.settings.conf });
     else if (stage === "ocr") await api("/api/ocr", { page });
-    else if (stage === "inpaint") await api("/api/inpaint", { page, mode: S.settings.inpaint_mode });
+    else if (stage === "inpaint") await api("/api/inpaint", {
+      page, mode: S.settings.inpaint_mode, force: true,
+      engine: S.settings.inpaint_engine || "legacy",
+      bubble_leg: S.settings.inpaint_bubble_leg || "android-fill",
+      free_leg: S.settings.inpaint_free_leg || "opencv",
+    });
     else if (stage === "translate") await api("/api/translate", { page });
     else if (stage === "render") await api("/api/render", { page });
     S.pageData.delete(page);
@@ -1940,6 +1945,9 @@ $("btnSettings")?.addEventListener("click", async () => {
   const s = (await api("/api/state")).settings;
   $("setOcrEngine").value = s.ocr_engine || "mangaocr";
   $("setInpaintMode").value = s.inpaint_mode || "quality";
+  $("setInpaintEngine").value = s.inpaint_engine || "legacy";
+  $("setInpaintBubbleLeg").value = s.inpaint_bubble_leg || "android-fill";
+  $("setInpaintFreeLeg").value = s.inpaint_free_leg || "opencv";
   $("setTranslateBackend").value = s.translate_backend || "google";
   $("setConf").value = s.conf;
   $("setMaxBatch").value = s.max_batch;
@@ -1952,11 +1960,26 @@ $("btnSettings")?.addEventListener("click", async () => {
   $("setLang").value = s.target_lang;
   $("settingsDlg").showModal();
 });
+$("inpaintPresetButtons")?.addEventListener("click", (event) => {
+  const preset = event.target.closest("[data-inpaint-preset]")?.dataset.inpaintPreset;
+  if (!preset) return;
+  $("setInpaintEngine").value = "android";
+  if (preset === "android-fast") {
+    $("setInpaintBubbleLeg").value = "android-fill";
+    $("setInpaintFreeLeg").value = "opencv";
+  } else if (preset === "android-quality") {
+    $("setInpaintBubbleLeg").value = "android-fill";
+    $("setInpaintFreeLeg").value = "aot";
+  }
+});
 $("setClose")?.addEventListener("click", () => $("settingsDlg").close());
 $("setSave")?.addEventListener("click", async () => {
   const s = await api("/api/settings", {
     ocr_engine: $("setOcrEngine").value,
     inpaint_mode: $("setInpaintMode").value,
+    inpaint_engine: $("setInpaintEngine").value,
+    inpaint_bubble_leg: $("setInpaintBubbleLeg").value,
+    inpaint_free_leg: $("setInpaintFreeLeg").value,
     translate_backend: $("setTranslateBackend").value,
     conf: parseFloat($("setConf").value),
     max_batch: parseInt($("setMaxBatch").value),
@@ -2113,4 +2136,3 @@ window.addEventListener("keyup", (e) => {
     l.lines.forEach((x) => logLine(x));
   } catch {}
 })();
-

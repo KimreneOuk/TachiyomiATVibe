@@ -1,0 +1,5 @@
+numpy
+pillow
+scipy
+onnxruntime
+opencv-python  # cv2 is used by the Telea free-text/bubble leg.

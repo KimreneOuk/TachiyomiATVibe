@@ -716,21 +716,32 @@ class Pipeline:
             if self._paddle is not None:
                 self._paddle_det = self._paddle[0]
             else:
-                log("loading PaddleOCR v6 det (free-text line refinement)…")
-                self._paddle_det = paddle_ocr.PaddleDet()
+                try:
+                    log("loading PaddleOCR v6 det (free-text line refinement)…")
+                    self._paddle_det = paddle_ocr.PaddleDet()
+                except Exception as e:
+                    log(f"Paddle det unavailable — free-text boxes stay unrefined: {e}")
+                    self._paddle_det_unavailable = True
+                    return None
         return self._paddle_det
 
-    def _aot_inpainter(self):
+    def _aot_inpainter(self, allow_dynamic: bool = False):
+        import aot_inpaint
+        fixed_ready = (self._aot.ready if self._aot is not None
+                       else aot_inpaint.AotInpainter().ready)
+        dynamic_ready = False
+        if allow_dynamic:
+            import inpaint_android
+            dynamic_ready = inpaint_android.AOT_DYNAMIC_MODEL.exists()
+        if not fixed_ready and not dynamic_ready:
+            return None
         if self._aot is None:
-            import aot_inpaint
-            if not aot_inpaint.AotInpainter().ready:
-                return None
             t0 = time.perf_counter()
-            log("loading AOT-512 inpainting model (QUALITY mode)…")
+            log("loading AOT inpainting sessions (QUALITY leg)…")
             self._aot = aot_inpaint.AotInpainter()
             self._load_times["aot"] = round((time.perf_counter() - t0) * 1000, 1)
-            log(f"AOT loaded in {self._load_times['aot']}ms")
-        return self._aot if self._aot.ready else None
+            log(f"AOT wrapper ready in {self._load_times['aot']}ms")
+        return self._aot
 
     def _bubble_segmenter(self):
         """Lazy manga109 bubble segmenter (Android OnnxBubbleSegmenter).
@@ -782,6 +793,11 @@ class Pipeline:
     def inpaint_page(self, page: str, force: bool = False, mode: str | None = None) -> dict:
         with self.lock:
             mode = (mode or self.settings.get("inpaint_mode", "quality")).upper()
+            engine = str(self.settings.get("inpaint_engine", "legacy")).lower()
+            bubble_leg = str(self.settings.get("inpaint_bubble_leg", "android-fill")).lower()
+            free_leg = str(self.settings.get("inpaint_free_leg", "opencv")).lower()
+            if engine not in ("legacy", "android"):
+                raise ValueError(f"unsupported inpaint engine: {engine}")
             det_data = self._cache["detections"].get(page) or {}
             raw_boxes = det_data.get("boxes", [])
             ocr_data = self._cache["ocr"].get(page) or {}
@@ -800,39 +816,92 @@ class Pipeline:
             stem = Path(page).stem
             out_path = out_dir / (stem + ".png")
             mask_path = mask_dir / (stem + ".png")
+            provenance_path = out_dir / (stem + ".json")
+            leg_matrix = {"bubble": bubble_leg, "free_text": free_leg}
+            cache_key = {
+                "engine": engine,
+                "leg_matrix": leg_matrix,
+                "legacy_mode": mode if engine == "legacy" else None,
+            }
+            cached = {}
+            if provenance_path.exists():
+                try:
+                    with open(provenance_path, "r", encoding="utf-8") as f:
+                        cached = json.load(f)
+                except Exception:
+                    cached = {}
+            cache_matches = cached.get("cache_key") == cache_key
 
-            if force or not out_path.exists() or not mask_path.exists():
+            if force or not out_path.exists() or not mask_path.exists() or not cache_matches:
                 img = self.page_image(page)
-                # 1. Bubble segmentation model (YOLO11-seg manga109)
-                seg_masks = self.bubble_masks(page)
-
-                # 2. Paddle Det line refinement
-                paddle_det = self._inpaint_paddle_det()
-
-                # 3. AOT neural inpainter (if QUALITY)
-                aot = self._aot_inpainter() if mode == "QUALITY" else None
-
-                # 4. Inpaint pipeline (AotReportBubbleFill + PushPull/AOT)
-                import aot_inpaint
-                bubble_erosion = int(self.settings.get("bubble_mask_erosion", 5))
                 t0 = time.perf_counter()
-                cleaned, mask, stats = aot_inpaint.inpaint_page_pipeline(
-                    img, regions, raw_detections=raw_boxes,
-                    seg_masks=seg_masks, mode=mode,
-                    paddle_det=paddle_det, aot=aot,
-                    bubble_erosion=bubble_erosion,
-                )
+                if engine == "android":
+                    import inpaint_android
+                    seg_masks = self.bubble_masks(page)
+                    paddle_det = self._inpaint_paddle_det()
+                    needs_aot = bubble_leg == "aot" or free_leg == "aot"
+                    aot = self._aot_inpainter(allow_dynamic=True) if needs_aot else None
+                    cleaned, mask, region_routes, stats = inpaint_android.inpaint_page_android(
+                        img, regions, raw_detections=raw_boxes,
+                        seg_masks=seg_masks, bubble_leg=bubble_leg,
+                        free_leg=free_leg, paddle_det=paddle_det, aot=aot,
+                    )
+                    provenance = {
+                        "engine": "android",
+                        "cache_key": cache_key,
+                        "leg_matrix": leg_matrix,
+                        "stats": stats,
+                        "regions": region_routes,
+                    }
+                else:
+                    # Legacy engine remains available for comparison.
+                    seg_masks = self.bubble_masks(page)
+                    paddle_det = self._inpaint_paddle_det()
+                    aot = self._aot_inpainter() if mode == "QUALITY" else None
+                    import aot_inpaint
+                    bubble_erosion = int(self.settings.get("bubble_mask_erosion", 5))
+                    cleaned, mask, stats = aot_inpaint.inpaint_page_pipeline(
+                        img, regions, raw_detections=raw_boxes,
+                        seg_masks=seg_masks, mode=mode,
+                        paddle_det=paddle_det, aot=aot,
+                        bubble_erosion=bubble_erosion,
+                    )
+                    provenance = {
+                        "engine": "legacy", "cache_key": cache_key,
+                        "leg_matrix": leg_matrix, "mode": mode,
+                        "stats": stats, "regions": [],
+                    }
                 inp_ms = round((time.perf_counter() - t0) * 1000, 1)
                 self._inpaint_times[page] = inp_ms
 
                 cleaned.save(out_path)
                 mask_img = Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
                 mask_img.save(mask_path)
+                provenance["infer_ms"] = inp_ms
+                try:
+                    with open(provenance_path, "w", encoding="utf-8") as f:
+                        json.dump(provenance, f, indent=2, ensure_ascii=False)
+                except Exception as e:
+                    self.log(f"warning: failed to save inpaint provenance for {page}: {e}")
                 self._render_dirty[page] = True
-                self.log(f"inpaint[{mode.lower()}] {page}: {stats.get('bubbleBoxes', 0)} bubbles, "
-                         f"{stats.get('freeBoxes', 0)} free boxes -> {out_path.name} ({inp_ms}ms)")
+                if engine == "android":
+                    self.log(f"inpaint[android {bubble_leg}+{free_leg}] {page}: "
+                             f"{stats.get('mask_pixels', 0)} mask pixels -> "
+                             f"{out_path.name} ({inp_ms}ms)")
+                else:
+                    self.log(f"inpaint[legacy {mode.lower()}] {page}: "
+                             f"{stats.get('bubbleBoxes', 0)} bubbles, "
+                             f"{stats.get('freeBoxes', 0)} free boxes -> "
+                             f"{out_path.name} ({inp_ms}ms)")
+            else:
+                provenance = cached
+                if "infer_ms" in cached:
+                    self._inpaint_times[page] = cached["infer_ms"]
             return {"page": page, "path": str(out_path), "mask_path": str(mask_path),
-                    "infer_ms": self._inpaint_times.get(page, 0)}
+                    "infer_ms": self._inpaint_times.get(page, 0),
+                    "engine": engine, "leg_matrix": leg_matrix,
+                    "provenance": provenance.get("regions", []),
+                    "provenance_path": str(provenance_path)}
 
     def inpainted_image(self, page: str) -> Image.Image:
         out_path = self.studio_dir / "inpaint" / (Path(page).stem + ".png")
@@ -1636,6 +1705,9 @@ DEFAULT_SETTINGS = {
     "erase": "auto",
     "ocr_engine": "mangaocr",        # "mangaocr" | "paddle"
     "inpaint_mode": "quality",       # "quality" (AOT-512) | "fast" (classical)
+    "inpaint_engine": "legacy",      # "legacy" | "android"
+    "inpaint_bubble_leg": "android-fill",  # android-fill | opencv | aot | pushpull
+    "inpaint_free_leg": "opencv",    # opencv | aot | pushpull
     "translate_backend": "google",   # "google" | "lm-studio"
     "bubble_segmentation": True,     # manga109 YOLO11-seg (on when model loads)
     "bubble_mask_erosion": 5,        # px erosion for bubble seg mask edge reduction
