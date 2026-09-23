@@ -1,6 +1,6 @@
 {
   "smoke": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\08-B2-visualization\\evidence\\smoke_b2.py",
-  "static_ui": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-b2-visualization\\tools\\translation_studio\\static",
+  "static_ui": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-b1-inpaint-provenance\\tools\\translation_studio\\static",
   "server_and_pipeline": "this B1 worktree",
   "fixture_adaptation": [
     "stamp current A5 detection-capture and OCR cache fingerprints",

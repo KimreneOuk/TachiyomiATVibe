@@ -283,7 +283,13 @@ class Pipeline:
             stale = previous.get("fingerprint") != fingerprint
         else:
             stored = self._cached_page_fingerprint(page)
-            stale = self._has_page_artifacts(page) and stored != fingerprint
+            # A legacy cache may predate page fingerprints entirely. Adopt
+            # the current source identity on first touch so its artifacts
+            # remain inspectable; stage cache validation still decides
+            # whether those records can be reused. A persisted fingerprint,
+            # however, is evidence that a different page was previously
+            # accepted and must be invalidated when it no longer matches.
+            stale = stored is not None and stored != fingerprint
         if stale:
             self._invalidate_page_artifacts(page)
         self._page_fingerprints[page] = info

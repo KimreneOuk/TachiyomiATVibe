@@ -40,6 +40,73 @@ def _asset_spot_check() -> dict:
                 "sample_changed": True, "full_digest_changed": True}
 
 
+def _legacy_cache_adoption_check() -> dict:
+    """Legacy records without page identity survive adoption, then invalidate."""
+    page = "legacy.png"
+    width, height = 40, 32
+    with tempfile.TemporaryDirectory(prefix="t937-a5-legacy-adoption-") as temp:
+        chapter = Path(temp)
+        source = chapter / page
+        Image.new("RGB", (width, height), (180, 20, 30)).save(source)
+        studio = chapter / ".studio"
+        inpaint_dir = studio / "inpaint"
+        inpaint_dir.mkdir(parents=True)
+        detection_record = {"legacy_marker": "keep", "boxes": []}
+        ocr_record = {"legacy_marker": "keep", "regions": []}
+        translation_record = {"r00": "saved translation"}
+        detections_path = studio / "detections.json"
+        ocr_path = studio / "ocr.json"
+        translations_path = studio / "translations.json"
+        detections_path.write_text(json.dumps({page: detection_record}),
+                                   encoding="utf-8")
+        ocr_path.write_text(json.dumps({page: ocr_record}), encoding="utf-8")
+        translations_path.write_text(json.dumps({page: translation_record}),
+                                     encoding="utf-8")
+        inpaint_metadata = inpaint_dir / "legacy.json"
+        inpaint_image = inpaint_dir / "legacy.png"
+        inpaint_metadata.write_text(json.dumps({"regions": []}),
+                                    encoding="utf-8")
+        inpaint_image.write_bytes(b"legacy inpaint output")
+
+        p = pipeline.Pipeline()
+        p.record_recent = lambda *_args, **_kwargs: []
+        p.open_folders(str(chapter), None)
+
+        # Opening folders reads legacy caches but does not accept a page
+        # fingerprint. This first decorated page operation must adopt the
+        # source fingerprint without treating the missing value as a change.
+        p.page_dims(page)
+        adopted_fingerprint = p._page_fingerprints[page]["fingerprint"]
+        assert page in p._cache["detections"]
+        assert page in p._cache["ocr"]
+        assert p._cache["detections"][page]["legacy_marker"] == "keep"
+        assert p._cache["ocr"][page]["legacy_marker"] == "keep"
+        assert json.loads(detections_path.read_text(encoding="utf-8"))[page] == detection_record
+        assert json.loads(ocr_path.read_text(encoding="utf-8"))[page] == ocr_record
+        assert inpaint_metadata.is_file() and inpaint_image.is_file()
+
+        # Once the accepted page changes, the next operation must invalidate
+        # the legacy records and derived image files as usual.
+        Image.new("RGB", (width, height), (10, 30, 180)).save(source)
+        p.page_dims(page)
+        changed_fingerprint = p._page_fingerprints[page]["fingerprint"]
+        assert changed_fingerprint != adopted_fingerprint
+        assert page not in p._cache["detections"]
+        assert page not in p._cache["ocr"]
+        assert page in p._cache["translations"]
+        assert not inpaint_metadata.exists() and not inpaint_image.exists()
+        assert json.loads(detections_path.read_text(encoding="utf-8")) == {}
+        assert json.loads(ocr_path.read_text(encoding="utf-8")) == {}
+        return {
+            "fingerprintless_legacy_records_preserved_on_first_touch": True,
+            "page_fingerprint_adopted": adopted_fingerprint,
+            "cache_json_unchanged_on_adoption": True,
+            "changed_source_fingerprint": changed_fingerprint,
+            "changed_page_invalidated_detection_ocr_and_inpaint_files": True,
+            "translations_preserved": True,
+        }
+
+
 def _capture(page: str, width: int, height: int, box: list[int]) -> dict:
     detector_sha = pipeline._asset_sha12(pipeline.DETECTOR_PATH)
     panel_sha = pipeline._asset_sha12(pipeline.PANEL_DETECTOR_PATH)
@@ -77,6 +144,7 @@ def _run_checks() -> dict:
     page = "page.png"
     width, height = 80, 64
     asset_spot_check = _asset_spot_check()
+    legacy_cache_adoption = _legacy_cache_adoption_check()
     counts = {"capture": 0, "ocr": 0, "inpaint": 0, "render": 0}
     with tempfile.TemporaryDirectory(prefix="t937-a5-cache-") as temp:
         chapter = Path(temp)
@@ -344,6 +412,7 @@ def _run_checks() -> dict:
                 "text_detector_recaptured": False,
             },
             "asset_stat_cache_spot_check": asset_spot_check,
+            "legacy_cache_fingerprint_adoption": legacy_cache_adoption,
             "unchanged_inputs": {
                 "capture_count": counts["capture"],
                 "ocr_count": counts["ocr"],

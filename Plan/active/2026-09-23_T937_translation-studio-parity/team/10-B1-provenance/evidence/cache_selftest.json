@@ -56,6 +56,14 @@
     "sample_changed": true,
     "full_digest_changed": true
   },
+  "legacy_cache_fingerprint_adoption": {
+    "fingerprintless_legacy_records_preserved_on_first_touch": true,
+    "page_fingerprint_adopted": "7d5687b65d8b951530fb70aec70fc8cad314b12beba3c5547bfca9d79c200437",
+    "cache_json_unchanged_on_adoption": true,
+    "changed_source_fingerprint": "756ae28cfdc0193d16acfd7649d6c8cd42a4f4a9d5c3cba0c6f0e98a9ccf39d4",
+    "changed_page_invalidated_detection_ocr_and_inpaint_files": true,
+    "translations_preserved": true
+  },
   "unchanged_inputs": {
     "capture_count": 4,
     "ocr_count": 6,
