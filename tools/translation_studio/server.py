@@ -233,10 +233,10 @@ class Handler(BaseHTTPRequestHandler):
                     page = get("p")
                     stem = Path(page).stem
                     out = PIPELINE.studio_dir / "render" / (stem + ".png")
-                    try:
-                        PIPELINE.render_page(page)
-                    except Exception:
-                        pass
+                    # Serve-or-fallback: GET image routes must never run
+                    # pipeline stages — an auto-run under the global lock
+                    # starves concurrent readers (UI boots, /api/artifacts).
+                    # Stage execution belongs to the explicit POST routes.
                     if out.exists():
                         return self._send_file(out, "image/png", cache_seconds=0)
                     # Fallback to original image if render does not exist yet (prevents 500 error & blank display!)
@@ -249,10 +249,7 @@ class Handler(BaseHTTPRequestHandler):
                 with PIPELINE.lock:
                     page = get("p")
                     out = PIPELINE.studio_dir / "inpaint" / (Path(page).stem + ".png")
-                    try:
-                        PIPELINE.inpaint_page(page)
-                    except Exception:
-                        pass
+                    # Serve-or-fallback, same rule as /img/render above.
                     if out.exists():
                         return self._send_file(out, "image/png", cache_seconds=0)
                     orig = PIPELINE.chapter / page
