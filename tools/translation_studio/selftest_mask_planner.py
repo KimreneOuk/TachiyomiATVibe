@@ -68,10 +68,31 @@ def _pipeline(chapter: Path, page: str, raw: dict, ocr_regions: list[dict]) -> p
     p._cache = {"detections": {page: raw},
                 "ocr": {page: {"regions": ocr_regions, "engine": "mangaocr"}},
                 "translations": {page: {}}}
+    page_info = p._compute_page_fingerprint(page)
+    p._page_fingerprints[page] = page_info
+    text_model = raw["models"]["text-detector"]
+    text_model["asset"] = pipeline.DETECTOR_PATH.name
+    text_model["asset_sha"] = pipeline._asset_sha12(pipeline.DETECTOR_PATH)
+    panel_model = raw["models"]["panel-detector"]
+    panel_model["asset"] = pipeline.PANEL_DETECTOR_PATH.name
+    panel_model["asset_sha"] = pipeline._asset_sha12(pipeline.PANEL_DETECTOR_PATH)
+    panel_model.setdefault("outputs", [])
+    segmenter_model = raw["models"]["bubble-segmenter"]
+    from segmentation import SEGMENTER_MODEL
+    segmenter_model["asset"] = SEGMENTER_MODEL.name
+    segmenter_model["asset_sha"] = pipeline._asset_sha12(SEGMENTER_MODEL)
+    p._stamp_detection_capture(raw, page_info)
     p._dims = {page: list(raw["page_wh"])}
     p._render_dirty = {page: True}
     p._bubble_mask_cache = {}
     p._inpaint_paddle_det = lambda: None
+    # These A4 planner cases intentionally exercise synthetic OCR records,
+    # including records excluded at the current confidence. Keep that fixture
+    # payload fixed while A5 production tests cover OCR cache validation.
+    p.ocr_page = lambda requested_page, conf=None, force=False: {
+        "page": requested_page,
+        "regions": p._cache["ocr"].get(requested_page, {}).get("regions", []),
+    }
     return p
 
 
@@ -179,7 +200,8 @@ def _normal_page_checks() -> dict:
         assert parent_source["artifact_id"] == "dt-td0000"
         assert parent_source["model"] == "text-detector"
         assert parent_source["asset"].endswith(".onnx")
-        assert parent_source["asset_sha"] == "fixture-sha"
+        assert parent_source["asset_sha"] == pipeline._asset_sha12(
+            pipeline.DETECTOR_PATH)
         assert parent_source["window"] is None
         detector_only = next(item for item in second_json["regions"]
                              if item["kind"] == "detector-only")

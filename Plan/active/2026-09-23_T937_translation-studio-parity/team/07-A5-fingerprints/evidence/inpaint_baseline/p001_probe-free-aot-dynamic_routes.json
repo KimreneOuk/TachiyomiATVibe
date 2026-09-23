@@ -1,0 +1,80 @@
+{
+  "page": "p001.jpg",
+  "probe": "free-aot-dynamic",
+  "leg_matrix": {
+    "bubble": "android-fill",
+    "free_text": "aot"
+  },
+  "stats": {
+    "bubble_leg": "android-fill",
+    "free_leg": "aot",
+    "bubble_boxes": 0,
+    "free_boxes": 1,
+    "free_groups": 1,
+    "bubble_components": 0,
+    "combined_components": 1,
+    "mask_pixels": 2648,
+    "segmenter_union_pixels": null,
+    "segmenter_union_sha256": null,
+    "segmenter_components": [],
+    "total_ms": 13299.496
+  },
+  "regions": [
+    {
+      "id": "probe-free-aot-dynamic",
+      "artifact_id": null,
+      "kind": "ocr-region",
+      "text": "probe",
+      "label": 2,
+      "score": null,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            418,
+            684,
+            482,
+            716
+          ],
+          "label": 2,
+          "score": null,
+          "artifact_id": null,
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            418,
+            684,
+            482,
+            716
+          ]
+        }
+      ],
+      "route_taken": "freetext/aot-fixed512-uniformity-rejected->aot-dynamic",
+      "mask_component_id": "c001",
+      "segmenter_component_id": null,
+      "erase_mask_component_id": "c001",
+      "context_crop_bbox": [
+        194,
+        444,
+        706,
+        956
+      ],
+      "timing_ms": {
+        "planning": 0.089,
+        "refinement": 0.004,
+        "fill": 13246.195,
+        "total": 13246.288
+      },
+      "timing_scope": "region"
+    }
+  ],
+  "inpainted_png": "p001_probe-free-aot-dynamic_inpainted.png",
+  "mask_png": "p001_probe-free-aot-dynamic_mask.png"
+}

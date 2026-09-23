@@ -1,0 +1,64 @@
+{
+  "page": "page.png",
+  "same_size_source_replacement": {
+    "dimensions": [
+      80,
+      64
+    ],
+    "compressed_bytes_before": 185,
+    "compressed_bytes_after": 185,
+    "fingerprint_changed": true,
+    "dependent_cache_counts": {
+      "capture": 3,
+      "ocr": 5,
+      "inpaint": 5,
+      "render": 6
+    }
+  },
+  "upstream_detection_change": {
+    "capture_reused": true,
+    "decision_fingerprint_changed": true,
+    "ocr_inpaint_render_recomputed": true
+  },
+  "translation_only_edit": {
+    "inpaint_reused": true,
+    "render_recomputed": true
+  },
+  "direct_inpaint_validates_upstream": {
+    "detector_identity_change_recaptured": true,
+    "ocr_setting_change_recomputed": true,
+    "force_required": false
+  },
+  "skipped_model_asset_change": {
+    "panel_inference_eligible": false,
+    "text_detector_recaptured": false
+  },
+  "asset_stat_cache_spot_check": {
+    "same_size": true,
+    "mtime_restored": true,
+    "sample_changed": true,
+    "full_digest_changed": true
+  },
+  "unchanged_inputs": {
+    "capture_count": 3,
+    "ocr_count": 5,
+    "inpaint_count": 5,
+    "render_count": 6,
+    "process_page_hash_calls": 1
+  },
+  "initial_cache_fingerprints": {
+    "ocr": "cb9d2276506ddf6c4f032b46d21fe940f60d82a6e0d664abe396cb33df60249a",
+    "inpaint": "90cc78c936aabd254e741f8b9eefb89d013d0dd60b35a32d8f8e856b33fcc5fd",
+    "render": "18879a04968a3ec453eb55f79a99e0e0fce046d410a872eedaed2e665d4e57b2"
+  },
+  "changed_upstream_fingerprints": {
+    "ocr": "4babe10347a0c2f58827a7ed12b858a7dadd710d8e49bd5df1e9b97f7409b715",
+    "inpaint": "7899d0d20a7fb93f015e6d1d18dddffa5ebf35bda0801a9388a8cf2ca9b92d5e",
+    "render": "eab2d1f9996cad07487e3f9ecd1bdb775799482c2ed1980f9bedade2e03558a4"
+  },
+  "changed_page_fingerprints": {
+    "ocr": "37e8c6621661ce044367894667cbffa991cb503c36b3568571ddb71f2a5e129d",
+    "inpaint": "daf3aabf9dccc17d008b7e758978cc3c5ede17eb5abdf41e5eb3eda0ee0c3fb5",
+    "render": "3edd8c68bc62c8a3c03654eb0231e2e91fbe2406be909154b35ce292abf3d7ee"
+  }
+}
