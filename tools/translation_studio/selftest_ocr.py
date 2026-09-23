@@ -136,6 +136,75 @@ class OcrParitySelfTest(unittest.TestCase):
                 leaf.close()
             crop.close()
 
+    def test_korean_detector_vertical_line_splits_each_glyph(self):
+        crop = Image.new("RGB", (50, 120), "white")
+        draw = ImageDraw.Draw(crop)
+        for top in (10, 50, 90):
+            draw.rectangle((5, top, 25, top + 15), fill="black")
+        detector = FixedDetector([[5, 10, 26, 110, 0.9]])
+        rec = RecordingRec([("가", 0.9), ("나", 0.9), ("다", 0.9)])
+        try:
+            plan = paddle_ocr.plan_region(
+                detector, crop, vertical_fallback=False, language="ko")
+            try:
+                self.assertEqual(len(plan.leaves), 3)
+                self.assertEqual([leaf.size for leaf in plan.leaves],
+                                 [(15, 21), (15, 21), (16, 21)])
+                self.assertEqual(plan.groups[0].leaf_indices, [0, 1, 2])
+            finally:
+                for leaf in plan.leaves:
+                    leaf.close()
+            result = paddle_ocr.recognize_regions(
+                detector, rec, [crop], region_boxes=[(0, 0, 50, 120)],
+                language="ko", webtoon_mode=True)
+            self.assertEqual(result[0]["text"], "가 나 다")
+            self.assertFalse(paddle_ocr._vertical_cjk("ko"))
+        finally:
+            crop.close()
+
+    def test_language_specific_separators_join_detector_lines(self):
+        cases = [
+            ("en", ["KEEP OUT", "DANGER"], "KEEP OUT DANGER"),
+            ("ko", ["위험", "출입 금지"], "위험 출입 금지"),
+            ("ja", ["警告", "立入禁止"], "警告立入禁止"),
+            ("zh", ["警告", "禁止入内"], "警告禁止入内"),
+        ]
+        lines = [[2, 2, 42, 14, 0.9], [2, 30, 42, 42, 0.9]]
+        for language, line_text, expected in cases:
+            with self.subTest(language=language):
+                crop = Image.new("RGB", (60, 50), "white")
+                rec = RecordingRec([(line_text[0], 0.9), (line_text[1], 0.9)])
+                try:
+                    result = paddle_ocr.recognize_regions(
+                        FixedDetector(lines), rec, [crop], max_batch=2,
+                        language=language, webtoon_mode=True)
+                finally:
+                    crop.close()
+                self.assertEqual(result[0]["text"], expected)
+
+    def test_ocr_usability_filter_matches_android_language_rules(self):
+        cases = [
+            ("ja", "Latin only", 0.99, ""),
+            ("ja", "日本語", 0.49, ""),  # confident script-valid text still obeys detector confidence
+            ("zh", "!!!", 0.99, ""),
+            ("ko", "HELLO", 0.99, ""),
+            ("ko", "안녕", 0.99, "안녕"),
+            ("en", "!!!", 0.99, ""),
+            ("en", "café", 0.99, "café"),
+            ("en", "\U0001d400", 0.99, ""),  # Android Char.isLetter is BMP-only here
+        ]
+        for language, text, confidence, expected in cases:
+            with self.subTest(language=language, text=text, confidence=confidence):
+                crop = Image.new("RGB", (40, 20), "white")
+                rec = RecordingRec([(text, confidence)])
+                try:
+                    result = paddle_ocr.recognize_regions(
+                        FixedDetector([[1, 1, 30, 12, 0.9]]), rec, [crop],
+                        language=language, webtoon_mode=True)
+                finally:
+                    crop.close()
+                self.assertEqual(result[0]["text"], expected)
+
     def test_ink_gap_fallback_reads_columns_right_to_left(self):
         crop = Image.new("RGB", (60, 100), "white")
         draw = ImageDraw.Draw(crop)
@@ -156,7 +225,7 @@ class OcrParitySelfTest(unittest.TestCase):
         det = FixedDetector([])
         rec = RecordingRec([("", 1.0)])
         rec.results = lambda crops, _batch: (
-            [("", 1.0)] if len(rec.calls) == 1 else [("retry", 1.0)])
+            [("", 1.0)] if len(rec.calls) == 1 else [("再読", 1.0)])
         padded = Image.new("RGB", (54, 104), "white")
         unpadded = Image.new("RGB", (30, 80), "white")
         calls = []
@@ -174,7 +243,7 @@ class OcrParitySelfTest(unittest.TestCase):
             padded.close()
             unpadded.close()
 
-        self.assertEqual(result[0]["text"], "retry")
+        self.assertEqual(result[0]["text"], "再読")
         self.assertEqual(calls, [True])
         self.assertEqual(rec.calls, [[(104, 54)], [(80, 30)]])
 
@@ -195,14 +264,33 @@ class OcrParitySelfTest(unittest.TestCase):
         crops = [Image.new("RGB", (30, 20), "white") for _ in range(2)]
         try:
             result = paddle_ocr.recognize_regions(
-                None, rec, crops, max_batch=2,
+                FixedDetector([[0, 0, 20, 10, 0.9]]), rec, crops, max_batch=2,
                 region_boxes=[(0, 0, 30, 20), (40, 0, 70, 20)],
                 language="en")
         finally:
             for crop in crops:
                 crop.close()
-        self.assertEqual(rec.calls, [[(30, 20), (30, 20)]])
+        self.assertEqual(rec.calls, [[(20, 10), (20, 10)]])
         self.assertEqual([row["text"] for row in result], ["first", ""])
+
+    def test_detector_missing_whole_region_disables_confidence_but_keeps_usability(self):
+        cases = [
+            (None, "en", "fallback", "fallback"),
+            (FixedDetector([]), "en", "fallback", "fallback"),
+            (None, "ja", "Latin only", ""),
+            (None, "en", "!!!", ""),
+        ]
+        for detector, language, text, expected in cases:
+            with self.subTest(detector=detector is not None, language=language, text=text):
+                crop = Image.new("RGB", (80, 30), "white")
+                rec = RecordingRec([(text, 0.49)])
+                try:
+                    result = paddle_ocr.recognize_regions(
+                        detector, rec, [crop], region_boxes=[(0, 0, 80, 30)],
+                        language=language, webtoon_mode=True)
+                finally:
+                    crop.close()
+                self.assertEqual(result[0]["text"], expected)
 
     def test_manga_decoder_contract_and_preprocessing(self):
         self.assertEqual((manga_decode.BOS, manga_decode.EOS,

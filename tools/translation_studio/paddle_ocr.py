@@ -367,6 +367,7 @@ class PaddleLineGroup:
 class PaddleRegionPlan:
     leaves: list[Image.Image]
     groups: list[PaddleLineGroup]
+    filter_confidence: bool = True
 
 
 def _detect_vertical_glyph_rows(crop: Image.Image) -> list[tuple[int, int]]:
@@ -429,6 +430,43 @@ def _vertical_cjk(language: str) -> bool:
             or value.startswith(("ja-", "zh-")))
 
 
+def _cjk_ocr_language(language: str) -> bool:
+    value = str(language or "").strip().lower().replace("_", "-")
+    return (_vertical_cjk(value)
+            or value in {"ko", "kor", "korean"}
+            or value.startswith("ko-"))
+
+
+def _line_join_separator(language: str) -> str:
+    """TextRecognizerLanguage.joinSeparator: Japanese/Chinese concatenate."""
+    return "" if _vertical_cjk(language) else " "
+
+
+def _is_android_cjk_character(character: str) -> bool:
+    """Match OcrTextFilter.Char.isCjk's supported BMP ranges."""
+    codepoint = ord(character)
+    return any(start <= codepoint <= end for start, end in (
+        (0x3040, 0x309F),  # Hiragana
+        (0x30A0, 0x30FF),  # Katakana
+        (0x4E00, 0x9FFF),  # CJK unified ideographs
+        (0x3400, 0x4DBF),  # CJK extension A
+        (0xAC00, 0xD7AF),  # Hangul syllables
+        (0xF900, 0xFAFF),  # CJK compatibility ideographs
+    ))
+
+
+def _is_usable_ocr_text(text: str, language: str) -> bool:
+    """Match Android OcrTextFilter.isUsable(text, language)."""
+    if not text:
+        return False
+    if _cjk_ocr_language(language):
+        return any(_is_android_cjk_character(character) for character in text)
+    # Kotlin's Char.isLetter examines UTF-16 code units; supplementary
+    # codepoints arrive as surrogates there and do not count as letters.
+    return any(ord(character) <= 0xFFFF and character.isalpha()
+               for character in text)
+
+
 def _add_group(plan: PaddleRegionPlan, image: Image.Image,
                bbox: tuple[int, int, int, int] | None, vertical: bool,
                score: float | None) -> None:
@@ -473,7 +511,7 @@ def plan_region(det: PaddleDet | None, crop: Image.Image, *,
                 force_heuristic: bool = False) -> PaddleRegionPlan:
     """Plan Android's detector-line or ink-gap recognition leaves for one ROI."""
     plan = PaddleRegionPlan([], [])
-    vertical_cjk = _vertical_cjk(language)
+    vertical_cjk = _cjk_ocr_language(language)
     lines = []
     if det is not None and not force_heuristic:
         try:
@@ -513,6 +551,9 @@ def plan_region(det: PaddleDet | None, crop: Image.Image, *,
     if vertical_fallback:
         columns = _detect_vertical_columns(crop)
         if len(columns) <= 1:
+            # Android's one-read degraded branch disables Paddle confidence
+            # filtering, while still applying the language usability filter.
+            plan.filter_confidence = False
             _add_group(plan, _rotate_ccw(crop), None, True, None)
             return plan
         # The detector returns left-to-right columns; manga reads right-to-left.
@@ -525,6 +566,9 @@ def plan_region(det: PaddleDet | None, crop: Image.Image, *,
         if plan.leaves:
             return plan
 
+    # Android's whole-region single-line fallback keeps usable text even when
+    # the Paddle confidence estimate is below the detector-line cutoff.
+    plan.filter_confidence = False
     _add_group(plan, crop.copy(), None, False, None)
     return plan
 
@@ -553,8 +597,10 @@ def _recognize_plans(rec: PaddleRec, plans: list[PaddleRegionPlan],
 
 
 def _compose_plan(plan: PaddleRegionPlan,
-                  results: list[tuple[str, float] | Exception]) -> tuple[str, list[dict], str | None]:
+                  results: list[tuple[str, float] | Exception],
+                  language: str) -> tuple[str, list[dict], str | None]:
     parts, line_info = [], []
+    separator = _line_join_separator(language)
     for group in plan.groups:
         group_parts = []
         for index in group.leaf_indices:
@@ -562,9 +608,13 @@ def _compose_plan(plan: PaddleRegionPlan,
             if isinstance(result, Exception):
                 return "", [], str(result)
             text, confidence = result
-            if confidence >= OCR_MIN_CONFIDENCE:
+            if (plan.filter_confidence
+                    and confidence < OCR_MIN_CONFIDENCE
+                    and confidence < 1.0):
+                continue
+            if _is_usable_ocr_text(text, language):
                 group_parts.append(text)
-        text = "".join(group_parts)
+        text = separator.join(group_parts)
         if text:
             parts.append(text)
             if group.bbox is not None and group.score is not None:
@@ -572,7 +622,7 @@ def _compose_plan(plan: PaddleRegionPlan,
                     "bbox": list(group.bbox), "vertical": group.vertical,
                     "score": round(group.score, 3), "text": text,
                 })
-    return "".join(parts), line_info, None
+    return separator.join(parts), line_info, None
 
 
 def recognize_regions(det: PaddleDet | None, rec: PaddleRec,
@@ -620,7 +670,7 @@ def recognize_regions(det: PaddleDet | None, rec: PaddleRec,
     outputs = []
     empty_vertical_indices = []
     for index, (plan, recognition) in enumerate(zip(plans, initial_results)):
-        text, line_info, error = _compose_plan(plan, recognition)
+        text, line_info, error = _compose_plan(plan, recognition, language)
         outputs.append({"text": text, "lines": line_info, "error": error})
         if needs_unpadded[index] and not text and unpadded_crop_factory is not None:
             empty_vertical_indices.append(index)
@@ -639,7 +689,7 @@ def recognize_regions(det: PaddleDet | None, rec: PaddleRec,
         batch_trace.extend(getattr(rec, "last_batch_trace", []))
         for index, plan, recognition in zip(
                 empty_vertical_indices, fallback_plans, fallback_results):
-            text, line_info, error = _compose_plan(plan, recognition)
+            text, line_info, error = _compose_plan(plan, recognition, language)
             if text:
                 outputs[index] = {"text": text, "lines": line_info, "error": None}
             elif error and outputs[index].get("error") is None:
