@@ -1,0 +1,38 @@
+{
+  "checks": [
+    "open temporary demo_chapter with current A1/A4 cache fixtures",
+    "GET /api/artifacts reads existing A1/A4/OCR/translation JSON",
+    "missing cache source returns empty data with reason",
+    "GET /img/seg_overlay composites cached page-space RLE over the original",
+    "Text badges show cached OCR/translation and the layer toggle hides them",
+    "All raw preset exposes every cached candidate",
+    "suppression view dims survivor; inspector exposes loser/winner/rule/threshold",
+    "lowered detector score slider adds cached no-downstream hatch",
+    "Original | Inpainted compare displays saved image without a model POST",
+    "compare without an inpaint cache falls back to Original without requesting /img/inpainted",
+    "filter changes posted settings only; no model stage or process POST"
+  ],
+  "export": {
+    "source_path": ".studio/exports/p001-production-20260923T143439_922523Z.json",
+    "evidence_path": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\08-B2-visualization\\evidence\\filtered_view.json",
+    "record_count": 7,
+    "screenshot_path": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\08-B2-visualization\\evidence\\smoke_ui.png"
+  },
+  "browser_posts": [
+    "/api/settings",
+    "/api/export-filtered",
+    "/api/settings"
+  ],
+  "image_gets": [
+    "/img/render?p=p001.jpg",
+    "/img/render?p=p002.jpg",
+    "/img/thumb?p=p001.jpg&s=128",
+    "/img/thumb?p=p002.jpg&s=128",
+    "/img/render?p=p001.jpg",
+    "/img/render?p=p002.jpg",
+    "/img/original?p=p001.jpg",
+    "/img/original?p=p002.jpg",
+    "/img/inpainted?p=p001.jpg"
+  ],
+  "browser_errors": []
+}
