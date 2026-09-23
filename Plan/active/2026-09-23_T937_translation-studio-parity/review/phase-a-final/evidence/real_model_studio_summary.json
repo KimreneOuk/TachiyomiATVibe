@@ -1,0 +1,1516 @@
+{
+  "commit": "e00f0c38d95f9317a9591adce11eff93684b9aa1",
+  "mode": "real-model Studio pipeline; no fake ONNX sessions",
+  "chain": "Pipeline.process_page(translate=False), then unchanged-stage replay",
+  "inputs": {
+    "regular_demo": {
+      "file": "p001.jpg",
+      "sha256": "e2d6cd3bf717e2bab516691d0075683ca7671d6ba74569ce9aa3f2c318b6b337"
+    },
+    "a1_tall_stack": {
+      "method": "A1 selftest_detect.py: stack p001 then p002, centered",
+      "size": [
+        900,
+        2800
+      ],
+      "aspect_ratio": 3.1111,
+      "source_sha256": {
+        "p001.jpg": "e2d6cd3bf717e2bab516691d0075683ca7671d6ba74569ce9aa3f2c318b6b337",
+        "p002.jpg": "fa1cea76ebe5892d8acc9495188b6b1b822157d10682ee62e13520c47d4164ca"
+      },
+      "sha256": "d9585301d02ff3f8db6bedafcf3f99e6b1dfb7451bae321b5dd3680ed20ed50e"
+    },
+    "free_text_control": {
+      "method": "known text drawn into p001's blank first-panel area",
+      "text": "テスト",
+      "bbox": [
+        72,
+        86,
+        288,
+        145
+      ],
+      "size": [
+        900,
+        1400
+      ],
+      "sha256": "773a56666d99a9b06ad3287e8a67940d87f21d9355da7add92e3656f287f1b87"
+    }
+  },
+  "models": {
+    "paddle_det": {
+      "path": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+      "bytes": 9880512,
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+    },
+    "paddle_rec": {
+      "path": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+      "bytes": 21159378,
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+    }
+  },
+  "presets": {
+    "android-fast": {
+      "inpaint_bubble_leg": "android-fill",
+      "inpaint_free_leg": "opencv"
+    },
+    "android-quality": {
+      "inpaint_bubble_leg": "android-fill",
+      "inpaint_free_leg": "aot"
+    }
+  },
+  "cases": [
+    {
+      "case": "regular-demo",
+      "preset": "android-fast",
+      "page": "p001.jpg",
+      "page_wh": [
+        900,
+        1400
+      ],
+      "page_fingerprint": "2fa20249a1fbd38df4e235979103f239114c0fa5ec71d9a1c1fc569ddf99bcbf",
+      "detection_capture_fingerprint": "0adb72eacca9c4b5018e56b38eb88e1d5dc61233be1683c5c586c46d6b3167ae",
+      "ocr_engine": "paddle",
+      "ocr_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0005",
+          "label": 1,
+          "score": 0.846,
+          "box": [
+            589,
+            206,
+            710,
+            291
+          ],
+          "text": "お前は誰だ！",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r01",
+          "artifact_id": "dt-td0003",
+          "label": 1,
+          "score": 0.892,
+          "box": [
+            180,
+            665,
+            421,
+            751
+          ],
+          "text": "静かだ…可主聞二えな",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r02",
+          "artifact_id": "dt-td0004",
+          "label": 1,
+          "score": 0.874,
+          "box": [
+            512,
+            1115,
+            691,
+            1201
+          ],
+          "text": "行こう。もう時間だ",
+          "confidence": null,
+          "engine": "paddle"
+        }
+      ],
+      "inpaint_leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "opencv"
+      },
+      "inpaint_cache_key": "b56d7608a239a993b40295e5292450777d80f64b7aff64d49f29a3bf33232471",
+      "first_chain_seconds": 17.611,
+      "first_chain_detection_counts": {
+        "text-detector": 7,
+        "panel-detector": 7,
+        "bubble-segmenter": 3
+      },
+      "first_chain_detection_status": {
+        "text-detector": "ready",
+        "panel-detector": "ready",
+        "bubble-segmenter": "ready"
+      },
+      "tall": {
+        "is_tall": false,
+        "windows": [
+          {
+            "index": null,
+            "top": 0,
+            "bottom": 1400,
+            "height": 1400
+          }
+        ],
+        "segmenter_call_sizes": [
+          [
+            900,
+            1400
+          ]
+        ],
+        "full_page_segmenter_calls": 1
+      },
+      "route_counts": {
+        "bubble/android-fill": 3
+      },
+      "paddle_rec_calls": 1,
+      "paddle_det_calls": 3,
+      "paddle_refinement_calls": [],
+      "paddle_refined_regions": [],
+      "second_run": {
+        "ocr_cache_hit": true,
+        "inpaint_cache_hit": true,
+        "detection_capture_fingerprint_unchanged": true,
+        "model_calls_delta": 0,
+        "detection_regions": 3
+      },
+      "evidence_files": {
+        "detection": "detection_capture.json",
+        "ocr": "ocr_capture.json",
+        "routes": "routes.json"
+      }
+    },
+    {
+      "case": "regular-demo",
+      "preset": "android-quality",
+      "page": "p001.jpg",
+      "page_wh": [
+        900,
+        1400
+      ],
+      "page_fingerprint": "2fa20249a1fbd38df4e235979103f239114c0fa5ec71d9a1c1fc569ddf99bcbf",
+      "detection_capture_fingerprint": "0adb72eacca9c4b5018e56b38eb88e1d5dc61233be1683c5c586c46d6b3167ae",
+      "ocr_engine": "paddle",
+      "ocr_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0005",
+          "label": 1,
+          "score": 0.846,
+          "box": [
+            589,
+            206,
+            710,
+            291
+          ],
+          "text": "お前は誰だ！",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r01",
+          "artifact_id": "dt-td0003",
+          "label": 1,
+          "score": 0.892,
+          "box": [
+            180,
+            665,
+            421,
+            751
+          ],
+          "text": "静かだ…可主聞二えな",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r02",
+          "artifact_id": "dt-td0004",
+          "label": 1,
+          "score": 0.874,
+          "box": [
+            512,
+            1115,
+            691,
+            1201
+          ],
+          "text": "行こう。もう時間だ",
+          "confidence": null,
+          "engine": "paddle"
+        }
+      ],
+      "inpaint_leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "aot"
+      },
+      "inpaint_cache_key": "fb24510ee4f6b161cd345bd2e8a59ea49725bde2031f4fd9e0aa6484d382e1e6",
+      "first_chain_seconds": 5.62,
+      "first_chain_detection_counts": {
+        "text-detector": 7,
+        "panel-detector": 7,
+        "bubble-segmenter": 3
+      },
+      "first_chain_detection_status": {
+        "text-detector": "ready",
+        "panel-detector": "ready",
+        "bubble-segmenter": "ready"
+      },
+      "tall": {
+        "is_tall": false,
+        "windows": [
+          {
+            "index": null,
+            "top": 0,
+            "bottom": 1400,
+            "height": 1400
+          }
+        ],
+        "segmenter_call_sizes": [],
+        "full_page_segmenter_calls": 0
+      },
+      "route_counts": {
+        "bubble/android-fill": 3
+      },
+      "paddle_rec_calls": 0,
+      "paddle_det_calls": 0,
+      "paddle_refinement_calls": [],
+      "paddle_refined_regions": [],
+      "second_run": {
+        "ocr_cache_hit": true,
+        "inpaint_cache_hit": true,
+        "detection_capture_fingerprint_unchanged": true,
+        "model_calls_delta": 0,
+        "detection_regions": 3
+      },
+      "evidence_files": {
+        "detection": "detection_capture.json",
+        "ocr": "ocr_capture.json",
+        "routes": "routes.json"
+      }
+    },
+    {
+      "case": "a1-tall-stack",
+      "preset": "android-fast",
+      "page": "a1_tall_stack.jpg",
+      "page_wh": [
+        900,
+        2800
+      ],
+      "page_fingerprint": "6f439fc7690d0465a1fd7d3b3c5057fbe6d0b885a94cec23ec55a632e743ea44",
+      "detection_capture_fingerprint": "345290648e229993816f8d4f7eb90d35e6a27900e0b92db37db2b4ea96cdb9e4",
+      "ocr_engine": "paddle",
+      "ocr_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0005",
+          "label": 1,
+          "score": 0.806,
+          "box": [
+            588,
+            207,
+            712,
+            291
+          ],
+          "text": "お前は誰だ！",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r01",
+          "artifact_id": "dt-td0003",
+          "label": 1,
+          "score": 0.874,
+          "box": [
+            180,
+            665,
+            420,
+            751
+          ],
+          "text": "静かだ…可主聞二えな",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r02",
+          "artifact_id": "dt-td0004",
+          "label": 1,
+          "score": 0.867,
+          "box": [
+            509,
+            1116,
+            694,
+            1201
+          ],
+          "text": "行う。もう時間だ",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r03",
+          "artifact_id": "dt-td0013",
+          "label": 1,
+          "score": 0.853,
+          "box": [
+            522,
+            1656,
+            719,
+            1742
+          ],
+          "text": "俺の名前はグロナ",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r04",
+          "artifact_id": "dt-td0021",
+          "label": 1,
+          "score": 0.811,
+          "box": [
+            195,
+            2175,
+            362,
+            2223
+          ],
+          "text": "そうか…",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r05",
+          "artifact_id": "dt-td0020",
+          "label": 1,
+          "score": 0.841,
+          "box": [
+            359,
+            2585,
+            539,
+            2627
+          ],
+          "text": "三日月の夜",
+          "confidence": null,
+          "engine": "paddle"
+        }
+      ],
+      "inpaint_leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "opencv"
+      },
+      "inpaint_cache_key": "f8d09497572dc37196431a1be336084c91ac5bc068c55b430a2a4bcef9ff9194",
+      "first_chain_seconds": 33.512,
+      "first_chain_detection_counts": {
+        "text-detector": 28,
+        "panel-detector": 0,
+        "bubble-segmenter": 8
+      },
+      "first_chain_detection_status": {
+        "text-detector": "ready",
+        "panel-detector": "skipped",
+        "bubble-segmenter": "ready"
+      },
+      "tall": {
+        "is_tall": true,
+        "windows": [
+          {
+            "index": 0,
+            "top": 0,
+            "bottom": 1260,
+            "height": 1260
+          },
+          {
+            "index": 1,
+            "top": 1010,
+            "bottom": 2270,
+            "height": 1260
+          },
+          {
+            "index": 2,
+            "top": 2020,
+            "bottom": 2800,
+            "height": 780
+          }
+        ],
+        "segmenter_call_sizes": [
+          [
+            900,
+            1260
+          ],
+          [
+            900,
+            1260
+          ],
+          [
+            900,
+            780
+          ]
+        ],
+        "full_page_segmenter_calls": 0
+      },
+      "route_counts": {
+        "bubble/android-fill": 6
+      },
+      "paddle_rec_calls": 1,
+      "paddle_det_calls": 6,
+      "paddle_refinement_calls": [],
+      "paddle_refined_regions": [],
+      "second_run": {
+        "ocr_cache_hit": true,
+        "inpaint_cache_hit": true,
+        "detection_capture_fingerprint_unchanged": true,
+        "model_calls_delta": 0,
+        "detection_regions": 6
+      },
+      "evidence_files": {
+        "detection": "detection_capture.json",
+        "ocr": "ocr_capture.json",
+        "routes": "routes.json"
+      }
+    },
+    {
+      "case": "a1-tall-stack",
+      "preset": "android-quality",
+      "page": "a1_tall_stack.jpg",
+      "page_wh": [
+        900,
+        2800
+      ],
+      "page_fingerprint": "6f439fc7690d0465a1fd7d3b3c5057fbe6d0b885a94cec23ec55a632e743ea44",
+      "detection_capture_fingerprint": "345290648e229993816f8d4f7eb90d35e6a27900e0b92db37db2b4ea96cdb9e4",
+      "ocr_engine": "paddle",
+      "ocr_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0005",
+          "label": 1,
+          "score": 0.806,
+          "box": [
+            588,
+            207,
+            712,
+            291
+          ],
+          "text": "お前は誰だ！",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r01",
+          "artifact_id": "dt-td0003",
+          "label": 1,
+          "score": 0.874,
+          "box": [
+            180,
+            665,
+            420,
+            751
+          ],
+          "text": "静かだ…可主聞二えな",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r02",
+          "artifact_id": "dt-td0004",
+          "label": 1,
+          "score": 0.867,
+          "box": [
+            509,
+            1116,
+            694,
+            1201
+          ],
+          "text": "行う。もう時間だ",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r03",
+          "artifact_id": "dt-td0013",
+          "label": 1,
+          "score": 0.853,
+          "box": [
+            522,
+            1656,
+            719,
+            1742
+          ],
+          "text": "俺の名前はグロナ",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r04",
+          "artifact_id": "dt-td0021",
+          "label": 1,
+          "score": 0.811,
+          "box": [
+            195,
+            2175,
+            362,
+            2223
+          ],
+          "text": "そうか…",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r05",
+          "artifact_id": "dt-td0020",
+          "label": 1,
+          "score": 0.841,
+          "box": [
+            359,
+            2585,
+            539,
+            2627
+          ],
+          "text": "三日月の夜",
+          "confidence": null,
+          "engine": "paddle"
+        }
+      ],
+      "inpaint_leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "aot"
+      },
+      "inpaint_cache_key": "6ed8cd8764a2449fead61e3e2bd3748b5d1d15ece2658534e74fe7eeb928d367",
+      "first_chain_seconds": 24.019,
+      "first_chain_detection_counts": {
+        "text-detector": 28,
+        "panel-detector": 0,
+        "bubble-segmenter": 8
+      },
+      "first_chain_detection_status": {
+        "text-detector": "ready",
+        "panel-detector": "skipped",
+        "bubble-segmenter": "ready"
+      },
+      "tall": {
+        "is_tall": true,
+        "windows": [
+          {
+            "index": 0,
+            "top": 0,
+            "bottom": 1260,
+            "height": 1260
+          },
+          {
+            "index": 1,
+            "top": 1010,
+            "bottom": 2270,
+            "height": 1260
+          },
+          {
+            "index": 2,
+            "top": 2020,
+            "bottom": 2800,
+            "height": 780
+          }
+        ],
+        "segmenter_call_sizes": [],
+        "full_page_segmenter_calls": 0
+      },
+      "route_counts": {
+        "bubble/android-fill": 6
+      },
+      "paddle_rec_calls": 0,
+      "paddle_det_calls": 0,
+      "paddle_refinement_calls": [],
+      "paddle_refined_regions": [],
+      "second_run": {
+        "ocr_cache_hit": true,
+        "inpaint_cache_hit": true,
+        "detection_capture_fingerprint_unchanged": true,
+        "model_calls_delta": 0,
+        "detection_regions": 6
+      },
+      "evidence_files": {
+        "detection": "detection_capture.json",
+        "ocr": "ocr_capture.json",
+        "routes": "routes.json"
+      }
+    },
+    {
+      "case": "regular-demo-free-text-control",
+      "preset": "android-fast",
+      "page": "p001_free_text_control.png",
+      "page_wh": [
+        900,
+        1400
+      ],
+      "page_fingerprint": "73f4ed773db9c5cbbca96bf42d2781f7caa8e2287c8edad7fae9032c482509bb",
+      "detection_capture_fingerprint": "ebd0f569fd802a0d9e573ec0840853ee484bdd170a93cfe030eb2611958803b6",
+      "ocr_engine": "paddle",
+      "ocr_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0006",
+          "label": 2,
+          "score": 0.666,
+          "box": [
+            63,
+            70,
+            300,
+            162
+          ],
+          "text": "テスト",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r01",
+          "artifact_id": "dt-td0005",
+          "label": 1,
+          "score": 0.824,
+          "box": [
+            588,
+            207,
+            711,
+            291
+          ],
+          "text": "お前は誰だ！",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r02",
+          "artifact_id": "dt-td0003",
+          "label": 1,
+          "score": 0.881,
+          "box": [
+            180,
+            665,
+            421,
+            751
+          ],
+          "text": "静かだ…可主聞二えな",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r03",
+          "artifact_id": "dt-td0004",
+          "label": 1,
+          "score": 0.869,
+          "box": [
+            512,
+            1116,
+            691,
+            1201
+          ],
+          "text": "行二う。もう時間だ",
+          "confidence": null,
+          "engine": "paddle"
+        }
+      ],
+      "inpaint_leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "opencv"
+      },
+      "inpaint_cache_key": "a2cfe8756791a72b23f495d2c1e7b3dca1952f524abef2cdab7b2d1ae098e64a",
+      "first_chain_seconds": 17.93,
+      "first_chain_detection_counts": {
+        "text-detector": 9,
+        "panel-detector": 7,
+        "bubble-segmenter": 3
+      },
+      "first_chain_detection_status": {
+        "text-detector": "ready",
+        "panel-detector": "ready",
+        "bubble-segmenter": "ready"
+      },
+      "tall": {
+        "is_tall": false,
+        "windows": [
+          {
+            "index": null,
+            "top": 0,
+            "bottom": 1400,
+            "height": 1400
+          }
+        ],
+        "segmenter_call_sizes": [
+          [
+            900,
+            1400
+          ]
+        ],
+        "full_page_segmenter_calls": 1
+      },
+      "route_counts": {
+        "bubble/android-fill": 3,
+        "freetext/opencv": 1
+      },
+      "paddle_rec_calls": 1,
+      "paddle_det_calls": 5,
+      "paddle_refinement_calls": [
+        {
+          "method": "paddle_det",
+          "size": [
+            261,
+            116
+          ],
+          "thresh": 0.18,
+          "box_thresh": 0.34,
+          "kind": "inpaint-refinement",
+          "returned_lines": [
+            [
+              32,
+              34,
+              219,
+              76,
+              0.909894499405049
+            ]
+          ],
+          "returned_line_count": 1
+        }
+      ],
+      "paddle_refined_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0006",
+          "kind": "ocr-region",
+          "text": "テスト",
+          "label": 2,
+          "score": 0.666,
+          "source_boxes": [
+            {
+              "source": "detector",
+              "role": "ocr-origin",
+              "box": [
+                63,
+                70,
+                300,
+                162
+              ],
+              "label": 2,
+              "score": 0.666,
+              "artifact_id": "dt-td0006",
+              "model": "text-detector",
+              "asset": "detector-v4-s_int8.onnx",
+              "asset_sha": "5fe9e4f576e4",
+              "window": null
+            },
+            {
+              "source": "ocr",
+              "role": "text-rect",
+              "box": [
+                63,
+                70,
+                300,
+                162
+              ]
+            },
+            {
+              "source": "paddle-refined",
+              "parent_region": "r00",
+              "box": [
+                83,
+                92,
+                270,
+                134
+              ]
+            }
+          ],
+          "route_taken": "freetext/opencv",
+          "mask_component_id": "c001",
+          "segmenter_component_id": null,
+          "erase_mask_component_id": "c001",
+          "context_crop_bbox": [
+            19,
+            28,
+            334,
+            198
+          ],
+          "timing_ms": {
+            "planning": 8.047,
+            "refinement": 1172.207,
+            "fill": 195.105,
+            "total": 1375.359
+          },
+          "timing_scope": "region",
+          "mask_resolution": {
+            "status": "no-assignment"
+          }
+        }
+      ],
+      "second_run": {
+        "ocr_cache_hit": true,
+        "inpaint_cache_hit": true,
+        "detection_capture_fingerprint_unchanged": true,
+        "model_calls_delta": 0,
+        "detection_regions": 4
+      },
+      "evidence_files": {
+        "detection": "detection_capture.json",
+        "ocr": "ocr_capture.json",
+        "routes": "routes.json"
+      }
+    },
+    {
+      "case": "regular-demo-free-text-control",
+      "preset": "android-quality",
+      "page": "p001_free_text_control.png",
+      "page_wh": [
+        900,
+        1400
+      ],
+      "page_fingerprint": "73f4ed773db9c5cbbca96bf42d2781f7caa8e2287c8edad7fae9032c482509bb",
+      "detection_capture_fingerprint": "ebd0f569fd802a0d9e573ec0840853ee484bdd170a93cfe030eb2611958803b6",
+      "ocr_engine": "paddle",
+      "ocr_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0006",
+          "label": 2,
+          "score": 0.666,
+          "box": [
+            63,
+            70,
+            300,
+            162
+          ],
+          "text": "テスト",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r01",
+          "artifact_id": "dt-td0005",
+          "label": 1,
+          "score": 0.824,
+          "box": [
+            588,
+            207,
+            711,
+            291
+          ],
+          "text": "お前は誰だ！",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r02",
+          "artifact_id": "dt-td0003",
+          "label": 1,
+          "score": 0.881,
+          "box": [
+            180,
+            665,
+            421,
+            751
+          ],
+          "text": "静かだ…可主聞二えな",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r03",
+          "artifact_id": "dt-td0004",
+          "label": 1,
+          "score": 0.869,
+          "box": [
+            512,
+            1116,
+            691,
+            1201
+          ],
+          "text": "行二う。もう時間だ",
+          "confidence": null,
+          "engine": "paddle"
+        }
+      ],
+      "inpaint_leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "aot"
+      },
+      "inpaint_cache_key": "441f2c22ffca0360a95cf922efa24a07aaee95785b5f08e2fe0c7e6dd480ec3d",
+      "first_chain_seconds": 17.403,
+      "first_chain_detection_counts": {
+        "text-detector": 9,
+        "panel-detector": 7,
+        "bubble-segmenter": 3
+      },
+      "first_chain_detection_status": {
+        "text-detector": "ready",
+        "panel-detector": "ready",
+        "bubble-segmenter": "ready"
+      },
+      "tall": {
+        "is_tall": false,
+        "windows": [
+          {
+            "index": null,
+            "top": 0,
+            "bottom": 1400,
+            "height": 1400
+          }
+        ],
+        "segmenter_call_sizes": [],
+        "full_page_segmenter_calls": 0
+      },
+      "route_counts": {
+        "bubble/android-fill": 3,
+        "freetext/aot-fixed512": 1
+      },
+      "paddle_rec_calls": 0,
+      "paddle_det_calls": 1,
+      "paddle_refinement_calls": [
+        {
+          "method": "paddle_det",
+          "size": [
+            261,
+            116
+          ],
+          "thresh": 0.18,
+          "box_thresh": 0.34,
+          "kind": "inpaint-refinement",
+          "returned_lines": [
+            [
+              32,
+              34,
+              219,
+              76,
+              0.909894499405049
+            ]
+          ],
+          "returned_line_count": 1
+        }
+      ],
+      "paddle_refined_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0006",
+          "kind": "ocr-region",
+          "text": "テスト",
+          "label": 2,
+          "score": 0.666,
+          "source_boxes": [
+            {
+              "source": "detector",
+              "role": "ocr-origin",
+              "box": [
+                63,
+                70,
+                300,
+                162
+              ],
+              "label": 2,
+              "score": 0.666,
+              "artifact_id": "dt-td0006",
+              "model": "text-detector",
+              "asset": "detector-v4-s_int8.onnx",
+              "asset_sha": "5fe9e4f576e4",
+              "window": null
+            },
+            {
+              "source": "ocr",
+              "role": "text-rect",
+              "box": [
+                63,
+                70,
+                300,
+                162
+              ]
+            },
+            {
+              "source": "paddle-refined",
+              "parent_region": "r00",
+              "box": [
+                83,
+                92,
+                270,
+                134
+              ]
+            }
+          ],
+          "route_taken": "freetext/aot-fixed512",
+          "mask_component_id": "c001",
+          "segmenter_component_id": null,
+          "erase_mask_component_id": "c001",
+          "context_crop_bbox": [
+            0,
+            0,
+            512,
+            512
+          ],
+          "timing_ms": {
+            "planning": 5.635,
+            "refinement": 1120.329,
+            "fill": 7908.824,
+            "total": 9034.788
+          },
+          "timing_scope": "region",
+          "mask_resolution": {
+            "status": "no-assignment"
+          }
+        }
+      ],
+      "second_run": {
+        "ocr_cache_hit": true,
+        "inpaint_cache_hit": true,
+        "detection_capture_fingerprint_unchanged": true,
+        "model_calls_delta": 0,
+        "detection_regions": 4
+      },
+      "evidence_files": {
+        "detection": "detection_capture.json",
+        "ocr": "ocr_capture.json",
+        "routes": "routes.json"
+      }
+    }
+  ],
+  "model_calls": {
+    "regular-demo/android-fast": [
+      {
+        "method": "text_detector",
+        "size": [
+          900,
+          1400
+        ]
+      },
+      {
+        "method": "bubble_segmenter",
+        "size": [
+          900,
+          1400
+        ]
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          145,
+          109
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            36,
+            28,
+            111,
+            45,
+            0.9636219707601352
+          ],
+          [
+            34,
+            62,
+            103,
+            79,
+            0.9547766175304984
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          265,
+          110
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            78,
+            29,
+            182,
+            44,
+            0.9345756924365819
+          ],
+          [
+            34,
+            64,
+            228,
+            78,
+            0.9503865926148114
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          203,
+          110
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            45,
+            29,
+            137,
+            46,
+            0.950563074623715
+          ],
+          [
+            35,
+            63,
+            166,
+            79,
+            0.9629550314134987
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_rec",
+        "size": null
+      }
+    ],
+    "regular-demo/android-quality": [],
+    "a1-tall-stack/android-fast": [
+      {
+        "method": "text_detector",
+        "size": [
+          900,
+          1260
+        ]
+      },
+      {
+        "method": "text_detector",
+        "size": [
+          900,
+          1260
+        ]
+      },
+      {
+        "method": "text_detector",
+        "size": [
+          900,
+          780
+        ]
+      },
+      {
+        "method": "bubble_segmenter",
+        "size": [
+          900,
+          1260
+        ]
+      },
+      {
+        "method": "bubble_segmenter",
+        "size": [
+          900,
+          1260
+        ]
+      },
+      {
+        "method": "bubble_segmenter",
+        "size": [
+          900,
+          780
+        ]
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          148,
+          108
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            37,
+            27,
+            112,
+            44,
+            0.9630500400376385
+          ],
+          [
+            35,
+            61,
+            105,
+            78,
+            0.9555884182812738
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          264,
+          110
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            78,
+            29,
+            182,
+            44,
+            0.9276921211558354
+          ],
+          [
+            34,
+            64,
+            228,
+            78,
+            0.9503261557979596
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          209,
+          109
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            48,
+            28,
+            141,
+            44,
+            0.9522510075358429
+          ],
+          [
+            38,
+            62,
+            170,
+            78,
+            0.9634615890626445
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          221,
+          110
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            42,
+            28,
+            177,
+            44,
+            0.9563782613585328
+          ],
+          [
+            72,
+            63,
+            147,
+            78,
+            0.948436833584931
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          191,
+          72
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            46,
+            25,
+            146,
+            43,
+            0.9249704614957086
+          ]
+        ],
+        "returned_line_count": 1
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          204,
+          66
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            29,
+            24,
+            165,
+            39,
+            0.9345925085377708
+          ]
+        ],
+        "returned_line_count": 1
+      },
+      {
+        "method": "paddle_rec",
+        "size": null
+      }
+    ],
+    "a1-tall-stack/android-quality": [],
+    "regular-demo-free-text-control/android-fast": [
+      {
+        "method": "text_detector",
+        "size": [
+          900,
+          1400
+        ]
+      },
+      {
+        "method": "bubble_segmenter",
+        "size": [
+          900,
+          1400
+        ]
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          261,
+          116
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            32,
+            34,
+            219,
+            76,
+            0.9162082446598856
+          ]
+        ],
+        "returned_line_count": 1
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          147,
+          108
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            37,
+            27,
+            112,
+            44,
+            0.9647564347176626
+          ],
+          [
+            35,
+            61,
+            105,
+            78,
+            0.9544020535623957
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          265,
+          110
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            78,
+            29,
+            182,
+            44,
+            0.9345756924365819
+          ],
+          [
+            34,
+            64,
+            228,
+            78,
+            0.9503865926148114
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          203,
+          109
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning",
+        "returned_lines": [
+          [
+            45,
+            28,
+            138,
+            44,
+            0.9517540611552349
+          ],
+          [
+            35,
+            62,
+            166,
+            78,
+            0.9635088014825482
+          ]
+        ],
+        "returned_line_count": 2
+      },
+      {
+        "method": "paddle_rec",
+        "size": null
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          261,
+          116
+        ],
+        "thresh": 0.18,
+        "box_thresh": 0.34,
+        "kind": "inpaint-refinement",
+        "returned_lines": [
+          [
+            32,
+            34,
+            219,
+            76,
+            0.909894499405049
+          ]
+        ],
+        "returned_line_count": 1
+      }
+    ],
+    "regular-demo-free-text-control/android-quality": [
+      {
+        "method": "paddle_det",
+        "size": [
+          261,
+          116
+        ],
+        "thresh": 0.18,
+        "box_thresh": 0.34,
+        "kind": "inpaint-refinement",
+        "returned_lines": [
+          [
+            32,
+            34,
+            219,
+            76,
+            0.909894499405049
+          ]
+        ],
+        "returned_line_count": 1
+      }
+    ]
+  }
+}

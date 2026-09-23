@@ -1,0 +1,549 @@
+{
+  "regions": [
+    {
+      "id": "r00",
+      "artifact_id": "dt-td0005",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.806,
+      "box": [
+        588,
+        207,
+        712,
+        291
+      ],
+      "ocr_box": [
+        576,
+        195,
+        724,
+        303
+      ],
+      "segmenter_assignment": {
+        "mask_ref": "bs0000",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": 0
+        }
+      },
+      "text": "お前は誰だ！",
+      "raw_text": "お前は誰だ！",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            37,
+            27,
+            112,
+            44
+          ],
+          "vertical": false,
+          "score": 0.963,
+          "text": "お前は"
+        },
+        {
+          "bbox": [
+            35,
+            61,
+            105,
+            78
+          ],
+          "vertical": false,
+          "score": 0.956,
+          "text": "誰だ！"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r01",
+      "artifact_id": "dt-td0003",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.874,
+      "box": [
+        180,
+        665,
+        420,
+        751
+      ],
+      "ocr_box": [
+        168,
+        653,
+        432,
+        763
+      ],
+      "segmenter_assignment": {
+        "mask_ref": "bs0001",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": 0
+        }
+      },
+      "text": "静かだ…可主聞二えな",
+      "raw_text": "静かだ…可主聞二えな",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            78,
+            29,
+            182,
+            44
+          ],
+          "vertical": false,
+          "score": 0.928,
+          "text": "静かだ…"
+        },
+        {
+          "bbox": [
+            34,
+            64,
+            228,
+            78
+          ],
+          "vertical": false,
+          "score": 0.95,
+          "text": "可主聞二えな"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r02",
+      "artifact_id": "dt-td0004",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.867,
+      "box": [
+        509,
+        1116,
+        694,
+        1201
+      ],
+      "ocr_box": [
+        497,
+        1104,
+        706,
+        1213
+      ],
+      "merged_from": [
+        "td0012"
+      ],
+      "segmenter_assignment": {
+        "mask_ref": "bs0002",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": 0
+        }
+      },
+      "text": "行う。もう時間だ",
+      "raw_text": "行う。もう時間だ",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            48,
+            28,
+            141,
+            44
+          ],
+          "vertical": false,
+          "score": 0.952,
+          "text": "行う。"
+        },
+        {
+          "bbox": [
+            38,
+            62,
+            170,
+            78
+          ],
+          "vertical": false,
+          "score": 0.963,
+          "text": "もう時間だ"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r03",
+      "artifact_id": "dt-td0013",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.853,
+      "box": [
+        522,
+        1656,
+        719,
+        1742
+      ],
+      "ocr_box": [
+        510,
+        1644,
+        731,
+        1754
+      ],
+      "segmenter_assignment": {
+        "mask_ref": "bs0004",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": 1
+        }
+      },
+      "text": "俺の名前はグロナ",
+      "raw_text": "俺の名前はグロナ",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            42,
+            28,
+            177,
+            44
+          ],
+          "vertical": false,
+          "score": 0.956,
+          "text": "俺の名前は"
+        },
+        {
+          "bbox": [
+            72,
+            63,
+            147,
+            78
+          ],
+          "vertical": false,
+          "score": 0.948,
+          "text": "グロナ"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r04",
+      "artifact_id": "dt-td0021",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.811,
+      "box": [
+        195,
+        2175,
+        362,
+        2223
+      ],
+      "ocr_box": [
+        183,
+        2163,
+        374,
+        2235
+      ],
+      "merged_from": [
+        "td0014"
+      ],
+      "segmenter_assignment": {
+        "mask_ref": "bs0005",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": 1
+        }
+      },
+      "text": "そうか…",
+      "raw_text": "そうか…",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            46,
+            25,
+            146,
+            43
+          ],
+          "vertical": false,
+          "score": 0.925,
+          "text": "そうか…"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r05",
+      "artifact_id": "dt-td0020",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.841,
+      "box": [
+        359,
+        2585,
+        539,
+        2627
+      ],
+      "ocr_box": [
+        347,
+        2573,
+        551,
+        2639
+      ],
+      "segmenter_assignment": {
+        "mask_ref": "bs0007",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": 2
+        }
+      },
+      "text": "三日月の夜",
+      "raw_text": "三日月の夜",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            29,
+            24,
+            165,
+            39
+          ],
+          "vertical": false,
+          "score": 0.935,
+          "text": "三日月の夜"
+        }
+      ],
+      "engine": "paddle"
+    }
+  ],
+  "runs": {
+    "engine": "paddle",
+    "regions": 6,
+    "batches": 3,
+    "fallback_batches": 0
+  },
+  "ms": 6746.1,
+  "infer_ms": 6746.1,
+  "load_ms": 1327.6,
+  "engine": "paddle",
+  "page_fingerprint": "6f439fc7690d0465a1fd7d3b3c5057fbe6d0b885a94cec23ec55a632e743ea44",
+  "detection_fingerprint": "bdda9da14a3cb5074f09bad98876e51464585072f72750c5bbf4ea5cdb8c7e39",
+  "cache_fingerprint": "d7745338903613be31788a0aafb1e156d3f4df85edca3421c693e1e9fe031576",
+  "ocr_fingerprint": "42e07ad3dad2afede10895ff061f2ed60419e78de97b1af7a88836d17457d477",
+  "cache_inputs": {
+    "algorithm": "studio-ocr-v2",
+    "page_fingerprint": "6f439fc7690d0465a1fd7d3b3c5057fbe6d0b885a94cec23ec55a632e743ea44",
+    "detection_decision_fingerprint": "bdda9da14a3cb5074f09bad98876e51464585072f72750c5bbf4ea5cdb8c7e39",
+    "engine": "paddle",
+    "models": {
+      "detector": {
+        "status": "present",
+        "size": 9880512,
+        "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+      },
+      "recognizer": {
+        "status": "present",
+        "size": 21159378,
+        "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+      },
+      "dictionary": {
+        "status": "present",
+        "size": 74947,
+        "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+      }
+    },
+    "settings": {
+      "max_batch": 8,
+      "source_language": "Japanese",
+      "webtoon_mode": false,
+      "reading_order_rtl": true
+    },
+    "regions": [
+      {
+        "id": "r00",
+        "artifact_id": "dt-td0005",
+        "label": 1,
+        "score": 0.806,
+        "box": [
+          588,
+          207,
+          712,
+          291
+        ],
+        "ocr_box": [
+          576,
+          195,
+          724,
+          303
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 0
+          }
+        },
+        "panel_assignment": null
+      },
+      {
+        "id": "r01",
+        "artifact_id": "dt-td0003",
+        "label": 1,
+        "score": 0.874,
+        "box": [
+          180,
+          665,
+          420,
+          751
+        ],
+        "ocr_box": [
+          168,
+          653,
+          432,
+          763
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 0
+          }
+        },
+        "panel_assignment": null
+      },
+      {
+        "id": "r02",
+        "artifact_id": "dt-td0004",
+        "label": 1,
+        "score": 0.867,
+        "box": [
+          509,
+          1116,
+          694,
+          1201
+        ],
+        "ocr_box": [
+          497,
+          1104,
+          706,
+          1213
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 0
+          }
+        },
+        "panel_assignment": null
+      },
+      {
+        "id": "r03",
+        "artifact_id": "dt-td0013",
+        "label": 1,
+        "score": 0.853,
+        "box": [
+          522,
+          1656,
+          719,
+          1742
+        ],
+        "ocr_box": [
+          510,
+          1644,
+          731,
+          1754
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0004",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 1
+          }
+        },
+        "panel_assignment": null
+      },
+      {
+        "id": "r04",
+        "artifact_id": "dt-td0021",
+        "label": 1,
+        "score": 0.811,
+        "box": [
+          195,
+          2175,
+          362,
+          2223
+        ],
+        "ocr_box": [
+          183,
+          2163,
+          374,
+          2235
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0005",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 1
+          }
+        },
+        "panel_assignment": null
+      },
+      {
+        "id": "r05",
+        "artifact_id": "dt-td0020",
+        "label": 1,
+        "score": 0.841,
+        "box": [
+          359,
+          2585,
+          539,
+          2627
+        ],
+        "ocr_box": [
+          347,
+          2573,
+          551,
+          2639
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0007",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": 2
+          }
+        },
+        "panel_assignment": null
+      }
+    ]
+  }
+}

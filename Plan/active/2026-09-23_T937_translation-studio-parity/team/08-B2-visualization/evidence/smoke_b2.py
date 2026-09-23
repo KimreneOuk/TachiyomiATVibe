@@ -50,6 +50,26 @@ def _record(artifact_id: str, model: str, label: int | str, score: float,
 
 def _make_fixture(chapter: Path) -> tuple[int, int]:
     shutil.copytree(DEMO, chapter)
+    # Determinism guard: the repo demo folder is gitignored and accumulates
+    # generated artifacts from interactive/automated runs. Strip every
+    # p002-stage artifact and generated cache so this fixture asserts against
+    # a known state (p001 caches are fully overwritten below; p002 must end
+    # with NO caches at all).
+    _studio = chapter / ".studio"
+    for _sub in ("inpaint", "inpaint_mask", "render", "thumbs", "inpaint_crops"):
+        _dir = _studio / _sub
+        if _dir.is_dir():
+            for _f in _dir.glob("p002*"):
+                if _f.is_dir():
+                    shutil.rmtree(_f, ignore_errors=True)
+                else:
+                    _f.unlink()
+    for _name in ("detections.json", "ocr.json", "translations.json"):
+        _file = _studio / _name
+        if _file.is_file():
+            _data = json.loads(_file.read_text(encoding="utf-8"))
+            _data.pop("p002.jpg", None)
+            _write_json(_file, _data)
     page_path = chapter / PAGE
     with Image.open(page_path) as source:
         width, height = source.size

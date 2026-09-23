@@ -1,0 +1,423 @@
+{
+  "regions": [
+    {
+      "id": "r00",
+      "artifact_id": "dt-td0006",
+      "label": 2,
+      "class": "text_free",
+      "score": 0.666,
+      "box": [
+        63,
+        70,
+        300,
+        162
+      ],
+      "ocr_box": [
+        51,
+        58,
+        312,
+        174
+      ],
+      "panel_assignment": {
+        "panel_index": 1,
+        "panel_id": "pd0003",
+        "best_panel_index": 1,
+        "best_panel_id": "pd0003",
+        "best_containment": 1.0,
+        "category": "owned"
+      },
+      "text": "テスト",
+      "raw_text": "テスト",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            32,
+            34,
+            219,
+            76
+          ],
+          "vertical": false,
+          "score": 0.916,
+          "text": "テスト"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r01",
+      "artifact_id": "dt-td0005",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.824,
+      "box": [
+        588,
+        207,
+        711,
+        291
+      ],
+      "ocr_box": [
+        576,
+        195,
+        723,
+        303
+      ],
+      "panel_assignment": {
+        "panel_index": 1,
+        "panel_id": "pd0003",
+        "best_panel_index": 1,
+        "best_panel_id": "pd0003",
+        "best_containment": 1.0,
+        "category": "owned"
+      },
+      "segmenter_assignment": {
+        "mask_ref": "bs0002",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      "text": "お前は誰だ！",
+      "raw_text": "お前は誰だ！",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            37,
+            27,
+            112,
+            44
+          ],
+          "vertical": false,
+          "score": 0.965,
+          "text": "お前は"
+        },
+        {
+          "bbox": [
+            35,
+            61,
+            105,
+            78
+          ],
+          "vertical": false,
+          "score": 0.954,
+          "text": "誰だ！"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r02",
+      "artifact_id": "dt-td0003",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.881,
+      "box": [
+        180,
+        665,
+        421,
+        751
+      ],
+      "ocr_box": [
+        168,
+        653,
+        433,
+        763
+      ],
+      "panel_assignment": {
+        "panel_index": null,
+        "panel_id": null,
+        "best_panel_index": null,
+        "best_panel_id": null,
+        "best_containment": 0.0,
+        "category": "free_floating"
+      },
+      "segmenter_assignment": {
+        "mask_ref": "bs0000",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      "text": "静かだ…可主聞二えな",
+      "raw_text": "静かだ…可主聞二えな",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            78,
+            29,
+            182,
+            44
+          ],
+          "vertical": false,
+          "score": 0.935,
+          "text": "静かだ…"
+        },
+        {
+          "bbox": [
+            34,
+            64,
+            228,
+            78
+          ],
+          "vertical": false,
+          "score": 0.95,
+          "text": "可主聞二えな"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r03",
+      "artifact_id": "dt-td0004",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.869,
+      "box": [
+        512,
+        1116,
+        691,
+        1201
+      ],
+      "ocr_box": [
+        500,
+        1104,
+        703,
+        1213
+      ],
+      "panel_assignment": {
+        "panel_index": 3,
+        "panel_id": "pd0001",
+        "best_panel_index": 3,
+        "best_panel_id": "pd0001",
+        "best_containment": 1.0,
+        "category": "owned"
+      },
+      "segmenter_assignment": {
+        "mask_ref": "bs0001",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      "text": "行二う。もう時間だ",
+      "raw_text": "行二う。もう時間だ",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            45,
+            28,
+            138,
+            44
+          ],
+          "vertical": false,
+          "score": 0.952,
+          "text": "行二う。"
+        },
+        {
+          "bbox": [
+            35,
+            62,
+            166,
+            78
+          ],
+          "vertical": false,
+          "score": 0.964,
+          "text": "もう時間だ"
+        }
+      ],
+      "engine": "paddle"
+    }
+  ],
+  "runs": {
+    "engine": "paddle",
+    "regions": 4,
+    "batches": 3,
+    "fallback_batches": 0
+  },
+  "ms": 5276.4,
+  "infer_ms": 5276.4,
+  "load_ms": 1327.6,
+  "engine": "paddle",
+  "page_fingerprint": "73f4ed773db9c5cbbca96bf42d2781f7caa8e2287c8edad7fae9032c482509bb",
+  "detection_fingerprint": "7cbca953e894d78c7623405767a52fda57d30576894e3afece6048263fb0af0c",
+  "cache_fingerprint": "beb4f37f4e9dc3e07bebc32af7c12818a420a54e5612955c447990b248521df8",
+  "ocr_fingerprint": "9846c3b73b64d20541e6f4e5ff6b10e42cd694e31ed70c80d16f8d15903f0326",
+  "cache_inputs": {
+    "algorithm": "studio-ocr-v2",
+    "page_fingerprint": "73f4ed773db9c5cbbca96bf42d2781f7caa8e2287c8edad7fae9032c482509bb",
+    "detection_decision_fingerprint": "7cbca953e894d78c7623405767a52fda57d30576894e3afece6048263fb0af0c",
+    "engine": "paddle",
+    "models": {
+      "detector": {
+        "status": "present",
+        "size": 9880512,
+        "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+      },
+      "recognizer": {
+        "status": "present",
+        "size": 21159378,
+        "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+      },
+      "dictionary": {
+        "status": "present",
+        "size": 74947,
+        "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+      }
+    },
+    "settings": {
+      "max_batch": 8,
+      "source_language": "Japanese",
+      "webtoon_mode": false,
+      "reading_order_rtl": true
+    },
+    "regions": [
+      {
+        "id": "r00",
+        "artifact_id": "dt-td0006",
+        "label": 2,
+        "score": 0.666,
+        "box": [
+          63,
+          70,
+          300,
+          162
+        ],
+        "ocr_box": [
+          51,
+          58,
+          312,
+          174
+        ],
+        "segmenter_assignment": null,
+        "panel_assignment": {
+          "panel_index": 1,
+          "panel_id": "pd0003",
+          "best_panel_index": 1,
+          "best_panel_id": "pd0003",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      },
+      {
+        "id": "r01",
+        "artifact_id": "dt-td0005",
+        "label": 1,
+        "score": 0.824,
+        "box": [
+          588,
+          207,
+          711,
+          291
+        ],
+        "ocr_box": [
+          576,
+          195,
+          723,
+          303
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": 1,
+          "panel_id": "pd0003",
+          "best_panel_index": 1,
+          "best_panel_id": "pd0003",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      },
+      {
+        "id": "r02",
+        "artifact_id": "dt-td0003",
+        "label": 1,
+        "score": 0.881,
+        "box": [
+          180,
+          665,
+          421,
+          751
+        ],
+        "ocr_box": [
+          168,
+          653,
+          433,
+          763
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": null,
+          "panel_id": null,
+          "best_panel_index": null,
+          "best_panel_id": null,
+          "best_containment": 0.0,
+          "category": "free_floating"
+        }
+      },
+      {
+        "id": "r03",
+        "artifact_id": "dt-td0004",
+        "label": 1,
+        "score": 0.869,
+        "box": [
+          512,
+          1116,
+          691,
+          1201
+        ],
+        "ocr_box": [
+          500,
+          1104,
+          703,
+          1213
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": 3,
+          "panel_id": "pd0001",
+          "best_panel_index": 3,
+          "best_panel_id": "pd0001",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      }
+    ]
+  }
+}

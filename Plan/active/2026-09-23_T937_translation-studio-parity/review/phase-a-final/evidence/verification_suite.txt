@@ -1,0 +1,7 @@
+Gate 1 verification suite on e00f0c38d95f9317a9591adce11eff93684b9aa1
+py_compile: passed (0.161 s)
+selftest_cache_fingerprints.py: passed (0.721 s)
+selftest_mask_planner.py: passed (0.629 s)
+selftest_ocr.py: passed (0.021 s)
+test_translation_providers.py: passed (0.014 s)
+selftest_inpaint.py: passed (74.389 s)

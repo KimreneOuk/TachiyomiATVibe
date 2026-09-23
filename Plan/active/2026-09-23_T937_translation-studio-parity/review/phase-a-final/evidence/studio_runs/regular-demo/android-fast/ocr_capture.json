@@ -1,0 +1,352 @@
+{
+  "regions": [
+    {
+      "id": "r00",
+      "artifact_id": "dt-td0005",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.846,
+      "box": [
+        589,
+        206,
+        710,
+        291
+      ],
+      "ocr_box": [
+        577,
+        194,
+        722,
+        303
+      ],
+      "panel_assignment": {
+        "panel_index": 1,
+        "panel_id": "pd0000",
+        "best_panel_index": 1,
+        "best_panel_id": "pd0000",
+        "best_containment": 1.0,
+        "category": "owned"
+      },
+      "segmenter_assignment": {
+        "mask_ref": "bs0000",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      "text": "お前は誰だ！",
+      "raw_text": "お前は誰だ！",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            36,
+            28,
+            111,
+            45
+          ],
+          "vertical": false,
+          "score": 0.964,
+          "text": "お前は"
+        },
+        {
+          "bbox": [
+            34,
+            62,
+            103,
+            79
+          ],
+          "vertical": false,
+          "score": 0.955,
+          "text": "誰だ！"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r01",
+      "artifact_id": "dt-td0003",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.892,
+      "box": [
+        180,
+        665,
+        421,
+        751
+      ],
+      "ocr_box": [
+        168,
+        653,
+        433,
+        763
+      ],
+      "panel_assignment": {
+        "panel_index": 2,
+        "panel_id": "pd0003",
+        "best_panel_index": 2,
+        "best_panel_id": "pd0003",
+        "best_containment": 1.0,
+        "category": "owned"
+      },
+      "segmenter_assignment": {
+        "mask_ref": "bs0002",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      "text": "静かだ…可主聞二えな",
+      "raw_text": "静かだ…可主聞二えな",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            78,
+            29,
+            182,
+            44
+          ],
+          "vertical": false,
+          "score": 0.935,
+          "text": "静かだ…"
+        },
+        {
+          "bbox": [
+            34,
+            64,
+            228,
+            78
+          ],
+          "vertical": false,
+          "score": 0.95,
+          "text": "可主聞二えな"
+        }
+      ],
+      "engine": "paddle"
+    },
+    {
+      "id": "r02",
+      "artifact_id": "dt-td0004",
+      "label": 1,
+      "class": "text_bubble",
+      "score": 0.874,
+      "box": [
+        512,
+        1115,
+        691,
+        1201
+      ],
+      "ocr_box": [
+        500,
+        1103,
+        703,
+        1213
+      ],
+      "panel_assignment": {
+        "panel_index": 4,
+        "panel_id": "pd0002",
+        "best_panel_index": 4,
+        "best_panel_id": "pd0002",
+        "best_containment": 1.0,
+        "category": "owned"
+      },
+      "segmenter_assignment": {
+        "mask_ref": "bs0001",
+        "mask_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      "text": "行こう。もう時間だ",
+      "raw_text": "行こう。もう時間だ",
+      "confidence": null,
+      "lines": [
+        {
+          "bbox": [
+            45,
+            29,
+            137,
+            46
+          ],
+          "vertical": false,
+          "score": 0.951,
+          "text": "行こう。"
+        },
+        {
+          "bbox": [
+            35,
+            63,
+            166,
+            79
+          ],
+          "vertical": false,
+          "score": 0.963,
+          "text": "もう時間だ"
+        }
+      ],
+      "engine": "paddle"
+    }
+  ],
+  "runs": {
+    "engine": "paddle",
+    "regions": 3,
+    "batches": 3,
+    "fallback_batches": 0
+  },
+  "ms": 4556.2,
+  "infer_ms": 4556.2,
+  "load_ms": 1327.6,
+  "engine": "paddle",
+  "page_fingerprint": "2fa20249a1fbd38df4e235979103f239114c0fa5ec71d9a1c1fc569ddf99bcbf",
+  "detection_fingerprint": "e7beca5b69733f2d863c72ee775666ddacd7f27a8e7dbe2e9d60f3b1c2af0374",
+  "cache_fingerprint": "3b644720e595e60d39cbd3784c949b193244049312e4b3a116d9d4f0e523a9a8",
+  "ocr_fingerprint": "4d6031eaac7d87030312a2e0b3def894b4d78b50dcb981d834a377b0bbe99da7",
+  "cache_inputs": {
+    "algorithm": "studio-ocr-v2",
+    "page_fingerprint": "2fa20249a1fbd38df4e235979103f239114c0fa5ec71d9a1c1fc569ddf99bcbf",
+    "detection_decision_fingerprint": "e7beca5b69733f2d863c72ee775666ddacd7f27a8e7dbe2e9d60f3b1c2af0374",
+    "engine": "paddle",
+    "models": {
+      "detector": {
+        "status": "present",
+        "size": 9880512,
+        "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+      },
+      "recognizer": {
+        "status": "present",
+        "size": 21159378,
+        "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+      },
+      "dictionary": {
+        "status": "present",
+        "size": 74947,
+        "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+      }
+    },
+    "settings": {
+      "max_batch": 8,
+      "source_language": "Japanese",
+      "webtoon_mode": false,
+      "reading_order_rtl": true
+    },
+    "regions": [
+      {
+        "id": "r00",
+        "artifact_id": "dt-td0005",
+        "label": 1,
+        "score": 0.846,
+        "box": [
+          589,
+          206,
+          710,
+          291
+        ],
+        "ocr_box": [
+          577,
+          194,
+          722,
+          303
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": 1,
+          "panel_id": "pd0000",
+          "best_panel_index": 1,
+          "best_panel_id": "pd0000",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      },
+      {
+        "id": "r01",
+        "artifact_id": "dt-td0003",
+        "label": 1,
+        "score": 0.892,
+        "box": [
+          180,
+          665,
+          421,
+          751
+        ],
+        "ocr_box": [
+          168,
+          653,
+          433,
+          763
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": 2,
+          "panel_id": "pd0003",
+          "best_panel_index": 2,
+          "best_panel_id": "pd0003",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      },
+      {
+        "id": "r02",
+        "artifact_id": "dt-td0004",
+        "label": 1,
+        "score": 0.874,
+        "box": [
+          512,
+          1115,
+          691,
+          1201
+        ],
+        "ocr_box": [
+          500,
+          1103,
+          703,
+          1213
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": 4,
+          "panel_id": "pd0002",
+          "best_panel_index": 4,
+          "best_panel_id": "pd0002",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      }
+    ]
+  }
+}

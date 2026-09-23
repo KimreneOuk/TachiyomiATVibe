@@ -1,0 +1,91 @@
+{
+  "ticket": "T937 A4",
+  "status": "passed",
+  "normal_page": {
+    "page": "normal.png",
+    "captured_mask_ref": "bs0000",
+    "captured_segmenter_component_id": 1,
+    "inpaint_mask_ref": "bs0000",
+    "render_mask_ref": "bs0000",
+    "erase_mask_component_id": "c001",
+    "mask_component_id_alias": "c001",
+    "schema_version": 2,
+    "threshold_0_6": {
+      "parity": "android-production",
+      "candidate_ids": [
+        "dt-td0001"
+      ],
+      "raw_low_candidate_state": "raw",
+      "low_label_0_excluded_from_parent": true,
+      "low_label_2_excluded_from_erase": true
+    },
+    "threshold_0_3": {
+      "parity": "experimental/non-parity",
+      "candidate_ids": [
+        "dt-td0001",
+        "dt-td0002",
+        "dt-td0003",
+        "dt-td0000"
+      ],
+      "parent_bubble_artifact_id": "dt-td0000",
+      "detector_only_artifact_id": "dt-td0002",
+      "mask_pixels": 2190
+    },
+    "confidence_raise_render": {
+      "excluded_region_status": "not-in-current-execution-projection",
+      "excluded_region_drawn": false
+    },
+    "segmentation_setting_cache": {
+      "disabled_union_pixels": 0,
+      "reenabled_union_pixels": 1444
+    },
+    "expected_union_sha256": "8fe76eb722108be4a400b8ed4be7f48f6d8da2b32335d201a695f24a8489f932",
+    "actual_union_sha256": "8fe76eb722108be4a400b8ed4be7f48f6d8da2b32335d201a695f24a8489f932"
+  },
+  "bubble_union_scope": {
+    "page": "union-scope.png",
+    "selected_bubble_union_pixels": 16,
+    "expected_bubble_union_pixels": 16,
+    "blank_ocr_mask_status": "not-selected-for-bubble-leg",
+    "free_detector_mask_status": "not-selected-for-bubble-leg",
+    "bubble_mask_status": "resolved",
+    "union_sha256": "0f44c27b540748184ea2eddf2520f124b86639af1cfe73f3addb8754bb3b20b4"
+  },
+  "synthetic_tall_page": {
+    "page": "tall.png",
+    "mask_ref": "bs0000",
+    "window": 2,
+    "segmenter_union_pixels": 1280,
+    "expected_union_sha256": "f7456e04e7f856e66f4429c200fb2563eee88ea4911603023a75ee1f775f699b",
+    "actual_union_sha256": "f7456e04e7f856e66f4429c200fb2563eee88ea4911603023a75ee1f775f699b",
+    "full_page_segmenter_reruns": 0,
+    "captured_rle_overlay_pixels": 1428
+  },
+  "missing_current_reference": {
+    "status": "degraded-missing-references",
+    "degraded": true,
+    "missing_mask_refs": [
+      "bs0000"
+    ],
+    "fallback_segmenter_rerun": false
+  },
+  "row_crossing_rle": {
+    "flat_run": [
+      6,
+      4
+    ],
+    "width": 8,
+    "decoded_row_spans": [
+      [
+        0,
+        6,
+        8
+      ],
+      [
+        1,
+        0,
+        2
+      ]
+    ]
+  }
+}

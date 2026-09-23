@@ -1,0 +1,80 @@
+{
+  "page": "p001.jpg",
+  "probe": "free-aot",
+  "leg_matrix": {
+    "bubble": "android-fill",
+    "free_text": "aot"
+  },
+  "stats": {
+    "bubble_leg": "android-fill",
+    "free_leg": "aot",
+    "bubble_boxes": 0,
+    "free_boxes": 1,
+    "free_groups": 1,
+    "bubble_components": 0,
+    "combined_components": 1,
+    "mask_pixels": 2648,
+    "segmenter_union_pixels": null,
+    "segmenter_union_sha256": null,
+    "segmenter_components": [],
+    "total_ms": 6892.467
+  },
+  "regions": [
+    {
+      "id": "probe-free-aot",
+      "artifact_id": null,
+      "kind": "ocr-region",
+      "text": "probe",
+      "label": 2,
+      "score": null,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            418,
+            684,
+            482,
+            716
+          ],
+          "label": 2,
+          "score": null,
+          "artifact_id": null,
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            418,
+            684,
+            482,
+            716
+          ]
+        }
+      ],
+      "route_taken": "freetext/aot-fixed512",
+      "mask_component_id": "c001",
+      "segmenter_component_id": null,
+      "erase_mask_component_id": "c001",
+      "context_crop_bbox": [
+        194,
+        444,
+        706,
+        956
+      ],
+      "timing_ms": {
+        "planning": 0.111,
+        "refinement": 0.006,
+        "fill": 6860.837,
+        "total": 6860.954
+      },
+      "timing_scope": "region"
+    }
+  ],
+  "inpainted_png": "p001_probe-free-aot_inpainted.png",
+  "mask_png": "p001_probe-free-aot_mask.png"
+}

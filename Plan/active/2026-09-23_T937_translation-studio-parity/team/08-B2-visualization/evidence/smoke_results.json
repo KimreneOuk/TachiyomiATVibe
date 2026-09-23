@@ -13,7 +13,7 @@
     "filter changes posted settings only; no model stage or process POST"
   ],
   "export": {
-    "source_path": ".studio/exports/p001-production-20260923T143439_922523Z.json",
+    "source_path": ".studio/exports/p001-production-20260923T163205_915599Z.json",
     "evidence_path": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\08-B2-visualization\\evidence\\filtered_view.json",
     "record_count": 7,
     "screenshot_path": "Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\08-B2-visualization\\evidence\\smoke_ui.png"

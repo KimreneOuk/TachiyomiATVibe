@@ -1,0 +1,14 @@
+{
+  "same_size": true,
+  "same_mtime_ns": true,
+  "artifact_helper_digest_before": "f3336bea752b",
+  "artifact_helper_digest_after": "f3336bea752b",
+  "artifact_helper_stale": true,
+  "pipeline_digest_before": "f3336bea752b5a28743033dd2c844a4a63fba08871aaee2586a2bf2d69be83a2",
+  "pipeline_digest_after": "e33f24140499430b048f6600af4f41f3ccb0cb766d9f7661124cf8ba4b827523",
+  "pipeline_digest_changed": true,
+  "standalone_helper_definition_matches": [
+    "tools/translation_studio/detection_artifacts.py:22:def asset_sha12(path: Path | None) -> str | None:"
+  ],
+  "standalone_helper_call_sites": []
+}

@@ -1,0 +1,10 @@
+{
+  "fresh_ocr_in_cache_after_inpaint_validation": "ocr-after-validation",
+  "rendered_region_ids": [
+    "stale-region"
+  ],
+  "render_cache_ocr_fingerprint": "ocr-before-validation",
+  "render_cache_inpaint_fingerprint": "inpaint-after-validation",
+  "render_cache_fingerprint": "bfaa699c533fc109667ef72876daa218b5265526357671ca3569857e033fcf4d",
+  "reproduced_stale_snapshot": true
+}

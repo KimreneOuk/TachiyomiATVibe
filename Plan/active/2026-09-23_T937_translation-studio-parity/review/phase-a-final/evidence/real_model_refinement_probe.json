@@ -1,0 +1,342 @@
+{
+  "commit": "e00f0c38d95f9317a9591adce11eff93684b9aa1",
+  "mode": "real-model Studio pipeline; no fake ONNX sessions",
+  "chain": "Pipeline.process_page(translate=False), then unchanged-stage replay",
+  "inputs": {
+    "regular_demo": {
+      "file": "p001.jpg",
+      "sha256": "e2d6cd3bf717e2bab516691d0075683ca7671d6ba74569ce9aa3f2c318b6b337"
+    },
+    "a1_tall_stack": {
+      "method": "A1 selftest_detect.py: stack p001 then p002, centered",
+      "size": [
+        900,
+        2800
+      ],
+      "aspect_ratio": 3.1111,
+      "source_sha256": {
+        "p001.jpg": "e2d6cd3bf717e2bab516691d0075683ca7671d6ba74569ce9aa3f2c318b6b337",
+        "p002.jpg": "fa1cea76ebe5892d8acc9495188b6b1b822157d10682ee62e13520c47d4164ca"
+      },
+      "sha256": "d9585301d02ff3f8db6bedafcf3f99e6b1dfb7451bae321b5dd3680ed20ed50e"
+    },
+    "free_text_control": {
+      "method": "known text drawn into p001's blank first-panel area",
+      "text": "テスト",
+      "bbox": [
+        72,
+        86,
+        288,
+        145
+      ],
+      "size": [
+        900,
+        1400
+      ],
+      "sha256": "773a56666d99a9b06ad3287e8a67940d87f21d9355da7add92e3656f287f1b87"
+    }
+  },
+  "models": {
+    "paddle_det": {
+      "path": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\det\\inference.onnx",
+      "bytes": 9880512,
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+    },
+    "paddle_rec": {
+      "path": "C:\\Users\\User\\Documents\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\TachiyomiAT-1.16.8-dev\\app\\src\\main\\assets\\models\\ocr\\paddle-v6-small\\inference.onnx",
+      "bytes": 21159378,
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+    }
+  },
+  "presets": {
+    "android-fast": {
+      "inpaint_bubble_leg": "android-fill",
+      "inpaint_free_leg": "opencv"
+    },
+    "android-quality": {
+      "inpaint_bubble_leg": "android-fill",
+      "inpaint_free_leg": "aot"
+    }
+  },
+  "cases": [
+    {
+      "case": "regular-demo-free-text-control",
+      "preset": "android-fast",
+      "page": "p001_free_text_control.png",
+      "page_wh": [
+        900,
+        1400
+      ],
+      "page_fingerprint": "73f4ed773db9c5cbbca96bf42d2781f7caa8e2287c8edad7fae9032c482509bb",
+      "detection_capture_fingerprint": "ebd0f569fd802a0d9e573ec0840853ee484bdd170a93cfe030eb2611958803b6",
+      "ocr_engine": "paddle",
+      "ocr_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0006",
+          "label": 2,
+          "score": 0.666,
+          "box": [
+            63,
+            70,
+            300,
+            162
+          ],
+          "text": "テスト",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r01",
+          "artifact_id": "dt-td0005",
+          "label": 1,
+          "score": 0.824,
+          "box": [
+            588,
+            207,
+            711,
+            291
+          ],
+          "text": "お前は誰だ！",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r02",
+          "artifact_id": "dt-td0003",
+          "label": 1,
+          "score": 0.881,
+          "box": [
+            180,
+            665,
+            421,
+            751
+          ],
+          "text": "静かだ…可主聞二えな",
+          "confidence": null,
+          "engine": "paddle"
+        },
+        {
+          "id": "r03",
+          "artifact_id": "dt-td0004",
+          "label": 1,
+          "score": 0.869,
+          "box": [
+            512,
+            1116,
+            691,
+            1201
+          ],
+          "text": "行二う。もう時間だ",
+          "confidence": null,
+          "engine": "paddle"
+        }
+      ],
+      "inpaint_leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "opencv"
+      },
+      "inpaint_cache_key": "a2cfe8756791a72b23f495d2c1e7b3dca1952f524abef2cdab7b2d1ae098e64a",
+      "first_chain_seconds": 18.055,
+      "first_chain_detection_counts": {
+        "text-detector": 9,
+        "panel-detector": 7,
+        "bubble-segmenter": 3
+      },
+      "first_chain_detection_status": {
+        "text-detector": "ready",
+        "panel-detector": "ready",
+        "bubble-segmenter": "ready"
+      },
+      "tall": {
+        "is_tall": false,
+        "windows": [
+          {
+            "index": null,
+            "top": 0,
+            "bottom": 1400,
+            "height": 1400
+          }
+        ],
+        "segmenter_call_sizes": [
+          [
+            900,
+            1400
+          ]
+        ],
+        "full_page_segmenter_calls": 1
+      },
+      "route_counts": {
+        "bubble/android-fill": 3,
+        "freetext/opencv": 1
+      },
+      "paddle_rec_calls": 1,
+      "paddle_det_calls": 5,
+      "paddle_refinement_calls": [
+        {
+          "method": "paddle_det",
+          "size": [
+            261,
+            116
+          ],
+          "thresh": 0.18,
+          "box_thresh": 0.34,
+          "kind": "inpaint-refinement"
+        }
+      ],
+      "paddle_refined_regions": [
+        {
+          "id": "r00",
+          "artifact_id": "dt-td0006",
+          "kind": "ocr-region",
+          "text": "テスト",
+          "label": 2,
+          "score": 0.666,
+          "source_boxes": [
+            {
+              "source": "detector",
+              "role": "ocr-origin",
+              "box": [
+                63,
+                70,
+                300,
+                162
+              ],
+              "label": 2,
+              "score": 0.666,
+              "artifact_id": "dt-td0006",
+              "model": "text-detector",
+              "asset": "detector-v4-s_int8.onnx",
+              "asset_sha": "5fe9e4f576e4",
+              "window": null
+            },
+            {
+              "source": "ocr",
+              "role": "text-rect",
+              "box": [
+                63,
+                70,
+                300,
+                162
+              ]
+            },
+            {
+              "source": "paddle-refined",
+              "parent_region": "r00",
+              "box": [
+                83,
+                92,
+                270,
+                134
+              ]
+            }
+          ],
+          "route_taken": "freetext/opencv",
+          "mask_component_id": "c001",
+          "segmenter_component_id": null,
+          "erase_mask_component_id": "c001",
+          "context_crop_bbox": [
+            19,
+            28,
+            334,
+            198
+          ],
+          "timing_ms": {
+            "planning": 13.613,
+            "refinement": 1549.898,
+            "fill": 55.144,
+            "total": 1618.655
+          },
+          "timing_scope": "region",
+          "mask_resolution": {
+            "status": "no-assignment"
+          }
+        }
+      ],
+      "second_run": {
+        "ocr_cache_hit": true,
+        "inpaint_cache_hit": true,
+        "detection_capture_fingerprint_unchanged": true,
+        "model_calls_delta": 0,
+        "detection_regions": 4
+      },
+      "evidence_files": {
+        "detection": "detection_capture.json",
+        "ocr": "ocr_capture.json",
+        "routes": "routes.json"
+      }
+    }
+  ],
+  "model_calls": {
+    "regular-demo-free-text-control/android-fast": [
+      {
+        "method": "text_detector",
+        "size": [
+          900,
+          1400
+        ]
+      },
+      {
+        "method": "bubble_segmenter",
+        "size": [
+          900,
+          1400
+        ]
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          261,
+          116
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning"
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          147,
+          108
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning"
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          265,
+          110
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning"
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          203,
+          109
+        ],
+        "thresh": 0.2,
+        "box_thresh": 0.45,
+        "kind": "ocr-line-planning"
+      },
+      {
+        "method": "paddle_rec",
+        "size": null
+      },
+      {
+        "method": "paddle_det",
+        "size": [
+          261,
+          116
+        ],
+        "thresh": 0.18,
+        "box_thresh": 0.34,
+        "kind": "inpaint-refinement"
+      }
+    ]
+  }
+}

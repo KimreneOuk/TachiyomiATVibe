@@ -1,0 +1,976 @@
+{
+  "provenance_schema_version": 2,
+  "engine": "android",
+  "cache_key": {
+    "schema": 2,
+    "algorithm": "studio-inpaint-v2",
+    "page_fingerprint": "73f4ed773db9c5cbbca96bf42d2781f7caa8e2287c8edad7fae9032c482509bb",
+    "detection_decision_fingerprint": "7cbca953e894d78c7623405767a52fda57d30576894e3afece6048263fb0af0c",
+    "ocr_fingerprint": "9846c3b73b64d20541e6f4e5ff6b10e42cd694e31ed70c80d16f8d15903f0326",
+    "regions": [
+      {
+        "id": "r00",
+        "artifact_id": "dt-td0006",
+        "box": [
+          63,
+          70,
+          300,
+          162
+        ],
+        "ocr_box": [
+          51,
+          58,
+          312,
+          174
+        ],
+        "label": 2,
+        "score": 0.666,
+        "text": "テスト",
+        "segmenter_assignment": null,
+        "panel_assignment": {
+          "panel_index": 1,
+          "panel_id": "pd0003",
+          "best_panel_index": 1,
+          "best_panel_id": "pd0003",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      },
+      {
+        "id": "r01",
+        "artifact_id": "dt-td0005",
+        "box": [
+          588,
+          207,
+          711,
+          291
+        ],
+        "ocr_box": [
+          576,
+          195,
+          723,
+          303
+        ],
+        "label": 1,
+        "score": 0.824,
+        "text": "お前は誰だ！",
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": 1,
+          "panel_id": "pd0003",
+          "best_panel_index": 1,
+          "best_panel_id": "pd0003",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      },
+      {
+        "id": "r02",
+        "artifact_id": "dt-td0003",
+        "box": [
+          180,
+          665,
+          421,
+          751
+        ],
+        "ocr_box": [
+          168,
+          653,
+          433,
+          763
+        ],
+        "label": 1,
+        "score": 0.881,
+        "text": "静かだ…可主聞二えな",
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": null,
+          "panel_id": null,
+          "best_panel_index": null,
+          "best_panel_id": null,
+          "best_containment": 0.0,
+          "category": "free_floating"
+        }
+      },
+      {
+        "id": "r03",
+        "artifact_id": "dt-td0004",
+        "box": [
+          512,
+          1116,
+          691,
+          1201
+        ],
+        "ocr_box": [
+          500,
+          1104,
+          703,
+          1213
+        ],
+        "label": 1,
+        "score": 0.869,
+        "text": "行二う。もう時間だ",
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        },
+        "panel_assignment": {
+          "panel_index": 3,
+          "panel_id": "pd0001",
+          "best_panel_index": 3,
+          "best_panel_id": "pd0001",
+          "best_containment": 1.0,
+          "category": "owned"
+        }
+      }
+    ],
+    "planner_candidate_ids_scores": [
+      {
+        "id": "dt-td0003",
+        "artifact_id": "dt-td0003",
+        "label": 1,
+        "score": 0.88134765625,
+        "box": [
+          180,
+          665,
+          421,
+          751
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "dt-td0004",
+        "artifact_id": "dt-td0004",
+        "label": 1,
+        "score": 0.8685491681098938,
+        "box": [
+          512,
+          1116,
+          691,
+          1201
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "dt-td0005",
+        "artifact_id": "dt-td0005",
+        "label": 1,
+        "score": 0.8237555027008057,
+        "box": [
+          588,
+          207,
+          711,
+          291
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "dt-td0006",
+        "artifact_id": "dt-td0006",
+        "label": 2,
+        "score": 0.666068971157074,
+        "box": [
+          63,
+          70,
+          300,
+          162
+        ],
+        "segmenter_assignment": null
+      },
+      {
+        "id": "dt-td0000",
+        "artifact_id": "dt-td0000",
+        "label": 0,
+        "score": 0.9760444164276123,
+        "box": [
+          85,
+          585,
+          516,
+          834
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0000",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "dt-td0001",
+        "artifact_id": "dt-td0001",
+        "label": 0,
+        "score": 0.9717093110084534,
+        "box": [
+          394,
+          1041,
+          806,
+          1279
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0001",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      },
+      {
+        "id": "dt-td0002",
+        "artifact_id": "dt-td0002",
+        "label": 0,
+        "score": 0.964485764503479,
+        "box": [
+          465,
+          135,
+          836,
+          364
+        ],
+        "segmenter_assignment": {
+          "mask_ref": "bs0002",
+          "mask_component_id": 1,
+          "source": {
+            "model": "bubble-segmenter",
+            "asset": "manga109_bubble_int8.onnx",
+            "asset_sha": "2c80dab0b9df",
+            "window": null
+          }
+        }
+      }
+    ],
+    "planner_items": [
+      {
+        "box": [
+          465,
+          135,
+          836,
+          364
+        ],
+        "label": 0,
+        "kind": "parent-bubble",
+        "record_ids": [
+          "r01"
+        ],
+        "source": null
+      },
+      {
+        "box": [
+          85,
+          585,
+          516,
+          834
+        ],
+        "label": 0,
+        "kind": "parent-bubble",
+        "record_ids": [
+          "r02"
+        ],
+        "source": null
+      },
+      {
+        "box": [
+          394,
+          1041,
+          806,
+          1279
+        ],
+        "label": 0,
+        "kind": "parent-bubble",
+        "record_ids": [
+          "r03"
+        ],
+        "source": null
+      },
+      {
+        "box": [
+          63,
+          70,
+          300,
+          162
+        ],
+        "label": 2,
+        "kind": "ocr-text",
+        "record_ids": [
+          "r00"
+        ],
+        "source": "ocr"
+      },
+      {
+        "box": [
+          588,
+          207,
+          711,
+          291
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "r01"
+        ],
+        "source": "ocr"
+      },
+      {
+        "box": [
+          180,
+          665,
+          421,
+          751
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "r02"
+        ],
+        "source": "ocr"
+      },
+      {
+        "box": [
+          512,
+          1116,
+          691,
+          1201
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "r03"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "bubble_items": [
+      {
+        "box": [
+          588,
+          207,
+          711,
+          291
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "r01"
+        ],
+        "source": "ocr"
+      },
+      {
+        "box": [
+          180,
+          665,
+          421,
+          751
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "r02"
+        ],
+        "source": "ocr"
+      },
+      {
+        "box": [
+          512,
+          1116,
+          691,
+          1201
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "r03"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "free_text_items": [
+      {
+        "box": [
+          63,
+          70,
+          300,
+          162
+        ],
+        "label": 2,
+        "kind": "ocr-text",
+        "record_ids": [
+          "r00"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "mask_rles": [
+      {
+        "mask_ref": "bs0000",
+        "segmenter_component_id": 1,
+        "rle_sha256": "b4e60b3a6d102926d553cd1a49d8108759ddfc24323a5aee1ee2c5aa7347f4c3",
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      {
+        "mask_ref": "bs0001",
+        "segmenter_component_id": 1,
+        "rle_sha256": "19600c2f68b5fc2a6d69222a11ebd472d819ac1d3fa09407a799a56aff5cd548",
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      {
+        "mask_ref": "bs0002",
+        "segmenter_component_id": 1,
+        "rle_sha256": "5048a2e14862b722a41cc6ea33f57c8884bf44dd043776513cd2394fc1c79fda",
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      }
+    ],
+    "parameters": {
+      "engine": "android",
+      "leg_matrix": {
+        "bubble": "android-fill",
+        "free_text": "opencv"
+      },
+      "legacy_mode": null,
+      "execution_confidence": 0.6,
+      "bubble_segmentation": true,
+      "planner_constants": {
+        "bubble_erosion": 5,
+        "bubble_box_pad": 8,
+        "bubble_smooth_passes": 12,
+        "bubble_feather": 12,
+        "free_text_context": 64,
+        "free_text_pad": 1,
+        "free_text_dilate": 2,
+        "free_text_feather": 3,
+        "paddle_crop_pad": 12,
+        "paddle_thresh": 0.18,
+        "paddle_box_thresh": 0.34
+      },
+      "opencv_version": "5.0.0"
+    },
+    "model_assets": {
+      "paddle_detector": {
+        "status": "present",
+        "size": 9880512,
+        "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+      }
+    },
+    "fingerprint": "a2cfe8756791a72b23f495d2c1e7b3dca1952f524abef2cdab7b2d1ae098e64a",
+    "engine": "android",
+    "leg_matrix": {
+      "bubble": "android-fill",
+      "free_text": "opencv"
+    },
+    "legacy_mode": null,
+    "execution_confidence": 0.6,
+    "bubble_segmentation": true
+  },
+  "page_fingerprint": "73f4ed773db9c5cbbca96bf42d2781f7caa8e2287c8edad7fae9032c482509bb",
+  "execution": {
+    "confidence_threshold": 0.6,
+    "parity": "android-production",
+    "source": "cached-detection-artifacts",
+    "candidate_artifact_ids": [
+      "dt-td0003",
+      "dt-td0004",
+      "dt-td0005",
+      "dt-td0006",
+      "dt-td0000",
+      "dt-td0001",
+      "dt-td0002"
+    ],
+    "mask_capture_integrity": {
+      "status": "complete",
+      "degraded": false,
+      "missing_mask_refs": []
+    },
+    "ocr_region_join": {
+      "status": "joined",
+      "matched": 4,
+      "unmatched": 0
+    }
+  },
+  "mask_source": "A1-cached-page-space-rle",
+  "leg_matrix": {
+    "bubble": "android-fill",
+    "free_text": "opencv"
+  },
+  "stats": {
+    "bubble_leg": "android-fill",
+    "free_leg": "opencv",
+    "bubble_boxes": 3,
+    "free_boxes": 1,
+    "free_groups": 1,
+    "bubble_components": 3,
+    "combined_components": 4,
+    "mask_pixels": 201040,
+    "segmenter_union_pixels": 208474,
+    "segmenter_union_sha256": "ef1cb5c97373614495c712deec8179c0483257a1a1c26077d51cbaf950891c49",
+    "segmenter_components": [
+      {
+        "mask_ref": "bs0002",
+        "segmenter_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      {
+        "mask_ref": "bs0000",
+        "segmenter_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      },
+      {
+        "mask_ref": "bs0001",
+        "segmenter_component_id": 1,
+        "source": {
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null
+        }
+      }
+    ],
+    "total_ms": 8234.968
+  },
+  "regions": [
+    {
+      "id": "r00",
+      "artifact_id": "dt-td0006",
+      "kind": "ocr-region",
+      "text": "テスト",
+      "label": 2,
+      "score": 0.666,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            63,
+            70,
+            300,
+            162
+          ],
+          "label": 2,
+          "score": 0.666,
+          "artifact_id": "dt-td0006",
+          "model": "text-detector",
+          "asset": "detector-v4-s_int8.onnx",
+          "asset_sha": "5fe9e4f576e4",
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            63,
+            70,
+            300,
+            162
+          ]
+        },
+        {
+          "source": "paddle-refined",
+          "parent_region": "r00",
+          "box": [
+            83,
+            92,
+            270,
+            134
+          ]
+        }
+      ],
+      "route_taken": "freetext/opencv",
+      "mask_component_id": "c001",
+      "segmenter_component_id": null,
+      "erase_mask_component_id": "c001",
+      "context_crop_bbox": [
+        19,
+        28,
+        334,
+        198
+      ],
+      "timing_ms": {
+        "planning": 8.047,
+        "refinement": 1172.207,
+        "fill": 195.105,
+        "total": 1375.359
+      },
+      "timing_scope": "region",
+      "mask_resolution": {
+        "status": "no-assignment"
+      }
+    },
+    {
+      "id": "r01",
+      "artifact_id": "dt-td0005",
+      "kind": "ocr-region",
+      "text": "お前は誰だ！",
+      "label": 1,
+      "score": 0.824,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            588,
+            207,
+            711,
+            291
+          ],
+          "label": 1,
+          "score": 0.824,
+          "artifact_id": "dt-td0005",
+          "model": "text-detector",
+          "asset": "detector-v4-s_int8.onnx",
+          "asset_sha": "5fe9e4f576e4",
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            588,
+            207,
+            711,
+            291
+          ]
+        },
+        {
+          "source": "detector",
+          "role": "parent-bubble",
+          "box": [
+            465,
+            135,
+            836,
+            364
+          ],
+          "artifact_id": "dt-td0002",
+          "score": 0.964485764503479,
+          "model": "text-detector",
+          "asset": "detector-v4-s_int8.onnx",
+          "asset_sha": "5fe9e4f576e4",
+          "window": null
+        },
+        {
+          "source": "bubble-segmenter",
+          "role": "assigned-mask",
+          "artifact_id": "bs0002",
+          "mask_ref": "bs0002",
+          "segmenter_component_id": 1,
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null,
+          "box": [
+            474,
+            146,
+            822,
+            354
+          ]
+        }
+      ],
+      "route_taken": "bubble/android-fill",
+      "mask_component_id": "c002",
+      "segmenter_component_id": 1,
+      "erase_mask_component_id": "c002",
+      "context_crop_bbox": [
+        0,
+        0,
+        900,
+        1400
+      ],
+      "timing_ms": {
+        "planning": 8.047,
+        "refinement": 0.0,
+        "fill": 6741.773,
+        "total": 6749.82
+      },
+      "timing_scope": "bubble-leg-shared",
+      "parent_bubble": [
+        465,
+        135,
+        836,
+        364
+      ],
+      "parent_bubble_artifact_id": "dt-td0002",
+      "mask_resolution": {
+        "status": "resolved",
+        "mask_ref": "bs0002",
+        "segmenter_component_id": 1
+      }
+    },
+    {
+      "id": "r02",
+      "artifact_id": "dt-td0003",
+      "kind": "ocr-region",
+      "text": "静かだ…可主聞二えな",
+      "label": 1,
+      "score": 0.881,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            180,
+            665,
+            421,
+            751
+          ],
+          "label": 1,
+          "score": 0.881,
+          "artifact_id": "dt-td0003",
+          "model": "text-detector",
+          "asset": "detector-v4-s_int8.onnx",
+          "asset_sha": "5fe9e4f576e4",
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            180,
+            665,
+            421,
+            751
+          ]
+        },
+        {
+          "source": "detector",
+          "role": "parent-bubble",
+          "box": [
+            85,
+            585,
+            516,
+            834
+          ],
+          "artifact_id": "dt-td0000",
+          "score": 0.9760444164276123,
+          "model": "text-detector",
+          "asset": "detector-v4-s_int8.onnx",
+          "asset_sha": "5fe9e4f576e4",
+          "window": null
+        },
+        {
+          "source": "bubble-segmenter",
+          "role": "assigned-mask",
+          "artifact_id": "bs0000",
+          "mask_ref": "bs0000",
+          "segmenter_component_id": 1,
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null,
+          "box": [
+            92,
+            596,
+            504,
+            827
+          ]
+        }
+      ],
+      "route_taken": "bubble/android-fill",
+      "mask_component_id": "c003",
+      "segmenter_component_id": 1,
+      "erase_mask_component_id": "c003",
+      "context_crop_bbox": [
+        0,
+        0,
+        900,
+        1400
+      ],
+      "timing_ms": {
+        "planning": 8.047,
+        "refinement": 0.0,
+        "fill": 6741.773,
+        "total": 6749.82
+      },
+      "timing_scope": "bubble-leg-shared",
+      "parent_bubble": [
+        85,
+        585,
+        516,
+        834
+      ],
+      "parent_bubble_artifact_id": "dt-td0000",
+      "mask_resolution": {
+        "status": "resolved",
+        "mask_ref": "bs0000",
+        "segmenter_component_id": 1
+      }
+    },
+    {
+      "id": "r03",
+      "artifact_id": "dt-td0004",
+      "kind": "ocr-region",
+      "text": "行二う。もう時間だ",
+      "label": 1,
+      "score": 0.869,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            512,
+            1116,
+            691,
+            1201
+          ],
+          "label": 1,
+          "score": 0.869,
+          "artifact_id": "dt-td0004",
+          "model": "text-detector",
+          "asset": "detector-v4-s_int8.onnx",
+          "asset_sha": "5fe9e4f576e4",
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            512,
+            1116,
+            691,
+            1201
+          ]
+        },
+        {
+          "source": "detector",
+          "role": "parent-bubble",
+          "box": [
+            394,
+            1041,
+            806,
+            1279
+          ],
+          "artifact_id": "dt-td0001",
+          "score": 0.9717093110084534,
+          "model": "text-detector",
+          "asset": "detector-v4-s_int8.onnx",
+          "asset_sha": "5fe9e4f576e4",
+          "window": null
+        },
+        {
+          "source": "bubble-segmenter",
+          "role": "assigned-mask",
+          "artifact_id": "bs0001",
+          "mask_ref": "bs0001",
+          "segmenter_component_id": 1,
+          "model": "bubble-segmenter",
+          "asset": "manga109_bubble_int8.onnx",
+          "asset_sha": "2c80dab0b9df",
+          "window": null,
+          "box": [
+            406,
+            1051,
+            792,
+            1266
+          ]
+        }
+      ],
+      "route_taken": "bubble/android-fill",
+      "mask_component_id": "c004",
+      "segmenter_component_id": 1,
+      "erase_mask_component_id": "c004",
+      "context_crop_bbox": [
+        0,
+        0,
+        900,
+        1400
+      ],
+      "timing_ms": {
+        "planning": 8.047,
+        "refinement": 0.0,
+        "fill": 6741.773,
+        "total": 6749.82
+      },
+      "timing_scope": "bubble-leg-shared",
+      "parent_bubble": [
+        394,
+        1041,
+        806,
+        1279
+      ],
+      "parent_bubble_artifact_id": "dt-td0001",
+      "mask_resolution": {
+        "status": "resolved",
+        "mask_ref": "bs0001",
+        "segmenter_component_id": 1
+      }
+    }
+  ],
+  "infer_ms": 8261.5
+}
