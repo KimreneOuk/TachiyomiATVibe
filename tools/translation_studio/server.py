@@ -160,11 +160,10 @@ class Handler(BaseHTTPRequestHandler):
                 page = get("p")
                 stem = Path(page).stem
                 out = PIPELINE.studio_dir / "render" / (stem + ".png")
-                if not out.exists():
-                    try:
-                        PIPELINE.render_page(page)
-                    except Exception:
-                        pass
+                try:
+                    PIPELINE.render_page(page)
+                except Exception:
+                    pass
                 if out.exists():
                     return self._send_file(out, "image/png", cache_seconds=0)
                 # Fallback to original image if render does not exist yet (prevents 500 error & blank display!)
@@ -176,11 +175,10 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/img/inpainted":
                 page = get("p")
                 out = PIPELINE.studio_dir / "inpaint" / (Path(page).stem + ".png")
-                if not out.exists():
-                    try:
-                        PIPELINE.inpaint_page(page)
-                    except Exception:
-                        pass
+                try:
+                    PIPELINE.inpaint_page(page)
+                except Exception:
+                    pass
                 if out.exists():
                     return self._send_file(out, "image/png", cache_seconds=0)
                 orig = PIPELINE.chapter / page
@@ -231,7 +229,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json(PIPELINE.detect_page(body["page"],
                                                             body.get("conf")))
             if url.path == "/api/ocr":
-                return self._send_json(PIPELINE.ocr_page(body["page"]))
+                return self._send_json(PIPELINE.ocr_page(
+                    body["page"], force=bool(body.get("force", False))))
             if url.path == "/api/inpaint":
                 return self._send_json(PIPELINE.inpaint_page(
                     body["page"], force=bool(body.get("force", False)),

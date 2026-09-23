@@ -20,13 +20,18 @@ Caches live under <chapter>/.studio/ so re-testing never repeats work:
 from __future__ import annotations
 
 import io
+import copy
+import hashlib
 import json
 import math
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from collections import deque
+from functools import lru_cache, wraps
 from pathlib import Path
+from pathlib import PurePosixPath
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -51,8 +56,8 @@ from boxgeom import (Box, DET_THRESHOLDS, intersection_area,  # noqa: E402
                      overlaps_any_bubble, greedy_dedup_with_suppressions,
                      dedupe_within_parents_with_suppressions,
                      suppress_cross_label_with_suppressions)
-from detection_artifacts import (asset_sha12, assign_mask_center,  # noqa: E402
-                                 box_artifact, iter_rle_row_spans,
+from detection_artifacts import (assign_mask_center, box_artifact,  # noqa: E402
+                                 iter_rle_row_spans,
                                  mask_artifact, resolve_mask_component)
 from panel_detector import (PANEL_MODEL, PanelDetector, assign_panel,  # noqa: E402
                             panel_nms, reading_order_panel_indices)
@@ -71,6 +76,13 @@ PANEL_DETECTOR_PATH = PANEL_MODEL
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 OCR_PAD = 12                # RoiPageRecognitionEngine pad around text boxes
 CONF_FLOOR = 0.05           # what we persist (slider re-filters above this)
+PAGE_HASH_CHUNK_BYTES = 1024 * 1024
+PAGE_FINGERPRINT_VERSION = 1
+DETECTION_CAPTURE_ALGORITHM = "studio-detection-capture-v3"
+DETECTION_REPLAY_ALGORITHM = "studio-detection-replay-v2"
+OCR_ALGORITHM = "studio-ocr-v2"
+INPAINT_ALGORITHM = "studio-inpaint-v2"
+RENDER_ALGORITHM = "studio-render-v2"
 N_CLASSES = {0: "bubble", 1: "text_bubble", 2: "text_free"}
 CLASS_COLORS = {0: (150, 150, 160), 1: (70, 200, 120), 2: (240, 170, 60)}
 
@@ -79,6 +91,62 @@ DEFAULT_CHAPTER = (r"C:\Users\User\Downloads\manga_test_chapters"
                    r"\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-"
                    r"mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16")
 RECENT_FILE = Path(__file__).resolve().parent / ".recent.json"
+
+
+def _stable_fingerprint(value) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@lru_cache(maxsize=32)
+def _cached_file_sha256(path: str, modified_ns: int, size: int,
+                        _sample_sha256: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        while chunk := stream.read(PAGE_HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _asset_sample_sha256(path: Path, size: int) -> str:
+    """Cheaply detect same-stat asset edits using a length/head/tail sample."""
+    digest = hashlib.sha256()
+    digest.update(size.to_bytes(8, "big", signed=False))
+    sample_bytes = 4096
+    with path.open("rb") as stream:
+        if size <= sample_bytes * 2:
+            digest.update(stream.read())
+        else:
+            digest.update(stream.read(sample_bytes))
+            stream.seek(max(0, size - sample_bytes))
+            digest.update(stream.read(sample_bytes))
+    return digest.hexdigest()
+
+
+def _asset_identity(path: Path | None) -> dict:
+    if path is None or not path.is_file():
+        return {"status": "missing"}
+    stat = path.stat()
+    return {"status": "present", "size": stat.st_size,
+            "sha256": _cached_file_sha256(str(path.resolve()),
+                                           stat.st_mtime_ns, stat.st_size,
+                                           _asset_sample_sha256(path, stat.st_size))}
+
+
+def _asset_sha12(path: Path | None) -> str | None:
+    identity = _asset_identity(path)
+    return identity["sha256"][:12] if identity["status"] == "present" else None
+
+
+def _page_operation(method):
+    """Hash and validate one page once, including through nested stage calls."""
+    @wraps(method)
+    def wrapped(self, page, *args, **kwargs):
+        with self.lock:
+            with self._page_operation_scope(str(page)):
+                return method(self, page, *args, **kwargs)
+    return wrapped
 
 
 def log(msg: str) -> None:
@@ -112,6 +180,155 @@ class Pipeline:
         self._render_dirty: dict[str, bool] = {}
         self._crop_cache: dict = {}
         self._dims: dict[str, list[int]] = {}
+        self._page_fingerprints: dict[str, dict] = {}
+        self._page_operation_local = threading.local()
+
+    @contextmanager
+    def _page_operation_scope(self, page: str):
+        active = getattr(self._page_operation_local, "active", None)
+        if active and active[0] == page:
+            yield active[1]
+            return
+        with self.lock:
+            info = self._compute_page_fingerprint(page)
+            self._accept_page_fingerprint(page, info)
+            previous = active
+            self._page_operation_local.active = (page, info)
+        try:
+            yield info
+        finally:
+            self._page_operation_local.active = previous
+
+    def _compute_page_fingerprint(self, page: str) -> dict:
+        if self.chapter is None:
+            raise ValueError("No chapter open")
+        path = self.chapter / page
+        if not path.is_file():
+            raise FileNotFoundError(page)
+        with Image.open(path) as source_image:
+            width, height = source_image.size
+        content_hash = hashlib.sha256()
+        byte_size = 0
+        with path.open("rb") as source:
+            while chunk := source.read(PAGE_HASH_CHUNK_BYTES):
+                content_hash.update(chunk)
+                byte_size += len(chunk)
+        identity = PurePosixPath(page.replace("\\", "/")).as_posix()
+        fields = {"algorithm": "sha256-compressed-page-v1",
+                  "fingerprint_version": PAGE_FINGERPRINT_VERSION,
+                  "identity": identity, "byte_size": byte_size,
+                  "width": width, "height": height,
+                  "content_sha256": content_hash.hexdigest()}
+        return {**fields, "fingerprint": _stable_fingerprint(fields)}
+
+    def _current_page_fingerprint(self, page: str) -> str:
+        active = getattr(self._page_operation_local, "active", None)
+        if active and active[0] == page:
+            return active[1]["fingerprint"]
+        return self._compute_page_fingerprint(page)["fingerprint"]
+
+    def _cached_page_fingerprint(self, page: str) -> str | None:
+        detection = (self._cache.get("detections", {}).get(page)
+                     if isinstance(self._cache, dict) else None)
+        if isinstance(detection, dict) and detection.get("page_fingerprint"):
+            return detection["page_fingerprint"]
+        ocr = (self._cache.get("ocr", {}).get(page)
+               if isinstance(self._cache, dict) else None)
+        if isinstance(ocr, dict) and ocr.get("page_fingerprint"):
+            return ocr["page_fingerprint"]
+        if self.studio_dir is not None:
+            stem = Path(page).stem
+            for name in ("inpaint", "render"):
+                metadata = self.studio_dir / name / f"{stem}.json"
+                try:
+                    cached = json.loads(metadata.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    continue
+                page_fingerprint = (cached.get("page_fingerprint")
+                                    or cached.get("cache_key", {}).get("page_fingerprint"))
+                if page_fingerprint:
+                    return page_fingerprint
+            thumb_dir = self.studio_dir / "thumbs"
+            for metadata in thumb_dir.glob(f"{stem}_*.json") if thumb_dir.is_dir() else ():
+                try:
+                    cached = json.loads(metadata.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError):
+                    continue
+                if cached.get("page_fingerprint"):
+                    return cached["page_fingerprint"]
+        return None
+
+    def _has_page_artifacts(self, page: str) -> bool:
+        if (page in self._cache.get("detections", {})
+                or page in self._cache.get("ocr", {})):
+            return True
+        if self.studio_dir is None:
+            return False
+        stem = Path(page).stem
+        if any((self.studio_dir / folder / f"{stem}{suffix}").exists()
+               for folder, suffix in (("inpaint", ".png"), ("inpaint", ".json"),
+                                      ("inpaint_mask", ".png"),
+                                      ("render", ".png"), ("render", ".json"),
+                                      ("segmentation", ".png"),
+                                      ("seg_overlay", ".png"))):
+            return True
+        thumb_dir = self.studio_dir / "thumbs"
+        return thumb_dir.is_dir() and any(thumb_dir.glob(f"{stem}_*.jpg"))
+
+    def _accept_page_fingerprint(self, page: str, info: dict) -> None:
+        fingerprint = info["fingerprint"]
+        previous = self._page_fingerprints.get(page)
+        if previous is not None:
+            stale = previous.get("fingerprint") != fingerprint
+        else:
+            stored = self._cached_page_fingerprint(page)
+            stale = self._has_page_artifacts(page) and stored != fingerprint
+        if stale:
+            self._invalidate_page_artifacts(page)
+        self._page_fingerprints[page] = info
+        self._dims[page] = [int(info["width"]), int(info["height"])]
+
+    def _invalidate_page_artifacts(self, page: str) -> None:
+        detections = self._cache.get("detections", {})
+        ocr = self._cache.get("ocr", {})
+        detection_changed = detections.pop(page, None) is not None
+        ocr_changed = ocr.pop(page, None) is not None
+        if detection_changed:
+            self._save_json("detections.json", detections)
+        if ocr_changed:
+            self._save_json("ocr.json", ocr)
+
+        self._dims.pop(page, None)
+        self._bubble_mask_cache.pop(page, None)
+        self._crop_cache.pop(page, None)
+        self._render_assignments.pop(page, None)
+        self._render_dirty[page] = True
+        self._seg_times.pop(page, None)
+        self._inpaint_times.pop(page, None)
+        self._render_times.pop(page, None)
+        if self.studio_dir is None:
+            return
+        stem = Path(page).stem
+        for folder, suffixes in (
+                ("inpaint", (".png", ".json")),
+                ("inpaint_mask", (".png",)),
+                ("render", (".png", ".json")),
+                ("segmentation", (".png",)),
+                ("seg_overlay", (".png",))):
+            for suffix in suffixes:
+                path = self.studio_dir / folder / f"{stem}{suffix}"
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+        thumb_dir = self.studio_dir / "thumbs"
+        if thumb_dir.is_dir():
+            for path in list(thumb_dir.glob(f"{stem}_*.jpg")) + list(
+                    thumb_dir.glob(f"{stem}_*.json")):
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
 
     # ------------------------------------------------------------------ util
     def log(self, msg: str) -> None:
@@ -197,6 +414,7 @@ class Pipeline:
                 "translations": self._load_json("translations.json", {}),
             }
             self._dims = {}
+            self._page_fingerprints = {}
             self._crop_cache = {}
             self._bubble_mask_cache = {}
             self._render_assignments = {}
@@ -253,7 +471,7 @@ class Pipeline:
                 if not d.is_dir():
                     return
                 if stem:
-                    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+                    for ext in (".png", ".jpg", ".jpeg", ".webp", ".json"):
                         _rm(d / (stem + ext))
                 else:
                     for f in list(d.iterdir()):
@@ -321,7 +539,7 @@ class Pipeline:
             "pages": self.pages,
             "settings": self.settings,
             "recent": self.get_recent(),
-            "dims": {p: self.page_dims(p) for p in self.pages},
+            "dims": {p: self._page_dims_header(p) for p in self.pages},
             "models": {
                 "detector_ready": self._detector is not None,
                 "ocr_ready": self._ocr is not None,
@@ -336,34 +554,53 @@ class Pipeline:
     # Additive helpers that feed the viewer UI. They reuse the existing
     # caches/outputs above; none of them change pipeline semantics.
 
-    def page_dims(self, page: str) -> list[int]:
-        """[w, h] from the image header, so the viewer can reserve layout
-        space before decoding anything."""
-        d = self._dims.get(page)
-        if d is None:
+    def _page_dims_header(self, page: str) -> list[int]:
+        """Read current header dimensions without hashing a page for state GETs."""
+        with self.lock:
             with Image.open(self.chapter / page) as im:
-                d = [im.width, im.height]
-            self._dims[page] = d
-        return d
+                dimensions = [im.width, im.height]
+            self._dims[page] = dimensions
+            return dimensions
 
+    @_page_operation
+    def page_dims(self, page: str) -> list[int]:
+        """Return dimensions after synchronizing this page's content identity."""
+        return self._page_dims_header(page)
+
+    @_page_operation
     def thumbnail_path(self, page: str, size: int = 160) -> Path:
         """Cached thumbnail file path on disk."""
         assert self.studio_dir is not None
         tdir = self.studio_dir / "thumbs"
         out = tdir / f"{Path(page).stem}_{size}.jpg"
-        if not out.exists():
+        metadata_path = tdir / f"{Path(page).stem}_{size}.json"
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            metadata = {}
+        page_fingerprint = self._current_page_fingerprint(page)
+        if (not out.exists()
+                or metadata.get("page_fingerprint") != page_fingerprint):
             img = self.page_image(page)
             img.thumbnail((size, 10000), Image.BILINEAR)
             tdir.mkdir(parents=True, exist_ok=True)
             tmp = out.with_suffix(".tmp.jpg")
             img.save(tmp, "JPEG", quality=80)
             tmp.replace(out)
+            metadata_path.write_text(json.dumps({
+                "page_fingerprint": page_fingerprint,
+                "size": int(size),
+                "cache_fingerprint": _stable_fingerprint(
+                    {"page_fingerprint": page_fingerprint,
+                     "size": int(size), "algorithm": "studio-thumbnail-v1"}),
+            }, indent=2), encoding="utf-8")
         return out
 
     def thumbnail(self, page: str, size: int = 160) -> Image.Image:
         """Small cached JPEG for the navigator rail / overview."""
         return Image.open(self.thumbnail_path(page, size)).convert("RGB")
 
+    @_page_operation
     def ocr_input_image(self, page: str, region_id: str) -> Image.Image:
         """The EXACT 224x224 normalized tensor OCR consumed, un-normalized
         for display — reuses lab.preprocessing.preprocess, nothing new."""
@@ -379,6 +616,7 @@ class Pipeline:
                       0, 255).astype("uint8")
         return Image.fromarray(arr, mode="L").convert("RGB")
 
+    @_page_operation
     def render_crop(self, page: str, region_id: str, scale: int = 2) -> Image.Image:
         """Region box cropped from the rendered output (final on-page text)."""
         self.render_page(page)
@@ -406,7 +644,7 @@ class Pipeline:
             if ocr and "regions" in ocr:
                 regs = [r for r in ocr["regions"] if r.get("score", 1.0) >= conf]
             elif det:
-                regs = self._regions_at_conf(p, conf).get("regions", [])
+                regs = self._regions_at_conf(p, conf, persist=False).get("regions", [])
             else:
                 regs = []
             tr = self.translations(p)
@@ -475,6 +713,7 @@ class Pipeline:
         }
 
     # ------------------------------------------------------------------ image
+    @_page_operation
     def page_image(self, page: str) -> Image.Image:
         p = self.chapter / page
         if not p.exists():
@@ -534,27 +773,113 @@ class Pipeline:
             return "ltr-reading-order"
         return None
 
-    def _detection_cache_is_current(self, raw: dict, page_wh: list[int]) -> bool:
+    def _detection_capture_inputs(self, page_info: dict) -> dict:
+        width, height = int(page_info["width"]), int(page_info["height"])
+        try:
+            from segmentation import SEGMENTER_MODEL
+            segmenter_path = SEGMENTER_MODEL
+        except Exception:
+            segmenter_path = None
+        panel_skip_reason = self._panel_skip_reason(width, height)
+        panel_identity = (_asset_identity(PANEL_DETECTOR_PATH)
+                          if panel_skip_reason is None
+                          else {"status": "skipped", "reason": panel_skip_reason})
+        segmenter_enabled = bool(self.settings.get("bubble_segmentation", True))
+        segmenter_identity = (_asset_identity(segmenter_path)
+                              if segmenter_enabled else {
+                                  "status": "skipped",
+                                  "reason": "bubble-segmentation-disabled"})
+        return {
+            "schema": 2,
+            "algorithm": DETECTION_CAPTURE_ALGORITHM,
+            "page_fingerprint": page_info["fingerprint"],
+            "page_wh": [width, height],
+            "text_detector": _asset_identity(DETECTOR_PATH),
+            "panel_detector": panel_identity,
+            "panel_skip_reason": panel_skip_reason,
+            "bubble_segmentation_enabled": segmenter_enabled,
+            "bubble_segmenter": segmenter_identity,
+            "raw_score_floor": CONF_FLOOR,
+        }
+
+    @staticmethod
+    def _detection_capture_statuses(raw: dict) -> dict:
+        models = raw.get("models", {})
+        return {name: (models.get(name) or {}).get("status")
+                for name in ("text-detector", "panel-detector", "bubble-segmenter")}
+
+    def _stamp_detection_capture(self, raw: dict, page_info: dict) -> dict:
+        inputs = self._detection_capture_inputs(page_info)
+        statuses = self._detection_capture_statuses(raw)
+        raw["capture_algorithm_version"] = DETECTION_CAPTURE_ALGORITHM
+        raw["page_fingerprint"] = page_info["fingerprint"]
+        raw["page_fingerprint_inputs"] = {
+            key: page_info[key] for key in
+            ("algorithm", "identity", "byte_size", "width", "height", "content_sha256")}
+        raw["capture_inputs"] = inputs
+        raw["capture_statuses"] = statuses
+        raw["capture_fingerprint"] = _stable_fingerprint({
+            "algorithm": DETECTION_CAPTURE_ALGORITHM,
+            "capture_version": raw.get("capture_version"),
+            "inputs": inputs, "statuses": statuses,
+        })
+        return raw
+
+    def _detection_cache_is_current(self, raw: dict, page_info: dict) -> bool:
+        page_wh = [int(page_info["width"]), int(page_info["height"])]
         if not isinstance(raw, dict) or raw.get("capture_version") != 1:
+            return False
+        if (raw.get("capture_algorithm_version") != DETECTION_CAPTURE_ALGORITHM
+                or raw.get("page_fingerprint") != page_info.get("fingerprint")
+                or raw.get("page_wh") != page_wh):
+            return False
+        expected_inputs = self._detection_capture_inputs(page_info)
+        capture_inputs = raw.get("capture_inputs")
+        if not isinstance(capture_inputs, dict):
+            return False
+        relevant_inputs = set(expected_inputs)
+        if expected_inputs.get("panel_skip_reason") is not None:
+            relevant_inputs.difference_update({"panel_detector", "panel_skip_reason"})
+        if not expected_inputs.get("bubble_segmentation_enabled", True):
+            relevant_inputs.difference_update({
+                "bubble_segmentation_enabled", "bubble_segmenter"})
+        if any(capture_inputs.get(key) != expected_inputs.get(key)
+               for key in relevant_inputs):
+            return False
+        statuses = self._detection_capture_statuses(raw)
+        if raw.get("capture_statuses") != statuses:
+            return False
+        expected_fingerprint = _stable_fingerprint({
+            "algorithm": DETECTION_CAPTURE_ALGORITHM,
+            "capture_version": raw.get("capture_version"),
+            "inputs": capture_inputs, "statuses": statuses,
+        })
+        if raw.get("capture_fingerprint") != expected_fingerprint:
             return False
         models = raw.get("models")
         if not isinstance(models, dict):
             return False
         text_model = models.get("text-detector")
-        text_sha = asset_sha12(DETECTOR_PATH)
+        text_sha = _asset_sha12(DETECTOR_PATH)
         if (not isinstance(text_model, dict)
                 or text_model.get("asset_sha") != text_sha
                 or not isinstance(text_model.get("outputs"), list)):
             return False
 
         panel_model = models.get("panel-detector")
-        panel_sha = asset_sha12(PANEL_DETECTOR_PATH)
-        if not isinstance(panel_model, dict) or panel_model.get("asset_sha") != panel_sha:
+        if (not isinstance(panel_model, dict)
+                or not isinstance(panel_model.get("outputs"), list)):
             return False
-        if panel_sha is None and panel_model.get("status") != "disabled":
-            return False
-        if panel_sha is not None and self._panel_skip_reason(*page_wh) is None:
-            if panel_model.get("status") not in {"ready", "error", "disabled"}:
+        if expected_inputs["panel_skip_reason"] is None:
+            panel_input = expected_inputs["panel_detector"]
+            if panel_input.get("status") == "present":
+                panel_sha = _asset_sha12(PANEL_DETECTOR_PATH)
+                if panel_model.get("asset_sha") != panel_sha:
+                    return False
+                if panel_model.get("status") not in {"ready", "error", "disabled"}:
+                    return False
+            elif (panel_model.get("asset_sha") is not None
+                    or panel_model.get("status") != "disabled"):
                 return False
 
         try:
@@ -563,16 +888,20 @@ class Pipeline:
         except Exception:
             seg_path = None
         segmenter_model = models.get("bubble-segmenter")
-        segmenter_sha = asset_sha12(seg_path)
         if (not isinstance(segmenter_model, dict)
-                or segmenter_model.get("asset_sha") != segmenter_sha):
+                or not isinstance(segmenter_model.get("outputs"), list)):
             return False
-        if segmenter_sha is None and segmenter_model.get("status") != "disabled":
-            return False
-        if (segmenter_sha is not None
-                and self.settings.get("bubble_segmentation", True)
-                and segmenter_model.get("status") not in {"ready", "error", "disabled"}):
-            return False
+        if expected_inputs.get("bubble_segmentation_enabled", True):
+            segmenter_input = expected_inputs["bubble_segmenter"]
+            if segmenter_input.get("status") == "present":
+                segmenter_sha = _asset_sha12(seg_path)
+                if segmenter_model.get("asset_sha") != segmenter_sha:
+                    return False
+                if segmenter_model.get("status") not in {"ready", "error", "disabled"}:
+                    return False
+            elif (segmenter_model.get("asset_sha") is not None
+                    or segmenter_model.get("status") != "disabled"):
+                return False
         return True
 
     def _capture_detection_models(self, page: str, img: Image.Image) -> dict:
@@ -581,7 +910,7 @@ class Pipeline:
         detector_start = time.perf_counter()
         text_outputs, windows, tall = run_text_detector(img, detector.detect)
         detector_ms = round((time.perf_counter() - detector_start) * 1000, 1)
-        text_sha = asset_sha12(DETECTOR_PATH)
+        text_sha = _asset_sha12(DETECTOR_PATH)
         text_records = [box_artifact(
             f"td{index:04d}", page, "text-detector", DETECTOR_PATH.name,
             text_sha, output["window"], output["box"], output["raw_score"],
@@ -590,7 +919,7 @@ class Pipeline:
         for index, output in enumerate(text_outputs):
             output["id"] = text_records[index]["id"]
 
-        panel_sha = asset_sha12(PANEL_DETECTOR_PATH)
+        panel_sha = _asset_sha12(PANEL_DETECTOR_PATH)
         panel_cache = {"asset": PANEL_DETECTOR_PATH.name, "asset_sha": panel_sha,
                        "outputs": [], "kept_ids": [], "suppression_records": [],
                        "status": "disabled" if panel_sha is None else "skipped"}
@@ -667,7 +996,7 @@ class Pipeline:
         try:
             from segmentation import SEGMENTER_MODEL
             segmenter_cache["asset"] = SEGMENTER_MODEL.name
-            segmenter_cache["asset_sha"] = asset_sha12(SEGMENTER_MODEL)
+            segmenter_cache["asset_sha"] = _asset_sha12(SEGMENTER_MODEL)
             if segmenter_cache["asset_sha"] is None:
                 segmenter_cache["reason"] = "asset-missing"
             elif not self.settings.get("bubble_segmentation", True):
@@ -741,46 +1070,58 @@ class Pipeline:
                           "merge_records": [], "kept_ids": []},
         }
 
+    @_page_operation
     def detect_page(self, page: str, conf: float | None = None,
                     force: bool = False) -> dict:
         """Runs (or reuses) the detector; re-filters at the requested conf."""
         with self.lock:
             conf = float(self.settings["conf"] if conf is None else conf)
+            page_info = self._page_fingerprints[page]
             raw = self._cache["detections"].get(page)
             if raw is None or force:
                 img = self.page_image(page)
-                raw = self._capture_detection_models(page, img)
+                if force:
+                    self._bubble_mask_cache.pop(page, None)
+                raw = self._stamp_detection_capture(
+                    self._capture_detection_models(page, img), page_info)
                 self._cache["detections"][page] = raw
                 self.log(f"detect {page}: {len(raw['boxes'])} raw "
                          f"(infer {raw['infer_ms']}ms, load {raw['load_ms']}ms)")
-            elif not self._detection_cache_is_current(raw, self.page_dims(page)):
+            elif not self._detection_cache_is_current(raw, page_info):
                 self.log(f"detect {page}: stale capture; recapturing model outputs")
                 img = self.page_image(page)
-                raw = self._capture_detection_models(page, img)
+                self._bubble_mask_cache.pop(page, None)
+                raw = self._stamp_detection_capture(
+                    self._capture_detection_models(page, img), page_info)
                 self._cache["detections"][page] = raw
             regions = self._regions_at_conf(page, conf)
             raw = self._cache["detections"][page]
             return {"page": page, "conf": conf, **regions,
+                    "page_fingerprint": raw.get("page_fingerprint"),
                     "model_ms": raw.get("infer_ms", raw.get("model_ms", 0)),
                     "infer_ms": raw.get("infer_ms", raw.get("model_ms", 0)),
                     "load_ms": raw.get("load_ms", self._load_times.get("detector", 0))}
 
-    def _regions_at_conf(self, page: str, conf: float) -> dict:
-        """Lock and replay the Android detection decisions from cached outputs."""
+    def _regions_at_conf(self, page: str, conf: float,
+                         persist: bool = True) -> dict:
+        """Replay decisions under lock; display-only callers use an isolated copy."""
         with self.lock:
-            return self._regions_at_conf_locked(page, conf)
+            raw = self._cache["detections"].get(page)
+            if raw is None:
+                raise ValueError(f"page not detected yet: {page}")
+            working = raw if persist else copy.deepcopy(raw)
+            return self._regions_at_conf_locked(page, conf, raw_override=working,
+                                                persist=persist)
 
-    def _regions_at_conf_locked(self, page: str, conf: float) -> dict:
+    def _regions_at_conf_locked(self, page: str, conf: float, *,
+                                raw_override: dict | None = None,
+                                persist: bool = True) -> dict:
         """Replay detection decisions while holding the pipeline cache lock."""
-        raw = self._cache["detections"].get(page)
+        raw = raw_override if raw_override is not None else self._cache["detections"].get(page)
         if raw is None:
             raise ValueError(f"page not detected yet: {page}")
         previous_decisions = raw.get("decisions") or {}
-        previous_replay_context = (
-            previous_decisions.get("conf"),
-            previous_decisions.get("panel_assignments_enabled"),
-            previous_decisions.get("segmenter_assignments_enabled"),
-        )
+        previous_replay_fingerprint = previous_decisions.get("fingerprint")
         models = raw.setdefault("models", {})
         text_model = models.setdefault("text-detector", {"outputs": []})
         records = text_model.setdefault("outputs", [])
@@ -792,7 +1133,7 @@ class Pipeline:
                 artifact_id = f"tdlegacy{index:04d}"
                 record = box_artifact(
                     artifact_id, page, "text-detector", DETECTOR_PATH.name,
-                    asset_sha12(DETECTOR_PATH), None,
+                    _asset_sha12(DETECTOR_PATH), None,
                     [int(v) for v in row[2:6]], float(row[1]), int(row[0]))
                 records.append(record)
                 record_by_id[artifact_id] = record
@@ -1036,11 +1377,31 @@ class Pipeline:
             "panel_assignments_enabled": panel_assignments_enabled,
             "segmenter_assignments_enabled": segmenter_enabled,
         }
-        current_replay_context = (conf, panel_assignments_enabled, segmenter_enabled)
-        if previous_replay_context != current_replay_context:
-            self._save_json("detections.json", self._cache["detections"])
+        decision_inputs = {
+            "algorithm": DETECTION_REPLAY_ALGORITHM,
+            "capture_fingerprint": raw.get("capture_fingerprint"),
+            "page_fingerprint": raw.get("page_fingerprint"),
+            "confidence": conf,
+            "panel_assignments_enabled": panel_assignments_enabled,
+            "segmenter_assignments_enabled": segmenter_enabled,
+            "reading_order_rtl": self._reading_order_is_rtl(),
+            "source_language": str(self.settings.get(
+                "source_language", self.settings.get("source_lang", "ja"))).strip().lower(),
+            "regions": kept_regions,
+            "panels": panel_views,
+            "candidate_ids": [record.get("id") for record in derived_records],
+        }
+        decision_fingerprint = _stable_fingerprint(decision_inputs)
+        raw["decisions"]["algorithm_version"] = DETECTION_REPLAY_ALGORITHM
+        raw["decisions"]["fingerprint"] = decision_fingerprint
+        raw["decisions"]["fingerprint_inputs"] = decision_inputs
+        if persist:
+            self._cache["detections"][page] = raw
+            if previous_replay_fingerprint != decision_fingerprint:
+                self._save_json("detections.json", self._cache["detections"])
         return {"bubbles": sum(1 for item in canonical if item["label"] == 0),
-                "regions": kept_regions, "panels": panel_views}
+                "regions": kept_regions, "panels": panel_views,
+                "decision_fingerprint": decision_fingerprint}
 
     # --------------------------------------------------------------------- OCR
     def _mangaocr_batch_size(self) -> int:
@@ -1088,6 +1449,53 @@ class Pipeline:
 
     def _ocr_engine_name(self) -> str:
         return self.settings.get("ocr_engine", "mangaocr")
+
+    def _ocr_model_assets(self, engine_name: str) -> dict:
+        if engine_name == "paddle":
+            try:
+                import paddle_ocr
+                paths = {"detector": paddle_ocr.DET_MODEL,
+                         "recognizer": paddle_ocr.REC_MODEL,
+                         "dictionary": paddle_ocr.REC_DICT}
+                return {name: _asset_identity(path) for name, path in paths.items()}
+            except Exception as error:
+                return {"status": "unavailable", "error": type(error).__name__}
+        try:
+            return {name: _asset_identity(path)
+                    for name, path in lab_assets.model_paths().items()}
+        except Exception as error:
+            return {"status": "unavailable", "error": type(error).__name__}
+
+    def _ocr_cache_inputs(self, page: str, engine_name: str,
+                          decision_fingerprint: str,
+                          regions: list[dict]) -> dict:
+        page_info = self._page_fingerprints[page]
+        if engine_name == "paddle":
+            settings = {
+                "max_batch": self._ocr_batch_setting(),
+                "source_language": str(self.settings.get(
+                    "source_language", self.settings.get("source_lang", "ja"))),
+                "webtoon_mode": bool(self.settings.get("webtoon_mode", False)),
+                "reading_order_rtl": self._reading_order_is_rtl(),
+            }
+        else:
+            settings = {
+                "max_batch": self._mangaocr_batch_size(),
+                "serial_timing": bool(self.settings.get(
+                    "mangaocr_serial_timing", False)),
+            }
+        return {
+            "algorithm": OCR_ALGORITHM,
+            "page_fingerprint": page_info["fingerprint"],
+            "detection_decision_fingerprint": decision_fingerprint,
+            "engine": engine_name,
+            "models": self._ocr_model_assets(engine_name),
+            "settings": settings,
+            "regions": [{key: region.get(key) for key in
+                         ("id", "artifact_id", "label", "score", "box", "ocr_box",
+                          "segmenter_assignment", "panel_assignment")}
+                        for region in regions],
+        }
 
     def _recognize_crops(self, crops: list[Image.Image], regions: list[dict] | None = None,
                          page_image: Image.Image | None = None) -> tuple[list[dict], dict, float]:
@@ -1154,50 +1562,81 @@ class Pipeline:
         results, runs, ms = engine.decode_regions(crops)
         return results, runs, ms
 
-    def ocr_page(self, page: str, conf: float | None = None) -> dict:
+    @_page_operation
+    def ocr_page(self, page: str, conf: float | None = None,
+                 force: bool = False) -> dict:
         with self.lock:
-            conf = self.settings["conf"] if conf is None else conf
-            self.detect_page(page, conf)
-            regions = self._regions_at_conf(page, conf)["regions"]
+            conf = float(self.settings["conf"] if conf is None else conf)
+            detection = self.detect_page(page, conf)
+            regions = detection["regions"]
             engine_name = self._ocr_engine_name()
             prev_entry = self._cache["ocr"].get(page) or {}
-            if not regions:
-                self._cache["ocr"][page] = {"regions": [], "runs": {},
-                                            "ms": 0, "engine": engine_name}
-                self._save_json("ocr.json", self._cache["ocr"])
-                return {"page": page, "regions": [], "runs": {}, "ms": 0}
+            cache_inputs = self._ocr_cache_inputs(
+                page, engine_name, detection["decision_fingerprint"], regions)
+            cache_fingerprint = _stable_fingerprint(cache_inputs)
+            if (not force
+                    and prev_entry.get("cache_fingerprint") == cache_fingerprint
+                    and isinstance(prev_entry.get("regions"), list)):
+                return {"page": page, "regions": prev_entry["regions"],
+                        "runs": prev_entry.get("runs", {}),
+                        "ms": prev_entry.get("ms", 0),
+                        "infer_ms": prev_entry.get("infer_ms", prev_entry.get("ms", 0)),
+                        "load_ms": prev_entry.get("load_ms", 0),
+                        "engine": engine_name, "cache_hit": True,
+                        "cache_fingerprint": cache_fingerprint}
 
-            # cached results from a DIFFERENT engine are not reusable
+            # Cached results from a different engine are not reusable.
             if prev_entry.get("engine", "mangaocr") != engine_name:
                 prev_entry = {}
-            img = self.page_image(page)
-            crops, err = [], []
-            for r in regions:
-                b = Box(*recognition_input_box(r, engine_name,
-                                               [img.width, img.height]))
-                crops.append(img.crop((b.x1, b.y1, b.x2, b.y2)))
+            if regions:
+                img = self.page_image(page)
+                crops = []
+                for region in regions:
+                    box = Box(*recognition_input_box(
+                        region, engine_name, [img.width, img.height]))
+                    crops.append(img.crop((box.x1, box.y1, box.x2, box.y2)))
+                results, runs, ms = self._recognize_crops(
+                    crops, regions=regions, page_image=img)
+            else:
+                results, runs, ms = [], {}, 0
 
-            results, runs, ms = self._recognize_crops(crops, regions=regions,
-                                                      page_image=img)
-
-            prev = {r0["id"]: r0 for r0 in prev_entry.get("regions", [])}
-            for r, res in zip(regions, results):
-                r.update(res)
-                # preserve hand/API translations across re-OCR by box overlap
-                for pid, p in prev.items():
-                    if iou_at_least(r["box"], p["box"], 0.7):
-                        r["carried_from"] = pid
+            prev = {row["id"]: row for row in prev_entry.get("regions", [])}
+            for region, result in zip(regions, results):
+                region.update(result)
+                # Keep the existing translation carry behavior on OCR reruns.
+                for previous_id, previous_region in prev.items():
+                    if iou_at_least(region["box"], previous_region["box"], 0.7):
+                        region["carried_from"] = previous_id
                         break
             load_ms = self._load_times.get(f"ocr_{engine_name}", 0)
-            self._cache["ocr"][page] = {"regions": regions, "runs": runs,
-                                        "ms": ms, "infer_ms": ms, "load_ms": load_ms,
-                                        "engine": engine_name}
+            ocr_fingerprint = _stable_fingerprint({
+                "inputs": cache_inputs,
+                "regions": [{key: region.get(key) for key in
+                             ("id", "artifact_id", "label", "score", "box", "ocr_box",
+                              "text", "raw_text", "confidence", "lines", "engine",
+                              "error", "position_limit")}
+                            for region in regions],
+            })
+            self._cache["ocr"][page] = {
+                "regions": regions, "runs": runs,
+                "ms": ms, "infer_ms": ms, "load_ms": load_ms,
+                "engine": engine_name,
+                "page_fingerprint": self._current_page_fingerprint(page),
+                "detection_fingerprint": detection["decision_fingerprint"],
+                "cache_fingerprint": cache_fingerprint,
+                "ocr_fingerprint": ocr_fingerprint,
+                "cache_inputs": cache_inputs,
+            }
+            self._crop_cache.pop(page, None)
             self._save_json("ocr.json", self._cache["ocr"])
             self._render_dirty[page] = True
             texts = [r.get("text", "") for r in regions]
             self.log(f"ocr[{engine_name}] {page}: {len(regions)} regions, "
                      f"infer {ms}ms (load {load_ms}ms, {sum(1 for t in texts if t)} non-empty)")
-            return {"page": page, "regions": regions, "runs": runs, "ms": ms, "infer_ms": ms, "load_ms": load_ms}
+            return {"page": page, "regions": regions, "runs": runs,
+                    "ms": ms, "infer_ms": ms, "load_ms": load_ms,
+                    "engine": engine_name, "cache_hit": False,
+                    "cache_fingerprint": cache_fingerprint}
 
     # -------------------------------------------------------------- translate
     def translations(self, page: str) -> dict:
@@ -1385,6 +1824,7 @@ class Pipeline:
             log(f"bubble segmenter loaded in {self._load_times['segmenter']}ms")
         return self._segmenter
 
+    @_page_operation
     def bubble_masks(self, page: str) -> list:
         """Return masks for legacy callers, preferring the captured A1 output.
 
@@ -1459,6 +1899,12 @@ class Pipeline:
             return {"current_capture": False, "regions": regions,
                     "detections": raw_boxes,
                     "candidate_ids": [],
+                    "decision_fingerprint": _stable_fingerprint({
+                        "schema": "legacy", "confidence": conf,
+                        "detections": raw_boxes,
+                        "regions": [{key: region.get(key) for key in
+                                     ("id", "label", "score", "box", "text")}
+                                    for region in regions]}),
                     "mask_capture_integrity": {
                         "status": "legacy-schema", "degraded": False,
                         "missing_mask_refs": []},
@@ -1508,6 +1954,7 @@ class Pipeline:
             "regions": joined,
             "detections": candidates,
             "candidate_ids": [record.get("id") for record in candidates],
+            "decision_fingerprint": projected.get("decision_fingerprint"),
             "mask_capture_integrity": {
                 "status": mask_status, "degraded": bool(missing_mask_refs),
                 "missing_mask_refs": missing_mask_refs},
@@ -1515,6 +1962,155 @@ class Pipeline:
                          "unmatched": unmatched},
         }
 
+    def _inpaint_cache_inputs(self, page: str, *, engine: str, mode: str,
+                              bubble_leg: str, free_leg: str, conf: float,
+                              execution: dict, regions: list[dict],
+                              planner_detections: list,
+                              planner_items: list[dict],
+                              bubble_items: list[dict],
+                              free_items: list[dict]) -> dict:
+        import inpaint_android
+
+        raw = self._cache.get("detections", {}).get(page) or {}
+        mask_cache = (raw.get("mask_cache", {})
+                      .get("bubble-segmenter", {}))
+        segmenter_outputs = (raw.get("models", {})
+                             .get("bubble-segmenter", {}).get("outputs", []))
+        refs: dict[tuple[str, str], dict] = {}
+        for source in list(regions) + [
+                item for item in planner_detections if isinstance(item, dict)]:
+            assignment = source.get("segmenter_assignment") or {}
+            ref = assignment.get("mask_ref")
+            component = assignment.get("mask_component_id")
+            if not ref:
+                continue
+            key = (str(ref), str(component))
+            if key in refs:
+                continue
+            entry = mask_cache.get(ref, {})
+            runs = (entry.get("components", {}).get(str(component))
+                    if component is not None else None)
+            if runs is None:
+                runs = entry.get("runs", [])
+            output = next((item for item in segmenter_outputs
+                           if item.get("mask_ref") == ref), {})
+            refs[key] = {
+                "mask_ref": str(ref),
+                "segmenter_component_id": component,
+                "rle_sha256": _stable_fingerprint(runs),
+                "source": assignment.get("source") or output.get("source"),
+            }
+
+        def detector_candidate(value):
+            if isinstance(value, dict):
+                attrs = value.get("attrs", {})
+                geometry = value.get("geometry", {})
+                box = value.get("box")
+                if box is None and all(key in geometry for key in
+                                       ("x1", "y1", "x2", "y2")):
+                    box = [geometry[key] for key in ("x1", "y1", "x2", "y2")]
+                return {
+                    "id": value.get("id"),
+                    "artifact_id": value.get("artifact_id") or value.get("id"),
+                    "label": attrs.get("label", value.get("label")),
+                    "score": attrs.get("score", value.get("score")),
+                    "box": box,
+                    "segmenter_assignment": value.get("segmenter_assignment"),
+                }
+            if isinstance(value, (list, tuple)) and len(value) >= 6:
+                return {"label": value[0], "score": value[1],
+                        "box": list(value[2:6])}
+            return {"value": value}
+
+        def planner_item(value):
+            return {key: value.get(key) for key in
+                    ("box", "label", "kind", "record_ids", "source")}
+
+        region_inputs = [{key: region.get(key) for key in
+                          ("id", "artifact_id", "box", "ocr_box", "label", "score",
+                           "text", "segmenter_assignment", "panel_assignment")}
+                         for region in regions]
+        ocr_entry = self._cache.get("ocr", {}).get(page) or {}
+        ocr_fingerprint = ocr_entry.get("ocr_fingerprint")
+        if not ocr_fingerprint:
+            ocr_fingerprint = _stable_fingerprint({
+                "legacy_ocr": [{key: region.get(key) for key in
+                                ("id", "artifact_id", "box", "label", "score", "text")}
+                               for region in ocr_entry.get("regions", [])]})
+
+        page_info = self._page_fingerprints[page]
+        assets: dict[str, dict] = {}
+        uses_bubble_aot = bubble_leg == "aot" and bool(bubble_items)
+        uses_free_aot = free_leg == "aot" and bool(free_items)
+        if engine == "legacy" and mode == "QUALITY" and planner_items:
+            uses_bubble_aot = True
+        if uses_bubble_aot or uses_free_aot:
+            import aot_inpaint
+            assets["aot_fixed"] = _asset_identity(aot_inpaint.AOT_MODEL)
+            assets["aot_dynamic"] = _asset_identity(
+                inpaint_android.AOT_DYNAMIC_MODEL)
+        if free_items:
+            try:
+                import paddle_ocr
+                assets["paddle_detector"] = _asset_identity(paddle_ocr.DET_MODEL)
+            except Exception as error:
+                assets["paddle_detector"] = {
+                    "status": "unavailable", "error": type(error).__name__}
+
+        parameters = {
+            "engine": engine,
+            "leg_matrix": ({"bubble": bubble_leg, "free_text": free_leg}
+                           if engine == "android" else None),
+            "legacy_mode": mode if engine == "legacy" else None,
+            "execution_confidence": conf,
+            "bubble_segmentation": bool(
+                self.settings.get("bubble_segmentation", True)),
+        }
+        if engine == "legacy":
+            parameters["bubble_mask_erosion"] = int(
+                self.settings.get("bubble_mask_erosion", 5))
+        else:
+            parameters["planner_constants"] = {
+                "bubble_erosion": inpaint_android.BUBBLE_SEG_EROSION,
+                "bubble_box_pad": inpaint_android.BUBBLE_BOX_PAD,
+                "bubble_smooth_passes": inpaint_android.BUBBLE_SMOOTH_PASSES,
+                "bubble_feather": inpaint_android.BUBBLE_FEATHER,
+                "free_text_context": inpaint_android.FREE_TEXT_CONTEXT,
+                "free_text_pad": inpaint_android.FREE_TEXT_PAD,
+                "free_text_dilate": inpaint_android.FREE_TEXT_DILATE,
+                "free_text_feather": inpaint_android.FREE_TEXT_FEATHER,
+                "paddle_crop_pad": inpaint_android.PADDLE_CROP_PAD,
+                "paddle_thresh": inpaint_android.PADDLE_THRESH,
+                "paddle_box_thresh": inpaint_android.PADDLE_BOX_THRESH,
+            }
+        if ((engine == "legacy" and mode == "FAST")
+                or (bubble_leg == "opencv" and bubble_items)
+                or (free_leg == "opencv" and free_items)):
+            try:
+                import cv2
+                parameters["opencv_version"] = cv2.__version__
+            except Exception:
+                parameters["opencv_version"] = None
+
+        return {
+            "schema": 2,
+            "algorithm": INPAINT_ALGORITHM,
+            "page_fingerprint": page_info["fingerprint"],
+            "detection_decision_fingerprint": execution.get(
+                "decision_fingerprint"),
+            "ocr_fingerprint": ocr_fingerprint,
+            "regions": region_inputs,
+            "planner_candidate_ids_scores": [detector_candidate(item)
+                                             for item in planner_detections],
+            "planner_items": [planner_item(item) for item in planner_items],
+            "bubble_items": [planner_item(item) for item in bubble_items],
+            "free_text_items": [planner_item(item) for item in free_items],
+            "mask_rles": [refs[key] for key in sorted(refs)],
+            "parameters": parameters,
+            "model_assets": assets,
+        }
+
+    @_page_operation
     def inpaint_page(self, page: str, force: bool = False, mode: str | None = None) -> dict:
         with self.lock:
             mode = (mode or self.settings.get("inpaint_mode", "quality")).upper()
@@ -1524,14 +2120,24 @@ class Pipeline:
             if engine not in ("legacy", "android"):
                 raise ValueError(f"unsupported inpaint engine: {engine}")
             conf = float(self.settings.get("conf", DEFAULT_SETTINGS["conf"]))
-            if page not in self._cache.get("detections", {}):
-                self.detect_page(page, conf)
+            # Validate captures and, when present, the OCR record before using
+            # them to form this stage's cache key. These calls are cheap hits
+            # for current inputs and refresh stale upstream stages otherwise.
+            self.detect_page(page, conf)
+            if page in self._cache.get("ocr", {}):
+                self.ocr_page(page, conf)
             det_data = self._cache["detections"].get(page) or {}
             raw_boxes = det_data.get("boxes", [])
             execution = self._inpaint_execution_projection(page, conf)
             regions = execution["regions"]
             planner_detections = execution["detections"]
             current_capture = execution["current_capture"]
+            import inpaint_android
+            planner_items, _ = inpaint_android.plan_erase_regions(
+                regions, planner_detections,
+                min_confidence=(conf if current_capture else None))
+            bubble_items, free_items = inpaint_android.partition_erase_items(
+                planner_items, [item.get("label", 2) for item in planner_items])
             if current_capture:
                 legacy_raw_boxes = [
                     [int(row[0]), float(row[1]),
@@ -1551,14 +2157,21 @@ class Pipeline:
             mask_path = mask_dir / (stem + ".png")
             provenance_path = out_dir / (stem + ".json")
             leg_matrix = {"bubble": bubble_leg, "free_text": free_leg}
-            cache_key = {
-                "engine": engine,
-                "leg_matrix": leg_matrix,
-                "legacy_mode": mode if engine == "legacy" else None,
-                "execution_confidence": conf,
-                "bubble_segmentation": bool(
-                    self.settings.get("bubble_segmentation", True)),
-            }
+            cache_inputs = self._inpaint_cache_inputs(
+                page, engine=engine, mode=mode, bubble_leg=bubble_leg,
+                free_leg=free_leg, conf=conf, execution=execution,
+                regions=regions, planner_detections=planner_detections,
+                planner_items=planner_items, bubble_items=bubble_items,
+                free_items=free_items)
+            cache_key = {**cache_inputs,
+                         "fingerprint": _stable_fingerprint(cache_inputs),
+                         # Keep A4-visible parameters at the key's top level.
+                         "engine": engine,
+                         "leg_matrix": leg_matrix if engine == "android" else None,
+                         "legacy_mode": mode if engine == "legacy" else None,
+                         "execution_confidence": conf,
+                         "bubble_segmentation": bool(
+                             self.settings.get("bubble_segmentation", True))}
             cached = {}
             if provenance_path.exists():
                 try:
@@ -1620,6 +2233,7 @@ class Pipeline:
                         "provenance_schema_version": 2,
                         "engine": "android",
                         "cache_key": cache_key,
+                        "page_fingerprint": self._current_page_fingerprint(page),
                         "execution": execution_provenance,
                         "mask_source": ("A1-cached-page-space-rle"
                                         if current_capture
@@ -1644,6 +2258,7 @@ class Pipeline:
                     provenance = {
                         "provenance_schema_version": 2,
                         "engine": "legacy", "cache_key": cache_key,
+                        "page_fingerprint": self._current_page_fingerprint(page),
                         "execution": execution_provenance,
                         "leg_matrix": leg_matrix, "mode": mode,
                         "stats": stats, "regions": [],
@@ -1677,15 +2292,21 @@ class Pipeline:
             return {"page": page, "path": str(out_path), "mask_path": str(mask_path),
                     "infer_ms": self._inpaint_times.get(page, 0),
                     "engine": engine, "leg_matrix": leg_matrix,
+                    "cache_fingerprint": cache_key["fingerprint"],
+                    "cache_hit": not (force or not out_path.exists()
+                                      or not mask_path.exists()
+                                      or not cache_matches),
                     "provenance": provenance.get("regions", []),
                     "provenance_path": str(provenance_path)}
 
+    @_page_operation
     def inpainted_image(self, page: str) -> Image.Image:
         out_path = self.studio_dir / "inpaint" / (Path(page).stem + ".png")
         if not out_path.exists():
             self.inpaint_page(page)
         return Image.open(out_path).convert("RGB")
 
+    @_page_operation
     def inpaint_mask_image(self, page: str) -> Image.Image:
         mask_path = self.studio_dir / "inpaint_mask" / (Path(page).stem + ".png")
         if mask_path.exists():
@@ -1694,6 +2315,7 @@ class Pipeline:
         return Image.new("L", (w, h), 0)
 
 
+    @_page_operation
     def segmentation_overlay_image(self, page: str) -> Image.Image:
         w, h = self.page_dims(page)
         if not self.settings.get("bubble_segmentation", True):
@@ -1763,6 +2385,7 @@ class Pipeline:
                 overlay_np[border] = c_border
         return Image.fromarray(overlay_np, "RGBA")
 
+    @_page_operation
     def segmentation_overlay_path(self, page: str) -> Path | None:
         assert self.studio_dir is not None
         sdir = self.studio_dir / "seg_overlay"
@@ -1772,12 +2395,55 @@ class Pipeline:
         return None
 
 
+    @_page_operation
     def segmentation_image(self, page: str) -> Image.Image:
         img = self.page_image(page).convert("RGBA")
         overlay_img = self.segmentation_overlay_image(page)
         result = Image.alpha_composite(img, overlay_img)
         return result.convert("RGB")
 
+    def _render_cache_inputs(self, page: str, ocr: dict,
+                             inpaint_fingerprint: str) -> dict:
+        page_info = self._page_fingerprints[page]
+        raw = self._cache.get("detections", {}).get(page) or {}
+        decision_fingerprint = (raw.get("decisions") or {}).get("fingerprint")
+        if not decision_fingerprint:
+            projection = self._regions_at_conf(
+                page, float(self.settings.get("conf", DEFAULT_SETTINGS["conf"])),
+                persist=False)
+            decision_fingerprint = projection["decision_fingerprint"]
+        font = _load_font(14, self.settings)
+        font_path = getattr(font, "path", None)
+        font_state = (_asset_identity(Path(str(font_path)))
+                      if font_path and Path(str(font_path)).is_file()
+                      else {"status": "builtin", "name": str(font_path or "default")})
+        return {
+            "algorithm": RENDER_ALGORITHM,
+            "page_fingerprint": page_info["fingerprint"],
+            "page_wh": [page_info["width"], page_info["height"]],
+            "detection_decision_fingerprint": decision_fingerprint,
+            "ocr_fingerprint": ocr.get("ocr_fingerprint") or _stable_fingerprint(
+                {"regions": ocr.get("regions", []), "engine": ocr.get("engine")}),
+            "inpaint_fingerprint": inpaint_fingerprint,
+            "render_regions": [{key: region.get(key) for key in
+                                ("id", "artifact_id", "box", "label", "score",
+                                 "segmenter_assignment", "panel_assignment")}
+                               for region in ocr.get("regions", [])],
+            "translations": {key: self.translations(page).get(key, "")
+                             for key in sorted(self.translations(page))},
+            "settings": {
+                "confidence": float(self.settings.get(
+                    "conf", DEFAULT_SETTINGS["conf"])),
+                "bubble_segmentation": bool(
+                    self.settings.get("bubble_segmentation", True)),
+                "font_scale": float(self.settings.get("font_scale", 1.0)),
+                "font_path": str(self.settings.get("font_path", "")),
+                "font_asset": font_state,
+                "pillow_version": getattr(Image, "__version__", "unknown"),
+            },
+        }
+
+    @_page_operation
     def render_page(self, page: str, force: bool = False) -> dict:
         with self.lock:
             ocr = self._cache["ocr"].get(page)
@@ -1786,7 +2452,25 @@ class Pipeline:
             out_dir = self.studio_dir / "render"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / (Path(page).stem + ".png")
-            if force or self._render_dirty.get(page, True) or not out_path.exists():
+            cache_path = out_dir / (Path(page).stem + ".json")
+            inpaint = self.inpaint_page(page)
+            cache_inputs = self._render_cache_inputs(
+                page, ocr, inpaint["cache_fingerprint"])
+            cache_key = {**cache_inputs,
+                         "fingerprint": _stable_fingerprint(cache_inputs)}
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                cached = {}
+            if (not force and out_path.exists()
+                    and cached.get("cache_key") == cache_key):
+                self._render_dirty[page] = False
+                self._render_assignments[page] = cached.get("mask_assignments", [])
+                self._render_times[page] = cached.get("render_ms", 0)
+                render_ms = self._render_times[page]
+                assignment_records = self._render_assignments[page]
+                cache_hit = True
+            else:
                 t0 = time.perf_counter()
                 # Start from clean inpainted background
                 img = self.inpainted_image(page).copy()
@@ -1803,13 +2487,25 @@ class Pipeline:
                 self._render_times[page] = render_ms
                 self.log(f"render {page}: {n}/{len(ocr['regions'])} regions "
                          f"translated -> {out_path.name} ({render_ms}ms)")
+                assignment_records = render_assignments
+                cached = {"page_fingerprint": self._current_page_fingerprint(page),
+                          "cache_key": cache_key,
+                          "cache_fingerprint": cache_key["fingerprint"],
+                          "render_ms": render_ms,
+                          "mask_assignments": render_assignments}
+                cache_path.write_text(json.dumps(cached, indent=2, ensure_ascii=False),
+                                      encoding="utf-8")
+                cache_hit = False
             return {"page": page, "path": str(out_path),
-                    "render_ms": self._render_times.get(page, 0),
-                    "mask_assignments": self._render_assignments.get(page, [])}
+                    "render_ms": render_ms,
+                    "cache_fingerprint": cache_key["fingerprint"],
+                    "cache_hit": cache_hit,
+                    "mask_assignments": assignment_records}
 
+    @_page_operation
     def overlay_image(self, page: str, conf: float | None = None) -> Image.Image:
         conf = self.settings["conf"] if conf is None else conf
-        regions = self._regions_at_conf(page, conf)["regions"]
+        regions = self._regions_at_conf(page, conf, persist=False)["regions"]
         raw = self._cache["detections"].get(page) or {}
         raw_boxes = raw.get("boxes", [])
         img = self.page_image(page)
@@ -1834,6 +2530,7 @@ class Pipeline:
                       font=_ui_font())
         return img
 
+    @_page_operation
     def region_crop(self, page: str, region_id: str, scale: int = 2) -> Image.Image:
         key = (page, region_id)
         if key in self._crop_cache:
@@ -1852,24 +2549,27 @@ class Pipeline:
     # ---------------------------------------------------------------- process
     def process_page(self, page: str, conf: float | None = None,
                      translate: bool = True) -> dict:
-        t0 = time.perf_counter()
-        det = self.detect_page(page, conf)
-        ocr = self.ocr_page(page, conf)
-        inpaint = self.inpaint_page(page)
-        self.carry_translations(page)
-        if translate:
-            try:
-                self.translate_page(page)
-            except Exception as e:
-                self.log(f"!! translate skipped: {e}")
-        rend = self.render_page(page)
-        return {"page": page, "detections": det, "ocr": {
-            "regions": ocr["regions"], "runs": ocr["runs"], "ms": ocr["ms"]},
-            "inpaint": inpaint["path"],
-            "render": rend["path"],
-            "translations": self.translations(page),
-            "total_ms": round((time.perf_counter() - t0) * 1000, 1)}
+        with self.lock:
+            with self._page_operation_scope(page):
+                t0 = time.perf_counter()
+                det = self.detect_page(page, conf)
+                ocr = self.ocr_page(page, conf)
+                inpaint = self.inpaint_page(page)
+                self.carry_translations(page)
+                if translate:
+                    try:
+                        self.translate_page(page)
+                    except Exception as e:
+                        self.log(f"!! translate skipped: {e}")
+                rend = self.render_page(page)
+                return {"page": page, "detections": det, "ocr": {
+                    "regions": ocr["regions"], "runs": ocr["runs"], "ms": ocr["ms"]},
+                    "inpaint": inpaint["path"],
+                    "render": rend["path"],
+                    "translations": self.translations(page),
+                    "total_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
+    @_page_operation
     def page_data(self, page: str) -> dict:
         conf = float(self.settings.get("conf", DEFAULT_SETTINGS["conf"]))
         ocr = self._cache["ocr"].get(page, {})
@@ -1891,7 +2591,7 @@ class Pipeline:
         if ocr and "regions" in ocr:
             regions = [r for r in ocr["regions"] if r.get("score", 1.0) >= conf]
         elif det:
-            regions = self._regions_at_conf(page, conf).get("regions", [])
+            regions = self._regions_at_conf(page, conf, persist=False).get("regions", [])
         else:
             regions = []
 
@@ -2323,7 +3023,7 @@ def render_regions(img: Image.Image, regions: list[dict],
             det_data = pipe._cache.get("detections", {}).get(p) or {}
             if det_data.get("capture_version") == 1:
                 conf = float(settings.get("conf", DEFAULT_SETTINGS["conf"]))
-                projected = pipe._regions_at_conf(p, conf).get("regions", [])
+                projected = pipe._regions_at_conf(p, conf, persist=False).get("regions", [])
                 projected_by_id = {r.get("artifact_id"): r for r in projected
                                    if r.get("artifact_id")}
                 raw = pipe._cache["detections"][p]
