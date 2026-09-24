@@ -1,0 +1,53 @@
+$ python tools/translation_studio/selftest_inpaint_variants.py
+exit_code=0
+elapsed_seconds=2.275
+
+--- stdout ---
+[10:56:16] inpaint[android android-fill+opencv] variant-page.png: 5124 mask pixels -> variant-page.png (89.9ms)
+[10:56:16] inpaint[android android-fill+opencv] variant-page.png: 5124 mask pixels -> variant-page.png (54.7ms)
+[10:56:16] inpaint[android android-fill+pushpull] variant-page.png: 5124 mask pixels -> variant-page.png (60.8ms)
+[10:56:17] inpaint[android opencv+pushpull] variant-page.png: 5124 mask pixels -> variant-page.png (57.8ms)
+[10:56:17] inpaint[android opencv+pushpull] variant-page.png: 5124 mask pixels -> variant-page.png (57.6ms)
+[10:56:17] inpaint[android opencv+pushpull] variant-page.png: 5632 mask pixels -> variant-page.png (49.0ms)
+[10:56:17] inpaint[android opencv+pushpull] variant-page.png: 5632 mask pixels -> variant-page.png (42.2ms)
+[10:56:17] inpaint[android android-fill+opencv] variant-page.png: 5124 mask pixels -> variant-page.png (33.4ms)
+{
+  "passed": true,
+  "page": "variant-page.png",
+  "variant_fingerprints": [
+    "d90be31dee3c3f3517d6f7b2bad4cbd8aa36abad968c5ec2052efdc9aa72a032",
+    "168674353fce40558f90def16f4f3a963156869a6e80e716897b985518db1776",
+    "40f04a2b1527041bd6ac51766c52e1c9f85cbcdfbfd60207c9b04e73c1552dfd",
+    "0e4295bb34efce47a5585f7cbe23cba3b11fdb7bb245088137f463a37e62cd77",
+    "9cc31b324192f36315efa66afd59150bbb7c5c4b7d3b1e4532422dc05936d96e",
+    "4f8d3bfb558dafa826273537d7dc1169fc5e8b24598f513988650e5486d2b9d5",
+    "031f3cfe870362d018b7bd3c0d83b830b40c4ad32be5742a722b4534e7ff6018"
+  ],
+  "switchback_cache_hit": true,
+  "switchback_recomputed": false,
+  "force_regenerated": true,
+  "opencv_method_ns_verified": true,
+  "variant_cache_recency_refreshed": true,
+  "inpaint_compute_count": 8,
+  "selected_legs_verified": true,
+  "planner_partition_and_paddle_refinement_stable": true,
+  "evidence": [
+    "baseline_fast_routes.json",
+    "free_leg_pushpull_routes.json",
+    "opencv_method_ns_routes.json",
+    "bubble_leg_opencv_routes.json",
+    "telea_radius_4_routes.json",
+    "erosion_radius_3_routes.json",
+    "feather_override_6_routes.json",
+    "switchback_routes.json",
+    "force_routes.json",
+    "baseline_fast.png",
+    "baseline_fast_mask.png",
+    "opencv_ns.png",
+    "opencv_ns_mask.png",
+    "free_pushpull.png",
+    "free_pushpull_mask.png"
+  ]
+}
+
+--- stderr ---

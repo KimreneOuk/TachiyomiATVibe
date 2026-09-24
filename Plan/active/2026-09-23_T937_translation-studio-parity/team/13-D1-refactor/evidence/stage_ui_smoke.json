@@ -1,0 +1,12 @@
+{
+  "checks": [
+    "Translate stage request updates its session dispatch count, status, and elapsed time",
+    "Chapter benchmark table includes the measured direct Translate request time"
+  ],
+  "browser_errors": [],
+  "stage_time": "13 ms",
+  "stage_status": "Complete",
+  "stage_dispatches": "1 dispatch",
+  "benchmark_translate_time": "13 ms",
+  "screenshot": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/stage_pipeline_translation_smoke.png"
+}
