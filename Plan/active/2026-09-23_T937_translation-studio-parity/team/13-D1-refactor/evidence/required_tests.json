@@ -1,0 +1,62 @@
+{
+  "results": [
+    {
+      "name": "cache_fingerprints",
+      "command": "python tools/translation_studio/selftest_cache_fingerprints.py",
+      "exit_code": 0,
+      "elapsed_seconds": 1.342,
+      "log": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/cache_fingerprints.log"
+    },
+    {
+      "name": "mask_planner",
+      "command": "python tools/translation_studio/selftest_mask_planner.py",
+      "exit_code": 0,
+      "elapsed_seconds": 1.429,
+      "log": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/mask_planner.log"
+    },
+    {
+      "name": "ocr",
+      "command": "python tools/translation_studio/selftest_ocr.py",
+      "exit_code": 0,
+      "elapsed_seconds": 0.758,
+      "log": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/ocr.log"
+    },
+    {
+      "name": "translation_providers",
+      "command": "python tools/translation_studio/test_translation_providers.py",
+      "exit_code": 0,
+      "elapsed_seconds": 0.716,
+      "log": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/translation_providers.log"
+    },
+    {
+      "name": "inpaint",
+      "command": "python tools/translation_studio/selftest_inpaint.py",
+      "exit_code": 0,
+      "elapsed_seconds": 84.333,
+      "log": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/inpaint.log"
+    },
+    {
+      "name": "translation_mapping",
+      "command": "python tools/translation_studio/selftest_translation_mapping.py",
+      "exit_code": 0,
+      "elapsed_seconds": 1.31,
+      "log": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/translation_mapping.log"
+    },
+    {
+      "name": "inpaint_variants",
+      "command": "python tools/translation_studio/selftest_inpaint_variants.py",
+      "exit_code": 0,
+      "elapsed_seconds": 2.275,
+      "log": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/inpaint_variants.log"
+    },
+    {
+      "name": "py_compile",
+      "command": "python -m py_compile tools/translation_studio/inpaint_android.py tools/translation_studio/inpaint_provenance.py tools/translation_studio/pipeline.py tools/translation_studio/server.py tools/translation_studio/selftest_inpaint_variants.py",
+      "exit_code": 0,
+      "elapsed_seconds": 0.144,
+      "log": "Plan/active/2026-09-23_T937_translation-studio-parity/team/13-D1-refactor/evidence/py_compile.log"
+    }
+  ],
+  "passed": 8,
+  "failed": 0
+}

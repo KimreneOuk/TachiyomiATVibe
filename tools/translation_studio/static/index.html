@@ -80,7 +80,7 @@
   <div class="tb-center">
     <!-- 1. Primary Workflow: Run Controls -->
     <div class="deck-group run-deck" title="Full pipeline execution">
-      <button class="pipe-btn pipe-accent" data-stage="all" id="btnProcessPage" title="Run full pipeline on current page (Detect → OCR → Clean → Translate → Render)">
+      <button class="pipe-btn pipe-accent" data-stage="all" id="btnProcessPage" title="Run full pipeline: Detect → OCR → Translate → Inpaint → Render">
         <span class="btn-icon">⚡</span> <span class="btn-text">Run Page</span>
       </button>
       <button id="btnProcessChapter" class="pipe-btn pipe-primary" title="Run full pipeline on all pages in chapter">
@@ -97,34 +97,7 @@
 
     <div class="pipe-sep-vert"></div>
 
-    <!-- 2. Debug & Inspection: Granular Step Stepper -->
-    <div class="deck-group stepper-deck" id="stepperDeck" title="Run individual stage on current page">
-      <button class="pipe-btn" data-stage="detect" title="Run Detector (v4) on current page">Detect</button>
-      <button class="pipe-btn" data-stage="ocr" title="Run OCR on detected boxes">OCR</button>
-      <button class="pipe-btn" data-stage="inpaint" title="Clean background (Bubble Fill + PaddleDet + AOT)">Clean</button>
-      <button class="pipe-btn" data-stage="translate" title="Translate OCR text on current page">Translate</button>
-      <button class="pipe-btn" data-stage="render" title="Render translated typography on current page">Render</button>
-      <button id="btnRerender" class="pipe-btn pipe-btn-subtle icon-only" title="Recalculate layout &amp; re-render from cached translations [R]">↻</button>
-    </div>
-
-    <!-- Compact Stages Dropdown for Narrow Viewports -->
-    <div class="dd stepper-dropdown-wrap hidden" id="stepperDropdownWrap">
-      <button id="btnStepperMenu" class="pipe-btn dropdown-btn" title="Inspect individual pipeline stages">Stages ▾</button>
-      <div id="stepperDropdown" class="dd-menu hidden">
-        <div class="dd-title">Individual Stages (Page)</div>
-        <button class="dd-item" data-stage="detect">1. Detect Text & Bubbles</button>
-        <button class="dd-item" data-stage="ocr">2. OCR Text Recognition</button>
-        <button class="dd-item" data-stage="inpaint">3. Clean Background (Inpaint)</button>
-        <button class="dd-item" data-stage="translate">4. Translate OCR Text</button>
-        <button class="dd-item" data-stage="render">5. Render Typography</button>
-        <div class="dd-sep"></div>
-        <button class="dd-item" id="btnRerenderDropdown">↻ Quick Re-render (Cached)</button>
-      </div>
-    </div>
-
-    <div class="pipe-sep-vert"></div>
-
-    <!-- 3. Maintenance / Reset Dropdown -->
+    <!-- Maintenance / Reset -->
     <div class="dd reset-dd">
       <button id="btnResetMenu" class="pipe-btn pipe-btn-danger dropdown-btn" title="Reset cached pipeline artifacts">
         <span class="btn-icon">🗑</span> <span class="btn-text">Reset ▾</span>
@@ -216,7 +189,7 @@
   <aside id="sidebar">
     <div class="sb-header">
       <div class="sb-tabs">
-        <button id="tabViz" class="sb-tab active" title="Visualization & Overlays (V)">Visualization</button>
+        <button id="tabViz" class="sb-tab active" title="Visualization & Overlays (V)">View</button>
         <button id="tabInsp" class="sb-tab" title="Region Inspector (I)">Inspector <span id="inspBadge" class="insp-badge hidden">0</span></button>
       </div>
       <button id="sbClose" class="tb-btn icon" title="Collapse sidebar (⇥)">⇥</button>
@@ -404,81 +377,34 @@
         </details>
       </div>
 
-      <!-- Pipeline Configuration (Directly Visible & Adjustable) -->
-      <div class="sb-card">
-        <div class="sb-label">Pipeline Configuration</div>
-        
-        <!-- OCR Engine -->
-        <div class="sb-ctrl-row">
-          <div class="sb-ctrl-label">
-            <span>OCR Engine</span>
-            <span class="sb-badge-tag" id="cfgOcrTag">mangaocr</span>
-          </div>
-          <div class="seg seg-2" id="cfgOcrSeg">
-            <button data-engine="mangaocr" class="active" title="ViT + Autoregressive decoder (Manga text specialist)">MangaOCR</button>
-            <button data-engine="paddle" title="PaddleOCR v6 mobile det+rec (high speed)">PaddleOCR</button>
-          </div>
+      <div class="sb-card stage-pipeline-card">
+        <div class="sb-label-row">
+          <div class="sb-label">Stage Pipeline</div>
+          <span id="stagePipelinePage" class="mono muted">No page</span>
         </div>
-
-        <!-- Inpaint Mode -->
-        <div class="sb-ctrl-row">
-          <div class="sb-ctrl-label">
-            <span>Inpaint Mode</span>
-            <span class="sb-badge-tag" id="cfgInpaintTag">fast</span>
-          </div>
-          <div class="seg seg-2" id="cfgInpaintSeg">
-            <button data-inpaint="fast" class="active" title="Classical color fill (instant)">Fast</button>
-            <button data-inpaint="quality" title="Neural AOT-512 inpainting">Quality</button>
-          </div>
-        </div>
-
-        <!-- Translation Backend -->
-        <div class="sb-ctrl-row">
-          <div class="sb-ctrl-label">
-            <span>Translate Backend</span>
-            <span class="sb-badge-tag" id="cfgTranslateTag">google</span>
-          </div>
-          <div class="seg seg-2" id="cfgTranslateSeg">
-            <button data-backend="google" class="active" title="Google Translate (cached)">Google</button>
-            <button data-backend="lm-studio" title="Local LLM (LM Studio / OpenAI API)">LM Studio</button>
-          </div>
-        </div>
-
-        <!-- Detector v4 Conf -->
-        <div class="sb-slider-row">
-          <div class="sb-slider-meta">
-            <span>Detector v4 Conf</span>
-            <span id="confVal" class="mono">0.6</span>
-          </div>
-          <input type="range" id="confSlider" min="0.05" max="0.95" step="0.05" value="0.6">
-        </div>
-
-        <!-- Bubble Mask Edge Inset -->
-        <div class="sb-slider-row">
-          <div class="sb-slider-meta">
-            <span>Bubble Edge Inset</span>
-            <span id="erosionVal" class="mono">5 px</span>
-          </div>
-          <input type="range" id="erosionSlider" min="0" max="20" step="1" value="5">
-        </div>
-
-        <!-- Font Scale -->
-        <div class="sb-slider-row">
-          <div class="sb-slider-meta">
-            <span>Font Scale</span>
-            <span id="fontScaleVal" class="mono">1.0x</span>
-          </div>
-          <input type="range" id="fontScaleSlider" min="0.5" max="2.0" step="0.1" value="1.0">
-        </div>
-
-        <!-- Mask Opacity -->
-        <div class="sb-slider-row">
-          <div class="sb-slider-meta">
-            <span>Mask Opacity</span>
-            <span id="maskOpacityVal" class="mono">85%</span>
-          </div>
-          <input type="range" id="maskOpacitySlider" min="10" max="100" step="5" value="85">
-        </div>
+        <ol id="stagePipeline" class="stage-pipeline">
+          <li class="stage-row" data-stage-row="detect">
+            <div class="stage-row-head"><div class="stage-copy"><strong>Detect</strong><span class="stage-facts"><span data-stage-status="detect">Not run</span> · <span data-stage-time="detect">—</span> · <span data-stage-dispatches="detect">0 dispatches</span></span></div><button class="pipe-btn stage-run" data-stage="detect" title="Run Detect on the current page">Run</button></div>
+            <details class="stage-params"><summary>Parameters</summary><div class="stage-param-body"><div class="sb-slider-row"><div class="sb-slider-meta"><span>Detector confidence</span><span id="confVal" class="mono">0.6</span></div><input type="range" id="confSlider" min="0.05" max="0.95" step="0.05" value="0.6"></div></div></details>
+          </li>
+          <li class="stage-row" data-stage-row="ocr">
+            <div class="stage-row-head"><div class="stage-copy"><strong>OCR</strong><span class="stage-facts"><span data-stage-status="ocr">Not run</span> · <span data-stage-time="ocr">—</span> · <span data-stage-dispatches="ocr">0 dispatches</span></span></div><button class="pipe-btn stage-run" data-stage="ocr" title="Run OCR on the current page">Run</button></div>
+            <details class="stage-params"><summary>Parameters</summary><div class="stage-param-body"><div class="sb-ctrl-row"><div class="sb-ctrl-label"><span>OCR engine</span><span class="sb-badge-tag" id="cfgOcrTag">mangaocr</span></div><div class="seg seg-2" id="cfgOcrSeg"><button data-engine="mangaocr" class="active" title="MangaOCR Japanese text specialist">MangaOCR</button><button data-engine="paddle" title="PaddleOCR v6 mobile detection and recognition">PaddleOCR</button></div></div><div class="stage-param-note">Batch size and serial timing are in <button class="link-button" data-open-settings>Settings</button>.</div></div></details>
+          </li>
+          <li class="stage-row" data-stage-row="translate">
+            <div class="stage-row-head"><div class="stage-copy"><strong>Translate</strong><span class="stage-facts"><span data-stage-status="translate">Not run</span> · <span data-stage-time="translate">—</span> · <span data-stage-dispatches="translate">0 dispatches</span></span></div><button class="pipe-btn stage-run" data-stage="translate" title="Translate the current page">Run</button></div>
+            <details class="stage-params"><summary>Parameters</summary><div class="stage-param-body"><div class="sb-ctrl-row"><div class="sb-ctrl-label"><span>Translation backend</span><span class="sb-badge-tag" id="cfgTranslateTag">google</span></div><div class="seg seg-2" id="cfgTranslateSeg"><button data-backend="google" class="active" title="Google Translate (cached)">Google</button><button data-backend="lm-studio" title="LM Studio OpenAI-compatible endpoint">LM Studio</button></div></div><div class="stage-param-note">Endpoint, model, and target language are in <button class="link-button" data-open-settings>Settings</button>.</div></div></details>
+          </li>
+          <li class="stage-row" data-stage-row="inpaint">
+            <div class="stage-row-head"><div class="stage-copy"><strong>Inpaint</strong><span class="stage-facts"><span data-stage-status="inpaint">Not run</span> · <span data-stage-time="inpaint">—</span> · <span data-stage-dispatches="inpaint">0 dispatches</span></span></div><button class="pipe-btn stage-run" data-stage="inpaint" title="Run inpainting on the current page">Run</button></div>
+            <details class="stage-params"><summary>Parameters</summary><div class="stage-param-body"><div class="sb-ctrl-row"><div class="sb-ctrl-label"><span>Inpaint mode</span><span class="sb-badge-tag" id="cfgInpaintTag">quality</span></div><div class="seg seg-2" id="cfgInpaintSeg"><button data-inpaint="fast" class="active" title="Fast classical fill">Fast</button><button data-inpaint="quality" title="AOT neural inpainting">Quality</button></div></div><div class="sb-slider-row"><div class="sb-slider-meta"><span>Bubble edge inset</span><span id="erosionVal" class="mono">5 px</span></div><input type="range" id="erosionSlider" min="0" max="20" step="1" value="5"></div><div class="stage-param-note">Fill legs and method are in <button class="link-button" data-open-settings>Settings</button>.</div></div></details>
+          </li>
+          <li class="stage-row" data-stage-row="render">
+            <div class="stage-row-head"><div class="stage-copy"><strong>Render</strong><span class="stage-facts"><span data-stage-status="render">Not run</span> · <span data-stage-time="render">—</span> · <span data-stage-dispatches="render">0 dispatches</span></span></div><div class="stage-actions"><button class="pipe-btn stage-run" data-stage="render" title="Render the current page">Run</button><button id="btnRerender" class="pipe-btn pipe-btn-subtle icon-only" title="Recalculate layout and render from cached translations [R]">↻</button></div></div>
+            <details class="stage-params"><summary>Parameters</summary><div class="stage-param-body"><div class="sb-slider-row"><div class="sb-slider-meta"><span>Font scale</span><span id="fontScaleVal" class="mono">1.0x</span></div><input type="range" id="fontScaleSlider" min="0.5" max="2.0" step="0.1" value="1.0"></div><div class="stage-param-note">Font file and erase fill are in <button class="link-button" data-open-settings>Settings</button>.</div></div></details>
+          </li>
+        </ol>
+        <div class="stage-display-setting"><div class="sb-slider-meta"><span>Mask preview opacity</span><span id="maskOpacityVal" class="mono">85%</span></div><input type="range" id="maskOpacitySlider" min="10" max="100" step="5" value="85"></div>
       </div>
 
       <!-- Compare Controls (visible in compare mode) -->
@@ -614,6 +540,12 @@
     <button id="gotoGo" class="primary">Go</button></div>
 </dialog>
 
-<script src="/static/app.js"></script>
+<script src="/static/modules/core.js"></script>
+<script src="/static/modules/layers.js"></script>
+<script src="/static/modules/viewer.js"></script>
+<script src="/static/modules/inspector.js"></script>
+<script src="/static/modules/stages.js"></script>
+<script src="/static/modules/console.js"></script>
+<script src="/static/modules/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,12 @@
+$ python tools/translation_studio/test_translation_providers.py
+exit_code=0
+elapsed_seconds=0.716
+
+--- stdout ---
+
+--- stderr ---
+................
+----------------------------------------------------------------------
+Ran 16 tests in 0.484s
+
+OK

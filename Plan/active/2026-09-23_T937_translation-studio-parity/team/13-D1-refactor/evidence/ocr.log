@@ -1,0 +1,31 @@
+$ python tools/translation_studio/selftest_ocr.py
+exit_code=0
+elapsed_seconds=0.758
+
+--- stdout ---
+
+--- stderr ---
+test_batch_results_reassemble_across_regions_and_apply_confidence (__main__.OcrParitySelfTest.test_batch_results_reassemble_across_regions_and_apply_confidence) ... ok
+test_detector_missing_whole_region_disables_confidence_but_keeps_usability (__main__.OcrParitySelfTest.test_detector_missing_whole_region_disables_confidence_but_keeps_usability) ... ok
+test_empty_vertical_result_rereads_unpadded_roi (__main__.OcrParitySelfTest.test_empty_vertical_result_rereads_unpadded_roi) ... ok
+test_ink_gap_fallback_reads_columns_right_to_left (__main__.OcrParitySelfTest.test_ink_gap_fallback_reads_columns_right_to_left) ... ok
+test_korean_detector_vertical_line_splits_each_glyph (__main__.OcrParitySelfTest.test_korean_detector_vertical_line_splits_each_glyph) ... ok
+test_language_specific_separators_join_detector_lines (__main__.OcrParitySelfTest.test_language_specific_separators_join_detector_lines) ... ok
+test_manga_batch_setting_and_serial_timing_override (__main__.OcrParitySelfTest.test_manga_batch_setting_and_serial_timing_override) ... ok
+test_manga_decoder_contract_and_preprocessing (__main__.OcrParitySelfTest.test_manga_decoder_contract_and_preprocessing) ... C:\Users\User\.traycer\worktrees\kimreneouk__tachiyomiatvibe\t937-d1-ui-refactor\tools\mangaocr_lab\lab\preprocessing.py:44: DeprecationWarning: 'mode' parameter is deprecated and will be removed in Pillow 13 (2026-10-15)
+  resized = Image.fromarray(lum8, mode="L").resize((new_w, new_h), Image.NEAREST)
+ok
+test_ocr_crop_padding_remains_twelve_pixels (__main__.OcrParitySelfTest.test_ocr_crop_padding_remains_twelve_pixels) ... ok
+test_ocr_usability_filter_matches_android_language_rules (__main__.OcrParitySelfTest.test_ocr_usability_filter_matches_android_language_rules) ... ok
+test_paddle_batch_failure_retries_ordered_single_crops (__main__.OcrParitySelfTest.test_paddle_batch_failure_retries_ordered_single_crops) ... ok
+test_paddle_batch_plans_only_android_batch_sizes (__main__.OcrParitySelfTest.test_paddle_batch_plans_only_android_batch_sizes) ... ok
+test_paddle_width_buckets_gray_padding_and_order (__main__.OcrParitySelfTest.test_paddle_width_buckets_gray_padding_and_order) ... ok
+test_pipeline_passes_paddle_batch_and_vertical_policy (__main__.OcrParitySelfTest.test_pipeline_passes_paddle_batch_and_vertical_policy) ... ok
+test_switching_ocr_engine_invalidates_cached_input_crops (__main__.OcrParitySelfTest.test_switching_ocr_engine_invalidates_cached_input_crops) ... ok
+test_vertical_detector_lines_split_and_rotate_glyphs (__main__.OcrParitySelfTest.test_vertical_detector_lines_split_and_rotate_glyphs) ... ok
+test_webtoon_mode_does_not_use_vertical_heuristic (__main__.OcrParitySelfTest.test_webtoon_mode_does_not_use_vertical_heuristic) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 0.021s
+
+OK

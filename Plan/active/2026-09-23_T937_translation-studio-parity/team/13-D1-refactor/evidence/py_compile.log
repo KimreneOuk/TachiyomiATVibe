@@ -1,0 +1,7 @@
+$ python -m py_compile tools/translation_studio/inpaint_android.py tools/translation_studio/inpaint_provenance.py tools/translation_studio/pipeline.py tools/translation_studio/server.py tools/translation_studio/selftest_inpaint_variants.py
+exit_code=0
+elapsed_seconds=0.144
+
+--- stdout ---
+
+--- stderr ---

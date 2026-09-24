@@ -185,8 +185,11 @@ class Handler(BaseHTTPRequestHandler):
             if url.path.startswith("/static/"):
                 name = url.path[len("/static/"):]
                 ctype = {"style.css": "text/css; charset=utf-8",
-                         "app.js": "text/javascript; charset=utf-8"}.get(name,
-                                                                          "application/octet-stream")
+                         "app.js": "text/javascript; charset=utf-8"}.get(name)
+                if ctype is None:
+                    ctype = ("text/javascript; charset=utf-8"
+                             if Path(name).suffix.lower() == ".js"
+                             else "application/octet-stream")
                 return self._send_file(STATIC / name, ctype, cache_seconds=0)
             if url.path == "/api/state":
                 with PIPELINE.lock:

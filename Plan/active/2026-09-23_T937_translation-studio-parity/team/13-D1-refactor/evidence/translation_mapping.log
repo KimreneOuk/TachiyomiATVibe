@@ -1,0 +1,19 @@
+$ python tools/translation_studio/selftest_translation_mapping.py
+exit_code=0
+elapsed_seconds=1.31
+
+--- stdout ---
+[10:56:15] opened chapter: C:\Users\User\AppData\Local\Temp\c2-translation-migration-saq9qu4a (1 pages)
+
+--- stderr ---
+test_block_ids_use_android_sort_and_reuse_persisted_ids (__main__.StableTranslationMappingTests.test_block_ids_use_android_sort_and_reuse_persisted_ids) ... ok
+test_legacy_ordinal_cache_migrates_by_old_position_and_fingerprint (__main__.StableTranslationMappingTests.test_legacy_ordinal_cache_migrates_by_old_position_and_fingerprint) ... ok
+test_ocr_refresh_keeps_exact_user_edit_remaps_auto_and_prunes (__main__.StableTranslationMappingTests.test_ocr_refresh_keeps_exact_user_edit_remaps_auto_and_prunes) ... ok
+test_open_folders_persists_legacy_cache_migration (__main__.StableTranslationMappingTests.test_open_folders_persists_legacy_cache_migration) ... ok
+test_region_fingerprint_covers_translation_identity_fields (__main__.StableTranslationMappingTests.test_region_fingerprint_covers_translation_identity_fields) ... ok
+test_user_edit_with_changed_fingerprint_is_pruned (__main__.StableTranslationMappingTests.test_user_edit_with_changed_fingerprint_is_pruned) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.035s
+
+OK

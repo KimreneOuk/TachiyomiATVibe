@@ -1,0 +1,43 @@
+$ python tools/translation_studio/selftest_cache_fingerprints.py
+exit_code=0
+elapsed_seconds=1.342
+
+--- stdout ---
+[10:54:46] opened chapter: C:\Users\User\AppData\Local\Temp\t937-a5-legacy-adoption-9zko6fbw (1 pages)
+[10:54:46] detect page.png: 1 raw (infer 1.0ms, load 0.0ms)
+[10:54:46] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[10:54:46] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.3ms)
+[10:54:46] render page.png: 1/1 regions translated -> page.png (0.8ms)
+[10:54:46] translation prune page.png: 1 unmappable entry (audit retained)
+[10:54:46] render page.png: 1/1 regions translated -> page.png (1.2ms)
+[10:54:46] detect page.png: stale capture; recapturing model outputs
+[10:54:46] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[10:54:46] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.2ms)
+[10:54:46] render page.png: 1/1 regions translated -> page.png (0.7ms)
+[10:54:46] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[10:54:46] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.2ms)
+[10:54:46] render page.png: 1/1 regions translated -> page.png (0.8ms)
+[10:54:46] translation prune page.png: 1 unmappable entry (audit retained)
+[10:54:46] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[10:54:46] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.2ms)
+[10:54:46] render page.png: 0/1 regions translated -> page.png (0.8ms)
+[10:54:46] detect page.png: stale capture; recapturing model outputs
+[10:54:46] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[10:54:46] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.2ms)
+[10:54:46] render page.png: 0/1 regions translated -> page.png (0.7ms)
+[10:54:46] detect page.png: 1 raw (infer 1.0ms, load 0.0ms)
+[10:54:46] ocr[mangaocr] page.png: 1 regions, infer 1.0ms (load 0ms, 1 non-empty)
+[10:54:46] inpaint[android android-fill+opencv] page.png: 0 mask pixels -> page.png (0.2ms)
+[10:54:46] render page.png: 0/1 regions translated -> page.png (1.0ms)
+{
+  "status": "ok",
+  "evidence": "C:\\Users\\User\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\t937-d1-ui-refactor\\Plan\\active\\2026-09-23_T937_translation-studio-parity\\team\\10-B1-provenance\\evidence\\cache_selftest.json",
+  "counts": {
+    "capture": 4,
+    "ocr": 6,
+    "inpaint": 6,
+    "render": 7
+  }
+}
+
+--- stderr ---

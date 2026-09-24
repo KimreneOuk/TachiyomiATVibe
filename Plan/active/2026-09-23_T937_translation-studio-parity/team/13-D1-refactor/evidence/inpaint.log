@@ -1,0 +1,164 @@
+$ python tools/translation_studio/selftest_inpaint.py
+exit_code=0
+elapsed_seconds=84.333
+
+--- stdout ---
+[10:54:50] opened chapter: C:\Users\User\.traycer\worktrees\kimreneouk__tachiyomiatvibe\t937-d1-ui-refactor\tools\translation_studio\demo_chapter (2 pages)
+[selftest] detect p001.jpg
+[10:54:50] loading detector: detector-v4-s_int8.onnx
+[10:54:51] detector loaded in 551.1ms
+[10:54:53] loading bubble segmenter (manga109 YOLO11-seg, 640 int8)�
+[10:54:53] bubble segmenter loaded in 0.1ms
+[10:54:55] detect p001.jpg: 7 raw (infer 415.8ms, load 551.1ms)
+[selftest] OCR p001.jpg
+[selftest] detect p002.jpg
+[10:55:00] detect p002.jpg: 10 raw (infer 1358.4ms, load 551.1ms)
+[selftest] OCR p002.jpg
+[selftest] android-fast p001.jpg
+[10:55:00] loading PaddleOCR v6 det (free-text line refinement)�
+[10:55:07] inpaint[android android-fill+opencv] p001.jpg: 192256 mask pixels -> p001.png (7090.8ms)
+[selftest] android-fast p002.jpg
+[10:55:12] inpaint[android android-fill+opencv] p002.jpg: 211010 mask pixels -> p002.png (4672.9ms)
+[selftest] android-quality p001.jpg
+[10:55:12] loading AOT inpainting sessions (QUALITY leg)�
+[10:55:12] AOT wrapper ready in 0.1ms
+[10:55:20] inpaint[android android-fill+aot] p001.jpg: 192256 mask pixels -> p001.png (6982.0ms)
+[selftest] android-quality p002.jpg
+[10:55:30] inpaint[android android-fill+aot] p002.jpg: 211010 mask pixels -> p002.png (9335.7ms)
+[
+  {
+    "page": "p001.jpg",
+    "preset": "android-fast",
+    "mask_pixels": 192256,
+    "regions": 3,
+    "routes": [
+      "bubble/android-fill"
+    ],
+    "inpainted_png": "p001_android-fast_inpainted.png",
+    "mask_png": "p001_android-fast_mask.png",
+    "routes_json": "p001_android-fast_routes.json",
+    "b1_provenance": "p001_android-fast/provenance.json",
+    "b1_crop_triples": 9
+  },
+  {
+    "page": "p002.jpg",
+    "preset": "android-fast",
+    "mask_pixels": 211010,
+    "regions": 3,
+    "routes": [
+      "bubble/android-fill"
+    ],
+    "inpainted_png": "p002_android-fast_inpainted.png",
+    "mask_png": "p002_android-fast_mask.png",
+    "routes_json": "p002_android-fast_routes.json",
+    "b1_provenance": "p002_android-fast/provenance.json",
+    "b1_crop_triples": 9
+  },
+  {
+    "page": "p001.jpg",
+    "preset": "android-quality",
+    "mask_pixels": 192256,
+    "regions": 3,
+    "routes": [
+      "bubble/android-fill"
+    ],
+    "inpainted_png": "p001_android-quality_inpainted.png",
+    "mask_png": "p001_android-quality_mask.png",
+    "routes_json": "p001_android-quality_routes.json",
+    "b1_provenance": "p001_android-quality/provenance.json",
+    "b1_crop_triples": 9
+  },
+  {
+    "page": "p002.jpg",
+    "preset": "android-quality",
+    "mask_pixels": 211010,
+    "regions": 3,
+    "routes": [
+      "bubble/android-fill"
+    ],
+    "inpainted_png": "p002_android-quality_inpainted.png",
+    "mask_png": "p002_android-quality_mask.png",
+    "routes_json": "p002_android-quality_routes.json",
+    "b1_provenance": "p002_android-quality/provenance.json",
+    "b1_crop_triples": 9
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "free-opencv",
+    "routes": [
+      "freetext/opencv-telea"
+    ],
+    "mask_pixels": 2648,
+    "inpainted_png": "p001_probe-free-opencv_inpainted.png",
+    "mask_png": "p001_probe-free-opencv_mask.png",
+    "routes_json": "p001_probe-free-opencv_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "free-aot",
+    "routes": [
+      "freetext/aot-fixed512"
+    ],
+    "mask_pixels": 2648,
+    "inpainted_png": "p001_probe-free-aot_inpainted.png",
+    "mask_png": "p001_probe-free-aot_mask.png",
+    "routes_json": "p001_probe-free-aot_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "free-aot-dynamic",
+    "routes": [
+      "freetext/aot-fixed512-uniformity-rejected->aot-dynamic"
+    ],
+    "mask_pixels": 2648,
+    "inpainted_png": "p001_probe-free-aot-dynamic_inpainted.png",
+    "mask_png": "p001_probe-free-aot-dynamic_mask.png",
+    "routes_json": "p001_probe-free-aot-dynamic_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "free-pushpull",
+    "routes": [
+      "freetext/pushpull"
+    ],
+    "mask_pixels": 2648,
+    "inpainted_png": "p001_probe-free-pushpull_inpainted.png",
+    "mask_png": "p001_probe-free-pushpull_mask.png",
+    "routes_json": "p001_probe-free-pushpull_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "bubble-opencv",
+    "routes": [
+      "bubble/opencv-telea"
+    ],
+    "mask_pixels": 4896,
+    "inpainted_png": "p001_probe-bubble-opencv_inpainted.png",
+    "mask_png": "p001_probe-bubble-opencv_mask.png",
+    "routes_json": "p001_probe-bubble-opencv_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "bubble-aot",
+    "routes": [
+      "bubble/aot-fixed512"
+    ],
+    "mask_pixels": 4896,
+    "inpainted_png": "p001_probe-bubble-aot_inpainted.png",
+    "mask_png": "p001_probe-bubble-aot_mask.png",
+    "routes_json": "p001_probe-bubble-aot_routes.json"
+  },
+  {
+    "page": "p001.jpg",
+    "probe": "bubble-pushpull",
+    "routes": [
+      "bubble/pushpull"
+    ],
+    "mask_pixels": 4896,
+    "inpainted_png": "p001_probe-bubble-pushpull_inpainted.png",
+    "mask_png": "p001_probe-bubble-pushpull_mask.png",
+    "routes_json": "p001_probe-bubble-pushpull_routes.json"
+  }
+]
+
+--- stderr ---

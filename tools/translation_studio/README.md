@@ -1,68 +1,131 @@
 # Translation Studio
 
-A lightweight local web app for visual translation-quality work on a whole
-chapter — Detect → OCR → Translate → Render, side by side with the original
-and an optional "goal" reference.
+Translation Studio is a local browser UI for running and inspecting the
+translation pipeline on chapter page images. It supports detection, OCR,
+translation, active background inpainting, rendering, cached artifact filters,
+comparison views, and inpaint variants with provenance.
 
-Run (from this folder):
+## Start
 
-```
+From this folder, run:
+
+```powershell
 python studio.py --chapter <folder-of-one-chapter> [--reference <goal-folder>]
 ```
 
-or just `python studio.py` and pick the folders **in the UI** — both header
-fields have Browse… buttons that open a filesystem navigator (drives + Home
-shortcuts, click to drill in, *Use this folder* to select). Picking a chapter
-folder opens it immediately. The UI opens at http://127.0.0.1:8765 (Ctrl+C in
-the terminal stops it).
+Or run `python studio.py` and choose a chapter and optional reference folder
+in the UI. The server opens at `http://127.0.0.1:8765`; stop it with Ctrl+C in
+the terminal. No frontend build step is required.
 
-## What you get
+`demo_chapter/` contains two synthetic pages for a basic UI check:
 
-- **Pages rail** — every image under the chapter folder, in order.
-- **Three collapsible panels**: Original | Goal (reference folder, optional) |
-  Ours (render output, with an `overlay` tab showing detection boxes +
-  scores).
-- **Per-page controls**: Detect, OCR, Translate, Render, Process Page, and
-  Process All (walks the chapter; tick *translate on process* to auto-fill
-  translations as it goes).
-- **Region inspector** — click a region: the exact OCR crop, OCR text,
-  confidence, and an auto-saving translation box (editing re-renders
-  immediately).
-- **Processing console** at the bottom (timings, dispatch counts, errors).
+```powershell
+python studio.py --chapter demo_chapter
+```
 
-## Stages
+## Pipeline
 
-| Stage | Engine | Notes |
-|---|---|---|
-| Detect | the app's own `detector-v4-s_int8.onnx` | exact production protocol: 640×640, conf 0.45 default, production dedup geometry (BoxGeometry port). Raw outputs are cached, so the confidence slider re-filters without re-running the model. |
-| OCR | T927 lab stack | the corrected decoder (KV slot `pos−1`, positions 2..127) on the derived batch-capable graphs — **all regions of a page decode in batched passes** (max batch configurable), with step-dispatch counts in the log. |
-| Translate | cache-first | hand-fill in the inspector (auto-saved), or press *Translate* / tick *translate on process* to fill missing ones from an OpenAI-compatible endpoint (LM Studio default `http://127.0.0.1:1234/v1`; set model + target language in ⚙ settings). |
-| Render | desktop renderer | erases each translated text box with a background-median fill (or plain white) and draws the translation auto-wrapped and auto-sized to the box. |
+The sidebar groups the work by stage. Each stage shows its cached status and
+timing, can be rerun for the current page, and exposes its main parameters.
+Run Page and Run Chapter execute the configured page or chapter workflow.
 
-Everything caches under `<chapter>/.studio/` — `detections.json`,
-`ocr.json`, `translations.json`, `settings.json`, `render/`. Re-testing a
-render or a confidence change never re-runs the models; re-OCR preserves
-translations of regions whose boxes survived (matched by IoU ≥ 0.7).
+The stage cards are presented in the requested Detect → OCR → Translate →
+Inpaint → Render review order. Run Page follows the current production pipeline
+sequence, which inpaints before translation after OCR; the individual stage
+buttons can be run independently.
 
-## Verifying quality
+| Stage | Behavior |
+|---|---|
+| Detect | Uses the production `detector-v4-s_int8.onnx` model and caches raw candidates. The confidence control re-filters cached detections without loading the model again. Optional YOLO11-seg bubble masks are included when the segmenter is available. |
+| OCR | Choose MangaOCR or PaddleOCR v6 small (detection and recognition). MangaOCR supports configurable batch size and a serial timing mode. OCR results and per-page timings are cached. |
+| Translate | Edit text in the inspector or use the configured backend: cached Google Translate or an OpenAI-compatible LM Studio endpoint. The Translate toggle controls automatic translation during page and chapter runs. |
+| Inpaint | Active. The legacy engine supports FAST classical fill and QUALITY AOT fill. The Android parity engine selects independent bubble-text and free-text legs from the supported leg matrix below. Outputs include an erase mask and route provenance. |
+| Render | Draws cached translations over the cleaned page, using the selected erase fill, optional font file, and font scale. Re-rendering uses the existing OCR, translation, and inpaint caches. |
 
-1. Open your chapter folder (+ the goal folder for comparison).
-2. *Process All* with *translate on process* (endpoint running), or process
-   page-by-page and fill translations by hand.
-3. Compare Original | Goal | Ours; click any region whose rendered text looks
-   wrong — the inspector shows whether the mistake came from detection
-   (wrong box), OCR (wrong source text), or translation.
+Detection, OCR, inpaint, and render outputs are cached under the chapter's
+`.studio/` folder. Translation text can be edited and saved per region in the
+inspector. When detections are refreshed, matching OCR and translations are
+carried according to the pipeline's artifact and region mapping rules.
 
-The **overlay** tab is the fastest way to audit detection: every text region
-gets an id + score tag; bubbles are shown in gray during detection but only
-text boxes (labels 1/2) are OCR'd and rendered, exactly like the app.
+## Inpaint engines and variants
 
-`demo_chapter/` contains two synthetic pages so the tool is testable on a
-fresh clone: `python studio.py --chapter demo_chapter`.
+The Advanced Settings dialog selects `Legacy` or `Android parity`. In Android
+parity mode, bubble and free-text regions use independent legs:
 
-## Not yet (deliberate v1 scope)
+| Region type | Available legs |
+|---|---|
+| Bubble text | Android fill, OpenCV, AOT, PushPull |
+| Free text | OpenCV, AOT, PushPull |
 
-- No bubble segmentation mask or AOT inpainting (render is fill+text).
-- No reading-order-aware batch translation (per-region calls).
-- Desktop rendering fidelity ≠ the Android text layout engine; this tool
-  judges detect/OCR/translate quality, not final on-device typesetting.
+The Android FAST and Android QUALITY presets select the supported production
+leg pairs and reset parameters to Android defaults. Other combinations are
+available for experiments and are labeled non-parity in the UI. OpenCV uses
+Telea by default; Navier–Stokes is available as an experimental method. The
+variant controls include Telea radius, bubble-mask erosion, and an optional
+feather override. Leaving feather blank uses the path-specific Android
+defaults.
+
+Variant output, erase masks, and JSON provenance are keyed by a settings
+fingerprint under `.studio/inpaint_variants/`. Provenance records the selected
+engine, leg matrix, normalized parameters, routes, and processing statistics.
+Changing active inpaint parameters invalidates the active output while keeping
+previous variants available for switching back.
+
+## Visualization, filters, and comparison
+
+The View sidebar shows the original, rendered, inpainted, and optional goal
+images, with side-by-side and A/B comparison modes. Its layer tree controls
+detection boxes, segmentation and erase masks, provenance labels, and OCR or
+translation text badges. Clicking a region or artifact opens its inspector,
+including the normalized artifact record and lifecycle or inpaint provenance
+when available.
+
+Artifact filters operate on cached data and do not trigger model or pipeline
+requests. The filter panel includes Production, All raw, Diagnosis: suppressed,
+and Inpaint audit presets; model and label toggles; score ranges; lifecycle and
+suppression rules; geometry, OCR, inpaint route, window, and translation
+dimensions. Filter choices persist in chapter settings. Export writes the
+current filtered records and state to `.studio/exports/` as JSON. Controls for
+translation edit or prune provenance are disabled when those fields are not
+present in the source cache.
+
+## Metrics and saved data
+
+Chapter Overview includes per-stage elapsed time, model load time, and Studio
+dispatch counts, plus cold model initialization and page-level timings. Stage
+times and load times come from cached pipeline metrics. Dispatch counts record
+stage requests sent by Studio in the current browser session; they are not
+model-internal calls.
+
+Typical chapter data includes:
+
+```text
+.studio/
+  detections.json
+  ocr.json
+  translations.json
+  settings.json
+  inpaint/           page images and provenance
+  inpaint_mask/      erase masks
+  inpaint_variants/  cached parameter variants
+  render/            rendered pages and assignments
+  exports/           exported filter snapshots
+```
+
+The storage layout may contain additional cache and preview files created by
+the pipeline. These files belong to the selected chapter, not the application
+source tree.
+
+## Settings
+
+The stage cards expose the frequently used controls: detector confidence, OCR
+engine, translation backend, inpaint mode and edge erosion, render font scale,
+and mask preview opacity. Advanced Settings also exposes the inpaint engine
+and leg matrix, OpenCV method and radii, feather override, OCR batch size and
+serial timing, erase fill, font path, translation endpoint/model/language, and
+other pipeline settings. Settings are saved through the Studio settings API;
+the mask preview opacity is a browser display preference.
+
+For a production comparison, use an Android FAST or QUALITY preset and keep
+experimental methods or leg combinations clearly labeled in any exported
+results.
