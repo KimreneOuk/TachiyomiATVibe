@@ -200,13 +200,59 @@ def main() -> None:
 
             old_paths = {chapter / relative for record in api_document["regions"]
                          for relative, _ in _record_file_paths(record)}
+
+            # Gate 2 F1 regression — the provenance GET is strictly
+            # read-only: absent records 404 without creating anything.
+            ghost_page = "ghost.png"
+            _rgb_fixture(width, height, tweak=5).save(chapter / ghost_page)
+            p.pages = [*p.pages, ghost_page]
+            ghost_json = chapter / ".studio" / "inpaint" / "ghost.json"
+            from urllib.error import HTTPError
+            try:
+                urlopen(base_url + "/api/inpaint_provenance?" +
+                        urlencode({"p": ghost_page}), timeout=10)
+                raise AssertionError("absent provenance must 404")
+            except HTTPError as exc:
+                assert exc.code == 404 and "unavailable" in exc.read().decode("utf-8")
+            assert not ghost_json.exists(), "GET must not process absent pages"
+
+            # Stale record: GET must 404 and perform NO recompute — the
+            # page-operation fingerprint validation may legitimately remove
+            # changed-content artifacts (A5 invalidation semantics), but the
+            # GET must never create new artifacts or run stage work.
+            _studio_inpaint = chapter / ".studio" / "inpaint"
+            _crops_root = chapter / ".studio" / "inpaint_crops"
+            def _artifact_files():
+                return {p for p in _studio_inpaint.rglob("*") if p.is_file()} | {
+                    p for p in _crops_root.rglob("*") if p.is_file()}
             _rgb_fixture(width, height, tweak=9).save(source_path)
+            _files_before_get = _artifact_files()
+            try:
+                urlopen(base_url + "/api/inpaint_provenance?" +
+                        urlencode({"p": page}), timeout=10)
+                raise AssertionError("stale provenance must 404")
+            except HTTPError as exc:
+                body = exc.read().decode("utf-8")
+                assert exc.code == 404
+                assert "unavailable" in body or "stale" in body
+            assert _artifact_files() <= _files_before_get, \
+                "GET must never create artifacts or run stage work"
+            assert ghost_json.exists() is False
+
+            # Explicit processing route performs the refresh.
+            from urllib.request import Request
+            request = Request(base_url + "/api/inpaint",
+                              data=json.dumps({"page": page}).encode("utf-8"),
+                              headers={"Content-Type": "application/json"})
+            with urlopen(request, timeout=30) as response:
+                assert response.status == 200
+            assert not all(path.exists() for path in old_paths), \
+                "explicit reprocess supersedes prior artifacts"
             with urlopen(base_url + "/api/inpaint_provenance?" +
                          urlencode({"p": page}), timeout=10) as response:
                 refreshed_document = json.loads(response.read().decode("utf-8"))
             refreshed_fingerprint = refreshed_document["cache_key"]["fingerprint"]
             assert refreshed_fingerprint != first_document["cache_key"]["fingerprint"]
-            assert all(not path.exists() for path in old_paths)
             refreshed_paths = [chapter / relative
                                for record in refreshed_document["regions"]
                                for relative, _ in _record_file_paths(record)]

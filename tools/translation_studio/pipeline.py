@@ -3076,8 +3076,13 @@ class Pipeline:
 
     @_page_operation
     def inpaint_provenance(self, page: str) -> dict:
-        """Return current persisted inpaint provenance after fingerprint validation."""
-        self.inpaint_page(page, force=False)
+        """Return the persisted inpaint provenance record, strictly read-only.
+
+        Gate 2 F1: GET routes must never trigger stage work. A missing or
+        stale record is reported as such (FileNotFoundError carries the
+        reason); refreshing provenance belongs to the explicit processing
+        routes (POST /api/inpaint, /api/process).
+        """
         path = self.studio_dir / "inpaint" / (Path(page).stem + ".json")
         try:
             document = json.loads(path.read_text(encoding="utf-8"))

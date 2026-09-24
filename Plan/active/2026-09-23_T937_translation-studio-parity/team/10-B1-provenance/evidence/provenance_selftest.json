@@ -2,8 +2,8 @@
   "status": "ok",
   "page": "page.png",
   "provenance_schema_version": 3,
-  "first_fingerprint": "78ac088f360c78525751e21f7f5ed738a1dbcfa04f684383f08810d15f8602e1",
-  "refreshed_fingerprint": "e063a9f4a6ca02fd33be450ba6d981118fd1e0e3ac8ea88b0f16173b12d2c4c8",
+  "first_fingerprint": "87a48d3653df4122484ed85226813eb57baa83268e150c583aefdb4e3d1adbe0",
+  "refreshed_fingerprint": "de97191b50c70e6b94f8e51032c85ceb47e0f745f7d9acb72a12f73f2781d09f",
   "android_fill_window_tradeoff": {
     "route_context_bbox_preserved": [
       0,
@@ -39,7 +39,7 @@
       "basis": "region-mask-union",
       "triples": {
         "input": {
-          "path": ".studio/inpaint_crops/page.png/r00/78ac088f360c78525751e21f7f5ed738a1dbcfa04f684383f08810d15f8602e1/input.png",
+          "path": ".studio/inpaint_crops/page.png/r00/87a48d3653df4122484ed85226813eb57baa83268e150c583aefdb4e3d1adbe0/input.png",
           "size": [
             90,
             71
@@ -47,7 +47,7 @@
           "mode": "RGB"
         },
         "output": {
-          "path": ".studio/inpaint_crops/page.png/r00/78ac088f360c78525751e21f7f5ed738a1dbcfa04f684383f08810d15f8602e1/output.png",
+          "path": ".studio/inpaint_crops/page.png/r00/87a48d3653df4122484ed85226813eb57baa83268e150c583aefdb4e3d1adbe0/output.png",
           "size": [
             90,
             71
@@ -55,7 +55,7 @@
           "mode": "RGB"
         },
         "mask": {
-          "path": ".studio/inpaint_crops/page.png/r00/78ac088f360c78525751e21f7f5ed738a1dbcfa04f684383f08810d15f8602e1/mask.png",
+          "path": ".studio/inpaint_crops/page.png/r00/87a48d3653df4122484ed85226813eb57baa83268e150c583aefdb4e3d1adbe0/mask.png",
           "size": [
             90,
             71
@@ -68,7 +68,7 @@
   "free_text_route_context": [
     {
       "id": "r00",
-      "route_taken": "freetext/opencv",
+      "route_taken": "freetext/opencv-telea",
       "a4_context_crop_bbox": [
         36,
         16,
@@ -84,7 +84,7 @@
       "basis": "route-context",
       "triples": {
         "input": {
-          "path": ".studio/inpaint_crops/free.png/r00/673d709f9c2ecc4217097e3dfb1b8ed5d07a11df75af82868c134d30cffb7bfc/input.png",
+          "path": ".studio/inpaint_crops/free.png/r00/4b3b2b6cb54d29e689b7ce36d8cec9b8482a9d2ebb3cebed687c09582006250c/input.png",
           "size": [
             178,
             168
@@ -92,7 +92,7 @@
           "mode": "RGB"
         },
         "output": {
-          "path": ".studio/inpaint_crops/free.png/r00/673d709f9c2ecc4217097e3dfb1b8ed5d07a11df75af82868c134d30cffb7bfc/output.png",
+          "path": ".studio/inpaint_crops/free.png/r00/4b3b2b6cb54d29e689b7ce36d8cec9b8482a9d2ebb3cebed687c09582006250c/output.png",
           "size": [
             178,
             168
@@ -100,7 +100,7 @@
           "mode": "RGB"
         },
         "mask": {
-          "path": ".studio/inpaint_crops/free.png/r00/673d709f9c2ecc4217097e3dfb1b8ed5d07a11df75af82868c134d30cffb7bfc/mask.png",
+          "path": ".studio/inpaint_crops/free.png/r00/4b3b2b6cb54d29e689b7ce36d8cec9b8482a9d2ebb3cebed687c09582006250c/mask.png",
           "size": [
             178,
             168
