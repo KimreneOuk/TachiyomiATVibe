@@ -1,0 +1,277 @@
+{
+  "page": "variant-page.png",
+  "scenario": "free_leg_pushpull",
+  "variant": {
+    "engine": "android",
+    "leg_matrix": {
+      "bubble": "android-fill",
+      "free_text": "pushpull"
+    },
+    "params": {
+      "opencv_method": "telea",
+      "telea_radius": 3,
+      "erosion_radius": 5,
+      "feather_px": null
+    },
+    "params_hash": "93e6e02fc15233b29fd0f259a25e579f336a3681085a7ae96fb9433cca957257"
+  },
+  "leg_matrix": {
+    "bubble": "android-fill",
+    "free_text": "pushpull"
+  },
+  "cache": {
+    "fingerprint": "40f04a2b1527041bd6ac51766c52e1c9f85cbcdfbfd60207c9b04e73c1552dfd",
+    "base_fingerprint": "8dc4c303eaf847b3d85f9f4acd0ee5f3847555214cfe185179baa58f87188812",
+    "variant_params": {
+      "opencv_method": "telea",
+      "telea_radius": 3,
+      "erosion_radius": 5,
+      "feather_px": null
+    },
+    "variant_params_hash": "93e6e02fc15233b29fd0f259a25e579f336a3681085a7ae96fb9433cca957257"
+  },
+  "planner_partition": {
+    "planner_candidate_ids_scores": [
+      {
+        "label": 0,
+        "score": 0.99,
+        "box": [
+          39,
+          28,
+          122,
+          119
+        ]
+      },
+      {
+        "label": 1,
+        "score": 0.98,
+        "box": [
+          63,
+          55,
+          100,
+          87
+        ]
+      },
+      {
+        "label": 2,
+        "score": 0.97,
+        "box": [
+          150,
+          44,
+          193,
+          75
+        ]
+      }
+    ],
+    "planner_items": [
+      {
+        "box": [
+          39,
+          28,
+          122,
+          119
+        ],
+        "label": 0,
+        "kind": "parent-bubble",
+        "record_ids": [
+          "bubble-text"
+        ],
+        "source": null
+      },
+      {
+        "box": [
+          63,
+          55,
+          100,
+          87
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "bubble-text"
+        ],
+        "source": "ocr"
+      },
+      {
+        "box": [
+          150,
+          44,
+          193,
+          75
+        ],
+        "label": 2,
+        "kind": "ocr-text",
+        "record_ids": [
+          "free-text"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "bubble_items": [
+      {
+        "box": [
+          63,
+          55,
+          100,
+          87
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "bubble-text"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "free_text_items": [
+      {
+        "box": [
+          150,
+          44,
+          193,
+          75
+        ],
+        "label": 2,
+        "kind": "ocr-text",
+        "record_ids": [
+          "free-text"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "mask_rles": []
+  },
+  "regions": [
+    {
+      "id": "bubble-text",
+      "artifact_id": "td-bubble",
+      "route_taken": "bubble/android-fill",
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            63,
+            55,
+            100,
+            87
+          ],
+          "label": 1,
+          "score": 0.98,
+          "artifact_id": "td-bubble",
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            63,
+            55,
+            100,
+            87
+          ]
+        },
+        {
+          "source": "detector",
+          "role": "parent-bubble",
+          "box": [
+            39,
+            28,
+            122,
+            119
+          ],
+          "artifact_id": null,
+          "score": 0.99,
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "bubble-segmenter",
+          "role": "assigned-mask",
+          "mask_ref": "s000",
+          "box": [
+            39,
+            30,
+            123,
+            120
+          ]
+        }
+      ],
+      "mask_resolution": null,
+      "context_crop_bbox": [
+        0,
+        0,
+        240,
+        160
+      ],
+      "timing_ms": {
+        "planning": 0.27,
+        "refinement": 0.0,
+        "fill": 65.973,
+        "total": 66.243
+      }
+    },
+    {
+      "id": "free-text",
+      "artifact_id": "td-free",
+      "route_taken": "freetext/pushpull",
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            150,
+            44,
+            193,
+            75
+          ],
+          "label": 2,
+          "score": 0.97,
+          "artifact_id": "td-free",
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            150,
+            44,
+            193,
+            75
+          ]
+        },
+        {
+          "source": "paddle-refined",
+          "parent_region": "free-text",
+          "box": [
+            148,
+            40,
+            173,
+            57
+          ]
+        }
+      ],
+      "mask_resolution": null,
+      "context_crop_bbox": [
+        84,
+        0,
+        237,
+        121
+      ],
+      "timing_ms": {
+        "planning": 0.27,
+        "refinement": 0.084,
+        "fill": 62.31,
+        "total": 62.664
+      }
+    }
+  ]
+}

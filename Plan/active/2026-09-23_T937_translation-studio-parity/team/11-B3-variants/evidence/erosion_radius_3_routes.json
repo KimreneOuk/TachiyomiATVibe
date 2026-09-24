@@ -1,0 +1,277 @@
+{
+  "page": "variant-page.png",
+  "scenario": "erosion_radius_3",
+  "variant": {
+    "engine": "android",
+    "leg_matrix": {
+      "bubble": "opencv",
+      "free_text": "pushpull"
+    },
+    "params": {
+      "opencv_method": "telea",
+      "telea_radius": 4,
+      "erosion_radius": 3,
+      "feather_px": null
+    },
+    "params_hash": "ec0a94f8215f5f93104c3f6cc71725bf830d1b3e019238ef977c3c36420e3801"
+  },
+  "leg_matrix": {
+    "bubble": "opencv",
+    "free_text": "pushpull"
+  },
+  "cache": {
+    "fingerprint": "4f8d3bfb558dafa826273537d7dc1169fc5e8b24598f513988650e5486d2b9d5",
+    "base_fingerprint": "0c742d0af2e1a555f5b29b9f1c75b3f5af52824fb52e95e791cfb65c8c11050a",
+    "variant_params": {
+      "opencv_method": "telea",
+      "telea_radius": 4,
+      "erosion_radius": 3,
+      "feather_px": null
+    },
+    "variant_params_hash": "ec0a94f8215f5f93104c3f6cc71725bf830d1b3e019238ef977c3c36420e3801"
+  },
+  "planner_partition": {
+    "planner_candidate_ids_scores": [
+      {
+        "label": 0,
+        "score": 0.99,
+        "box": [
+          39,
+          28,
+          122,
+          119
+        ]
+      },
+      {
+        "label": 1,
+        "score": 0.98,
+        "box": [
+          63,
+          55,
+          100,
+          87
+        ]
+      },
+      {
+        "label": 2,
+        "score": 0.97,
+        "box": [
+          150,
+          44,
+          193,
+          75
+        ]
+      }
+    ],
+    "planner_items": [
+      {
+        "box": [
+          39,
+          28,
+          122,
+          119
+        ],
+        "label": 0,
+        "kind": "parent-bubble",
+        "record_ids": [
+          "bubble-text"
+        ],
+        "source": null
+      },
+      {
+        "box": [
+          63,
+          55,
+          100,
+          87
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "bubble-text"
+        ],
+        "source": "ocr"
+      },
+      {
+        "box": [
+          150,
+          44,
+          193,
+          75
+        ],
+        "label": 2,
+        "kind": "ocr-text",
+        "record_ids": [
+          "free-text"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "bubble_items": [
+      {
+        "box": [
+          63,
+          55,
+          100,
+          87
+        ],
+        "label": 1,
+        "kind": "ocr-text",
+        "record_ids": [
+          "bubble-text"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "free_text_items": [
+      {
+        "box": [
+          150,
+          44,
+          193,
+          75
+        ],
+        "label": 2,
+        "kind": "ocr-text",
+        "record_ids": [
+          "free-text"
+        ],
+        "source": "ocr"
+      }
+    ],
+    "mask_rles": []
+  },
+  "regions": [
+    {
+      "id": "bubble-text",
+      "artifact_id": "td-bubble",
+      "route_taken": "bubble/opencv-telea",
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            63,
+            55,
+            100,
+            87
+          ],
+          "label": 1,
+          "score": 0.98,
+          "artifact_id": "td-bubble",
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            63,
+            55,
+            100,
+            87
+          ]
+        },
+        {
+          "source": "detector",
+          "role": "parent-bubble",
+          "box": [
+            39,
+            28,
+            122,
+            119
+          ],
+          "artifact_id": null,
+          "score": 0.99,
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "bubble-segmenter",
+          "role": "assigned-mask",
+          "mask_ref": "s000",
+          "box": [
+            39,
+            30,
+            123,
+            120
+          ]
+        }
+      ],
+      "mask_resolution": null,
+      "context_crop_bbox": [
+        0,
+        0,
+        185,
+        160
+      ],
+      "timing_ms": {
+        "planning": 0.895,
+        "refinement": 0.0,
+        "fill": 56.647,
+        "total": 57.542
+      }
+    },
+    {
+      "id": "free-text",
+      "artifact_id": "td-free",
+      "route_taken": "freetext/pushpull",
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            150,
+            44,
+            193,
+            75
+          ],
+          "label": 2,
+          "score": 0.97,
+          "artifact_id": "td-free",
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            150,
+            44,
+            193,
+            75
+          ]
+        },
+        {
+          "source": "paddle-refined",
+          "parent_region": "free-text",
+          "box": [
+            148,
+            40,
+            173,
+            57
+          ]
+        }
+      ],
+      "mask_resolution": null,
+      "context_crop_bbox": [
+        84,
+        0,
+        237,
+        121
+      ],
+      "timing_ms": {
+        "planning": 0.895,
+        "refinement": 0.107,
+        "fill": 64.187,
+        "total": 65.189
+      }
+    }
+  ]
+}

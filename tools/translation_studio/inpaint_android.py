@@ -543,11 +543,14 @@ def _disk(radius: int) -> np.ndarray:
 
 
 def _erode_segmentation_union(raw_union: np.ndarray, bounds_list: list[list[int]],
-                              width: int, height: int) -> np.ndarray:
-    """AOTInpainting.erodeBinaryMask: disk 5, then disk 2, else raw pixels."""
+                              width: int, height: int,
+                              erosion_radius: int = BUBBLE_SEG_EROSION) -> np.ndarray:
+    """Erode each captured component, with Android's half-radius/raw fallbacks."""
     if not raw_union.any():
         return np.zeros((height, width), dtype=bool)
-    eroded5 = ndimage.binary_erosion(raw_union, structure=_disk(BUBBLE_SEG_EROSION),
+    if erosion_radius <= 0:
+        return raw_union.copy()
+    eroded5 = ndimage.binary_erosion(raw_union, structure=_disk(erosion_radius),
                                      border_value=0)
     eroded2 = None
     out = np.zeros((height, width), dtype=bool)
@@ -564,7 +567,7 @@ def _erode_segmentation_union(raw_union: np.ndarray, bounds_list: list[list[int]
             out[y1:y2, x1:x2] |= local5
             continue
         if eroded2 is None:
-            eroded2 = ndimage.binary_erosion(raw_union, structure=_disk(max(1, BUBBLE_SEG_EROSION // 2)),
+            eroded2 = ndimage.binary_erosion(raw_union, structure=_disk(max(1, erosion_radius // 2)),
                                              border_value=0)
         local2 = eroded2[y1:y2, x1:x2]
         if local2.any():
@@ -578,7 +581,8 @@ def _erode_segmentation_union(raw_union: np.ndarray, bounds_list: list[list[int]
 
 def _bubble_erase_mask(bubble_text: list[dict], assigned_masks, all_masks,
                        mask_bounds, height: int, width: int,
-                       raw_union_override: np.ndarray | None = None) -> np.ndarray:
+                       raw_union_override: np.ndarray | None = None,
+                       erosion_radius: int = BUBBLE_SEG_EROSION) -> np.ndarray:
     raw_union = (raw_union_override if raw_union_override is not None
                  else np.zeros((height, width), dtype=bool))
     seg_bounds = []
@@ -592,7 +596,8 @@ def _bubble_erase_mask(bubble_text: list[dict], assigned_masks, all_masks,
                 seg_bounds.append(mask_bounds[idx])
     else:
         seg_bounds = list(mask_bounds or [])
-    out = _erode_segmentation_union(raw_union, seg_bounds, width, height)
+    out = _erode_segmentation_union(raw_union, seg_bounds, width, height,
+                                    erosion_radius=erosion_radius)
 
     fallback_boxes = []
     for item in bubble_text:
@@ -732,7 +737,10 @@ def _mask_feather(mask: np.ndarray, ramp: int) -> np.ndarray:
 
 
 def _fast_reconstruct(page: Image.Image, boxes, method: str,
-                      mask_override: np.ndarray | None = None) -> tuple[Image.Image, np.ndarray, str, list[int] | None]:
+                      mask_override: np.ndarray | None = None,
+                      telea_radius: float = 3.0,
+                      feather_px: int | None = None,
+                      opencv_method: str = "telea") -> tuple[Image.Image, np.ndarray, str, list[int] | None]:
     """Android FAST crop/mask/Telea path, or the parity PushPull alternative."""
     w, h = page.size
     bounds = (aot_inpaint.padded_union_bounds(boxes, w, h, FREE_TEXT_CONTEXT)
@@ -755,12 +763,17 @@ def _fast_reconstruct(page: Image.Image, boxes, method: str,
     work = original.copy()
     route = method
     if method == "opencv":
+        opencv_method = ("ns" if str(opencv_method).lower() == "ns"
+                         else "telea")
+        route = f"opencv-{opencv_method}"
         try:
             import cv2
+            cv2_method = (cv2.INPAINT_NS if opencv_method == "ns"
+                          else cv2.INPAINT_TELEA)
             work = cv2.inpaint(original, local_mask.astype(np.uint8) * 255,
-                               3.0, cv2.INPAINT_TELEA)
+                               float(telea_radius), cv2_method)
         except Exception:
-            route = "opencv->pushpull"
+            route = f"opencv-{opencv_method}->pushpull"
             bg = aot_inpaint.local_ring_median(work, local_mask, aot_inpaint.DEFAULT_RING)
             aot_inpaint.push_pull_fill(work, local_mask, bg)
     elif method == "pushpull":
@@ -768,7 +781,8 @@ def _fast_reconstruct(page: Image.Image, boxes, method: str,
         aot_inpaint.push_pull_fill(work, local_mask, bg)
     else:
         raise ValueError(f"unsupported FAST reconstruction method: {method}")
-    alpha = _mask_feather(local_mask, FREE_TEXT_FEATHER)
+    alpha = _mask_feather(
+        local_mask, FREE_TEXT_FEATHER if feather_px is None else feather_px)
     output = _blend(original, work, alpha)
     page.paste(Image.fromarray(output), (x1, y1))
     return page, page_mask, route, bounds
@@ -893,7 +907,10 @@ def _dynamic_aot_candidate(source: np.ndarray, mask: np.ndarray, session) -> tup
 
 
 def _aot_reconstruct(page: Image.Image, boxes, aot,
-                     mask_override: np.ndarray | None = None) -> tuple[Image.Image, np.ndarray, str, list[int] | None]:
+                     mask_override: np.ndarray | None = None,
+                      telea_radius: float = 3.0,
+                     feather_px: int | None = None,
+                     opencv_method: str = "telea") -> tuple[Image.Image, np.ndarray, str, list[int] | None]:
     w, h = page.size
     if boxes:
         crop = _centered_report_crop(boxes, w, h)
@@ -917,7 +934,9 @@ def _aot_reconstruct(page: Image.Image, boxes, aot,
     page_mask = np.zeros((h, w), dtype=bool)
     page_mask[y1:y2, x1:x2] = local_mask
     if not local_mask.any() or aot is None:
-        page, fast_mask, fast_route, fast_bounds = _fast_reconstruct(page, boxes, "opencv", mask_override)
+        page, fast_mask, fast_route, fast_bounds = _fast_reconstruct(
+            page, boxes, "opencv", mask_override, telea_radius, feather_px,
+            opencv_method)
         page_mask |= fast_mask
         return page, page_mask, "aot-unavailable->" + fast_route, fast_bounds or crop
 
@@ -931,7 +950,8 @@ def _aot_reconstruct(page: Image.Image, boxes, aot,
             attempts.append("aot-fixed512")
             if not rejected:
                 route = "aot-fixed512"
-                alpha = _mask_feather(local_mask, FREE_TEXT_FEATHER)
+                alpha = _mask_feather(
+                    local_mask, FREE_TEXT_FEATHER if feather_px is None else feather_px)
                 page.paste(Image.fromarray(_blend(original, candidate, alpha)), (x1, y1))
                 return page, page_mask, route, crop
             attempts[-1] += "-uniformity-rejected"
@@ -950,7 +970,8 @@ def _aot_reconstruct(page: Image.Image, boxes, aot,
                 candidate, rejected = _dynamic_aot_candidate(original, local_mask, dynamic)
                 attempts.append("aot-dynamic")
                 if not rejected:
-                    alpha = _mask_feather(local_mask, FREE_TEXT_FEATHER)
+                    alpha = _mask_feather(
+                        local_mask, FREE_TEXT_FEATHER if feather_px is None else feather_px)
                     page.paste(Image.fromarray(_blend(original, candidate, alpha)), (x1, y1))
                     return page, page_mask, "->".join(attempts), crop
                 attempts[-1] += "-uniformity-rejected"
@@ -964,7 +985,8 @@ def _aot_reconstruct(page: Image.Image, boxes, aot,
         attempts.append("aot-dynamic-skipped-after-fixed-oom")
 
     page, fast_mask, fast_route, fast_bounds = _fast_reconstruct(
-        page, boxes, "opencv", mask_override)
+        page, boxes, "opencv", mask_override, telea_radius, feather_px,
+        opencv_method)
     page_mask |= fast_mask
     attempts.append(fast_route)
     return page, page_mask, "->".join(attempts), fast_bounds or crop
@@ -991,7 +1013,10 @@ def _mask_component_for_boxes(labels: np.ndarray, boxes) -> int | None:
     return max(counts, key=lambda value: (counts[value], -value))
 
 
-def _bubble_non_android(page: Image.Image, mask: np.ndarray, leg: str, aot):
+def _bubble_non_android(page: Image.Image, mask: np.ndarray, leg: str, aot,
+                        telea_radius: float = 3.0,
+                        feather_px: int | None = None,
+                        opencv_method: str = "telea"):
     """Run one experimental bubble fill leg over 8-connected mask components."""
     height, width = mask.shape
     labels, count = _connected_components(mask)
@@ -1000,11 +1025,16 @@ def _bubble_non_android(page: Image.Image, mask: np.ndarray, leg: str, aot):
     for component_id in range(1, count + 1):
         component = labels == component_id
         if leg == "opencv":
-            result, _, route, crop = _fast_reconstruct(result, [], "opencv", component)
+            result, _, route, crop = _fast_reconstruct(
+                result, [], "opencv", component, telea_radius, feather_px,
+                opencv_method)
         elif leg == "pushpull":
-            result, _, route, crop = _fast_reconstruct(result, [], "pushpull", component)
+            result, _, route, crop = _fast_reconstruct(
+                result, [], "pushpull", component, telea_radius, feather_px)
         elif leg == "aot":
-            result, _, route, crop = _aot_reconstruct(result, [], aot, component)
+            result, _, route, crop = _aot_reconstruct(
+                result, [], aot, component, telea_radius, feather_px,
+                opencv_method)
         else:
             raise ValueError(f"unsupported bubble leg {leg}")
         comp_routes[component_id] = f"bubble/{route}"
@@ -1019,7 +1049,11 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
                          aot=None, mask_cache=None, segmenter_outputs=None,
                          current_capture: bool = False,
                          segmenter_enabled: bool = True,
-                         execution_confidence: float | None = None
+                         execution_confidence: float | None = None,
+                         telea_radius: float = 3.0,
+                         erosion_radius: int = BUBBLE_SEG_EROSION,
+                         feather_px: int | None = None,
+                         opencv_method: str = "telea",
                          ) -> tuple[Image.Image, np.ndarray, list[dict], dict]:
     """Planner, partition, refinement, mask and composable Android legs."""
     if bubble_leg not in BUBBLE_LEGS:
@@ -1055,7 +1089,7 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
 
     bubble_mask = _bubble_erase_mask(
         bubble_items, assigned, arrays, bounds, height, width,
-        raw_union_override=captured_union)
+        raw_union_override=captured_union, erosion_radius=erosion_radius)
     free_groups, _ = _refine_free_text(image, free_items, paddle_det, record_map)
     free_mask = np.zeros((height, width), dtype=bool)
     for group in free_groups:
@@ -1097,7 +1131,7 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
         if bubble_leg == "android-fill":
             pixels = np.asarray(image, dtype=np.uint8).copy()
             aot_inpaint.fill_and_blend(pixels, bubble_mask, BUBBLE_SMOOTH_PASSES,
-                                       BUBBLE_FEATHER)
+                                       BUBBLE_FEATHER if feather_px is None else feather_px)
             image = Image.fromarray(pixels)
             labels_b, n_b = _connected_components(bubble_mask)
             for cid in range(1, n_b + 1):
@@ -1107,7 +1141,8 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
                 bubble_crop_by_comp[cid] = [0, 0, width, height]
         else:
             image, bubble_route_by_comp, bubble_crop_by_comp = _bubble_non_android(
-                image, bubble_mask, bubble_leg, aot)
+                image, bubble_mask, bubble_leg, aot, telea_radius, feather_px,
+                opencv_method)
     bubble_ms = round((time.perf_counter() - bubble_started) * 1000, 3)
     for rec in records:
         if rec["id"] not in bubble_record_ids:
@@ -1127,9 +1162,13 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
             continue
         t0 = time.perf_counter()
         if free_leg == "aot":
-            image, _, route, crop = _aot_reconstruct(image, boxes, aot)
+            image, _, route, crop = _aot_reconstruct(
+                image, boxes, aot, telea_radius=telea_radius,
+                feather_px=feather_px, opencv_method=opencv_method)
         else:
-            image, _, route, crop = _fast_reconstruct(image, boxes, free_leg)
+            image, _, route, crop = _fast_reconstruct(
+                image, boxes, free_leg, telea_radius=telea_radius,
+                feather_px=feather_px, opencv_method=opencv_method)
         fill_ms = round((time.perf_counter() - t0) * 1000, 3)
         route = f"freetext/{route}"
         for rid in ids:
@@ -1157,6 +1196,12 @@ def inpaint_page_android(page: Image.Image, regions: list[dict],
     stats = {
         "bubble_leg": bubble_leg,
         "free_leg": free_leg,
+        "variant_params": {"telea_radius": float(telea_radius),
+                           "erosion_radius": int(erosion_radius),
+                           "feather_px": (int(feather_px)
+                                          if feather_px is not None else None),
+                           "opencv_method": ("ns" if str(opencv_method).lower() == "ns"
+                                             else "telea")},
         "bubble_boxes": len(bubble_items),
         "free_boxes": len(free_items),
         "free_groups": len(free_groups),

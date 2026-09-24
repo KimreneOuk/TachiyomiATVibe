@@ -246,8 +246,10 @@ def remove_all_crop_artifacts(studio_dir: Path) -> bool:
 
 
 def prune_stale_crop_runs(studio_dir: Path, page: str,
-                          keep_fingerprint: str) -> None:
-    """Delete previous run directories after the new provenance is committed."""
+                          keep_fingerprints: str | set[str]) -> None:
+    """Keep only crop runs whose inpaint variants are still cached."""
+    keep = ({keep_fingerprints} if isinstance(keep_fingerprints, str)
+            else {str(value) for value in keep_fingerprints})
     page_dir = (studio_dir / "inpaint_crops" / page_key(page)).resolve()
     root = (studio_dir / "inpaint_crops").resolve()
     try:
@@ -261,7 +263,7 @@ def prune_stale_crop_runs(studio_dir: Path, page: str,
             region_dir.unlink(missing_ok=True)
             continue
         for run_dir in list(region_dir.iterdir()):
-            if run_dir.name != keep_fingerprint:
+            if run_dir.name not in keep:
                 if run_dir.is_dir():
                     shutil.rmtree(run_dir)
                 else:

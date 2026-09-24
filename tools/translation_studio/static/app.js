@@ -2020,6 +2020,33 @@ function applyLayerFlags() {
 }
 
 /* ==================================== Right Sidebar Pipeline Configuration */
+function resetInpaintVariantParams() {
+  if ($("setInpaintOpenCvMethod")) $("setInpaintOpenCvMethod").value = "telea";
+  if ($("setInpaintTeleaRadius")) $("setInpaintTeleaRadius").value = 3;
+  if ($("setBubbleErosion")) $("setBubbleErosion").value = 5;
+  if ($("setInpaintFeatherPx")) $("setInpaintFeatherPx").value = "";
+  syncInpaintVariantStatus();
+}
+
+function syncInpaintVariantStatus() {
+  const status = $("inpaintVariantStatus");
+  if (!status) return;
+  const engine = $("setInpaintEngine")?.value || "legacy";
+  const bubble = $("setInpaintBubbleLeg")?.value || "android-fill";
+  const free = $("setInpaintFreeLeg")?.value || "opencv";
+  const opencvMethod = $("setInpaintOpenCvMethod")?.value || "telea";
+  const paramsMatch = opencvMethod === "telea"
+    && Number($("setInpaintTeleaRadius")?.value) === 3
+    && Number($("setBubbleErosion")?.value) === 5
+    && !String($("setInpaintFeatherPx")?.value || "").trim();
+  const preset = bubble === "android-fill" && free === "opencv"
+    ? "Android FAST" : bubble === "android-fill" && free === "aot"
+      ? "Android QUALITY" : "";
+  const parity = engine === "android" && preset && paramsMatch;
+  status.textContent = parity ? `${preset} · Android defaults` : "Experimental/non-parity variant";
+  status.classList.toggle("parity", Boolean(parity));
+}
+
 function syncSettingsUI() {
   const s = S.settings || {};
   // OCR Engine
@@ -2364,14 +2391,13 @@ async function runStage(stage) {
   refreshSectionStatus(page);
   refreshRailDots();
   try {
-    if (stage === "all") await api("/api/process", { page, translate: $("chkTranslate").checked });
+    if (stage === "all") await api("/api/process", {
+      page, translate: $("chkTranslate").checked, force: true,
+    });
     else if (stage === "detect") await api("/api/detect", { page, conf: S.settings.conf });
     else if (stage === "ocr") await api("/api/ocr", { page });
     else if (stage === "inpaint") await api("/api/inpaint", {
       page, mode: S.settings.inpaint_mode, force: true,
-      engine: S.settings.inpaint_engine || "legacy",
-      bubble_leg: S.settings.inpaint_bubble_leg || "android-fill",
-      free_leg: S.settings.inpaint_free_leg || "opencv",
     });
     else if (stage === "translate") await api("/api/translate", { page });
     else if (stage === "render") await api("/api/render", { page });
@@ -3035,6 +3061,9 @@ $("btnSettings")?.addEventListener("click", async () => {
   $("setInpaintEngine").value = s.inpaint_engine || "legacy";
   $("setInpaintBubbleLeg").value = s.inpaint_bubble_leg || "android-fill";
   $("setInpaintFreeLeg").value = s.inpaint_free_leg || "opencv";
+  $("setInpaintOpenCvMethod").value = s.inpaint_opencv_method || "telea";
+  $("setInpaintTeleaRadius").value = s.inpaint_telea_radius ?? 3;
+  $("setInpaintFeatherPx").value = s.inpaint_feather_px ?? "";
   $("setTranslateBackend").value = s.translate_backend || "google";
   $("setConf").value = s.conf;
   $("setMaxBatch").value = s.max_batch;
@@ -3046,6 +3075,7 @@ $("btnSettings")?.addEventListener("click", async () => {
   $("setEndpoint").value = s.endpoint;
   $("setModel").value = s.model;
   $("setLang").value = s.target_lang;
+  syncInpaintVariantStatus();
   $("settingsDlg").showModal();
 });
 $("inpaintPresetButtons")?.addEventListener("click", (event) => {
@@ -3059,15 +3089,29 @@ $("inpaintPresetButtons")?.addEventListener("click", (event) => {
     $("setInpaintBubbleLeg").value = "android-fill";
     $("setInpaintFreeLeg").value = "aot";
   }
+  resetInpaintVariantParams();
 });
+$("btnResetInpaintParams")?.addEventListener("click", resetInpaintVariantParams);
+["setInpaintEngine", "setInpaintBubbleLeg", "setInpaintFreeLeg",
+  "setInpaintOpenCvMethod", "setInpaintTeleaRadius", "setBubbleErosion",
+  "setInpaintFeatherPx"]
+  .forEach((id) => $(id)?.addEventListener("input", syncInpaintVariantStatus));
+["setInpaintEngine", "setInpaintBubbleLeg", "setInpaintFreeLeg",
+  "setInpaintOpenCvMethod"]
+  .forEach((id) => $(id)?.addEventListener("change", syncInpaintVariantStatus));
 $("setClose")?.addEventListener("click", () => $("settingsDlg").close());
 $("setSave")?.addEventListener("click", async () => {
+  const previousVariant = S.settings || {};
   const s = await api("/api/settings", {
     ocr_engine: $("setOcrEngine").value,
     inpaint_mode: $("setInpaintMode").value,
     inpaint_engine: $("setInpaintEngine").value,
     inpaint_bubble_leg: $("setInpaintBubbleLeg").value,
     inpaint_free_leg: $("setInpaintFreeLeg").value,
+    inpaint_opencv_method: $("setInpaintOpenCvMethod").value,
+    inpaint_telea_radius: parseInt($("setInpaintTeleaRadius").value, 10) || 3,
+    inpaint_feather_px: String($("setInpaintFeatherPx").value || "").trim()
+      ? parseInt($("setInpaintFeatherPx").value, 10) : null,
     translate_backend: $("setTranslateBackend").value,
     conf: parseFloat($("setConf").value),
     max_batch: parseInt($("setMaxBatch").value),
@@ -3075,14 +3119,27 @@ $("setSave")?.addEventListener("click", async () => {
     erase: $("setErase").value,
     font_path: $("setFont").value.trim(),
     font_scale: parseFloat($("setFontScale").value) || 1.0,
-    bubble_mask_erosion: parseInt($("setBubbleErosion").value) ?? 5,
+    bubble_mask_erosion: Number.isFinite(parseInt($("setBubbleErosion").value, 10))
+      ? parseInt($("setBubbleErosion").value, 10) : 5,
     endpoint: $("setEndpoint").value.trim(),
     model: $("setModel").value.trim(),
     target_lang: $("setLang").value.trim(),
   });
   S.settings = s.settings;
   syncSettingsUI();
+  const variantChanged = ["inpaint_mode", "inpaint_engine", "inpaint_bubble_leg",
+    "inpaint_free_leg", "inpaint_opencv_method", "inpaint_telea_radius",
+    "bubble_mask_erosion",
+    "inpaint_feather_px"].some((key) => previousVariant[key] !== S.settings[key]);
+  if (variantChanged && S.current) {
+    const result = await api("/api/inpaint", {
+      page: S.current, mode: S.settings.inpaint_mode, force: false,
+    });
+    logLine(`inpaint variant active: ${result.cache_hit ? "cache hit" : "computed"}`);
+  }
+  S.cacheBust = Date.now();
   S.pageData.clear();
+  if (S.current) clearArtifactData(S.current);
   rebuildVisible();
   $("settingsDlg").close();
   logLine("studio: settings saved");

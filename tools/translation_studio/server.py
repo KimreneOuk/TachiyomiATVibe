@@ -339,7 +339,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/process":
                 return self._send_json(PIPELINE.process_page(
                     body["page"], body.get("conf"),
-                    translate=bool(body.get("translate", True))))
+                    translate=bool(body.get("translate", True)),
+                    force=bool(body.get("force", False))))
             if url.path == "/api/translate":
                 return self._send_json(PIPELINE.translate_page(body["page"]))
             if url.path == "/api/translation":
