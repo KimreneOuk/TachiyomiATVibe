@@ -24,7 +24,9 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -83,7 +85,8 @@ PAGE_FINGERPRINT_VERSION = 1
 DETECTION_CAPTURE_ALGORITHM = "studio-detection-capture-v3"
 DETECTION_REPLAY_ALGORITHM = "studio-detection-replay-v2"
 OCR_ALGORITHM = "studio-ocr-v2"
-INPAINT_ALGORITHM = "studio-inpaint-v2"
+INPAINT_ALGORITHM = "studio-inpaint-v3"
+INPAINT_VARIANT_CACHE_LIMIT = 8
 RENDER_ALGORITHM = "studio-render-v2"
 N_CLASSES = {0: "bubble", 1: "text_bubble", 2: "text_free"}
 CLASS_COLORS = {0: (150, 150, 160), 1: (70, 200, 120), 2: (240, 170, 60)}
@@ -629,6 +632,7 @@ class Pipeline:
                 except FileNotFoundError:
                     pass
         inpaint_provenance.remove_page_crop_artifacts(self.studio_dir, page)
+        self._remove_inpaint_variant_cache(page)
         thumb_dir = self.studio_dir / "thumbs"
         if thumb_dir.is_dir():
             for path in list(thumb_dir.glob(f"{stem}_*.jpg")) + list(
@@ -837,11 +841,25 @@ class Pipeline:
     def save_settings(self, patch: dict) -> dict:
         with self.lock:
             previous_ocr_engine = self.settings.get("ocr_engine", "mangaocr")
+            previous_inpaint = {key: self.settings.get(key) for key in (
+                "inpaint_mode", "inpaint_engine", "inpaint_bubble_leg",
+                "inpaint_free_leg", "inpaint_opencv_method",
+                "inpaint_telea_radius",
+                "bubble_mask_erosion", "inpaint_feather_px")}
             for k, v in patch.items():
                 if k == "conf" and v is not None:
                     self.settings[k] = float(v)
                 elif k == "bubble_mask_erosion" and v is not None:
-                    self.settings[k] = int(v)
+                    self.settings[k] = max(0, min(20, int(v)))
+                elif k == "inpaint_telea_radius" and v is not None:
+                    self.settings[k] = max(1, min(20, int(v)))
+                elif k == "inpaint_opencv_method":
+                    self.settings[k] = ("ns" if str(v).lower() == "ns"
+                                        else "telea")
+                elif k == "inpaint_feather_px":
+                    self.settings[k] = (None if v in (None, "") else
+                                        max(2, min(48, int(v)))
+                                        if str(v).strip() else None)
                 elif k == "font_scale" and v is not None:
                     self.settings[k] = float(v)
                 elif k == "max_batch" and v is not None:
@@ -851,7 +869,80 @@ class Pipeline:
             if self.settings.get("ocr_engine", "mangaocr") != previous_ocr_engine:
                 self._crop_cache.clear()
             self._save_json("settings.json", self.settings)
+            if any(self.settings.get(key) != value
+                   for key, value in previous_inpaint.items()):
+                for page in self.pages:
+                    self._invalidate_active_inpaint_variant(page)
             return self.settings
+
+    def _inpaint_variant_page_dir(self, page: str) -> Path | None:
+        """Return a page's variant-cache directory only when confined to .studio."""
+        if self.studio_dir is None:
+            return None
+        studio = self.studio_dir.resolve()
+        lexical_root = studio / "inpaint_variants"
+        root = lexical_root.resolve()
+        if root.parent != studio:
+            return None
+        target = (lexical_root / Path(page).stem).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None
+        return target
+
+    def _inpaint_variant_dir(self, page: str, fingerprint: str) -> Path | None:
+        if (not isinstance(fingerprint, str) or len(fingerprint) != 64
+                or any(ch not in "0123456789abcdef" for ch in fingerprint)):
+            return None
+        page_dir = self._inpaint_variant_page_dir(page)
+        if page_dir is None:
+            return None
+        return page_dir / fingerprint
+
+    def _remove_inpaint_variant_cache(self, page: str | None = None) -> bool:
+        if self.studio_dir is None:
+            return False
+        studio = self.studio_dir.resolve()
+        root = (studio / "inpaint_variants").resolve()
+        if root.parent != studio:
+            return False
+        target = root if page is None else self._inpaint_variant_page_dir(page)
+        if target is None or not target.exists():
+            return False
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink(missing_ok=True)
+        return True
+
+    def _invalidate_active_inpaint_variant(self, page: str) -> None:
+        """Preserve then remove canonical output so GETs cannot serve old settings."""
+        if self.studio_dir is None:
+            return
+        stem = Path(page).stem
+        out_path = self.studio_dir / "inpaint" / f"{stem}.png"
+        mask_path = self.studio_dir / "inpaint_mask" / f"{stem}.png"
+        provenance_path = self.studio_dir / "inpaint" / f"{stem}.json"
+        if provenance_path.is_file():
+            try:
+                provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                fingerprint = (provenance.get("cache_key") or {}).get("fingerprint")
+                if fingerprint and out_path.is_file() and mask_path.is_file():
+                    self._store_inpaint_variant(
+                        page, fingerprint, out_path, mask_path, provenance_path)
+            except (OSError, ValueError, TypeError, shutil.Error) as error:
+                self.log(f"!! could not preserve active inpaint variant for {page}: {error}")
+        for path in (out_path, mask_path, provenance_path,
+                     self.studio_dir / "render" / f"{stem}.png",
+                     self.studio_dir / "render" / f"{stem}.json"):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        self._inpaint_times.pop(page, None)
+        self._render_times.pop(page, None)
+        self._render_dirty[page] = True
 
     def reset_artifacts(self, page: str | None = None,
                         keep_translations: bool = False) -> dict:
@@ -903,6 +994,8 @@ class Pipeline:
                 _rm_tree(self.studio_dir / "render")
                 _rm_tree(self.studio_dir / "inpaint")
                 _rm_tree(self.studio_dir / "inpaint_mask")
+                if self._remove_inpaint_variant_cache(page):
+                    deleted.append(f"inpaint_variants/{stem}")
                 _rm_tree(self.studio_dir / "segmentation")
                 _rm_tree(self.studio_dir / "seg_overlay")
                 _rm_tree(self.studio_dir / "thumbs")
@@ -924,6 +1017,8 @@ class Pipeline:
                 _rm_tree(self.studio_dir / "render")
                 _rm_tree(self.studio_dir / "inpaint")
                 _rm_tree(self.studio_dir / "inpaint_mask")
+                if self._remove_inpaint_variant_cache():
+                    deleted.append("inpaint_variants")
                 _rm_tree(self.studio_dir / "segmentation")
                 _rm_tree(self.studio_dir / "seg_overlay")
                 _rm_tree(self.studio_dir / "thumbs")
@@ -2449,8 +2544,34 @@ class Pipeline:
                          "unmatched": unmatched},
         }
 
+    def _normalized_inpaint_variant_params(self, engine: str) -> dict:
+        def integer(key: str, default: int, low: int, high: int) -> int:
+            try:
+                value = int(self.settings.get(key, default))
+            except (TypeError, ValueError, OverflowError):
+                value = default
+            return max(low, min(high, value))
+
+        erosion = integer("bubble_mask_erosion", 5, 0, 20)
+        raw_feather = self.settings.get("inpaint_feather_px")
+        feather = None
+        if raw_feather not in (None, ""):
+            try:
+                feather = max(2, min(48, int(raw_feather)))
+            except (TypeError, ValueError, OverflowError):
+                feather = None
+        return {
+            "opencv_method": ("ns" if str(self.settings.get(
+                "inpaint_opencv_method", "telea")).lower() == "ns" else "telea"),
+            "telea_radius": integer("inpaint_telea_radius", 3, 1, 20),
+            "erosion_radius": erosion,
+            # None preserves Android's path-specific 12px bubble / 3px text defaults.
+            "feather_px": feather,
+        }
+
     def _inpaint_cache_inputs(self, page: str, *, engine: str, mode: str,
                               bubble_leg: str, free_leg: str, conf: float,
+                              variant_params: dict,
                               execution: dict, regions: list[dict],
                               planner_detections: list,
                               planner_items: list[dict],
@@ -2546,8 +2667,9 @@ class Pipeline:
 
         parameters = {
             "engine": engine,
-            "leg_matrix": ({"bubble": bubble_leg, "free_text": free_leg}
-                           if engine == "android" else None),
+            "leg_matrix": {"bubble": bubble_leg, "free_text": free_leg},
+            "variant_params": variant_params,
+            "variant_params_hash": _stable_fingerprint(variant_params),
             "legacy_mode": mode if engine == "legacy" else None,
             "execution_confidence": conf,
             "bubble_segmentation": bool(
@@ -2597,6 +2719,89 @@ class Pipeline:
             "model_assets": assets,
         }
 
+    @staticmethod
+    def _inpaint_cache_base_fingerprint(cache_inputs: dict) -> str:
+        """Fingerprint inputs shared by leg/parameter variants of one plan."""
+        base = copy.deepcopy(cache_inputs)
+        parameters = base.get("parameters", {})
+        for key in ("leg_matrix", "variant_params", "variant_params_hash"):
+            parameters.pop(key, None)
+        return _stable_fingerprint(base)
+
+    def _store_inpaint_variant(self, page: str, fingerprint: str,
+                               out_path: Path, mask_path: Path,
+                               provenance_path: Path) -> Path | None:
+        target = self._inpaint_variant_dir(page, fingerprint)
+        if target is None or not all(path.is_file()
+                                     for path in (out_path, mask_path, provenance_path)):
+            return None
+        target.parent.mkdir(parents=True, exist_ok=True)
+        pending = target.with_name(target.name + ".pending")
+        if pending.exists():
+            if pending.is_dir():
+                shutil.rmtree(pending)
+            else:
+                pending.unlink()
+        pending.mkdir()
+        try:
+            shutil.copy2(out_path, pending / "inpaint.png")
+            shutil.copy2(mask_path, pending / "mask.png")
+            shutil.copy2(provenance_path, pending / "provenance.json")
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target)
+                else:
+                    target.unlink()
+            pending.replace(target)
+        except Exception:
+            if pending.exists():
+                shutil.rmtree(pending, ignore_errors=True)
+            raise
+        return target
+
+    def _load_inpaint_variant(self, page: str, fingerprint: str,
+                              cache_key: dict) -> tuple[dict, Path] | None:
+        folder = self._inpaint_variant_dir(page, fingerprint)
+        if folder is None:
+            return None
+        out_path, mask_path = folder / "inpaint.png", folder / "mask.png"
+        provenance_path = folder / "provenance.json"
+        if not all(path.is_file() for path in (out_path, mask_path, provenance_path)):
+            return None
+        try:
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None
+        if (provenance.get("cache_key") != cache_key
+                or not inpaint_provenance.crop_artifacts_are_current(
+                    provenance, fingerprint, self.studio_dir)):
+            return None
+        return provenance, folder
+
+    def _prune_inpaint_variant_cache(self, page: str,
+                                     active_fingerprint: str) -> None:
+        page_dir = self._inpaint_variant_page_dir(page)
+        if page_dir is None or not page_dir.is_dir():
+            return
+        variants = []
+        for path in list(page_dir.iterdir()):
+            if path.is_dir() and len(path.name) == 64 and all(
+                    ch in "0123456789abcdef" for ch in path.name):
+                variants.append(path)
+            elif path.name.endswith(".pending"):
+                shutil.rmtree(path, ignore_errors=True) if path.is_dir() else path.unlink(missing_ok=True)
+        variants.sort(key=lambda path: path.stat().st_mtime_ns, reverse=True)
+        keep = {active_fingerprint}
+        for path in variants:
+            if len(keep) >= INPAINT_VARIANT_CACHE_LIMIT:
+                break
+            keep.add(path.name)
+        for path in variants:
+            if path.name not in keep:
+                shutil.rmtree(path, ignore_errors=True)
+        inpaint_provenance.prune_stale_crop_runs(
+            self.studio_dir, page, keep)
+
     @_page_operation
     def inpaint_page(self, page: str, force: bool = False, mode: str | None = None) -> dict:
         with self.lock:
@@ -2606,6 +2811,8 @@ class Pipeline:
             free_leg = str(self.settings.get("inpaint_free_leg", "opencv")).lower()
             if engine not in ("legacy", "android"):
                 raise ValueError(f"unsupported inpaint engine: {engine}")
+            variant_params = self._normalized_inpaint_variant_params(engine)
+            variant_params_hash = _stable_fingerprint(variant_params)
             conf = float(self.settings.get("conf", DEFAULT_SETTINGS["conf"]))
             # Validate captures and, when present, the OCR record before using
             # them to form this stage's cache key. These calls are cheap hits
@@ -2646,15 +2853,20 @@ class Pipeline:
             leg_matrix = {"bubble": bubble_leg, "free_text": free_leg}
             cache_inputs = self._inpaint_cache_inputs(
                 page, engine=engine, mode=mode, bubble_leg=bubble_leg,
-                free_leg=free_leg, conf=conf, execution=execution,
+                free_leg=free_leg, conf=conf, variant_params=variant_params,
+                execution=execution,
                 regions=regions, planner_detections=planner_detections,
                 planner_items=planner_items, bubble_items=bubble_items,
                 free_items=free_items)
             cache_key = {**cache_inputs,
                          "fingerprint": _stable_fingerprint(cache_inputs),
+                         "base_fingerprint": self._inpaint_cache_base_fingerprint(
+                             cache_inputs),
+                         "variant_params": variant_params,
+                         "variant_params_hash": variant_params_hash,
                          # Keep A4-visible parameters at the key's top level.
                          "engine": engine,
-                         "leg_matrix": leg_matrix if engine == "android" else None,
+                         "leg_matrix": leg_matrix,
                          "legacy_mode": mode if engine == "legacy" else None,
                          "execution_confidence": conf,
                          "bubble_segmentation": bool(
@@ -2669,6 +2881,39 @@ class Pipeline:
             cache_matches = (cached.get("cache_key") == cache_key
                              and inpaint_provenance.crop_artifacts_are_current(
                                  cached, cache_key["fingerprint"], self.studio_dir))
+
+            # Preserve the currently active result before replacing its canonical
+            # page paths with another leg/parameter variant. This makes a later
+            # switch back a real cache hit instead of another reconstruction.
+            if (not force and not cache_matches
+                    and cached.get("cache_key", {}).get("base_fingerprint")
+                    == cache_key["base_fingerprint"]
+                    and out_path.is_file() and mask_path.is_file()
+                    and inpaint_provenance.crop_artifacts_are_current(
+                        cached, cached.get("cache_key", {}).get("fingerprint", ""),
+                        self.studio_dir)):
+                try:
+                    self._store_inpaint_variant(
+                        page, cached["cache_key"]["fingerprint"], out_path,
+                        mask_path, provenance_path)
+                except Exception as error:
+                    self.log(f"!! could not preserve previous inpaint variant: {error}")
+
+            if not force and not cache_matches:
+                variant_hit = self._load_inpaint_variant(
+                    page, cache_key["fingerprint"], cache_key)
+                if variant_hit is not None:
+                    cached, variant_dir = variant_hit
+                    shutil.copy2(variant_dir / "inpaint.png", out_path)
+                    shutil.copy2(variant_dir / "mask.png", mask_path)
+                    shutil.copy2(variant_dir / "provenance.json", provenance_path)
+                    self._inpaint_times[page] = cached.get("infer_ms", 0)
+                    self._render_dirty[page] = True
+                    try:
+                        os.utime(variant_dir, None)
+                    except OSError:
+                        pass
+                    cache_matches = True
 
             if force or not out_path.exists() or not mask_path.exists() or not cache_matches:
                 img = self.page_image(page)
@@ -2717,6 +2962,10 @@ class Pipeline:
                         current_capture=current_capture,
                         segmenter_enabled=segmenter_enabled,
                         execution_confidence=conf,
+                        opencv_method=variant_params["opencv_method"],
+                        telea_radius=variant_params["telea_radius"],
+                        erosion_radius=variant_params["erosion_radius"],
+                        feather_px=variant_params["feather_px"],
                     )
                     provenance = {
                         "provenance_schema_version": 3,
@@ -2728,6 +2977,10 @@ class Pipeline:
                                         if current_capture
                                         else "legacy-schema-fallback"),
                         "leg_matrix": leg_matrix,
+                        "variant": {"engine": engine,
+                                    "leg_matrix": leg_matrix,
+                                    "params": variant_params,
+                                    "params_hash": variant_params_hash},
                         "stats": stats,
                         "regions": region_routes,
                     }
@@ -2737,7 +2990,7 @@ class Pipeline:
                     paddle_det = self._inpaint_paddle_det()
                     aot = self._aot_inpainter() if mode == "QUALITY" else None
                     import aot_inpaint
-                    bubble_erosion = int(self.settings.get("bubble_mask_erosion", 5))
+                    bubble_erosion = variant_params["erosion_radius"]
                     cleaned, mask, stats = aot_inpaint.inpaint_page_pipeline(
                         img, regions, raw_detections=legacy_raw_boxes,
                         seg_masks=seg_masks, mode=mode,
@@ -2749,7 +3002,12 @@ class Pipeline:
                         "engine": "legacy", "cache_key": cache_key,
                         "page_fingerprint": self._current_page_fingerprint(page),
                         "execution": execution_provenance,
-                        "leg_matrix": leg_matrix, "mode": mode,
+                        "leg_matrix": leg_matrix,
+                        "variant": {"engine": engine,
+                                    "leg_matrix": leg_matrix,
+                                    "params": variant_params,
+                                    "params_hash": variant_params_hash},
+                        "mode": mode,
                         "stats": stats, "regions": [],
                     }
                 if engine == "android":
@@ -2777,9 +3035,14 @@ class Pipeline:
                         pass
                     raise RuntimeError(
                         f"failed to save inpaint provenance for {page}: {e}") from e
-                if provenance_path.exists():
-                    inpaint_provenance.prune_stale_crop_runs(
-                        self.studio_dir, page, cache_key["fingerprint"])
+                try:
+                    self._store_inpaint_variant(
+                        page, cache_key["fingerprint"], out_path, mask_path,
+                        provenance_path)
+                    self._prune_inpaint_variant_cache(
+                        page, cache_key["fingerprint"])
+                except Exception as error:
+                    self.log(f"!! could not save inpaint variant cache: {error}")
                 self._render_dirty[page] = True
                 if engine == "android":
                     self.log(f"inpaint[android {bubble_leg}+{free_leg}] {page}: "
@@ -3104,19 +3367,19 @@ class Pipeline:
 
     # ---------------------------------------------------------------- process
     def process_page(self, page: str, conf: float | None = None,
-                     translate: bool = True) -> dict:
+                     translate: bool = True, force: bool = False) -> dict:
         with self.lock:
             with self._page_operation_scope(page):
                 t0 = time.perf_counter()
-                det = self.detect_page(page, conf)
-                ocr = self.ocr_page(page, conf)
-                inpaint = self.inpaint_page(page)
+                det = self.detect_page(page, conf, force=force)
+                ocr = self.ocr_page(page, conf, force=force)
+                inpaint = self.inpaint_page(page, force=force)
                 if translate:
                     try:
                         self.translate_page(page)
                     except Exception as e:
                         self.log(f"!! translate skipped: {e}")
-                rend = self.render_page(page)
+                rend = self.render_page(page, force=force)
                 return {"page": page, "detections": det, "ocr": {
                     "regions": ocr["regions"], "runs": ocr["runs"], "ms": ocr["ms"]},
                     "inpaint": inpaint["path"],
@@ -3798,6 +4061,9 @@ DEFAULT_SETTINGS = {
     "inpaint_engine": "legacy",      # "legacy" | "android"
     "inpaint_bubble_leg": "android-fill",  # android-fill | opencv | aot | pushpull
     "inpaint_free_leg": "opencv",    # opencv | aot | pushpull
+    "inpaint_opencv_method": "telea",  # telea | ns (experimental)
+    "inpaint_telea_radius": 3,        # Android OpenCV Telea default (px)
+    "inpaint_feather_px": None,       # None keeps path-specific Android defaults
     "translate_backend": "google",   # "google" | "lm-studio"
     "bubble_segmentation": True,     # manga109 YOLO11-seg (on when model loads)
     "bubble_mask_erosion": 5,        # px erosion for bubble seg mask edge reduction

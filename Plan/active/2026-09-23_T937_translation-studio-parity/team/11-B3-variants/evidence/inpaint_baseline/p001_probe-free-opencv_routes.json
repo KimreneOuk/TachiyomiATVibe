@@ -1,0 +1,85 @@
+{
+  "page": "p001.jpg",
+  "probe": "free-opencv",
+  "leg_matrix": {
+    "bubble": "android-fill",
+    "free_text": "opencv"
+  },
+  "stats": {
+    "bubble_leg": "android-fill",
+    "free_leg": "opencv",
+    "variant_params": {
+      "telea_radius": 3.0,
+      "erosion_radius": 5,
+      "feather_px": null
+    },
+    "bubble_boxes": 0,
+    "free_boxes": 1,
+    "free_groups": 1,
+    "bubble_components": 0,
+    "combined_components": 1,
+    "mask_pixels": 2648,
+    "segmenter_union_pixels": null,
+    "segmenter_union_sha256": null,
+    "segmenter_components": [],
+    "total_ms": 855.627
+  },
+  "regions": [
+    {
+      "id": "probe-free-opencv",
+      "artifact_id": null,
+      "kind": "ocr-region",
+      "text": "probe",
+      "label": 2,
+      "score": null,
+      "source_boxes": [
+        {
+          "source": "detector",
+          "role": "ocr-origin",
+          "box": [
+            418,
+            684,
+            482,
+            716
+          ],
+          "label": 2,
+          "score": null,
+          "artifact_id": null,
+          "model": null,
+          "asset": null,
+          "asset_sha": null,
+          "window": null
+        },
+        {
+          "source": "ocr",
+          "role": "text-rect",
+          "box": [
+            418,
+            684,
+            482,
+            716
+          ]
+        }
+      ],
+      "route_taken": "freetext/opencv",
+      "mask_component_id": "c001",
+      "segmenter_component_id": null,
+      "erase_mask_component_id": "c001",
+      "context_crop_bbox": [
+        354,
+        620,
+        546,
+        780
+      ],
+      "timing_ms": {
+        "planning": 0.238,
+        "refinement": 0.027,
+        "fill": 756.074,
+        "total": 756.339
+      },
+      "timing_scope": "region"
+    }
+  ],
+  "inpainted_png": "p001_probe-free-opencv_inpainted.png",
+  "mask_png": "p001_probe-free-opencv_mask.png"
+}

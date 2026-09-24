@@ -980,6 +980,47 @@ dialog ul { list-style: none; max-height: 260px; overflow-y: auto; border: 1px s
 dialog ul li { display: flex; gap: 8px; padding: 7px 10px; cursor: pointer; font-size: 12.5px; }
 dialog ul li:hover { background: var(--bg3); }
 #folderQuick { flex-wrap: wrap; }
+
+.inpaint-variant-panel {
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  margin: 4px 0 14px;
+  padding: 10px;
+}
+dialog#settingsDlg { max-height: 92vh; overflow-y: auto; }
+.inpaint-variant-panel h3 { margin-bottom: 10px; }
+.inpaint-variant-panel label { margin-bottom: 8px; }
+.inpaint-variant-panel #inpaintPresetButtons button,
+.variant-panel-footer button {
+  border: 1px solid var(--line2);
+  border-radius: 5px;
+  padding: 5px 8px;
+  color: var(--txt2);
+  font-size: 11px;
+}
+.inpaint-variant-panel #inpaintPresetButtons button:hover,
+.variant-panel-footer button:hover { border-color: var(--accent); color: var(--txt); }
+.variant-param-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+}
+.variant-span-two { grid-column: 1 / -1; }
+.variant-default-note, .variant-status {
+  color: var(--txt3);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.variant-default-note { margin: 2px 0 9px; }
+.variant-panel-footer { align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
+.variant-status { max-width: 52%; padding-top: 4px; }
+.variant-status.parity { color: var(--ok); }
+.inpaint-variant-panel .muted { font-size: 10px; line-height: 1.4; }
+@media (max-width: 520px) {
+  dialog { min-width: 0; width: min(94vw, 460px); padding: 14px; }
+  .variant-panel-footer { flex-direction: column; }
+  .variant-status { max-width: none; }
+}
 #folderQuick button { border: 1px solid var(--line2); border-radius: 6px; padding: 3px 10px; font-size: 12px; }
 
 .recent-list { margin-bottom: 14px; }

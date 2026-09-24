@@ -542,30 +542,47 @@
     <option value="mangaocr">manga-ocr (T927 lab stack)</option>
     <option value="paddle">PaddleOCR v6 small (det+rec)</option>
   </select></label>
-  <label>Inpaint mode <select id="setInpaintMode">
-    <option value="fast">FAST — classical fill</option>
-    <option value="quality">QUALITY — AOT-512 neural</option>
-  </select></label>
-  <label>Inpaint engine <select id="setInpaintEngine">
-    <option value="legacy">Legacy (comparison)</option>
-    <option value="android">Android parity</option>
-  </select></label>
-  <div class="row" id="inpaintPresetButtons" aria-label="Android leg presets">
-    <button type="button" data-inpaint-preset="android-fast">Android FAST</button>
-    <button type="button" data-inpaint-preset="android-quality">Android QUALITY</button>
-  </div>
-  <label>Bubble-text leg <select id="setInpaintBubbleLeg">
-    <option value="android-fill">android-fill</option>
-    <option value="opencv">OpenCV Telea</option>
-    <option value="aot">AOT</option>
-    <option value="pushpull">PushPull</option>
-  </select></label>
-  <label>Free-text leg <select id="setInpaintFreeLeg">
-    <option value="opencv">OpenCV Telea</option>
-    <option value="aot">AOT</option>
-    <option value="pushpull">PushPull</option>
-  </select></label>
-  <div class="muted">Android FAST and QUALITY are production presets. Other leg pairs are experimental.</div>
+  <section class="inpaint-variant-panel" aria-labelledby="inpaintVariantTitle">
+    <h3 id="inpaintVariantTitle">Inpaint variant</h3>
+    <label>Inpaint mode <select id="setInpaintMode">
+      <option value="fast">FAST — classical fill</option>
+      <option value="quality">QUALITY — AOT-512 neural</option>
+    </select></label>
+    <label>Inpaint engine <select id="setInpaintEngine">
+      <option value="legacy">Legacy (comparison)</option>
+      <option value="android">Android parity</option>
+    </select></label>
+    <div class="row" id="inpaintPresetButtons" aria-label="Android leg presets">
+      <button type="button" data-inpaint-preset="android-fast">Android FAST</button>
+      <button type="button" data-inpaint-preset="android-quality">Android QUALITY</button>
+    </div>
+    <label>Bubble-text leg <select id="setInpaintBubbleLeg">
+      <option value="android-fill">android-fill</option>
+      <option value="opencv">OpenCV</option>
+      <option value="aot">AOT</option>
+      <option value="pushpull">PushPull</option>
+    </select></label>
+    <label>Free-text leg <select id="setInpaintFreeLeg">
+      <option value="opencv">OpenCV</option>
+      <option value="aot">AOT</option>
+      <option value="pushpull">PushPull</option>
+    </select></label>
+    <label>OpenCV method <select id="setInpaintOpenCvMethod">
+      <option value="telea">Telea (default)</option>
+      <option value="ns">Navier–Stokes (experimental)</option>
+    </select></label>
+    <div class="variant-param-grid">
+      <label>Telea radius (px)<input id="setInpaintTeleaRadius" type="number" min="1" max="20" step="1" value="3"></label>
+      <label>Erosion radius (px)<input id="setBubbleErosion" type="number" min="0" max="20" step="1" value="5"></label>
+      <label class="variant-span-two">Feather override (px)<input id="setInpaintFeatherPx" type="number" min="2" max="48" step="1" placeholder="Android defaults"></label>
+    </div>
+    <div class="variant-default-note">Android defaults: Telea 3px · erosion 5px · feather 12px for bubble fill and 3px for text. NS only applies to OpenCV legs and is experimental. Leave feather blank to keep each leg’s default.</div>
+    <div class="row variant-panel-footer">
+      <span id="inpaintVariantStatus" class="variant-status" aria-live="polite">Experimental/non-parity variant</span>
+      <button type="button" id="btnResetInpaintParams">Reset Android defaults</button>
+    </div>
+    <div class="muted">Preset buttons select a production leg pair and restore Android defaults. Other combinations or custom parameters are experimental/non-parity.</div>
+  </section>
   <label>Translate backend <select id="setTranslateBackend">
     <option value="google">Google Translate (cached)</option>
     <option value="lm-studio">LM Studio (OpenAI-compatible)</option>
@@ -578,7 +595,6 @@
   <label>Erase fill <select id="setErase"><option value="auto">auto (background)</option><option value="white">white</option></select></label>
   <label>Font file (optional) <input id="setFont" placeholder="C:/Windows/Fonts/arial.ttf"></label>
   <label>Font scale <input id="setFontScale" type="number" step="0.1" min="0.5" max="2"></label>
-  <label>Bubble mask edge reduction (px) <input id="setBubbleErosion" type="number" step="1" min="0" max="20" value="5"></label>
   <h3>Translation endpoint (LM Studio)</h3>
   <label>Base URL <input id="setEndpoint" placeholder="http://127.0.0.1:1234/v1"></label>
   <label>Model <input id="setModel"></label>

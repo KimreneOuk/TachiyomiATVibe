@@ -1,0 +1,89 @@
+{
+  "page": "page.png",
+  "same_size_source_replacement": {
+    "dimensions": [
+      80,
+      64
+    ],
+    "compressed_bytes_before": 185,
+    "compressed_bytes_after": 185,
+    "fingerprint_changed": true,
+    "dependent_cache_counts": {
+      "capture": 4,
+      "ocr": 6,
+      "inpaint": 6,
+      "render": 7
+    }
+  },
+  "upstream_detection_change": {
+    "capture_reused": true,
+    "decision_fingerprint_changed": true,
+    "ocr_inpaint_render_recomputed": true
+  },
+  "translation_only_edit": {
+    "inpaint_reused": true,
+    "render_recomputed": true
+  },
+  "direct_inpaint_validates_upstream": {
+    "detector_identity_change_recaptured": true,
+    "ocr_setting_change_recomputed": true,
+    "force_required": false
+  },
+  "direct_render_uses_refreshed_ocr": {
+    "previous_ocr_fingerprint": "542ebf907ae03f5c4039244b61663b0d6b03bab9b5774c0846eb0bb297000c45",
+    "refreshed_ocr_fingerprint": "8a0328b0b3d8dceef0eb86ce80053a8b2f035c68d6478dbba011cfc947eb9e25",
+    "rendered_regions": [
+      {
+        "id": "r00",
+        "box": [
+          18,
+          20,
+          55,
+          44
+        ]
+      }
+    ],
+    "render_cache_fingerprint": "202ba4e42e28843f68688a14a3bb5b50312b3d67ed34c3f16e42891609202859",
+    "render_used_refreshed_ocr": true
+  },
+  "skipped_model_asset_change": {
+    "panel_inference_eligible": false,
+    "text_detector_recaptured": false
+  },
+  "asset_stat_cache_spot_check": {
+    "same_size": true,
+    "mtime_restored": true,
+    "sample_changed": true,
+    "full_digest_changed": true
+  },
+  "legacy_cache_fingerprint_adoption": {
+    "fingerprintless_legacy_records_preserved_on_first_touch": true,
+    "page_fingerprint_adopted": "7d5687b65d8b951530fb70aec70fc8cad314b12beba3c5547bfca9d79c200437",
+    "cache_json_unchanged_on_adoption": true,
+    "changed_source_fingerprint": "756ae28cfdc0193d16acfd7649d6c8cd42a4f4a9d5c3cba0c6f0e98a9ccf39d4",
+    "changed_page_invalidated_detection_ocr_and_inpaint_files": true,
+    "translations_preserved": true
+  },
+  "unchanged_inputs": {
+    "capture_count": 4,
+    "ocr_count": 6,
+    "inpaint_count": 6,
+    "render_count": 7,
+    "process_page_hash_calls": 1
+  },
+  "initial_cache_fingerprints": {
+    "ocr": "cb9d2276506ddf6c4f032b46d21fe940f60d82a6e0d664abe396cb33df60249a",
+    "inpaint": "dbb8019d3a870eb82e9f5e1d17e47a27b236172939edb45e0583e514d63887c2",
+    "render": "fb995b63f8966dc2e65b0c994578622805c20122bae56597146fb72c3295fdcc"
+  },
+  "changed_upstream_fingerprints": {
+    "ocr": "4babe10347a0c2f58827a7ed12b858a7dadd710d8e49bd5df1e9b97f7409b715",
+    "inpaint": "7522c3b667e3d0c2c4d57f92a3e8e136c3a9f5413d355ff7c9ed20363d158ce7",
+    "render": "0ae6d974ecbd9a5a3dad83a3995bc462a34b184ccd75de7dfd825bdfeeca7c2e"
+  },
+  "changed_page_fingerprints": {
+    "ocr": "17561c4756008b9cd3b3faa9b01be7fc492ed4b5c8c3aa700ca6c11a51ad2357",
+    "inpaint": "15aafde437167e84db4ca71c5d7fcf33ea2ceee503b8145424027ab22115a8a7",
+    "render": "25ce2cf7f3bc376257179d14b69bec133a3873605bd71f4d71fb220f5bc2481c"
+  }
+}
