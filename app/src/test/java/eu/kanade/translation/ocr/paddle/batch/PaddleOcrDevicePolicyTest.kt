@@ -145,12 +145,19 @@ class PaddleOcrDevicePolicyTest {
                 requestedProvider = PaddleOcrExecutionProvider.CPU,
             )
 
-            val expectedActive = if (BuildConfig.DEBUG) active else PaddleOcrBatchSize.B1
-            assertEquals(expectedActive, decision.activeBatchSize)
-            assertEquals(
-                if (expectedActive == PaddleOcrBatchSize.B1) "b1_default" else "debug_provisional_optin",
-                decision.reason,
-            )
+            if (BuildConfig.DEBUG) {
+                assertEquals(active, decision.activeBatchSize)
+                assertEquals(
+                    if (active == PaddleOcrBatchSize.B1) "b1_default" else "debug_provisional_optin",
+                    decision.reason,
+                )
+            } else {
+                assertEquals(PaddleOcrBatchSize.B1, decision.activeBatchSize)
+                assertEquals(
+                    if (requested == PaddleOcrRecognitionBatch.B1) "b1_default" else "combination_not_confirmed",
+                    decision.reason,
+                )
+            }
         }
     }
 }
