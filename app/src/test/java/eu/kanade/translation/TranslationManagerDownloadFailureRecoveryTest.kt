@@ -1,19 +1,19 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.orchestration.*
-
-import eu.kanade.translation.storage.*
-
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import android.content.Context
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.orchestration.ChapterTranslator
+import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.storage.TranslationPendingRequestRecord
+import eu.kanade.translation.storage.TranslationPendingRequestStore
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.just

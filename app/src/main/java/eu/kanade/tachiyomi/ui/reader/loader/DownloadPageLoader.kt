@@ -10,11 +10,11 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.translation.orchestration.ReaderEntryTrace
-import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.orchestration.ReaderEntryTrace
+import eu.kanade.translation.orchestration.TranslationManager
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
 import tachiyomi.core.common.util.system.logcat

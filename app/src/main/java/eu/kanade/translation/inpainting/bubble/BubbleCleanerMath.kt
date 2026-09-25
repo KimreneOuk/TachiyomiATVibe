@@ -1,6 +1,4 @@
 package eu.kanade.translation.inpainting.bubble
-import eu.kanade.translation.inpainting.aot.AotOutputGuard
-
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt

@@ -2,12 +2,12 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 
 import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationSlot
 import eu.kanade.tachiyomi.ui.reader.projectReaderAutoTranslationUiState
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.toPageDisplayProjection
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState

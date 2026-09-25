@@ -1,6 +1,5 @@
 package eu.kanade.translation.translator.providers
 import eu.kanade.translation.translator.TextTranslatorLanguage
-
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

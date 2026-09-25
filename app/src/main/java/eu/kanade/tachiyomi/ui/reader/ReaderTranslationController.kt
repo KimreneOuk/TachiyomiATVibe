@@ -3,40 +3,23 @@ package eu.kanade.tachiyomi.ui.reader
 import android.app.Application
 import androidx.lifecycle.viewModelScope
 import eu.kanade.presentation.more.settings.widget.AiModelListState
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
-import eu.kanade.tachiyomi.data.saver.ImageSaver
-import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
-import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.MemoryPressureClass
-import eu.kanade.translation.pipeline.MemoryPressurePolicy
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.orchestration.ReaderEntryTrace
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
-import eu.kanade.translation.rendering.HydratedLayout
-import eu.kanade.translation.rendering.LayoutPlanPublication
-import eu.kanade.translation.rendering.PersistedLayoutHydrator
-import eu.kanade.translation.rendering.PersistedLayoutReaderBridge
-import eu.kanade.translation.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.displayImageName
-import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.shouldShowTranslationOverlay
@@ -44,19 +27,30 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.orchestration.ReaderEntryTrace
 import eu.kanade.translation.orchestration.ReaderSessionIntent
 import eu.kanade.translation.orchestration.SessionAdmission
 import eu.kanade.translation.orchestration.SessionRejection
+import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.MemoryPressureClass
+import eu.kanade.translation.pipeline.MemoryPressurePolicy
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.rendering.HydratedLayout
+import eu.kanade.translation.rendering.LayoutPlanPublication
+import eu.kanade.translation.rendering.PersistedLayoutHydrator
+import eu.kanade.translation.rendering.PersistedLayoutReaderBridge
+import eu.kanade.translation.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.TranslatorComputeClass
-import kotlinx.collections.immutable.toImmutableList
-import kotlinx.coroutines.CancellationException
+import eu.kanade.translation.translator.providers.AiModelFetcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -67,26 +61,23 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.i18n.at.ATMR
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
-import eu.kanade.translation.translator.providers.AiModelFetcher
-import eu.kanade.tachiyomi.util.system.toast
+import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
 import java.lang.ref.WeakReference
-import java.util.concurrent.atomic.AtomicLong
 
 internal class ReaderTranslationController(
     private val owner: ReaderViewModel,
@@ -108,52 +99,80 @@ internal class ReaderTranslationController(
     private val translationDiagnosticsEnabled get() = owner.translationDiagnosticsEnabled
     private var translationStoreJob: Job?
         get() = owner.translationStoreJob
-        set(value) { owner.translationStoreJob = value }
+        set(value) {
+            owner.translationStoreJob = value
+        }
     private var translationBatchProgressJob: Job?
         get() = owner.translationBatchProgressJob
-        set(value) { owner.translationBatchProgressJob = value }
+        set(value) {
+            owner.translationBatchProgressJob = value
+        }
     private var translationStateJob: Job?
         get() = owner.translationStateJob
-        set(value) { owner.translationStateJob = value }
+        set(value) {
+            owner.translationStateJob = value
+        }
     private var autoSnapshotJob: Job?
         get() = owner.autoSnapshotJob
-        set(value) { owner.autoSnapshotJob = value }
+        set(value) {
+            owner.autoSnapshotJob = value
+        }
     private var currentTranslationStore: ChapterTranslationStore?
         get() = owner.currentTranslationStore
-        set(value) { owner.currentTranslationStore = value }
+        set(value) {
+            owner.currentTranslationStore = value
+        }
     private var autoTranslationScrollJob: Job?
         get() = owner.autoTranslationScrollJob
-        set(value) { owner.autoTranslationScrollJob = value }
+        set(value) {
+            owner.autoTranslationScrollJob = value
+        }
     private val autoPageResolver get() = owner.autoPageResolver
     private val autoReadinessLock get() = owner.autoReadinessLock
     private val autoReadinessGeneration get() = owner.autoReadinessGeneration
     private var autoReadinessLoader: PageLoader?
         get() = owner.autoReadinessLoader
-        set(value) { owner.autoReadinessLoader = value }
+        set(value) {
+            owner.autoReadinessLoader = value
+        }
     private var autoReadinessPokeInFlight: Boolean
         get() = owner.autoReadinessPokeInFlight
-        set(value) { owner.autoReadinessPokeInFlight = value }
+        set(value) {
+            owner.autoReadinessPokeInFlight = value
+        }
     private var activeAutoIdentity: AutoChapterIdentity?
         get() = owner.activeAutoIdentity
-        set(value) { owner.activeAutoIdentity = value }
+        set(value) {
+            owner.activeAutoIdentity = value
+        }
     private val autoSnapshotGeneration get() = owner.autoSnapshotGeneration
     private val autoSnapshotFenceLock get() = owner.autoSnapshotFenceLock
     private var acceptedAutoOwnerVersion: Long?
         get() = owner.acceptedAutoOwnerVersion
-        set(value) { owner.acceptedAutoOwnerVersion = value }
+        set(value) {
+            owner.acceptedAutoOwnerVersion = value
+        }
     private var acceptedAutoWindowVersion: Long
         get() = owner.acceptedAutoWindowVersion
-        set(value) { owner.acceptedAutoWindowVersion = value }
+        set(value) {
+            owner.acceptedAutoWindowVersion = value
+        }
     private var activeAutoOwnerToken: Any?
         get() = owner.activeAutoOwnerToken
-        set(value) { owner.activeAutoOwnerToken = value }
+        set(value) {
+            owner.activeAutoOwnerToken = value
+        }
     private val autoReaderSessionKey get() = owner.autoReaderSessionKey
     private var batchTranslationState: Translation.State
         get() = owner.batchTranslationState
-        set(value) { owner.batchTranslationState = value }
+        set(value) {
+            owner.batchTranslationState = value
+        }
     private var liveTranslationState: Translation.State
         get() = owner.liveTranslationState
-        set(value) { owner.liveTranslationState = value }
+        set(value) {
+            owner.liveTranslationState = value
+        }
 
     private fun recomputeTranslationState() = owner.recomputeTranslationState()
     private fun getCurrentChapter(): ReaderChapter? = owner.getCurrentChapter()
@@ -312,7 +331,6 @@ internal class ReaderTranslationController(
             radius = ReaderPageWarmWindow.radiusFor(ReadingMode.fromPreference(getMangaReadingMode())),
         )
     }
-
 
     internal fun handleAutoTranslation(currentPage: ReaderPage) {
         autoTranslationScrollJob?.cancel()
@@ -556,8 +574,6 @@ internal class ReaderTranslationController(
         handleAutoTranslation(page)
     }
 
-
-
     internal suspend fun cancelTranslationForChapter(chapter: ReaderChapter) {
         val manga = manga ?: return
         val chapterId = chapter.chapter.id ?: return
@@ -725,9 +741,11 @@ internal class ReaderTranslationController(
     }
 
     internal fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
-        when (val admission = translationManager.sessionCoordinator.requestReaderSession(
-            ReaderSessionIntent(chapterId = page.chapter.chapter.id),
-        )) {
+        when (
+            val admission = translationManager.sessionCoordinator.requestReaderSession(
+                ReaderSessionIntent(chapterId = page.chapter.chapter.id),
+            )
+        ) {
             is SessionAdmission.Admitted,
             is SessionAdmission.Switched,
             -> translateSinglePageAfterAdmission(page, force)
@@ -1168,7 +1186,6 @@ internal class ReaderTranslationController(
         // TachiyomiAT: cancel any prior collector first. loadChapter() calls
         // this, so without cancelling
 
-
         // each chapter change stacked another statusFlow().launchIn(viewModelScope)
         // collector (the translationStateJob field was declared but never
         // assigned). They filtered by a captured chapterId and so no-op'd for
@@ -1560,46 +1577,48 @@ internal class ReaderTranslationController(
             PersistedLayoutReaderBridge.installChapterSource(null)
             return
         }
-        PersistedLayoutReaderBridge.installChapterSource(PersistedLayoutReaderBridge.PageKeyedSource { pageKey, blocks, width, height ->
-            val manifest = store.artifactManifest ?: return@PageKeyedSource null
-            val page = store.state.value[pageKey] ?: return@PageKeyedSource null
-            if (page.imgWidth <= 0f || page.imgHeight <= 0f) return@PageKeyedSource null
-            // Fresh manifest read per consult: the pointer/compat identity is
-            // compared against the DURABLE state, never a stale snapshot.
-            val currentManifest = store.artifactManifest ?: return@PageKeyedSource null
-            val hydrated = PersistedLayoutHydrator(
-                resolve = { key ->
-                    currentManifest.layoutPlans[key]?.let { pointer ->
-                        PersistedLayoutHydrator.PersistedPlanRef(
+        PersistedLayoutReaderBridge.installChapterSource(
+            PersistedLayoutReaderBridge.PageKeyedSource { pageKey, blocks, width, height ->
+                val manifest = store.artifactManifest ?: return@PageKeyedSource null
+                val page = store.state.value[pageKey] ?: return@PageKeyedSource null
+                if (page.imgWidth <= 0f || page.imgHeight <= 0f) return@PageKeyedSource null
+                // Fresh manifest read per consult: the pointer/compat identity is
+                // compared against the DURABLE state, never a stale snapshot.
+                val currentManifest = store.artifactManifest ?: return@PageKeyedSource null
+                val hydrated = PersistedLayoutHydrator(
+                    resolve = { key ->
+                        currentManifest.layoutPlans[key]?.let { pointer ->
+                            PersistedLayoutHydrator.PersistedPlanRef(
+                                pointer = pointer,
+                                compatibilityFingerprint = currentManifest.pages[key]?.layout?.fingerprint,
+                            )
+                        }
+                    },
+                    readDocument = { pointer ->
+                        artifact.readSidecarDocument(
                             pointer = pointer,
-                            compatibilityFingerprint = currentManifest.pages[key]?.layout?.fingerprint,
+                            serializer = PageLayoutDrawPlan.serializer(),
+                            currentSchemaVersion = PageLayoutDrawPlan.SCHEMA_VERSION,
+                            expectedKind = PageLayoutDrawPlan.KIND,
+                            schemaVersionOf = { it.schemaVersion },
+                            kindOf = { it.kind },
+                            isValid = { it.validationError() == null },
                         )
-                    }
-                },
-                readDocument = { pointer ->
-                    artifact.readSidecarDocument(
-                        pointer = pointer,
-                        serializer = PageLayoutDrawPlan.serializer(),
-                        currentSchemaVersion = PageLayoutDrawPlan.SCHEMA_VERSION,
-                        expectedKind = PageLayoutDrawPlan.KIND,
-                        schemaVersionOf = { it.schemaVersion },
-                        kindOf = { it.kind },
-                        isValid = { it.validationError() == null },
-                    )
-                },
-                fontSha256 = { PersistedLayoutRuntime.productionFontSha256() },
-            ).hydrate(
-                pageKey = pageKey,
-                blocks = blocks,
-                pageWidth = page.imgWidth,
-                pageHeight = page.imgHeight,
-                bindPageWidth = width,
-                bindPageHeight = height,
-                decodeSampleSize = page.decodeSampleSize,
-                expectedCompatibilityFingerprint = persistedLayoutExpectedFingerprint(page),
-            )
-            (hydrated as? HydratedLayout.Resolved)?.layouts
-        })
+                    },
+                    fontSha256 = { PersistedLayoutRuntime.productionFontSha256() },
+                ).hydrate(
+                    pageKey = pageKey,
+                    blocks = blocks,
+                    pageWidth = page.imgWidth,
+                    pageHeight = page.imgHeight,
+                    bindPageWidth = width,
+                    bindPageHeight = height,
+                    decodeSampleSize = page.decodeSampleSize,
+                    expectedCompatibilityFingerprint = persistedLayoutExpectedFingerprint(page),
+                )
+                (hydrated as? HydratedLayout.Resolved)?.layouts
+            },
+        )
     }
 
     /** Reader-side FP-07 recompute for the stored-fingerprint comparison; null skips it. */
@@ -1617,5 +1636,4 @@ internal class ReaderTranslationController(
             pageHeight = page.imgHeight,
         )
     }
-
 }

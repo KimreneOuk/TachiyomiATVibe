@@ -22,7 +22,8 @@ internal class InMemorySharedPreferences : SharedPreferences {
 
     override fun getStringSet(key: String, defValues: MutableSet<String>?): MutableSet<String> =
         @Suppress("UNCHECKED_CAST")
-        (entries[key] as? MutableSet<String>) ?: defValues ?: LinkedHashSet()
+        (entries[key] as? MutableSet<String>)
+            ?: defValues ?: LinkedHashSet()
 
     override fun getInt(key: String, defValue: Int): Int = entries[key] as? Int ?: defValue
 

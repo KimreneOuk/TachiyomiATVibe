@@ -1,12 +1,12 @@
 package eu.kanade.translation.scheduling
 
 import android.graphics.Bitmap
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.every

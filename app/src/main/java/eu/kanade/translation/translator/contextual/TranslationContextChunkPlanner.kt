@@ -1,7 +1,6 @@
 package eu.kanade.translation.translator.contextual
-import eu.kanade.translation.translator.TextTranslator
-
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.translator.TextTranslator
 
 /**
  * Conservative AI-request chunking for pre-translation.

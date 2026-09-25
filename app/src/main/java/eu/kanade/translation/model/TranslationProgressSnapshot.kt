@@ -119,7 +119,7 @@ data class TranslationProgressSnapshot(
      */
     val cancelledPages: Int = 0,
     /**
- * Phase 5 (spec §2.1): whether [totalPages] is the trusted source
+     * Phase 5 (spec §2.1): whether [totalPages] is the trusted source
      * total. A partially downloaded chapter's available page set is NOT its
      * trusted total — unknown totals must never render a percentage or a
      * fabricated complete chapter. Only a registered batch work set or a

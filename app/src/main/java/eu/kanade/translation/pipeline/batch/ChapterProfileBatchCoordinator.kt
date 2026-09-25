@@ -1,27 +1,12 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.CheckpointOcrResult
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.context.SeriesProfileRegistry
-import eu.kanade.translation.model.PageStage
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.artifact.AnalysisChunkResult
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.EvidenceStrength
-import eu.kanade.translation.artifact.FactConflictState
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.FactScope
-import eu.kanade.translation.artifact.FactType
-import eu.kanade.translation.artifact.ProfileFact
 import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactEngine
+import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
@@ -33,7 +18,6 @@ import eu.kanade.translation.artifact.ExtractedRelationship
 import eu.kanade.translation.artifact.ExtractedTerm
 import eu.kanade.translation.artifact.ExtractedTermKind
 import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.OcrCheckpointMode
 import eu.kanade.translation.artifact.PageRange
 import eu.kanade.translation.artifact.ProfilePointer
 import eu.kanade.translation.artifact.ProfileScene
@@ -44,40 +28,34 @@ import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.ToneFlag
 import eu.kanade.translation.artifact.isSha256Hex
-import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.hasCommittedDisplay
-import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.OcrStagePatch
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.contextual.ContextualTextTranslator
-import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.BatchRequestSublimitGate
+import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
+import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.translator.analysis.AnalysisRequestBuilder
-import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.translator.analysis.GlossaryEntryKind
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
-import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
 import eu.kanade.translation.translator.analysis.AnalyzerProvenanceFactory
-import eu.kanade.translation.translator.contextual.AnalysisChunkPlanResult
-import eu.kanade.translation.translator.contextual.AnalysisChunkPlanner
-import eu.kanade.translation.translator.contextual.AnalysisChunkPolicy
-import eu.kanade.translation.translator.contextual.ChunkPlannerPage
+import eu.kanade.translation.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.translator.contextual.EnvelopePlanResult
 import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
 import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
 import eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy
-import eu.kanade.translation.translator.contextual.EnvelopePlanResult
 import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
 import eu.kanade.translation.translator.contextual.OcrCorpusManifest
 import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
@@ -85,15 +63,6 @@ import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.security.MessageDigest
@@ -1091,9 +1060,11 @@ internal class ChapterProfileBatchCoordinator(
             ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.NO_POINTER)
         val pointer = manifest.ocrCheckpoints[pageKey]
             ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.NO_POINTER)
-        val checkpoint = when (val read = store.withArtifactEngineLocked { engine ->
-            engine.readOcrCheckpoint(pointer)
-        }) {
+        val checkpoint = when (
+            val read = store.withArtifactEngineLocked { engine ->
+                engine.readOcrCheckpoint(pointer)
+            }
+        ) {
             is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
             else -> return CheckpointAdoption.Failed(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
         }
@@ -1273,9 +1244,11 @@ internal class ChapterProfileBatchCoordinator(
         val entries = mutableListOf<AnalysisCorpusEntry>()
         for ((pageKey, pageIndex) in orderedPages) {
             val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
-            val checkpoint = when (val read = store.withArtifactEngineLocked { engine ->
-                engine.readOcrCheckpoint(pointer)
-            }) {
+            val checkpoint = when (
+                val read = store.withArtifactEngineLocked { engine ->
+                    engine.readOcrCheckpoint(pointer)
+                }
+            ) {
                 is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
                 else -> return null
             }
@@ -1721,7 +1694,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_STRANDED_RECONCILED = "strandedPagesReconciled"
 
         /**
-          * Display-tail drain counters: pages whose committed display was
+         * Display-tail drain counters: pages whose committed display was
          * produced by the FINALIZE drain, and pages left without one (typed
          * terminal, run completes as a warning). Pages left pending on
          * publication rejections count in neither bucket.
@@ -1730,7 +1703,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_DISPLAY_TAIL_FAILED = "displayTailFailed"
 
         /**
-          * Display-tail drain bound: the first pass retries the overlap
+         * Display-tail drain bound: the first pass retries the overlap
          * scheduler's single orphan sweep (a stale-write rejection heals on a
          * fresh snapshot); the third exists so one transient rejection never
          * typed-fails a healthy page. A MANUAL Render owner persists across
@@ -1748,7 +1721,7 @@ internal class ChapterProfileBatchCoordinator(
         internal const val REJECTED_ARTIFACT_PUBLICATION = "ARTIFACT_PUBLICATION_FAILED"
 
         /**
-          * Analysis output budget (`outputBudget`): free-form
+         * Analysis output budget (`outputBudget`): free-form
          * chunk summaries are ~120 words, so the reservation is small and
          * the input side keeps the 8k window. Mirrors
          * [eu.kanade.translation.translator.analysis.AnalysisEngineTransport

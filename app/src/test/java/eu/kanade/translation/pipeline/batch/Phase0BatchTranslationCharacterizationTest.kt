@@ -1,7 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
@@ -9,6 +8,7 @@ import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.util.ResumeOrdering
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.collect

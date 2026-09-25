@@ -1,11 +1,5 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.TranslationBlockPatch
-import eu.kanade.translation.pipeline.TranslationStagePatch
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterTranslationProfile
@@ -19,8 +13,14 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.TranslationBlockPatch
+import eu.kanade.translation.pipeline.TranslationStagePatch
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderFailure
@@ -404,13 +404,13 @@ internal class ProfileEnvelopeExecutor(
                     store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     return replanOrPause("page $pageKey lost its live state", pageKey)
                 }
-                //.3 skip re-check: the page became committed /
+                // .3 skip re-check: the page became committed /
                 // manual-authoritative between plan and dispatch.
                 if (pageAuthoritativelyDone(pageKey, live)) {
                     store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     continue
                 }
-                //.2 live-revalidate the plan-time identities.
+                // .2 live-revalidate the plan-time identities.
                 val drift = revalidationDrift(pageWork, snapshot, live)
                 if (drift != null) {
                     // Wave-6 F-W6-1: same release-before-early-return as the
@@ -421,7 +421,7 @@ internal class ProfileEnvelopeExecutor(
                         anchorPageKey = pageKey,
                     )
                 }
-                //.3 block-level skip: a block edited by the user since
+                // .3 block-level skip: a block edited by the user since
                 // the plan is authoritative — dropped from THIS dispatch
                 // (never overwritten); the rest of the page still dispatches.
                 val dispatchBlocks = pageWork.blocks.filter { planned ->

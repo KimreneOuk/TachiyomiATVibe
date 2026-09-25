@@ -1,15 +1,14 @@
 package eu.kanade.translation.translator.providers
-import eu.kanade.translation.translator.currentProviderRequestPriority
-import eu.kanade.translation.translator.ProviderFailureException
-import eu.kanade.translation.translator.retry.classifyHttpFailure
-import eu.kanade.translation.translator.SharedProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.ProviderRequestKey
-import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailure
-
+import eu.kanade.translation.translator.ProviderFailureException
+import eu.kanade.translation.translator.ProviderFailureKind
+import eu.kanade.translation.translator.ProviderFailureRetryability
+import eu.kanade.translation.translator.ProviderRequestGovernor
+import eu.kanade.translation.translator.ProviderRequestKey
+import eu.kanade.translation.translator.ProviderRequestMetadata
+import eu.kanade.translation.translator.SharedProviderRequestGovernor
+import eu.kanade.translation.translator.currentProviderRequestPriority
+import eu.kanade.translation.translator.retry.classifyHttpFailure
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

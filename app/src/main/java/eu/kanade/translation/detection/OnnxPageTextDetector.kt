@@ -1,9 +1,8 @@
 package eu.kanade.translation.detection
-import eu.kanade.translation.model.Detection
-
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
+import eu.kanade.translation.model.Detection
 import eu.kanade.translation.ocr.BoxGeometry
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority

@@ -26,8 +26,10 @@ internal class PaddleOcrV6BatchExecutor(
         if (strictProviderMode && session.providerLabel.isCpuLike()) {
             throw PaddleOcrStrictProviderException(session.providerLabel)
         }
-        require(widthBucket == PaddleOcrV6SmallEngine.BUCKET_WIDTH_SMALL ||
-            widthBucket == PaddleOcrV6SmallEngine.MAX_RECOGNITION_WIDTH) {
+        require(
+            widthBucket == PaddleOcrV6SmallEngine.BUCKET_WIDTH_SMALL ||
+                widthBucket == PaddleOcrV6SmallEngine.MAX_RECOGNITION_WIDTH,
+        ) {
             "Paddle OCR only supports width buckets 640 and 1600, got $widthBucket"
         }
         if (crops.isEmpty()) {

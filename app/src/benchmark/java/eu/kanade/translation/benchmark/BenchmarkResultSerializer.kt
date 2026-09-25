@@ -154,50 +154,56 @@ class BenchmarkResultSerializer {
         put("firstPssKb", pss.firstPssKb ?: JSONObject.NULL)
         put("lastPssKb", pss.lastPssKb ?: JSONObject.NULL)
         put("thermalStatusAtPeak", pss.thermalStatusAtPeak)
-        put("samples", JSONArray().apply {
-            pss.samples.forEach { sample ->
-                put(
-                    JSONObject().apply {
-                        put("elapsedMs", sample.elapsedMs)
-                        put("pssKb", sample.pssKb)
-                        put("javaHeapBytes", sample.javaHeapBytes)
-                        put("thermalStatus", sample.thermalStatus)
-                    },
-                )
-            }
-        })
+        put(
+            "samples",
+            JSONArray().apply {
+                pss.samples.forEach { sample ->
+                    put(
+                        JSONObject().apply {
+                            put("elapsedMs", sample.elapsedMs)
+                            put("pssKb", sample.pssKb)
+                            put("javaHeapBytes", sample.javaHeapBytes)
+                            put("thermalStatus", sample.thermalStatus)
+                        },
+                    )
+                }
+            },
+        )
     }
 
     private fun matrixJson(matrix: PaddleBenchmarkMatrixResult): JSONObject = JSONObject().apply {
         put("deviceProfileEvidence", matrix.deviceProfileEvidence)
-        put("cells", JSONArray().apply {
-            matrix.cells.forEach { cell ->
-                put(
-                    JSONObject().apply {
-                        put("provider", cell.provider.name)
-                        put("requestedBatchSize", cell.requestedBatchSize.value)
-                        put("widthBucket", cell.widthBucket.paddedWidth)
-                        put("evidence", cell.evidence)
-                        put("actualRegisteredProvider", cell.actualRegisteredProvider)
-                        put("strictNoCpuFallback", cell.strictNoCpuFallback)
-                        put("provenanceAfterInference", cell.provenanceAfterInference)
-                        put("noCpuFallbackObserved", cell.noCpuFallbackObserved)
-                        put("downgradeReason", cell.downgradeReason ?: JSONObject.NULL)
-                        put("downgradeReasons", JSONArray(cell.downgradeReasons))
-                        put("measuredBatchSizes", JSONArray(cell.measuredBatchSizes))
-                        put("peakInputBytes", cell.peakInputBytes ?: JSONObject.NULL)
-                        put("peakOutputBytes", cell.peakOutputBytes ?: JSONObject.NULL)
-                        put("p50Ms", cell.p50Ms ?: JSONObject.NULL)
-                        put("p95Ms", cell.p95Ms ?: JSONObject.NULL)
-                        put("pssDeltaKb", cell.pssDeltaKb ?: JSONObject.NULL)
-                        put("thermalStatusAtStart", cell.thermalStatusAtStart)
-                        put("thermalStatusAtEnd", cell.thermalStatusAtEnd)
-                        put("rollingP95Actions", JSONArray(cell.rollingP95Actions))
-                        put("error", cell.error ?: JSONObject.NULL)
-                    },
-                )
-            }
-        })
+        put(
+            "cells",
+            JSONArray().apply {
+                matrix.cells.forEach { cell ->
+                    put(
+                        JSONObject().apply {
+                            put("provider", cell.provider.name)
+                            put("requestedBatchSize", cell.requestedBatchSize.value)
+                            put("widthBucket", cell.widthBucket.paddedWidth)
+                            put("evidence", cell.evidence)
+                            put("actualRegisteredProvider", cell.actualRegisteredProvider)
+                            put("strictNoCpuFallback", cell.strictNoCpuFallback)
+                            put("provenanceAfterInference", cell.provenanceAfterInference)
+                            put("noCpuFallbackObserved", cell.noCpuFallbackObserved)
+                            put("downgradeReason", cell.downgradeReason ?: JSONObject.NULL)
+                            put("downgradeReasons", JSONArray(cell.downgradeReasons))
+                            put("measuredBatchSizes", JSONArray(cell.measuredBatchSizes))
+                            put("peakInputBytes", cell.peakInputBytes ?: JSONObject.NULL)
+                            put("peakOutputBytes", cell.peakOutputBytes ?: JSONObject.NULL)
+                            put("p50Ms", cell.p50Ms ?: JSONObject.NULL)
+                            put("p95Ms", cell.p95Ms ?: JSONObject.NULL)
+                            put("pssDeltaKb", cell.pssDeltaKb ?: JSONObject.NULL)
+                            put("thermalStatusAtStart", cell.thermalStatusAtStart)
+                            put("thermalStatusAtEnd", cell.thermalStatusAtEnd)
+                            put("rollingP95Actions", JSONArray(cell.rollingP95Actions))
+                            put("error", cell.error ?: JSONObject.NULL)
+                        },
+                    )
+                }
+            },
+        )
     }
 
     private fun stringMapJson(values: Map<String, String>): JSONObject = JSONObject().apply {
@@ -254,8 +260,10 @@ class BenchmarkResultSerializer {
             val confirmed = matrix.cells.count { it.evidence == "CONFIRMED" }
             val failed = matrix.cells.count { it.evidence == "FAILED" }
             val untested = matrix.cells.count { it.evidence == "UNTESTED" }
-            appendLine("- Matrix: **$confirmed CONFIRMED**, $failed FAILED, $untested UNTESTED cells; " +
-                "strict accelerator cells require post-inference provenance and zero CPU fallback.")
+            appendLine(
+                "- Matrix: **$confirmed CONFIRMED**, $failed FAILED, $untested UNTESTED cells; " +
+                    "strict accelerator cells require post-inference provenance and zero CPU fallback.",
+            )
             appendLine()
             appendLine("## Provider / batch / width matrix")
             appendLine()

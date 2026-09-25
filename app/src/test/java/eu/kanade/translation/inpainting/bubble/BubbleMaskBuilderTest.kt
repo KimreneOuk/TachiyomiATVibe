@@ -1,9 +1,9 @@
 package eu.kanade.translation.inpainting.bubble
 
+import eu.kanade.translation.inpainting.opencv.OpenCvInpaintEngine
 import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.comparables.shouldBeLessThan
 import io.kotest.matchers.shouldBe
-import eu.kanade.translation.inpainting.opencv.OpenCvInpaintEngine
 import org.junit.jupiter.api.Test
 
 /**

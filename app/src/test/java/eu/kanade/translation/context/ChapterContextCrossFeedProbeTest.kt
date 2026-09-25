@@ -1,11 +1,10 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.EvidenceRef
 import eu.kanade.translation.artifact.EvidenceStrength
@@ -20,6 +19,7 @@ import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.SceneRegister
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.pipeline.batch.ProfileFreezePublication
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.contextual.ProfileSubsetMatcher
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import io.kotest.matchers.collections.shouldContain

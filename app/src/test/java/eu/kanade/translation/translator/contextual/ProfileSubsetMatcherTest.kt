@@ -174,18 +174,30 @@ class ProfileSubsetMatcherTest {
                 fact("g001", FactType.GENDER, "ヒーロー", "Hero", gender = ProfileGender.FEMALE),
                 // In-range RANGE_SCOPED fact.
                 fact(
-                    "r001", FactType.NARRATIVE_STATE, "ヒーロー", "wounded",
-                    scope = FactScope.RANGE_SCOPED, range = PageRange(0, 1),
+                    "r001",
+                    FactType.NARRATIVE_STATE,
+                    "ヒーロー",
+                    "wounded",
+                    scope = FactScope.RANGE_SCOPED,
+                    range = PageRange(0, 1),
                 ),
                 // OUT-of-range RANGE_SCOPED fact.
                 fact(
-                    "r002", FactType.NARRATIVE_STATE, "相方", "angry",
-                    scope = FactScope.RANGE_SCOPED, range = PageRange(5, 6),
+                    "r002",
+                    FactType.NARRATIVE_STATE,
+                    "相方",
+                    "angry",
+                    scope = FactScope.RANGE_SCOPED,
+                    range = PageRange(5, 6),
                 ),
                 // AVAILABLE_FROM later than the envelope start.
                 fact(
-                    "a001", FactType.ENTITY_IDENTITY, "賊", "Bandit",
-                    scope = FactScope.AVAILABLE_FROM, availableFrom = 3,
+                    "a001",
+                    FactType.ENTITY_IDENTITY,
+                    "賊",
+                    "Bandit",
+                    scope = FactScope.AVAILABLE_FROM,
+                    availableFrom = 3,
                 ),
             ),
             scenes = listOf(

@@ -32,6 +32,7 @@ sealed class TranslationBatchEvent {
         val state: AiPageProgressState,
         val reason: String? = null,
     ) : TranslationBatchEvent()
+
     /**
      *   the coordinator is rebuilding the envelope dispatch work
      * (resume hydration). Flips the projection into the REBUILDING phase and

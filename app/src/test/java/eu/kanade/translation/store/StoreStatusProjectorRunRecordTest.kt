@@ -1,13 +1,11 @@
 package eu.kanade.translation.store
 
-import eu.kanade.translation.artifact.loadArtifact
-
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactEngine
+import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
@@ -15,13 +13,14 @@ import eu.kanade.translation.artifact.CommittedBundleMetadata
 import eu.kanade.translation.artifact.DisplayBaseKind
 import eu.kanade.translation.artifact.DisplayBaseReference
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.StageArtifactRecord
+import eu.kanade.translation.artifact.loadArtifact
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf

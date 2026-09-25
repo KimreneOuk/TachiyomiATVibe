@@ -1,13 +1,8 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.pipeline.*
-
-import eu.kanade.translation.storage.*
-
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterGlossary
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.CommittedBundleMetadata
 import eu.kanade.translation.artifact.DisplayBaseKind
@@ -19,21 +14,17 @@ import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import io.kotest.matchers.nulls.shouldBeNull
-import io.kotest.matchers.nulls.shouldNotBeNull
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromStream
-import kotlinx.serialization.json.encodeToJsonElement
-import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -578,7 +569,10 @@ class ChapterTranslationStoreArtifactMigrationTest {
         val store = ChapterTranslationStore.lazy(
             artifactParent = null,
             artifactFileName = "Chapter 8.json",
-            fileCreator = { creatorCalls++; root },
+            fileCreator = {
+                creatorCalls++
+                root
+            },
         )
 
         store.preRegisterPages(listOf("p1.jpg", "p2.jpg"))

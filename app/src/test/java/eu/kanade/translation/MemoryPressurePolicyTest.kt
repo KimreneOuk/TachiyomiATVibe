@@ -1,7 +1,7 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.pipeline.*
-
+import eu.kanade.translation.pipeline.MemoryPressureClass
+import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

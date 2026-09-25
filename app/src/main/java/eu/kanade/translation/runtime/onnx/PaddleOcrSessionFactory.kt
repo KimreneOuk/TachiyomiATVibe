@@ -157,5 +157,4 @@ object PaddleOcrSessionFactory {
     private fun HardwareDiscoveryEngine.HardwareRoute.isPaddleAccelerator(): Boolean =
         this == HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU ||
             this == HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP
-
 }

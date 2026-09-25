@@ -1,14 +1,13 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.artifact.loadArtifact
-
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ArtifactSeed
+import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactEngine
+import eu.kanade.translation.artifact.ChapterArtifactLayout
+import eu.kanade.translation.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.artifact.loadArtifact
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
@@ -22,8 +21,8 @@ import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.batch.BatchContextFrontier
 import eu.kanade.translation.pipeline.batch.BatchResumePlanner
 import eu.kanade.translation.pipeline.toPrecondition
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.tachiyomi.source.online.HttpSource
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

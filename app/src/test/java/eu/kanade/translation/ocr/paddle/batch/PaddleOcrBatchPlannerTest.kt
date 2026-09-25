@@ -75,10 +75,16 @@ class PaddleOcrBatchPlannerTest {
         batches.forEach { batch ->
             assertTrue(batch.leaves.all { it.widthBucket == batch.widthBucket })
         }
-        assertEquals(listOf(0, 1, 2, 3, 4), batches.filter { it.widthBucket == PaddleOcrWidthBucket.WIDTH_640 }
-            .flatMap { it.leaves }.map { it.parentRegion.index })
-        assertEquals(listOf(100, 101, 102, 103, 104), batches.filter { it.widthBucket == PaddleOcrWidthBucket.WIDTH_1600 }
-            .flatMap { it.leaves }.map { it.parentRegion.index })
+        assertEquals(
+            listOf(0, 1, 2, 3, 4),
+            batches.filter { it.widthBucket == PaddleOcrWidthBucket.WIDTH_640 }
+                .flatMap { it.leaves }.map { it.parentRegion.index },
+        )
+        assertEquals(
+            listOf(100, 101, 102, 103, 104),
+            batches.filter { it.widthBucket == PaddleOcrWidthBucket.WIDTH_1600 }
+                .flatMap { it.leaves }.map { it.parentRegion.index },
+        )
     }
 
     @Test

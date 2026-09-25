@@ -2,8 +2,8 @@ package eu.kanade.translation.manager
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

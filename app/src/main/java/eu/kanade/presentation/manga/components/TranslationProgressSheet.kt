@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.FormatPaint
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -60,13 +59,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.tachiyomi.data.download.model.Download
-import eu.kanade.translation.pipeline.batch.BatchPhase
 import eu.kanade.translation.model.AiBatchProgress
 import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.BatchHeroPhase
@@ -76,10 +76,9 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.pipeline.batch.BatchPhase
 import eu.kanade.translation.ui.BatchStatusLineKind
 import eu.kanade.translation.ui.TranslationUiTruth
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR

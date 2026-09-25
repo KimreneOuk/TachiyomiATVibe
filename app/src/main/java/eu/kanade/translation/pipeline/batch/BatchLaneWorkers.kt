@@ -3,10 +3,6 @@ package eu.kanade.translation.pipeline.batch
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.data.TranslationProvider
@@ -21,21 +17,24 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasCurrentInpaintResult
-import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.ocr.PageRecognitionEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
+import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
-import eu.kanade.translation.ocr.PageRecognitionEngine
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.scheduling.CrossOriginBitmapBudget
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.contextual.StableBlockIds
-import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TranslationBlockValidation
+import eu.kanade.translation.translator.contextual.StableBlockIds
+import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.retry.classifyProviderFailure
 import eu.kanade.translation.util.ShortHash
@@ -43,7 +42,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
@@ -54,6 +52,7 @@ import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 
 /**
  * Native-lane admission runner: the workers' nested `withNativeLane` calls are
@@ -299,8 +298,6 @@ internal class BatchLaneWorkers(
         chapterId,
         expectedPrecondition,
     )
-
-
 
     // ---- TachiyomiAT Phase 5: consolidated sequential coordinator ----
     // The batch schedule is driven by the coordinator pass (one serialized

@@ -1,8 +1,7 @@
 package eu.kanade.translation.translator.contextual
-import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
-
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain

@@ -1,22 +1,21 @@
 package eu.kanade.translation.benchmark
 
+import ai.onnxruntime.OrtEnvironment
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Debug
-import ai.onnxruntime.OrtEnvironment
 import eu.kanade.tachiyomi.BuildConfig
-import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.PaddleOcrV6BatchTelemetry
-import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchSize
+import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrRollingP95Config
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrRollingP95HysteresisDowngradePolicy
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrWidthBucket
 import eu.kanade.translation.runtime.onnx.HardwareDiscoveryEngine
+import eu.kanade.translation.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
-import eu.kanade.translation.runtime.onnx.ModelRoutingEngine
-import eu.kanade.translation.runtime.onnx.PaddleOcrProviderTestConfiguration
 import eu.kanade.translation.runtime.onnx.PaddleOcrProviderTarget
+import eu.kanade.translation.runtime.onnx.PaddleOcrProviderTestConfiguration
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import kotlin.math.ceil
@@ -184,9 +183,10 @@ class PaddleBenchmarkRunner(private val context: Context) {
         val parity = if (config.parityMode) {
             PaddleB1ParityResult(
                 mode = "recognizeWithConf_vs_recognizeBucketBatch_B1",
-                passed = paritySamples.isNotEmpty() && paritySamples.all {
-                    it.exactText && it.exactConfidence
-                },
+                passed = paritySamples.isNotEmpty() &&
+                    paritySamples.all {
+                        it.exactText && it.exactConfidence
+                    },
                 detectorConfiguration = "crop-only benchmark; detector-present/absent parity is covered by JVM fixtures",
                 comparedSamples = paritySamples.size,
                 samples = paritySamples.toList(),

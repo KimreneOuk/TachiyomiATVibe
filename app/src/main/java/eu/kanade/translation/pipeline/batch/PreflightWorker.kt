@@ -1,103 +1,27 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.CheckpointOcrResult
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.context.SeriesProfileRegistry
-import eu.kanade.translation.model.PageStage
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.artifact.AnalysisChunkCoverage
-import eu.kanade.translation.artifact.AnalysisChunkResult
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.EvidenceStrength
-import eu.kanade.translation.artifact.FactConflictState
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.FactScope
-import eu.kanade.translation.artifact.FactType
-import eu.kanade.translation.artifact.ProfileFact
-import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.artifact.EnvelopePlan
-import eu.kanade.translation.artifact.ExtractedEntity
-import eu.kanade.translation.artifact.ExtractedRelationship
-import eu.kanade.translation.artifact.ExtractedTerm
-import eu.kanade.translation.artifact.ExtractedTermKind
-import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.OcrCheckpointMode
-import eu.kanade.translation.artifact.PageRange
 import eu.kanade.translation.artifact.ProfilePointer
-import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.RunConfigSnapshot
-import eu.kanade.translation.artifact.SceneRegister
-import eu.kanade.translation.artifact.SidecarPointer
-import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
-import eu.kanade.translation.artifact.ToneFlag
-import eu.kanade.translation.artifact.isSha256Hex
-import eu.kanade.translation.model.PageDisplayState
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.context.SeriesProfileRegistry
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.hasCommittedDisplay
-import eu.kanade.translation.model.hasRecognizedTranslation
-import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.contextual.ContextualTextTranslator
-import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
-import eu.kanade.translation.translator.BatchRequestSublimitGate
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.storage.CheckpointOcrResult
 import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.translator.analysis.AnalysisRequestBuilder
-import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.translator.analysis.GlossaryEntryKind
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
-import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.translator.analysis.AnalyzerProvenanceFactory
-import eu.kanade.translation.translator.contextual.AnalysisChunkPlanResult
-import eu.kanade.translation.translator.contextual.AnalysisChunkPlanner
-import eu.kanade.translation.translator.contextual.AnalysisChunkPolicy
-import eu.kanade.translation.translator.contextual.ChunkPlannerPage
-import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy
-import eu.kanade.translation.translator.contextual.EnvelopePlanResult
-import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
-import eu.kanade.translation.translator.contextual.OcrCorpusManifest
-import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import java.security.MessageDigest
-
 
 internal class PreflightWorkerContext(
     val store: ChapterTranslationStore,
@@ -278,150 +202,149 @@ internal class PreflightWorker(
         val corpusFingerprint: String,
     )
 
-        private suspend fun existingActiveRecord(
-            artifact: ChapterArtifactEngine,
-        ): ChapterArtifactEngine.RunRecordRead? {
-            //  dispatch reads the DURABLE manifest, not the facade's cached
-            // snapshot: the cache is a CAS optimization with many writers, while
-            // this decision must never re-run paid work (or drain a stale
-            // FINALIZE) behind what the artifact tree actually records. One
-            // sidecar read per dispatch — negligible next to the preflight.
-            return store.withArtifactEngineLocked { engine ->
-                val pointer = engine.readManifest()?.activeRun ?: return@withArtifactEngineLocked null
-                engine.readRunRecord(pointer)
-            }
+    private suspend fun existingActiveRecord(
+        artifact: ChapterArtifactEngine,
+    ): ChapterArtifactEngine.RunRecordRead? {
+        //  dispatch reads the DURABLE manifest, not the facade's cached
+        // snapshot: the cache is a CAS optimization with many writers, while
+        // this decision must never re-run paid work (or drain a stale
+        // FINALIZE) behind what the artifact tree actually records. One
+        // sidecar read per dispatch — negligible next to the preflight.
+        return store.withArtifactEngineLocked { engine ->
+            val pointer = engine.readManifest()?.activeRun ?: return@withArtifactEngineLocked null
+            engine.readRunRecord(pointer)
         }
+    }
 
-        private suspend fun checkpointPage(
-            artifact: ChapterArtifactEngine,
-            pageKey: String,
-            ref: OcrReadyPageRef,
-        ): CheckpointOcrResult {
-            // OCR preflight is a durability boundary. Active reader stores
-            // publish page state and page registration memory-first, so drain
-            // that queue before reading the manifest-backed checkpoint
-            // identity. This call is deliberately outside any store mutex;
-            // StorePersistenceScheduler serializes its own flush worker and
-            // no flush task calls back into this checkpoint path.
-            val lazyPersistence = store.isLazyPersistenceEnabled()
-            if (lazyPersistence) {
-                store.flush()
-            }
-            val snapshot = store.snapshot(pageKey)
-            val leaseToken = ref.leaseToken
-            if (leaseToken == null) {
-                return CheckpointOcrResult.Rejected(
-                    "preflight ocr reference without a lease token",
-                )
-            }
-            // The worker reference predates the flush. Prefer the fresh
-            // manifest identity and retain the reference only for stores that
-            // published synchronously before this boundary.
-            val candidateGenerationId = if (lazyPersistence) {
-                snapshot.candidateGenerationId ?: ref.candidateGenerationId
-            } else {
-                ref.candidateGenerationId
-            }
-            val artifactPageVersion = if (lazyPersistence) {
-                snapshot.artifactPageVersion ?: ref.artifactPageVersion
-            } else {
-                snapshot.artifactPageVersion
-            }
-            val dependencyFingerprint = if (lazyPersistence && snapshot.candidateGenerationId != null) {
-                snapshot.dependencyFingerprint
-            } else {
-                ref.dependencyFingerprint
-            }
-            val admissionSha = context.admissionSourceSha(pageKey)
-            return store.checkpointOcr(
-                pageKey = pageKey,
-                generation = snapshot.generation,
-                expectedPageVersion = snapshot.pageVersion,
-                expectedLeaseToken = leaseToken,
-                expectedCandidateGenerationId = candidateGenerationId,
-                expectedArtifactPageVersion = artifactPageVersion,
-                expectedDependencyFingerprint = dependencyFingerprint,
-                sourceSha256 = admissionSha,
-                sourceOrientation = context.orientationOf(snapshot),
-                mode = OcrCheckpointMode.CLOSE,
-                description = "t924 ocr preflight checkpoint",
+    private suspend fun checkpointPage(
+        artifact: ChapterArtifactEngine,
+        pageKey: String,
+        ref: OcrReadyPageRef,
+    ): CheckpointOcrResult {
+        // OCR preflight is a durability boundary. Active reader stores
+        // publish page state and page registration memory-first, so drain
+        // that queue before reading the manifest-backed checkpoint
+        // identity. This call is deliberately outside any store mutex;
+        // StorePersistenceScheduler serializes its own flush worker and
+        // no flush task calls back into this checkpoint path.
+        val lazyPersistence = store.isLazyPersistenceEnabled()
+        if (lazyPersistence) {
+            store.flush()
+        }
+        val snapshot = store.snapshot(pageKey)
+        val leaseToken = ref.leaseToken
+        if (leaseToken == null) {
+            return CheckpointOcrResult.Rejected(
+                "preflight ocr reference without a lease token",
             )
         }
-
-        private suspend fun checkpointReuse(
-            artifact: ChapterArtifactEngine,
-            pageKey: String,
-        ): CheckpointReuse {
-            val manifest = store.artifactManifest
-                ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
-            val pointer = manifest.ocrCheckpoints[pageKey]
-                ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
-            val read = store.withArtifactEngineLocked { engine ->
-                engine.readOcrCheckpoint(pointer)
-            }
-            if (read !is ChapterArtifactEngine.OcrCheckpointRead.Usable) {
-                return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
-            }
-            val admissionSha = context.admissionSourceSha(pageKey)
-            if (admissionSha == null || read.checkpoint.sourceIdentity.sha256 != admissionSha) {
-                return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SHA_MISMATCH)
-            }
-            return CheckpointReuse.Reusable(read.checkpoint.ocrContentFingerprint)
+        // The worker reference predates the flush. Prefer the fresh
+        // manifest identity and retain the reference only for stores that
+        // published synchronously before this boundary.
+        val candidateGenerationId = if (lazyPersistence) {
+            snapshot.candidateGenerationId ?: ref.candidateGenerationId
+        } else {
+            ref.candidateGenerationId
         }
-
-        private suspend fun readCheckpointFingerprint(
-            artifact: ChapterArtifactEngine,
-            pageKey: String,
-        ): String? {
-            val manifest = store.artifactManifest ?: return null
-            val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
-            val read = store.withArtifactEngineLocked { engine ->
-                engine.readOcrCheckpoint(pointer)
-            }
-            return (read as? ChapterArtifactEngine.OcrCheckpointRead.Usable)?.checkpoint?.ocrContentFingerprint
+        val artifactPageVersion = if (lazyPersistence) {
+            snapshot.artifactPageVersion ?: ref.artifactPageVersion
+        } else {
+            snapshot.artifactPageVersion
         }
+        val dependencyFingerprint = if (lazyPersistence && snapshot.candidateGenerationId != null) {
+            snapshot.dependencyFingerprint
+        } else {
+            ref.dependencyFingerprint
+        }
+        val admissionSha = context.admissionSourceSha(pageKey)
+        return store.checkpointOcr(
+            pageKey = pageKey,
+            generation = snapshot.generation,
+            expectedPageVersion = snapshot.pageVersion,
+            expectedLeaseToken = leaseToken,
+            expectedCandidateGenerationId = candidateGenerationId,
+            expectedArtifactPageVersion = artifactPageVersion,
+            expectedDependencyFingerprint = dependencyFingerprint,
+            sourceSha256 = admissionSha,
+            sourceOrientation = context.orientationOf(snapshot),
+            mode = OcrCheckpointMode.CLOSE,
+            description = "t924 ocr preflight checkpoint",
+        )
+    }
 
-        private suspend fun frozenProfileReuse(
-            artifact: ChapterArtifactEngine,
-            orderedPages: List<PageKey>,
-            expectedPageCount: Int,
-        ): FrozenProfileReuse? {
-            val manifest = store.artifactManifest ?: return null
-            val pointer = manifest.profile ?: return null
-            if (!pointer.isWellFormed()) return null
-            // The FP-04 corpus identity must come from checkpoints whose source
-            // identity STILL matches the current source ( resume: identities
-            // are revalidated against current files). A changed/missing page
-            // makes the frozen profile NOT reusable — the normal path re-OCRs it
-            // and the corpus drift gates downstream (wave-4 F-W4-1 discipline).
-            val corpusPairs = mutableListOf<Pair<String, String>>()
-            for ((pageKey, _) in orderedPages) {
-                val reusable = checkpointReuse(artifact, pageKey)
-                val fingerprint = (reusable as? CheckpointReuse.Reusable)?.ocrContentFingerprint ?: return null
-                corpusPairs += pageKey to fingerprint
-            }
-            val naturalOrderProven =
-                orderedPages.map { it.second }.toSet() == (0 until expectedPageCount).toSet()
-            val corpusFingerprint = StageFingerprints.ocrCorpusFingerprint(
-                pages = corpusPairs,
-                expectedPageCount = expectedPageCount,
-                expectedPageCountTrusted = true,
-                naturalOrderProven = naturalOrderProven,
+    private suspend fun checkpointReuse(
+        artifact: ChapterArtifactEngine,
+        pageKey: String,
+    ): CheckpointReuse {
+        val manifest = store.artifactManifest
+            ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
+        val pointer = manifest.ocrCheckpoints[pageKey]
+            ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
+        val read = store.withArtifactEngineLocked { engine ->
+            engine.readOcrCheckpoint(pointer)
+        }
+        if (read !is ChapterArtifactEngine.OcrCheckpointRead.Usable) {
+            return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
+        }
+        val admissionSha = context.admissionSourceSha(pageKey)
+        if (admissionSha == null || read.checkpoint.sourceIdentity.sha256 != admissionSha) {
+            return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SHA_MISMATCH)
+        }
+        return CheckpointReuse.Reusable(read.checkpoint.ocrContentFingerprint)
+    }
+
+    private suspend fun readCheckpointFingerprint(
+        artifact: ChapterArtifactEngine,
+        pageKey: String,
+    ): String? {
+        val manifest = store.artifactManifest ?: return null
+        val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
+        val read = store.withArtifactEngineLocked { engine ->
+            engine.readOcrCheckpoint(pointer)
+        }
+        return (read as? ChapterArtifactEngine.OcrCheckpointRead.Usable)?.checkpoint?.ocrContentFingerprint
+    }
+
+    private suspend fun frozenProfileReuse(
+        artifact: ChapterArtifactEngine,
+        orderedPages: List<PageKey>,
+        expectedPageCount: Int,
+    ): FrozenProfileReuse? {
+        val manifest = store.artifactManifest ?: return null
+        val pointer = manifest.profile ?: return null
+        if (!pointer.isWellFormed()) return null
+        // The FP-04 corpus identity must come from checkpoints whose source
+        // identity STILL matches the current source ( resume: identities
+        // are revalidated against current files). A changed/missing page
+        // makes the frozen profile NOT reusable — the normal path re-OCRs it
+        // and the corpus drift gates downstream (wave-4 F-W4-1 discipline).
+        val corpusPairs = mutableListOf<Pair<String, String>>()
+        for ((pageKey, _) in orderedPages) {
+            val reusable = checkpointReuse(artifact, pageKey)
+            val fingerprint = (reusable as? CheckpointReuse.Reusable)?.ocrContentFingerprint ?: return null
+            corpusPairs += pageKey to fingerprint
+        }
+        val naturalOrderProven =
+            orderedPages.map { it.second }.toSet() == (0 until expectedPageCount).toSet()
+        val corpusFingerprint = StageFingerprints.ocrCorpusFingerprint(
+            pages = corpusPairs,
+            expectedPageCount = expectedPageCount,
+            expectedPageCountTrusted = true,
+            naturalOrderProven = naturalOrderProven,
+        )
+        val inputFingerprint = profileInputFingerprintOf(corpusFingerprint)
+        return when (
+            val read = ProfileFreezePublication.readReusableFrozenProfile(
+                store = store,
+                manifest = manifest,
+                expectedInputFingerprint = inputFingerprint,
             )
-            val inputFingerprint = profileInputFingerprintOf(corpusFingerprint)
-            return when (
-                val read = ProfileFreezePublication.readReusableFrozenProfile(
-                    store = store,
-                    manifest = manifest,
-                    expectedInputFingerprint = inputFingerprint,
-                )
-            ) {
-                is ProfileFreezePublication.FrozenProfileRead.Reusable ->
-                    FrozenProfileReuse(pointer, corpusFingerprint)
-                is ProfileFreezePublication.FrozenProfileRead.NotReusable -> null
-            }
+        ) {
+            is ProfileFreezePublication.FrozenProfileRead.Reusable ->
+                FrozenProfileReuse(pointer, corpusFingerprint)
+            is ProfileFreezePublication.FrozenProfileRead.NotReusable -> null
         }
-
+    }
 
     private suspend fun recordPageFailure(failure: PreflightStageFailure) =
         context.failureRecorder(failure)

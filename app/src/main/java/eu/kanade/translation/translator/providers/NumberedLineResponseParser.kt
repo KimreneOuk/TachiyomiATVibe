@@ -1,6 +1,5 @@
 package eu.kanade.translation.translator.providers
 import eu.kanade.translation.translator.TextTranslatorLanguage
-
 import java.util.regex.Pattern
 
 /**

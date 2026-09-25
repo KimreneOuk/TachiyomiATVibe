@@ -72,7 +72,6 @@ object OnnxRuntimeProvider {
         cause: Throwable,
     ) : RuntimeException("Execution provider registration failed for route $route", cause)
 
-
     /**
      * Generic production QNN HTP provider options.
      * By default, only backend_type="htp" is specified, allowing ORT and QNN runtime

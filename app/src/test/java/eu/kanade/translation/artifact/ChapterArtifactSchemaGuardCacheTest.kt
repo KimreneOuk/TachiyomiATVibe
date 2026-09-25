@@ -1,7 +1,6 @@
 package eu.kanade.translation.artifact
 
 import eu.kanade.translation.artifact.loadArtifact
-
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import io.kotest.matchers.shouldBe
@@ -61,10 +60,12 @@ class ChapterArtifactSchemaGuardCacheTest {
     )
 
     private fun legacySnapshot(identityTag: String = "v1") = ArtifactSeed(
-        pages = mapOf("page.jpg" to ArtifactPageFacts(
-            displayablePage(),
-            CleanedFileState.VALID,
-        )),
+        pages = mapOf(
+            "page.jpg" to ArtifactPageFacts(
+                displayablePage(),
+                CleanedFileState.VALID,
+            ),
+        ),
         glossary = emptyMap(),
         legacyIdentity = identity(identityTag),
         sourceFileName = "Chapter 1.json",

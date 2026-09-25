@@ -1,5 +1,7 @@
 package eu.kanade.translation.ocr
 
+import eu.kanade.translation.ocr.PaddleB1Crop
+import eu.kanade.translation.ocr.PaddleOcrB1FixtureFactory
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchSize
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrCropOwnership
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrFallbackKind
@@ -8,17 +10,15 @@ import eu.kanade.translation.ocr.paddle.batch.PaddleOcrPageGeneration
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrParentRegion
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrRotation
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrWidthBucket
-import eu.kanade.translation.ocr.PaddleB1Crop
-import eu.kanade.translation.ocr.PaddleOcrB1FixtureFactory
 import eu.kanade.translation.ocr.paddleB1Executor
 import eu.kanade.translation.ocr.paddleB1Pool
 import eu.kanade.translation.ocr.writePaddleB1Marker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
-import org.junit.jupiter.api.Assertions.assertIterableEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertIterableEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -70,12 +70,16 @@ class PaddlePageOcrCoordinatorTest {
 
             assertEquals(5, dispatcher.resolvedLeafCount)
             assertEquals(listOf(4, 1), dispatcher.batchTraces.map { it.leafIdentities.size })
-            assertTrue(dispatcher.batchTraces.all { trace ->
-                trace.pageGeneration == page && trace.leafIdentities.all { it.pageGeneration == page }
-            })
-            assertTrue(dispatcher.batchTraces.all {
-                it.queueWaitMs >= 0.0 && it.admissionWaitMs >= 0.0 && it.batchLatencyMs >= 0.0
-            })
+            assertTrue(
+                dispatcher.batchTraces.all { trace ->
+                    trace.pageGeneration == page && trace.leafIdentities.all { it.pageGeneration == page }
+                },
+            )
+            assertTrue(
+                dispatcher.batchTraces.all {
+                    it.queueWaitMs >= 0.0 && it.admissionWaitMs >= 0.0 && it.batchLatencyMs >= 0.0
+                },
+            )
             leaves.forEach { assertTrue(it.cropOwnership.isReleased) }
         }
     }

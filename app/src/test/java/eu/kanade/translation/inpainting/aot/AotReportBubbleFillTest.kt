@@ -1,6 +1,5 @@
 package eu.kanade.translation.inpainting.aot
 import eu.kanade.translation.inpainting.bubble.BubbleMaskBuilder
-
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

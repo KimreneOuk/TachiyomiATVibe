@@ -4,8 +4,8 @@ import ai.onnxruntime.OrtException
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
-import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.string.shouldMatch
+import io.kotest.matchers.string.shouldNotContain
 import org.junit.jupiter.api.Test
 import java.io.IOException
 

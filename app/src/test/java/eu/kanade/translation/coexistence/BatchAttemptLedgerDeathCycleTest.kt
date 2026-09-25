@@ -1,26 +1,24 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.artifact.loadArtifact
-
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.ArtifactSeed
+import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactEngine
+import eu.kanade.translation.artifact.ChapterArtifactLayout
+import eu.kanade.translation.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.artifact.loadArtifact
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
@@ -399,5 +397,4 @@ class BatchAttemptLedgerDeathCycleTest {
                 cappedHarness.close()
             }
         }
-
 }

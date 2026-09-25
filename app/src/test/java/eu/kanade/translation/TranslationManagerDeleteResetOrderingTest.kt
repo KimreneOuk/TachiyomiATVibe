@@ -1,25 +1,24 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.orchestration.*
-
-import eu.kanade.translation.storage.*
-
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableStatus
-import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
-import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.orchestration.ChapterTranslator
+import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -267,26 +266,26 @@ class TranslationManagerDeleteResetOrderingTest {
 
             manager.resetOcrData(chapter, manga, source, "p1")
 
-                assertTrue(
-                    events == listOf(
-                        "clearDurableStatusCache",
-                        "cancelPageTranslation",
-                        "clearPage",
-                        "deletePage",
-                        "storeFlush",
-                        // One companion-dir scan feeds the retired-name set; each
-                        // name (persisted + fixed publication names) is then
-                        // retired through the stream registry (the registry
-                        // invokes the delete callback itself, so it is not part
-                        // of this synchronous event stream).
-                        "findCompanionImageDir",
-                        "retirePageCompanionImage",
-                        "retirePageCompanionImage",
-                        "retirePageCompanionImage",
-                        "retirePageCompanionImage",
-                    ),
-                    "resetOcrData ordering changed: $events",
-                )
+            assertTrue(
+                events == listOf(
+                    "clearDurableStatusCache",
+                    "cancelPageTranslation",
+                    "clearPage",
+                    "deletePage",
+                    "storeFlush",
+                    // One companion-dir scan feeds the retired-name set; each
+                    // name (persisted + fixed publication names) is then
+                    // retired through the stream registry (the registry
+                    // invokes the delete callback itself, so it is not part
+                    // of this synchronous event stream).
+                    "findCompanionImageDir",
+                    "retirePageCompanionImage",
+                    "retirePageCompanionImage",
+                    "retirePageCompanionImage",
+                    "retirePageCompanionImage",
+                ),
+                "resetOcrData ordering changed: $events",
+            )
 
             // deletePageTranslation is documented as routing to resetOcrData; the
             // same ordering must hold through the alias.

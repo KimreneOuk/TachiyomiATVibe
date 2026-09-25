@@ -341,7 +341,7 @@ private fun TranslatedIndicator(
                         translationIndicatorTapAction(
                             state = translationState,
                             hasPendingRequest = false,
-                        )
+                        ),
                     )
                 },
             ),
@@ -400,7 +400,7 @@ private fun ErrorIndicator(
                         translationIndicatorTapAction(
                             state = translationState,
                             hasPendingRequest = false,
-                        )
+                        ),
                     )
                 },
             ),

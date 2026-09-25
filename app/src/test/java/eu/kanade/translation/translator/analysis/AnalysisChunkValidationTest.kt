@@ -5,9 +5,9 @@ import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
+import eu.kanade.translation.translator.ProviderQuotaPolicy
 import eu.kanade.translation.translator.ProviderRequestClock
 import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderQuotaPolicy
 import eu.kanade.translation.translator.analysis.AnalysisResponseValidator.AnalysisResponseOutcome
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull

@@ -1,8 +1,7 @@
 package eu.kanade.translation.translator.retry
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.translator.contextual.TranslationContextChunk
 
 /**
  * Pure retry-planning helpers for AI batch translation.

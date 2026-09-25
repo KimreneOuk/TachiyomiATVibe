@@ -1,9 +1,9 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationProgressStage
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest

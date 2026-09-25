@@ -5,7 +5,6 @@ import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.manager.rebuildTruthFromRunRecord
 import eu.kanade.translation.manager.withRunRecordTruth
-import eu.kanade.translation.model.BatchRebuildProgress
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot

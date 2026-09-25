@@ -1,10 +1,9 @@
 package eu.kanade.translation.translator
-import eu.kanade.translation.translator.providers.OpenRouterTranslator
-import eu.kanade.translation.translator.providers.LmStudioTranslator
-import eu.kanade.translation.translator.providers.GeminiTranslator
-import eu.kanade.translation.translator.providers.DeepSeekTranslator
-
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.providers.DeepSeekTranslator
+import eu.kanade.translation.translator.providers.GeminiTranslator
+import eu.kanade.translation.translator.providers.LmStudioTranslator
+import eu.kanade.translation.translator.providers.OpenRouterTranslator
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationPreferences

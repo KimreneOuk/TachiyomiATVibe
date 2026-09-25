@@ -4,9 +4,9 @@ import android.content.Context
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.OcrModelCatalog
-import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.ocr.PageRecognitionEngine
 import eu.kanade.translation.ocr.RoiPageRecognitionEngine
+import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TextTranslatorLanguage

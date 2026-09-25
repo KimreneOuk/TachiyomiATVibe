@@ -1,12 +1,11 @@
 package eu.kanade.translation.artifact
 
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.loadArtifact
-
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -17,7 +16,6 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import java.io.InputStream
-import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit

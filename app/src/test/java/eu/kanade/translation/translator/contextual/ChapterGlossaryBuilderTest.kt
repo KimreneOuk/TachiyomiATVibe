@@ -135,4 +135,3 @@ class ChapterGlossaryBuilderTest {
         incremental["太郎"] shouldBe "Taro"
     }
 }
-

@@ -1,17 +1,14 @@
 package eu.kanade.translation.artifact
 
-import eu.kanade.translation.orchestration.ReaderEntryTrace
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
-import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
+import eu.kanade.translation.orchestration.ReaderEntryTrace
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
+import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
@@ -321,7 +318,6 @@ class ChapterArtifactEngine(
             commitPoint = CommitPoint.CHAPTER_PHASE_RECORD,
         )
     }
-
 
     /**
      *   retires the [ChapterArtifactManifest.activeRun] pointer in ONE
@@ -1090,6 +1086,7 @@ class ChapterArtifactEngine(
         }
         return SidecarRead.Usable(document)
     }
+
     /** Reads a complete live-store page snapshot referenced by a manifest pointer. */
     fun readPageSnapshot(fileName: String?): PageTranslation? =
         fileName?.let { documents.readValidated<PageTranslation>(it) }
@@ -1791,7 +1788,7 @@ class ChapterArtifactEngine(
      * reason (identity drift, publication failure, future-schema guard) must
      * keep failing the caller exactly as before.
      */
-    private val STALE_MANIFEST_REJECTION_REASON = "stale manifest snapshot"
+    private val staleManifestRejectionReason = "stale manifest snapshot"
 
     private fun staleManifestRejection(manifest: ChapterArtifactManifest): String? {
         val durable = casBaselineManifest()
@@ -1799,7 +1796,7 @@ class ChapterArtifactEngine(
         return if (durable == manifest) {
             null
         } else {
-            "$STALE_MANIFEST_REJECTION_REASON: chapter=${layout.chapterKey}"
+            "$staleManifestRejectionReason: chapter=${layout.chapterKey}"
         }
     }
 
@@ -1807,12 +1804,12 @@ class ChapterArtifactEngine(
     private fun TransactionOutcome.staleManifestRejectionOrNull(): String? =
         (this as? TransactionOutcome.Rejected)
             ?.reason
-            ?.takeIf { it.startsWith(STALE_MANIFEST_REJECTION_REASON) }
+            ?.takeIf { it.startsWith(staleManifestRejectionReason) }
 
     /**
      *  LI-x: stale-manifest CAS detection exposed to the one seam whose
      * publication lives OUTSIDE this store ([EnvelopePlanPublication.publish]):
-     * the CAS there keys on the same [STALE_MANIFEST_REJECTION_REASON] prefix
+     * the CAS there keys on the same [staleManifestRejectionReason] prefix
      * so every other rejection reason keeps failing exactly as before
      *
      */
@@ -2011,7 +2008,7 @@ class ChapterArtifactEngine(
     // manifest publication only STASHES the intended manifest (last
     // writer wins — the transaction chain is serialized by the store monitor,
     // so the stash is always the newest intended state); the durable rewrite
-    // happens at most once per [MANIFEST_COALESCING_FLUSH_EVERY] stashed
+    // happens at most once per [manifestCoalescingFlushEvery] stashed
     // publications and ALWAYS on [endManifestCoalescing]. Failure semantics:
     // a mid-window flush failure fails the owning transaction exactly as a
     // direct publication failure would (callers see Rejected); the final flush
@@ -2030,7 +2027,7 @@ class ChapterArtifactEngine(
     // ------------------------------------------------------------------
 
     /** Bounded unflushed state: a durable manifest rewrite at most every N stashed publications. */
-    private val MANIFEST_COALESCING_FLUSH_EVERY = 32
+    private val manifestCoalescingFlushEvery = 32
 
     private var manifestCoalescingDepth = 0
     private var coalescedManifest: ChapterArtifactManifest? = null
@@ -2103,7 +2100,7 @@ class ChapterArtifactEngine(
             coalescedManifest = manifest
             if (syncToDisk) coalescedSyncToDisk = true
             coalescedPublications += 1
-            if (coalescedPublications % MANIFEST_COALESCING_FLUSH_EVERY == 0) {
+            if (coalescedPublications % manifestCoalescingFlushEvery == 0) {
                 //  LI-x: bounded unflushed state — flush through the normal
                 // path WITHOUT closing the window (depth stays > 0).
                 val pending = coalescedManifest

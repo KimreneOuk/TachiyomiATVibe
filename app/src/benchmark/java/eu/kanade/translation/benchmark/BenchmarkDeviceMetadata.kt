@@ -90,7 +90,12 @@ object BenchmarkDeviceMetadata {
 
     private fun Context.packageVersionCode(): Long = runCatching {
         val info = packageManager.getPackageInfo(packageName, 0)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
     }.getOrDefault(0L)
 }
 

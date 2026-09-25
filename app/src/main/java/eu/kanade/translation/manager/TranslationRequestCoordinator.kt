@@ -1,14 +1,14 @@
 package eu.kanade.translation.manager
 
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.storage.TranslationPendingRequestRecord
-import eu.kanade.translation.storage.TranslationPendingRequestStore
 import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.TranslationUiProjection
+import eu.kanade.translation.orchestration.ChapterTranslator
+import eu.kanade.translation.storage.TranslationPendingRequestRecord
+import eu.kanade.translation.storage.TranslationPendingRequestStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow

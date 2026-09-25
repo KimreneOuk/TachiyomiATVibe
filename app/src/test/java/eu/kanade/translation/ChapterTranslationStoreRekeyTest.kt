@@ -1,8 +1,7 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.storage.*
-
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test

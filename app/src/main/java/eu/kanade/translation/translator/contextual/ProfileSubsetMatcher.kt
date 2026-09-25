@@ -5,7 +5,6 @@ import eu.kanade.translation.artifact.FactScope
 import eu.kanade.translation.artifact.FactType
 import eu.kanade.translation.artifact.ProfileFact
 import eu.kanade.translation.artifact.ProfileGender
-import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.SceneRegister
 import eu.kanade.translation.artifact.ToneFlag
 
@@ -135,7 +134,8 @@ object ProfileSubsetMatcher {
             .toSet()
         val relatedFacts = (profile.entities + profile.terms)
             .filter { fact ->
-                fact.type != FactType.ENTITY_IDENTITY && fact.type != FactType.TERM &&
+                fact.type != FactType.ENTITY_IDENTITY &&
+                    fact.type != FactType.TERM &&
                     usable(fact) &&
                     (linksToIncludedForm(fact, includedForms) || matchedText(fact))
             }
@@ -268,9 +268,10 @@ object ProfileSubsetMatcher {
         FactScope.RANGE_SCOPED -> fact.applicableRange?.let {
             overlaps(it.firstNaturalPageIndex, it.lastNaturalPageIndex, firstPage, lastPage)
         } ?: false
-        FactScope.AVAILABLE_FROM -> fact.availableFrom
-            ?.let { it.naturalPageIndex <= firstPage }
-            ?: false
+        FactScope.AVAILABLE_FROM ->
+            fact.availableFrom
+                ?.let { it.naturalPageIndex <= firstPage }
+                ?: false
     }
 
     private fun overlaps(aFirst: Int, aLast: Int, bFirst: Int, bLast: Int): Boolean =

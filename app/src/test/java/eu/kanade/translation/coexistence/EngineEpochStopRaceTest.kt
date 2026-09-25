@@ -1,21 +1,19 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.artifact.loadArtifact
-
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactEngine
+import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.ArtifactSeed
 import eu.kanade.translation.artifact.ProbedImage
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.artifact.loadArtifact
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CancellationException
@@ -25,11 +23,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable

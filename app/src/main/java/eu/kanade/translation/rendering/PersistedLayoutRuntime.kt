@@ -1,8 +1,8 @@
 package eu.kanade.translation.rendering
 
+import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import tachiyomi.domain.translation.TranslationPreferences
 
 /**
  *  WP9: process-wide runtime seams for the persisted-layout

@@ -1,17 +1,16 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.orchestration.*
-
-import eu.kanade.translation.storage.*
-
 import android.content.Context
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.orchestration.ChapterTranslator
+import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.storage.TranslationPendingRequestStore
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -91,11 +90,15 @@ class TranslationManagerAutoDeleteProtectionTest {
         val unsafe = theUnsafeField.get(null)
         val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
         val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "scheduler", TranslationScheduler(
-            executor = mockk<TranslationExecutor>(relaxed = true),
-            storeResolver = TranslationStoreResolver { null },
-            immediateStoreResolver = { null },
-        ))
+        setField(
+            manager,
+            "scheduler",
+            TranslationScheduler(
+                executor = mockk<TranslationExecutor>(relaxed = true),
+                storeResolver = TranslationStoreResolver { null },
+                immediateStoreResolver = { null },
+            ),
+        )
         setField(manager, "translator", translator)
         setField(manager, "context", mockk<Context>(relaxed = true))
         setField(manager, "pendingRequestStore", pendingRequestStore)

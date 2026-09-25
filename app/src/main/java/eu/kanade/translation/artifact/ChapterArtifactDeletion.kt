@@ -106,6 +106,5 @@ class ChapterArtifactDeletionPlan private constructor(
                     .forEach(::add)
             }.distinct()
         }
-
     }
 }

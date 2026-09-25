@@ -1,12 +1,9 @@
 package eu.kanade.translation.manager
 
-import eu.kanade.translation.storage.ActiveChapterStoreRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
@@ -14,7 +11,10 @@ import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

@@ -4,14 +4,12 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.MaskConversionBudgets
 import eu.kanade.translation.segmentation.MaskGeometry
 import eu.kanade.translation.segmentation.OrderedMaskResult
-import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
  * TachiyomiAT: pure text-measurement abstraction.
@@ -1422,7 +1420,7 @@ object TextLayoutPlanner {
                     blockCenterX = centerX,
                     blockCenterY = centerY,
                 )
-                ?: break
+                    ?: break
                 val candidate = adaptiveBlockLayout(block, text, region, fit, scale)
                 if (paintEnvelopeContainedInSpans(candidate, spans, measurer, scale)) {
                     if (fit.fontPx >= TextLayoutTuning.MIN_RESCUE_ACCEPT_FRACTION * maxFont) {
@@ -1524,6 +1522,7 @@ object TextLayoutPlanner {
         rescueBudget,
         precomputedRescue,
     )
+
     /** Legibility floor for a page of [pageWidth]×[pageHeight] at decode [scale]. */
     internal fun minLegibleFont(pageWidth: Float, pageHeight: Float, scale: Float): Float =
         max(LEGIBLE_FONT_ABS_PX * scale, min(pageWidth, pageHeight) * LEGIBLE_FONT_FRACTION)

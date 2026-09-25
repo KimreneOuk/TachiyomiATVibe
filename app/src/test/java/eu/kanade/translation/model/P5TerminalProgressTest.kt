@@ -1,11 +1,11 @@
 package eu.kanade.translation.model
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.assertions.withClue
-import io.kotest.matchers.shouldBe
 import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

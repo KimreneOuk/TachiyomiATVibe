@@ -5,22 +5,22 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.ProviderAdmissionDecision
 import eu.kanade.translation.translator.ProviderAdmissionEvent
+import eu.kanade.translation.translator.ProviderQuotaPolicy
 import eu.kanade.translation.translator.ProviderRequestGovernor
 import eu.kanade.translation.translator.ProviderRequestKey
 import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.ProviderQuotaPolicy
 import eu.kanade.translation.translator.ProviderRequestPausedException
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
-import okhttp3.MediaType.Companion.toMediaType
 import org.junit.jupiter.api.Test
 
 class GoogleTranslatorEnvelopeTest {

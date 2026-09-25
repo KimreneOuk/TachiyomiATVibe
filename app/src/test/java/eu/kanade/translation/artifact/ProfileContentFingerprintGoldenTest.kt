@@ -1,8 +1,8 @@
 package eu.kanade.translation.artifact
 
+import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
-import io.kotest.matchers.nulls.shouldBeNull
 import org.junit.jupiter.api.Test
 
 /**

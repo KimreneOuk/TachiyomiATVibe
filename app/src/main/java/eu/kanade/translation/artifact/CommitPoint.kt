@@ -40,7 +40,8 @@ enum class CommitPoint(val description: String) {
     EXPLICIT_FLUSH("explicit flush requests from fenced CAS seams"),
 
     /** Batch chunk accumulation boundary (e.g. every MAX_STAGED_PAGES pages). */
-    BATCH_CHUNK("batch chunk accumulation boundary");
+    BATCH_CHUNK("batch chunk accumulation boundary"),
+    ;
 
     /** Returns true if this mutation must trigger durable publication immediately. */
     val isMandatoryDurable: Boolean get() = true

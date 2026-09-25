@@ -3,12 +3,10 @@ package eu.kanade.translation.ui
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageFeedbackState
 import eu.kanade.tachiyomi.ui.reader.viewer.readerManualOutcomeFeedback
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.GroupCommitConfiguration
@@ -16,13 +14,15 @@ import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.pipeline.toPrecondition
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.PreparedPage
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStageListener
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -111,7 +111,7 @@ class GroupCommitSliceCTest {
         tachiyomi.domain.manga.model.Manga,
         tachiyomi.domain.chapter.model.Chapter,
         HttpSource,
-    > {
+        > {
         val manga = mockk<tachiyomi.domain.manga.model.Manga>(relaxed = true)
         every { manga.id } returns chapterId
         val chapter = mockk<tachiyomi.domain.chapter.model.Chapter>(relaxed = true)

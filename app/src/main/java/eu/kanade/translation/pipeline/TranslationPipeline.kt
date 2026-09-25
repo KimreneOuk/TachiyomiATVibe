@@ -1,20 +1,10 @@
 package eu.kanade.translation.pipeline
 
-import eu.kanade.translation.*
-import eu.kanade.translation.orchestration.*
-import eu.kanade.translation.storage.*
-
-import eu.kanade.translation.orchestration.*
-
-import eu.kanade.translation.storage.*
-
 import android.content.Context
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
@@ -33,20 +23,16 @@ import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.DeferredPagePublications
 import eu.kanade.translation.pipeline.EngineLane
-import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
-import eu.kanade.translation.pipeline.batch.BatchResumeGate
-import eu.kanade.translation.pipeline.batch.BatchResumePlanner
-import eu.kanade.translation.pipeline.batch.BatchWriteGate
-import eu.kanade.translation.pipeline.batch.BatchWriteIdentity
-import eu.kanade.translation.pipeline.batch.HeldBitmapRegistry
-import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.MemoryGovernance
 import eu.kanade.translation.pipeline.OnnxPhaseResult
 import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.SinglePageHttpRenderPhase
 import eu.kanade.translation.pipeline.SinglePageOnnxPhase
-import eu.kanade.translation.pipeline.copyForResume
+import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
+import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.batch.NativeLaneRunner
+import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.scheduling.PreparedPage
@@ -56,12 +42,12 @@ import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.NativeStallState
 import eu.kanade.translation.translator.NativeStallWatchdog
-import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
-import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.TextTranslatorLanguage
+import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.withProviderRequestPriority
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
@@ -278,7 +264,6 @@ class TranslationPipeline(
     fun closeEngines() {
         engines.closeEngines()
     }
-
 
     /**
      * Listener that lets the translator share the same [ChapterTranslationStore]
@@ -753,6 +738,7 @@ class TranslationPipeline(
         streamRegistry = streamRegistry,
         currentInpaintingMode = { currentInpaintingMode },
     )
+
     //  Phase 12: single-page HTTP+render phase moved to
     // translation/pipeline/SinglePageHttpRenderPhase.kt. Engine reads are taken
     // through [engines] at call time so in-flight calls observe engine rebuilds
@@ -768,6 +754,7 @@ class TranslationPipeline(
             retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
         },
     )
+
     //  Phase 14: permit-held ONNX phase + resume/native-stage helpers moved
     // to translation/pipeline/SinglePageOnnxPhase.kt (OnnxPhaseResult moves with
     // it; bitmap recycle/ownership points moved verbatim). Engine reads go
@@ -785,7 +772,6 @@ class TranslationPipeline(
         activeStoreResolverProvider = { activeStoreResolver },
         engineRebuildMutex = engineRebuildMutex,
     )
-
 
     private suspend fun deleteRetiredCleanedFile(
         manga: Manga,
@@ -1234,7 +1220,6 @@ class TranslationPipeline(
         }
     }
 
-
     //  Phase 20.2: BatchWriteIdentity moved to pipeline/batch/BatchWriteGate.kt
     // (internal top-level, same module reachability).
 
@@ -1418,7 +1403,6 @@ class TranslationPipeline(
             fromLang,
             toLang,
         )
-
 
     private fun getChapterPages(chapterPath: UniFile): List<Pair<String, () -> InputStream>> =
         eu.kanade.translation.util.getChapterPages(context, chapterPath)

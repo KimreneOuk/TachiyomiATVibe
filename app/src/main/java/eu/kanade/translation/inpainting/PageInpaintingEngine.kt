@@ -1,7 +1,6 @@
 package eu.kanade.translation.inpainting
-import eu.kanade.translation.inpainting.aot.AOTInpainting
-
 import android.graphics.Bitmap
+import eu.kanade.translation.inpainting.aot.AOTInpainting
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure

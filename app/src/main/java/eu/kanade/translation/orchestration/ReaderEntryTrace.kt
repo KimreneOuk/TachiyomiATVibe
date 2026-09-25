@@ -1,8 +1,5 @@
 package eu.kanade.translation.orchestration
 
-import eu.kanade.translation.*
-import eu.kanade.translation.storage.*
-
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock

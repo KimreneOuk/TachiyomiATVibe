@@ -171,7 +171,7 @@ object AnalysisRequestBuilder {
                 '\r' -> append("\\r")
                 '\t' -> append("\\t")
                 '\b' -> append("\\b")
-				'\u000C' -> append("\\u000C")
+                '\u000C' -> append("\\u000C")
                 else -> if (ch < ' ') append("\\u%04x".format(ch.code)) else append(ch)
             }
         }

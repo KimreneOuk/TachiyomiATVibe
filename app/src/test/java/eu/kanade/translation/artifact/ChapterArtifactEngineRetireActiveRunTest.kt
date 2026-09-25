@@ -1,7 +1,6 @@
 package eu.kanade.translation.artifact
 
 import eu.kanade.translation.artifact.loadArtifact
-
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

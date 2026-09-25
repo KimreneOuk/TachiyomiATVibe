@@ -63,7 +63,14 @@ class PaddleOcrV6BatchExecutorTest {
             "provider_failure",
         )
         execution.results.map { it.first } shouldContainExactly listOf(
-            "a", "b", "c", "a", "b", "c", "a", "b",
+            "a",
+            "b",
+            "c",
+            "a",
+            "b",
+            "c",
+            "a",
+            "b",
         )
     }
 
