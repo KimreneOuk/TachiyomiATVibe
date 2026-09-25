@@ -71,8 +71,8 @@ class NextPageAdmittedDuringParkedPublicationTest {
             )
             try {
                 harness.installGraphicsShims()
-                harness.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
-                harness.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p1")
+                harness.registerReaderStream(harness.CHAPTER_ID, "p0")
+                harness.registerReaderStream(harness.CHAPTER_ID, "p1")
 
                 // The resume-tail seam: the cleaned-image publication is
                 // a REAL store commit that parks at the COMMIT barrier

@@ -54,7 +54,6 @@ class BatchAttemptLedgerDeathCycleTest {
     companion object {
         /** The design-mandated ledger sidecar path for the fixture chapter. */
         const val LEDGER_FILE = "D9 Chapter_artifacts/attempts/ledger.json"
-        const val CHAPTER_ID = TranslationCoexistenceHarness.CHAPTER_ID
         const val AWAIT_TIMEOUT_MS = TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS
     }
 
@@ -186,11 +185,14 @@ class BatchAttemptLedgerDeathCycleTest {
     }
 
     /** Startup reconcile over exactly the bounded chapter set (never a library scan). */
-    private fun reconcileStartup(manager: eu.kanade.translation.orchestration.TranslationManager, store: ChapterTranslationStore) {
+    private fun reconcileStartup(
+        harness: TranslationCoexistenceHarness,
+        store: ChapterTranslationStore,
+    ) {
         invokeSuspending(
-            manager,
+            harness.manager,
             "reconcileAttemptLedgersForStartup",
-            setOf(CHAPTER_ID),
+            setOf(harness.CHAPTER_ID),
             TranslationStoreResolver { _ -> store },
         )
     }
@@ -238,7 +240,7 @@ class BatchAttemptLedgerDeathCycleTest {
             val reconcileHarness =
                 TranslationCoexistenceHarness.create(listOf("p0"), storeOverride = reopened)
             try {
-                reconcileStartup(reconcileHarness.manager, reopened)
+                reconcileStartup(reconcileHarness, reopened)
 
                 val consumed = withClue(
                     "D9 (design §3.2): the startup reconcile must consume the unresolved entry as " +
@@ -284,7 +286,7 @@ class BatchAttemptLedgerDeathCycleTest {
                 val reconcileHarness =
                     TranslationCoexistenceHarness.create(listOf("p0"), storeOverride = reopened)
                 try {
-                    reconcileStartup(reconcileHarness.manager, reopened)
+                    reconcileStartup(reconcileHarness, reopened)
                     withClue("D9 cycle ${cycle + 1}: the death was consumed as exactly one attempt") {
                         readLedger().shouldNotBeNull().consecutiveUnresolved shouldBe mapOf("p0" to cycle + 1)
                     }
@@ -310,7 +312,11 @@ class BatchAttemptLedgerDeathCycleTest {
             val cappedHarness = TranslationCoexistenceHarness.create(listOf("p0"), storeOverride = capped)
             try {
                 val queueEntry =
-                    Translation(cappedHarness.source, cappedHarness.manga, cappedHarness.chapterFor(CHAPTER_ID))
+                    Translation(
+                        cappedHarness.source,
+                        cappedHarness.manga,
+                        cappedHarness.chapterFor(cappedHarness.CHAPTER_ID),
+                    )
                 queueEntry.status = Translation.State.QUEUE
                 // Both fields must be wired: `_queueState` is the internal
                 // delegate the translator mutates; `queueState` is the stored
@@ -325,7 +331,7 @@ class BatchAttemptLedgerDeathCycleTest {
                     ),
                 )
 
-                reconcileStartup(cappedHarness.manager, capped)
+                reconcileStartup(cappedHarness, capped)
 
                 withClue("D9: the third death left the counter at the cap") {
                     readLedger().shouldNotBeNull().consecutiveUnresolved shouldBe mapOf("p0" to 3)

@@ -144,7 +144,7 @@ class EngineEpochStopRaceTest {
         // The AUTO prepared-page boundary resolves its source through the reader
         // stream peek (the coordinator passes streamFn = null); without a
         // registered stream the fresh path soft-skips at chapter-file lookup.
-        harness!!.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        harness!!.registerReaderStream(harness!!.CHAPTER_ID, "p0")
         return store
     }
 
@@ -173,7 +173,7 @@ class EngineEpochStopRaceTest {
         val run = AutoRun(outcome)
         run.job = scope.launch {
             try {
-                val chapter = h.chapterFor(TranslationCoexistenceHarness.CHAPTER_ID)
+                val chapter = h.chapterFor(h.CHAPTER_ID)
                 val prepared = h.pipeline.prepareSinglePage(h.manga, chapter, h.source, pageKey)
                 if (prepared == null) {
                     run.earlyFailure = IllegalStateException("prepareSinglePage returned null")
@@ -187,7 +187,7 @@ class EngineEpochStopRaceTest {
                 run.earlyFailure = t
                 outcome.completeExceptionally(t)
             }
-        }
+        }.also(h::trackJobForTeardown)
         return run
     }
 
@@ -542,7 +542,7 @@ class EngineEpochStopRaceTest {
         val store = createHarness(drainGraceMs = null)
         val h = checkNotNull(harness)
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         try {
             h.barrier.arm(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
             h.tapManual("p0")

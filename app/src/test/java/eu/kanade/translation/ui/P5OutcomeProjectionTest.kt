@@ -435,7 +435,7 @@ class P5OutcomeProjectionTest {
         )
         try {
             h.installGraphicsShims()
-            h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+            h.registerReaderStream(h.CHAPTER_ID, "p0")
             val accessor = schedulerAccessor()
             h.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
             h.tapManual("p0")
@@ -444,7 +444,7 @@ class P5OutcomeProjectionTest {
             // accessor must not fabricate one, and another chapter's key must
             // never observe this page's outcome (identity fence).
             accessor.invoke(h.scheduler, 11L, "p0").shouldBeNull()
-            accessor.invoke(h.scheduler, TranslationCoexistenceHarness.CHAPTER_ID, "p0").shouldBeNull()
+            accessor.invoke(h.scheduler, h.CHAPTER_ID, "p0").shouldBeNull()
 
             // Join BEFORE releasing: the injected 150ms result timer must fire
             // while the transport is parked, deterministically typing the
@@ -453,7 +453,7 @@ class P5OutcomeProjectionTest {
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }
             h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
 
-            val outcome = accessor.invoke(h.scheduler, TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+            val outcome = accessor.invoke(h.scheduler, h.CHAPTER_ID, "p0")
             withClue("the last typed outcome must be readable through the public accessor") {
                 (outcome is SinglePageOutcome.Failed) shouldBe true
                 (outcome as SinglePageOutcome.Failed).reason.contains("HTTP+render") shouldBe true

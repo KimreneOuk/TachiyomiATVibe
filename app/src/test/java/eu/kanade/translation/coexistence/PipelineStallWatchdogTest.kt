@@ -44,8 +44,8 @@ class PipelineStallWatchdogTest {
         )
         harness = h
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p1")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p1")
         h.barrier.arm(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
         try {
             h.tapManual("p0")
@@ -66,7 +66,7 @@ class PipelineStallWatchdogTest {
             h.tapManual("p1")
             val p1 = h.capturedManualJob("p1")
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { p1.join() }
-            val outcome = readManualOutcome(h, "${TranslationCoexistenceHarness.CHAPTER_ID}:p1")
+            val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p1")
             withClue("T917 D8 §2.2: a tap during native stall is typed Stalled") {
                 if (outcome?.javaClass?.simpleName != "Stalled") {
                     throw AssertionError(
@@ -114,7 +114,7 @@ class PipelineStallWatchdogTest {
         )
         harness = h
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         h.barrier.arm(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
         h.tapManual("p0")
         val first = h.capturedManualJob("p0")
@@ -145,7 +145,7 @@ class PipelineStallWatchdogTest {
             CoroutineScope(Dispatchers.IO).async {
                 h.pipeline.translateSinglePage(
                     h.manga,
-                    h.chapterFor(TranslationCoexistenceHarness.CHAPTER_ID),
+                    h.chapterFor(h.CHAPTER_ID),
                     h.source,
                     "p0",
                     force = false,
@@ -165,7 +165,7 @@ class PipelineStallWatchdogTest {
         h.barrier.release(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { first.join() }
 
-        val outcome = readManualOutcome(h, "${TranslationCoexistenceHarness.CHAPTER_ID}:p0")
+        val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
         withClue("T917 D8 §2.2: native timeout cannot be reported as Completed") {
             if (outcome?.javaClass?.simpleName != "Failed") {
                 throw AssertionError(
@@ -183,7 +183,7 @@ class PipelineStallWatchdogTest {
         )
         harness = h
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         h.tapManual("p0")
         val job = h.capturedManualJob("p0")
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }

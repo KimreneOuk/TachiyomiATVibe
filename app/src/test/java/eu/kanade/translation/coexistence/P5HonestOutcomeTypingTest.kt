@@ -91,7 +91,7 @@ class P5HonestOutcomeTypingTest {
         val h = TranslationCoexistenceHarness.create(listOf("p0", "p1"), storeOverride = store)
         harnessRef.set(h)
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         // The resume tail's cleaned-image publication is the REAL store commit
         // (sanctioned disk/graphics seam; no Bitmap.compress on the JVM).
         coEvery {
@@ -141,7 +141,7 @@ class P5HonestOutcomeTypingTest {
             store.snapshot("p0").page?.renderStatus shouldBe StageStatus.READY
         }
 
-        val outcome = readManualOutcome(h, "10:p0")
+        val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
         if (outcome !is SinglePageOutcome.Completed) {
             throw AssertionError(
                 "T917 P5 RED defect (condition A, phase4 review §5 Deviation #7): a SUCCESSFUL " +
@@ -170,7 +170,7 @@ class P5HonestOutcomeTypingTest {
         )
         harnessRef.set(h)
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         // Park the provider transport: the HTTP+render phase suspends inside
         // withTimeoutOrNull and the injected 150 ms result timer fires.
         h.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
@@ -184,7 +184,7 @@ class P5HonestOutcomeTypingTest {
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }
         h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
 
-        val outcome = readManualOutcome(h, "10:p0")
+        val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
         val page = h.store.snapshot("p0").page
         withClue("P5 condition B precondition: the timed-out page is not durably rendered") {
             page?.hasRenderedResult() shouldBe false
@@ -221,7 +221,7 @@ class P5HonestOutcomeTypingTest {
         )
         harnessRef.set(h)
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         // Park the transport AFTER the paid call so the phase's commit
         // precondition is captured, then break the commit's ownership under
         // it: the guarded final patchPage must reject →
@@ -248,7 +248,7 @@ class P5HonestOutcomeTypingTest {
         val job = h.capturedManualJob("p0")
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }
 
-        val outcome = readManualOutcome(h, "10:p0")
+        val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
         withClue("P5 condition C precondition: the rejected publication left no durable display") {
             h.store.snapshot("p0").page?.hasRenderedResult() shouldBe false
         }
@@ -278,7 +278,7 @@ class P5HonestOutcomeTypingTest {
         // when its commit was rejected (SinglePageHttpRenderPhase finally →
         // streamRegistry.clearPage). A real reader retry re-supplies the page
         // stream; the harness must too, or the retry soft-skips before decode.
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         h.tapManual("p0", force = true)
         val retryJob = h.capturedManualJob("p0")
         // NB: kotest's withClue converts foreign Throwables (including
@@ -299,7 +299,7 @@ class P5HonestOutcomeTypingTest {
             val page = h.store.snapshot("p0").page
             val cause = runCatching { withTimeout(1_000L) { retryCause.await() } }
                 .getOrNull() // do not let diagnostics mask the named failure
-            val retryOutcome = readManualOutcome(h, "10:p0")
+            val retryOutcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
             throw AssertionError(
                 "T917 P5 (condition C): the forced retry after a publication rejection never " +
                     "committed — retryJobActive=${retryJob.isActive} " +
@@ -328,7 +328,7 @@ class P5HonestOutcomeTypingTest {
         )
         harnessRef.set(h)
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         // Swap the engine lane's translator for a terminal-failing fake: the
         // HTTP phase catches the typed ProviderFailureException and returns
         // ChunkCompletionOutcome.Failed as a VALUE (never throws).
@@ -354,7 +354,7 @@ class P5HonestOutcomeTypingTest {
         val job = h.capturedManualJob("p0")
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }
 
-        val outcome = readManualOutcome(h, "10:p0")
+        val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
         val page = h.store.snapshot("p0").page
         withClue("P5 condition C precondition: the durable page is a terminal failure, not a display") {
             page?.isStageFailed shouldBe true

@@ -83,7 +83,7 @@ class P5CopyAndAccessibilityTest {
         )
         try {
             h.installGraphicsShims()
-            h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+            h.registerReaderStream(h.CHAPTER_ID, "p0")
             h.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
             h.tapManual("p0")
             val job = h.capturedManualJob("p0")
@@ -113,7 +113,7 @@ class P5CopyAndAccessibilityTest {
         )
         try {
             h.installGraphicsShims()
-            h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+            h.registerReaderStream(h.CHAPTER_ID, "p0")
             // Park the decode shim: the native lane suspends inside the ONNX
             // phase until its result timer fires.
             h.barrier.arm(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")

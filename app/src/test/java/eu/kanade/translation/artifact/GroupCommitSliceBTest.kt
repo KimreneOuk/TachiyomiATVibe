@@ -211,22 +211,28 @@ class GroupCommitSliceBTest {
                 initialArtifactManifest = initialManifest,
             )
             registry.register(1L, store)
-
-            // Perform an intermediate mutation staged in memory
-            store.stagePageMutationLocked("0001.jpg", intermediatePage())
-            store.hasStagedMutations() shouldBe true
-
-            // When a second writer registers (e.g. PROBE_STORE), it triggers forceFlushOwningStore
-            val secondWriterToken = ActiveChapterStoreRegistry.registerWriter(
-                chapterId = 1L,
-                chapterKey = layout.chapterKey,
-                origin = WriterOrigin.PROBE_STORE,
-            )
             try {
-                // Staged mutations must be flushed!
-                store.hasStagedMutations() shouldBe false
+                // Perform an intermediate mutation staged in memory
+                store.stagePageMutationLocked("0001.jpg", intermediatePage())
+                store.hasStagedMutations() shouldBe true
+
+                // When a second writer registers (e.g. PROBE_STORE), it triggers forceFlushOwningStore
+                val secondWriterToken = ActiveChapterStoreRegistry.registerWriter(
+                    chapterId = 1L,
+                    chapterKey = layout.chapterKey,
+                    origin = WriterOrigin.PROBE_STORE,
+                )
+                try {
+                    // Staged mutations must be flushed!
+                    store.hasStagedMutations() shouldBe false
+                } finally {
+                    secondWriterToken.close()
+                }
             } finally {
-                secondWriterToken.close()
+                // register() also publishes into the process-wide mainStores map.
+                // Remove it even after an assertion failure so later chapters that
+                // reuse this layout key cannot force-flush this test's store.
+                registry.remove(1L)?.closeAndFlush()
             }
         }
     }
