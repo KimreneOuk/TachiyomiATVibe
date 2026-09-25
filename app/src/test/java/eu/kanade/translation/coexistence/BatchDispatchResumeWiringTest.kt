@@ -99,7 +99,8 @@ class BatchDispatchResumeWiringTest {
                         "${TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS}ms — the run " +
                         "stopped early (a load-induced typed pause is legal production " +
                         "behavior): state=${record.state}, runId=${record.runId}, " +
-                        "phaseCounters=${record.phaseCounters}",
+                        "phaseCounters=${record.phaseCounters}, " +
+                        "diagnostics=${harness.failureDiagnostics(pageKeys)}",
                 )
             }
         } catch (t: Throwable) {
@@ -161,6 +162,12 @@ class BatchDispatchResumeWiringTest {
                 second.transportCallsFor("p1") shouldBe 0
 
                 // The chapter still finishes end-to-end (no stranded pages).
+                if (reconciliation.chapterStatus != Translation.State.TRANSLATED) {
+                    throw AssertionError(
+                        "idempotent standard resume ended as ${reconciliation.chapterStatus}: " +
+                            second.failureDiagnostics(pageKeys),
+                    )
+                }
                 reconciliation.chapterStatus shouldBe Translation.State.TRANSLATED
                 reconciliation.doneCount shouldBe pageKeys.size
                 reconciliation.strandedPages shouldBe emptyMap()

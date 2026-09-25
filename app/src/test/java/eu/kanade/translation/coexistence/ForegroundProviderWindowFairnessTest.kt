@@ -121,8 +121,8 @@ class ForegroundProviderWindowFairnessTest {
             )
             val transport = GovernedTransport(harness.fakeTransport, governor)
             TranslationCoexistenceHarness.setField(harness.engineLane, "textTranslator", transport)
-            harness.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "q0")
-            harness.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "q1")
+            harness.registerReaderStream(harness.CHAPTER_ID, "q0")
+            harness.registerReaderStream(harness.CHAPTER_ID, "q1")
             harness.installGraphicsShims()
             try {
                 val q0WallMs = System.currentTimeMillis()
@@ -141,7 +141,7 @@ class ForegroundProviderWindowFairnessTest {
                 withClue("the window-exhausted request performs one governed attempt") {
                     transport.callsFor("q1") shouldBe 1
                 }
-                val key = TranslationCoexistenceHarness.CHAPTER_ID.toString() + ":q1"
+                val key = harness.CHAPTER_ID.toString() + ":q1"
                 val outcome = readManualOutcome(harness.scheduler, key)
                 withClue("window exhaustion is recorded as a typed pause") {
                     outcome!!::class.simpleName shouldBe "Paused"

@@ -51,7 +51,6 @@ class CancelledBatchRestartReuseTest {
 
     companion object {
         private const val AWAIT_TIMEOUT_MS = TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS
-        private const val CHAPTER_ID = TranslationCoexistenceHarness.CHAPTER_ID
     }
 
     @Test
@@ -75,7 +74,7 @@ class CancelledBatchRestartReuseTest {
             // queueState is a read-only projection; the private backing flow is
             // the SAME instance the CancellationException branch reads, so it is
             // mutated through reflection (harness setField precedent).
-            val queueEntry = Translation(harness.source, harness.manga, harness.chapterFor(CHAPTER_ID))
+            val queueEntry = Translation(harness.source, harness.manga, harness.chapterFor(harness.CHAPTER_ID))
                 .apply { status = Translation.State.TRANSLATING }
             val backingQueue = harness.translator.javaClass.getDeclaredField("_queueState")
                 .apply { isAccessible = true }
@@ -114,12 +113,13 @@ class CancelledBatchRestartReuseTest {
             // removeFromQueue path (its status settles NOT_TRANSLATED), and the
             // batch job is then cancelled at page 1's parked suspension — the
             // exact state ChapterTranslator's CancellationException branch runs in.
-            harness.translator.removeFromQueue(harness.chapterFor(CHAPTER_ID))
+            harness.translator.removeFromQueue(harness.chapterFor(harness.CHAPTER_ID))
             batch.job.cancel()
             withTimeout(AWAIT_TIMEOUT_MS) { batch.job.join() }
 
             val terminal = withTimeout(AWAIT_TIMEOUT_MS) {
-                harness.trackerRegistry.terminal.first { it.containsKey(CHAPTER_ID) }.getValue(CHAPTER_ID)
+                harness.trackerRegistry.terminal.first { it.containsKey(harness.CHAPTER_ID) }
+                    .getValue(harness.CHAPTER_ID)
             }
             withClue("the cancelled batch must land a typed ABORTED terminal snapshot, not a live tracker") {
                 terminal.aborted shouldBe true
@@ -128,7 +128,7 @@ class CancelledBatchRestartReuseTest {
                 terminal.batchPhase shouldBe TranslationBatchPhase.FINISHED
             }
             withClue("no queue entry may survive the cancellation (the UI reconciliation guard)") {
-                harness.translator.queueState.value.none { it.chapter.id == CHAPTER_ID } shouldBe true
+                harness.translator.queueState.value.none { it.chapter.id == harness.CHAPTER_ID } shouldBe true
             }
             withClue("the removed entry's own status must settle restartable (NOT_TRANSLATED)") {
                 queueEntry.status shouldBe Translation.State.NOT_TRANSLATED

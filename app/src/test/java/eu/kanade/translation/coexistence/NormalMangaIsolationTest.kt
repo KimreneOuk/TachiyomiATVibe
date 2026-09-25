@@ -99,11 +99,11 @@ class NormalMangaIsolationTest {
             // 2. No storage observation: no store was ever opened for the
             //    disabled chapter in the real ActiveChapterStoreRegistry.
             withClue("isolation: observeActiveDisplayStore opened/observed a store for the disabled chapter") {
-                harness.manager.observeActiveDisplayStore(TranslationCoexistenceHarness.DISABLED_CHAPTER_ID)
+                harness.manager.observeActiveDisplayStore(harness.DISABLED_CHAPTER_ID)
                     .shouldBeNull()
             }
             val observed = withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                harness.manager.selectActiveStore(TranslationCoexistenceHarness.DISABLED_CHAPTER_ID).first()
+                harness.manager.selectActiveStore(harness.DISABLED_CHAPTER_ID).first()
             }
             withClue("isolation: selectActiveStore emitted a non-empty map for the disabled chapter") {
                 observed.shouldBeEmpty()

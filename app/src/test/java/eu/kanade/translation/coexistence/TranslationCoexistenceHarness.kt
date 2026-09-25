@@ -73,10 +73,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -115,6 +117,7 @@ import java.util.concurrent.atomic.AtomicLong
  * `runBlocking { withTimeout(...) }`.
  */
 internal class TranslationCoexistenceHarness private constructor(
+    private val chapterId: Long,
     val barrier: CoexistenceBarrier,
     val store: ChapterTranslationStore,
     val pipeline: TranslationPipeline,
@@ -146,14 +149,22 @@ internal class TranslationCoexistenceHarness private constructor(
     private val engineDrainScope: CoroutineScope,
 ) {
 
+    /** Unique process-local identity so concurrent or sequential harnesses never alias chapter state. */
+    val CHAPTER_ID: Long get() = chapterId
+    val DISABLED_CHAPTER_ID: Long get() = chapterId + 1L
+
     companion object {
-        const val CHAPTER_ID = 10L
-        const val DISABLED_CHAPTER_ID = 11L
         const val SOURCE_ID = 1L
         const val MANGA_ID = 2L
 
+        private val nextChapterId = AtomicLong(1_000_000L)
+        private val nextArtifactChapterKey = AtomicLong(1L)
+
         /** Bound for every event-driven await (design note §2/§5.2). */
         const val AWAIT_TIMEOUT_MS = 10_000L
+
+        /** Keep teardown bounded when a canceled job has a non-cancellable tail. */
+        private const val JOB_DRAIN_TIMEOUT_MS = 2_000L
 
         /**
          * Bound for NEGATIVE oracles ("X must NOT happen while Y is parked").
@@ -199,6 +210,7 @@ internal class TranslationCoexistenceHarness private constructor(
             // ordering.
             transportWaitsForNativeStage: Boolean = false,
         ): TranslationCoexistenceHarness {
+            val chapterId = nextChapterId.getAndAdd(2L)
             val barrier = CoexistenceBarrier()
 
             // ---- collaborators that need no reflection ----------------------
@@ -753,6 +765,7 @@ internal class TranslationCoexistenceHarness private constructor(
             )
 
             val harness = TranslationCoexistenceHarness(
+                chapterId = chapterId,
                 barrier = barrier,
                 store = store,
                 pipeline = pipeline,
@@ -886,7 +899,7 @@ internal class TranslationCoexistenceHarness private constructor(
             preRegisterInStore: Boolean = true,
         ): ChapterTranslationStore {
             val documentIo = FakeChapterDocumentIo()
-            val layout = ChapterArtifactLayout("Chapter 1")
+            val layout = ChapterArtifactLayout("T941 Harness Chapter ${nextArtifactChapterKey.getAndIncrement()}")
             val artifact = ChapterArtifactEngine(
                 AtomicChapterDocuments(documentIo),
                 layout,
@@ -1017,6 +1030,12 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     private var batchJobStub: Job? = null
+    private val activeTeardownJobs = ConcurrentHashMap.newKeySet<Job>()
+    @Volatile
+    private var graphicsShimsInstalled = false
+    private var pageDecodeShimInstalled = false
+    private var colorEstimatorShimInstalled = false
+    private var bitmapShimInstalled = false
 
     /**
      * Registers a reader page stream so the single-page boundary resolves its
@@ -1116,7 +1135,14 @@ internal class TranslationCoexistenceHarness private constructor(
                 }
             }
         }
+        trackJobForTeardown(job)
         return BatchRun(translation, job, reconciliation)
+    }
+
+    /** Register test-owned work that can still touch this harness after an assertion exits. */
+    fun trackJobForTeardown(job: Job) {
+        activeTeardownJobs += job
+        job.invokeOnCompletion { activeTeardownJobs -= job }
     }
 
     /**
@@ -1147,35 +1173,103 @@ internal class TranslationCoexistenceHarness private constructor(
      * [removeGraphicsShims].
      */
     fun installGraphicsShims() {
-        mockkObject(PageDecode)
-        coEvery {
-            PageDecode.decodePageBitmapForTranslation(any(), any(), any(), any())
-        } coAnswers {
-            val pageKey = thirdArg<String>()
-            barrier.arrive(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, pageKey)
-            FakeCoexistence.decodedPage(pageKey)
+        check(!graphicsShimsInstalled) { "graphics shims are already installed for this harness" }
+        graphicsShimsInstalled = true
+        try {
+            // Mark each target before mocking so teardown also rolls back if
+            // MockK fails partway through installing a global shim.
+            pageDecodeShimInstalled = true
+            mockkObject(PageDecode)
+            coEvery {
+                PageDecode.decodePageBitmapForTranslation(any(), any(), any(), any())
+            } coAnswers {
+                val pageKey = thirdArg<String>()
+                barrier.arrive(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, pageKey)
+                FakeCoexistence.decodedPage(pageKey)
+            }
+            coEvery { PageDecode.computeSourceFingerprint(any()) } coAnswers { callOriginal() }
+            every {
+                PageDecode.batchExpectedFingerprints(any(), any(), any(), any(), any(), any())
+            } answers { callOriginal() }
+
+            colorEstimatorShimInstalled = true
+            mockkObject(RenderColorEstimator)
+            every { RenderColorEstimator.recomputeFor(any(), any()) } returns Unit
+            //  Phase 4  addendum (documented, phase4-implementation-log §1):
+            // the AUTO prepared-page translate half (translatePreparedPage) builds a
+            // 1x1 dummy DecodedPage via Bitmap.createBitmap, which the unit-test
+            // android.jar throws on. Disk/render IO shim only — no coexistence
+            // collaborator is faked.
+            bitmapShimInstalled = true
+            mockkStatic(android.graphics.Bitmap::class)
+            every {
+                android.graphics.Bitmap.createBitmap(any(), any(), any())
+            } answers { FakeCoexistence.stubBitmap() }
+        } catch (failure: Throwable) {
+            runCatching { uninstallGraphicsShims() }
+                .exceptionOrNull()
+                ?.let(failure::addSuppressed)
+            throw failure
         }
-        coEvery { PageDecode.computeSourceFingerprint(any()) } coAnswers { callOriginal() }
-        every {
-            PageDecode.batchExpectedFingerprints(any(), any(), any(), any(), any(), any())
-        } answers { callOriginal() }
-        mockkObject(RenderColorEstimator)
-        every { RenderColorEstimator.recomputeFor(any(), any()) } returns Unit
-        //  Phase 4  addendum (documented, phase4-implementation-log §1):
-        // the AUTO prepared-page translate half (translatePreparedPage) builds a
-        // 1x1 dummy DecodedPage via Bitmap.createBitmap, which the unit-test
-        // android.jar throws on. Disk/render IO shim only — no coexistence
-        // collaborator is faked.
-        mockkStatic(android.graphics.Bitmap::class)
-        every {
-            android.graphics.Bitmap.createBitmap(any(), any(), any())
-        } answers { FakeCoexistence.stubBitmap() }
     }
 
     fun removeGraphicsShims() {
-        unmockkObject(PageDecode)
-        unmockkObject(RenderColorEstimator)
-        unmockkStatic(android.graphics.Bitmap::class)
+        cancelAndJoinRunningJobs()
+        if (!graphicsShimsInstalled) return
+        uninstallGraphicsShims()
+    }
+
+    private fun uninstallGraphicsShims() {
+        var failure: Throwable? = null
+        fun attempt(installed: Boolean, uninstall: () -> Unit, onSuccess: () -> Unit) {
+            if (!installed) return
+            try {
+                uninstall()
+                onSuccess()
+            } catch (error: Throwable) {
+                if (failure == null) failure = error else failure?.addSuppressed(error)
+            }
+        }
+        attempt(
+            bitmapShimInstalled,
+            { unmockkStatic(android.graphics.Bitmap::class) },
+            { bitmapShimInstalled = false },
+        )
+        attempt(
+            colorEstimatorShimInstalled,
+            { unmockkObject(RenderColorEstimator) },
+            { colorEstimatorShimInstalled = false },
+        )
+        attempt(
+            pageDecodeShimInstalled,
+            { unmockkObject(PageDecode) },
+            { pageDecodeShimInstalled = false },
+        )
+        graphicsShimsInstalled = bitmapShimInstalled || colorEstimatorShimInstalled || pageDecodeShimInstalled
+        failure?.let { throw it }
+    }
+
+    /**
+     * Batch jobs run in their own SupervisorJob; explicitly tracked test-owned
+     * work and scheduler manual, auto-page, and coordinator jobs are also drained
+     * before global MockK shims or fixture resources are released.
+     */
+    private fun cancelAndJoinRunningJobs() {
+        val trackedJobs = activeTeardownJobs.toSet()
+        trackedJobs.forEach { it.cancel() }
+        runBlocking {
+            val drained = withTimeoutOrNull(JOB_DRAIN_TIMEOUT_MS) {
+                scheduler.awaitReaderStop(reason = "Coexistence harness teardown")
+                trackedJobs.joinAll()
+                true
+            } ?: false
+            if (!drained) {
+                System.err.println(
+                    "Timed out draining coexistence harness jobs after ${JOB_DRAIN_TIMEOUT_MS}ms; " +
+                        "all captured jobs were canceled before the join.",
+                )
+            }
+        }
     }
 
     /**
@@ -1227,6 +1321,8 @@ internal class TranslationCoexistenceHarness private constructor(
 
     /** Tears the graph down without leaving scopes or pool state behind. */
     fun close() {
+        runCatching { cancelAndJoinRunningJobs() }
+        if (graphicsShimsInstalled) runCatching { uninstallGraphicsShims() }
         runCatching { scheduler.close() }
         runCatching { pipeline.close() }
         runCatching { batchJobStub?.cancel() }
@@ -1234,6 +1330,85 @@ internal class TranslationCoexistenceHarness private constructor(
         runCatching { trackerScope.cancel() }
         runCatching { managerScope.cancel() }
         runCatching { BitmapPool.releaseAll() }
+    }
+
+    /**
+     * Failure context for assertions that expect a completely translated
+     * chapter. Keep the durable manifest failures and run counters alongside
+     * the live store projection so a cross-test failure identifies its page
+     * and typed pipeline reason without relying on logcat output.
+     */
+    fun failureDiagnostics(pageKeys: List<String>): String {
+        val artifact = store.artifactEngine
+        val manifest = artifact?.readManifest()
+        val pageSnapshots = pageKeys.associateWith { pageKey ->
+            val page = store.state.value[pageKey]
+            page?.let {
+                "ocr=${it.ocrStatus}(${it.ocrError}), " +
+                    "translation=${it.translationStatus}(${it.translationError}), " +
+                    "inpaint=${it.inpaintStatus}(${it.inpaintError}), " +
+                    "render=${it.renderStatus}(${it.renderError})"
+            } ?: "missing"
+        }
+        val artifactPages = pageKeys.associateWith { pageKey ->
+            val page = manifest?.pages?.get(pageKey)
+            page?.let {
+                "ocr=${it.ocr?.status}:${it.ocr?.skipReason}, " +
+                    "translation=${it.translation?.status}:${it.translation?.skipReason}, " +
+                    "inpaint=${it.inpaint?.status}:${it.inpaint?.skipReason}, " +
+                    "layout=${it.layout?.status}:${it.layout?.skipReason}"
+            } ?: "missing"
+        }
+        val guardedWriteState = runBlocking {
+            val states = LinkedHashMap<String, String>()
+            for (pageKey in pageKeys) {
+                val snapshot = store.snapshot(pageKey)
+                states[pageKey] = "generation=${snapshot.generation}, pageVersion=${snapshot.pageVersion}, " +
+                    "leaseToken=${snapshot.leaseToken}, candidateGenerationId=${snapshot.candidateGenerationId}, " +
+                    "dependencyFingerprint=${snapshot.dependencyFingerprint}, " +
+                    "artifactPageVersion=${snapshot.artifactPageVersion}"
+            }
+            states
+        }
+        val chapterKey = store.artifactChapterKey()
+        val activeWriters = ActiveChapterStoreRegistry.allActiveWriters().filter { writer ->
+            writer.chapterId == CHAPTER_ID || (chapterKey != null && writer.chapterKey == chapterKey)
+        }
+        val durableFailures = manifest?.durableFailures.orEmpty()
+            .filterKeys { failureKey -> pageKeys.any { failureKey.startsWith("$it:") } }
+            .mapValues { (_, failure) ->
+                "stage=${failure.stage}, status=${failure.status}, category=${failure.category}, " +
+                    "retryCount=${failure.retryCount}, reason=${failure.lastFailureMessage}"
+            }
+        val runSummary = manifest?.activeRun?.let { pointer ->
+            when (val read = artifact?.readRunRecord(pointer)) {
+                is ChapterArtifactEngine.RunRecordRead.Usable ->
+                    "state=${read.record.state}, phaseCounters=${read.record.phaseCounters}"
+
+                null -> "unavailable"
+                else -> read.toString()
+            }
+        } ?: "none"
+        val liveTracker = trackerRegistry.getLive(CHAPTER_ID)?.snapshot?.value?.let {
+            "state=${it.state}, pageStates=${it.pages.map { page ->
+                "${page.pageKey}:${page.stage}:${page.errorMessage}"
+            }}, pauseReason=${it.pauseReason}, nonDurableFailureReason=${it.nonDurableFailureReason}"
+        } ?: "not live"
+        val terminal = trackerRegistry.terminal.value[CHAPTER_ID]?.let {
+            "state=${it.state}, pages=${it.pages.map { page ->
+                "${page.pageKey}:${page.stage}:${page.errorMessage}"
+            }}, perStage=${it.perStage}, groupedFailures=${it.groupedFailures}, " +
+                "pauseReason=${it.pauseReason}, abortedReason=${it.abortedReason}, " +
+                "nonDurableFailureReason=${it.nonDurableFailureReason}"
+        } ?: "not published"
+
+        return "chapterId=$CHAPTER_ID, chapterKey=$chapterKey, " +
+            "rejectingComponent=BatchLaneWorkers.standardTranslateOutcome -> " +
+            "BatchWriteGate.guardedBatchUpdate -> ChapterTranslationStore.updatePageGuarded, " +
+            "activeWriters=$activeWriters, guardedWriteState=$guardedWriteState, " +
+            "pageSnapshots=$pageSnapshots, artifactPages=$artifactPages, " +
+            "durableFailures=$durableFailures, run=$runSummary, liveTracker={$liveTracker}, " +
+            "tracker={$terminal}"
     }
 
     /**

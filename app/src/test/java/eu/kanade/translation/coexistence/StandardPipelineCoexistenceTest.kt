@@ -87,12 +87,25 @@ class StandardPipelineCoexistenceTest {
                 artifact.readRunRecord(pointer)
                     as ChapterArtifactEngine.RunRecordRead.Usable
                 ).record
+            if (record.state != ChapterRunState.COMPLETE) {
+                throw AssertionError(
+                    "standard batch run stopped before COMPLETE: state=${record.state}, " +
+                        "runId=${record.runId}, phaseCounters=${record.phaseCounters}, " +
+                        "diagnostics=${harness.failureDiagnostics(pageKeys)}",
+                )
+            }
             record.state shouldBe ChapterRunState.COMPLETE
             record.frozenConfig.providerKey shouldBe "standard:mlkit"
             record.frozenConfig.flagProfilePipeline shouldBe true
             record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_RUN_COMPLETE] shouldBe 1
 
             // ---- Contract 3: single COMPLETE; translation-terminal pages. ----
+            if (reconciliation.chapterStatus != Translation.State.TRANSLATED) {
+                throw AssertionError(
+                    "standard pipeline ended as ${reconciliation.chapterStatus}: " +
+                        harness.failureDiagnostics(pageKeys),
+                )
+            }
             reconciliation.chapterStatus shouldBe Translation.State.TRANSLATED
             reconciliation.strandedPages shouldBe emptyMap()
             runBlocking {

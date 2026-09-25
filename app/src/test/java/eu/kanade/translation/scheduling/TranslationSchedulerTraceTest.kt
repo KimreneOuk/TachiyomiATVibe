@@ -17,6 +17,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import java.io.InputStream
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -28,7 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class TranslationSchedulerTraceTest {
 
-    private val capturedLines = mutableListOf<String>()
+    private val capturedLines = CopyOnWriteArrayList<String>()
     private var oldSink: TranslationTraceSink? = null
     private var oldGate: Boolean? = null
     private var oldIds: TranslationTraceIdGenerator? = null

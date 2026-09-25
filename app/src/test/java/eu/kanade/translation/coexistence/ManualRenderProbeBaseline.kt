@@ -15,7 +15,7 @@ class ManualRenderProbeBaseline {
             preRegisterInStore = false,
         )
         h.installGraphicsShims()
-        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
         h.stubChapterPages(listOf("p0"))
         try {
             h.tapManual("p0")

@@ -79,7 +79,14 @@ class StandardLaneMultiPageCompletionTest {
 
             val reconciliation = withTimeout(AWAIT_TIMEOUT_MS) { batchRun.reconciliation.await() }
             reconciliation.shouldNotBeNull()
-            reconciliation!!.chapterStatus shouldBe Translation.State.TRANSLATED
+            val chapterStatus = reconciliation!!.chapterStatus
+            if (chapterStatus != Translation.State.TRANSLATED) {
+                throw AssertionError(
+                    "multi-page standard batch ended as $chapterStatus: " +
+                        harness.failureDiagnostics(pageKeys),
+                )
+            }
+            chapterStatus shouldBe Translation.State.TRANSLATED
             reconciliation.strandedPages.shouldBeEmpty()
             pageKeys.forEach { pageKey ->
                 harness.transportCallsFor(pageKey) shouldBe 1
@@ -98,8 +105,8 @@ class StandardLaneMultiPageCompletionTest {
             // lane rendered in-pass.
             val terminal = withTimeout(AWAIT_TIMEOUT_MS) {
                 harness.trackerRegistry.terminal
-                    .first { it.containsKey(TranslationCoexistenceHarness.CHAPTER_ID) }
-                    .getValue(TranslationCoexistenceHarness.CHAPTER_ID)
+                    .first { it.containsKey(harness.CHAPTER_ID) }
+                    .getValue(harness.CHAPTER_ID)
             }
             terminal.perStage.getValue(BatchPhase.RENDER).processed shouldBe pageKeys.size
         } finally {
