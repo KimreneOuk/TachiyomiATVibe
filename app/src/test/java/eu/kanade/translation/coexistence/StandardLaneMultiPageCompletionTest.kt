@@ -95,11 +95,17 @@ class StandardLaneMultiPageCompletionTest {
             reconciliation.strandedPages.shouldBeEmpty()
             pageKeys.forEach { pageKey ->
                 harness.transportCallsFor(pageKey) shouldBe 1
-                val page = harness.store.state.value.getValue(pageKey)
-                //  zero-legacy  + 2026-09-16 E-fix: no in-pass render
-                // WORK, but every page's durable record is stamped
-                // render-terminal at inpaint-completion (BatchLaneWorkers
-                // render terminal stamp) so the display bundle commits.
+                //  read-race hardening: reconciliation completes on its own
+                // flow; under load the durable page-stamp publication can
+                // land after terminal status is observed. Await the store's
+                // terminal page state within the harness budget instead of
+                // asserting an immediate snapshot.
+                val page = withTimeout(AWAIT_TIMEOUT_MS) {
+                    harness.store.state.first { s ->
+                        s[pageKey]?.translationStatus == StageStatus.READY &&
+                            s[pageKey]?.renderStatus == StageStatus.READY
+                    }.getValue(pageKey)
+                }
                 page.translationStatus shouldBe StageStatus.READY
                 page.renderStatus shouldBe StageStatus.READY
             }

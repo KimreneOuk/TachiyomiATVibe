@@ -340,10 +340,28 @@ class MangaScreenModelMultiSelectBatchTest {
             downloadManager.isChapterDownloaded(eq("Chapter 5"), any(), any(), any(), any())
         } returns true
 
+        //  verify-too-early hardening: the partition work (fenced admission
+        // for downloaded chapters, bridge enqueue + startDownloads for the
+        // rest) runs async after the drawer appears. Record the calls so the
+        // assertions below await completion instead of racing the handler.
+        val singleAdmitted = AtomicBoolean(false)
+        val bridgeEnqueued = AtomicBoolean(false)
+        val downloadsStarted = AtomicBoolean(false)
+        every {
+            translationManager.translateChapter(eq(manga), eq(chapterFixture(5L)), eq(1L))
+        } answers {
+            singleAdmitted.set(true)
+        }
+        every { downloadManager.downloadChapters(eq(manga), any(), any()) } answers { bridgeEnqueued.set(true) }
+        every { downloadManager.startDownloads() } answers { downloadsStarted.set(true) }
+
         model.runChapterTranslationActions(items(5L, 6L, 7L), ChapterTranslationAction.START)
         awaitUntil("drawer selected for the primary chapter") {
             successState()?.dialog is MangaScreenModel.Dialog.TranslationProgress
         }
+        awaitUntil("fenced admission for the downloaded chapter") { singleAdmitted.get() }
+        awaitUntil("undownloaded chapters enqueued via the bridge") { bridgeEnqueued.get() }
+        awaitUntil("downloads started") { downloadsStarted.get() }
 
         // ONE acknowledgement for the whole group.
         val acknowledged = slot<List<Chapter>>()
