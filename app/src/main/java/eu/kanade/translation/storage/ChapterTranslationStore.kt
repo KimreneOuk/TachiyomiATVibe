@@ -338,7 +338,17 @@ class ChapterTranslationStore(
 
     sealed interface PatchResult {
         data class Accepted(val snapshot: PageSnapshot) : PatchResult
-        data class Rejected(val reason: String) : PatchResult
+        data class Rejected(
+            val reason: String,
+            val detail: Detail? = null,
+        ) : PatchResult {
+            sealed interface Detail {
+                data class PageLeaseTokenMismatch(
+                    val expectedToken: Long,
+                    val actualToken: Long?,
+                ) : Detail
+            }
+        }
     }
 
     private class GenerationContext(
@@ -378,6 +388,22 @@ class ChapterTranslationStore(
      */
     @Volatile
     private var lazyPersistenceEnabled = false
+
+    /** Latest guarded page-write identity rejection, retained for failure diagnostics. */
+    @Volatile
+    internal var lastGuardedWriteRejectionDiagnostic: String? = null
+        private set
+
+    @Volatile
+    internal var lastBatchWriteGateRejectionDiagnostic: String? = null
+        private set
+
+    @Volatile
+    private var lastArtifactPublicationRejectionDiagnostic: String? = null
+
+    internal fun recordBatchWriteGateRejectionDiagnostic(diagnostic: String) {
+        lastBatchWriteGateRejectionDiagnostic = diagnostic
+    }
 
     private data class PendingLazyMutation(
         val pageKey: String,
@@ -997,13 +1023,53 @@ class ChapterTranslationStore(
             }
             val rejection = pageWriteRejection(pageKey, expected)
             if (rejection != null) {
-                rejected(pageKey, description, rejection)
+                val actual = snapshotLocked(pageKey)
+                val expectedLeaseToken = expected.leaseToken
+                val actualLeaseToken = pageLeases[pageKey]?.token
+                val leaseTokenMismatch = expectedLeaseToken
+                    ?.takeIf { it != actualLeaseToken }
+                    ?.let { expectedToken ->
+                        PatchResult.Rejected.Detail.PageLeaseTokenMismatch(
+                            expectedToken = expectedToken,
+                            actualToken = actualLeaseToken,
+                        )
+                    }
+                    ?.takeIf { mismatch ->
+                        rejection ==
+                            "page lease token expected=${mismatch.expectedToken} " +
+                            "actual=${mismatch.actualToken}"
+                    }
+                lastGuardedWriteRejectionDiagnostic =
+                    "pageKey=$pageKey, description=$description, reason=$rejection, " +
+                    "expected={generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
+                    "artifactPageVersion=${expected.artifactPageVersion}, " +
+                    "candidateGenerationId=${expected.candidateGenerationId}, " +
+                    "dependencyFingerprint=${expected.dependencyFingerprint}, " +
+                    "leaseToken=${expected.leaseToken}}, " +
+                    "actual={generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
+                    "artifactPageVersion=${actual.artifactPageVersion}, " +
+                    "candidateGenerationId=${actual.candidateGenerationId}, " +
+                    "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}"
+                rejected(pageKey, description, rejection, leaseTokenMismatch)
             } else {
                 val previous = pages[pageKey]
                 val updated = ownedPage(pageKey, update(previous?.detachedCopy()))
                 pages = pages.put(pageKey, updated)
                 if (!publishLocked(previous, updated, expected)) {
                     restorePageLocked(pageKey, previous)
+                    val actual = snapshotLocked(pageKey)
+                    lastGuardedWriteRejectionDiagnostic =
+                        "pageKey=$pageKey, description=$description, reason=ARTIFACT_PUBLICATION_FAILED, " +
+                        "artifactPublication=${lastArtifactPublicationRejectionDiagnostic ?: "reason unavailable"}, " +
+                        "expected={generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
+                        "artifactPageVersion=${expected.artifactPageVersion}, " +
+                        "candidateGenerationId=${expected.candidateGenerationId}, " +
+                        "dependencyFingerprint=${expected.dependencyFingerprint}, " +
+                        "leaseToken=${expected.leaseToken}}, " +
+                        "actual={generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
+                        "artifactPageVersion=${actual.artifactPageVersion}, " +
+                        "candidateGenerationId=${actual.candidateGenerationId}, " +
+                        "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}"
                     return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
                 }
                 PatchResult.Accepted(snapshotLocked(pageKey))
@@ -1789,20 +1855,22 @@ class ChapterTranslationStore(
             expected.pageVersion != (current?.pageVersion ?: 0L) ->
                 "pageVersion expected=${expected.pageVersion} actual=${current?.pageVersion ?: 0L}"
             expected.artifactPageVersion != null && expected.artifactPageVersion != artifactPage?.pageVersion ->
-                "artifact pageVersion changed"
+                "artifact pageVersion expected=${expected.artifactPageVersion} actual=${artifactPage?.pageVersion}"
             expected.candidateGenerationId != null &&
                 expected.candidateGenerationId != artifactPage?.candidate?.generationId ->
-                "candidate generation changed"
+                "candidate generation expected=${expected.candidateGenerationId} " +
+                    "actual=${artifactPage?.candidate?.generationId}"
             expected.dependencyFingerprint != null &&
                 artifactPage?.candidate?.let { candidate ->
                     expected.dependencyFingerprint != candidate.dependencyFingerprint
                 } == true ->
-                "candidate dependency fingerprint changed"
+                "candidate dependency fingerprint expected=${expected.dependencyFingerprint} " +
+                    "actual=${artifactPage?.candidate?.dependencyFingerprint}"
             expected.blockFingerprints != null &&
                 expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
                 "block fingerprint changed"
             expected.leaseToken != null && pageLeases[pageKey]?.token != expected.leaseToken ->
-                "page lease token changed"
+                "page lease token expected=${expected.leaseToken} actual=${pageLeases[pageKey]?.token}"
             expected.leaseToken == null && pageLeases[pageKey] != null ->
                 "page lease token required"
             else -> null
@@ -2299,6 +2367,20 @@ class ChapterTranslationStore(
         expected: PatchPrecondition? = null,
         durableFailure: DurableFailureMetadata? = null,
     ): Boolean {
+        lastArtifactPublicationRejectionDiagnostic = null
+        fun reject(reason: String): Boolean {
+            val page = artifactManifest?.pages?.get(pageKey)
+            lastArtifactPublicationRejectionDiagnostic =
+                "pageKey=$pageKey, reason=$reason, " +
+                "expected={generation=${expected?.generation}, pageVersion=${expected?.pageVersion}, " +
+                "artifactPageVersion=${expected?.artifactPageVersion}, " +
+                "candidateGenerationId=${expected?.candidateGenerationId}, " +
+                "dependencyFingerprint=${expected?.dependencyFingerprint}, leaseToken=${expected?.leaseToken}}, " +
+                "localArtifact={pageVersion=${page?.pageVersion}, " +
+                "candidateGenerationId=${page?.candidate?.generationId}, " +
+                "dependencyFingerprint=${page?.candidate?.dependencyFingerprint}}"
+            return false
+        }
         if (engineMode is eu.kanade.translation.store.ChapterStoreEngineMode.Memory) {
             // Pure in-memory stores have no persistence target and never
             // create a compatibility document as a side effect.
@@ -2312,10 +2394,10 @@ class ChapterTranslationStore(
         if (engineMode !is eu.kanade.translation.store.ChapterStoreEngineMode.Durable &&
             !ensureArtifactStoreLocked()
         ) {
-            return false
+            return reject("artifact store initialization failed")
         }
         val store = (engineMode as? eu.kanade.translation.store.ChapterStoreEngineMode.Durable)?.artifact
-            ?: return false
+            ?: return reject("durable artifact store unavailable")
         var manifest = artifactManifest ?: return true
         if (pageKey.isEmpty()) return true
         val firstReaderBaseline = if (
@@ -2392,7 +2474,7 @@ class ChapterTranslationStore(
                         "TachiyomiAT artifact page registration failed: pageKey=$pageKey " +
                             "count=${registrationKeys.size} reason=${registration.reason}"
                     }
-                    return false
+                    return reject("page registration rejected: ${registration.reason}")
                 }
             }
         }
@@ -2400,30 +2482,41 @@ class ChapterTranslationStore(
         if (expected != null) {
             if (expected.artifactPageVersion != null && expected.artifactPageVersion != record.pageVersion) {
                 logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey reason=artifact pageVersion changed"
+                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey " +
+                        "reason=artifact pageVersion expected=${expected.artifactPageVersion} actual=${record.pageVersion}"
                 }
-                return false
+                return reject("artifact pageVersion expected=${expected.artifactPageVersion} actual=${record.pageVersion}")
             }
             if (expected.candidateGenerationId != null && expected.candidateGenerationId != record.candidate?.generationId) {
                 logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey reason=candidate generation changed"
+                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey " +
+                        "reason=candidate generation expected=${expected.candidateGenerationId} " +
+                        "actual=${record.candidate?.generationId}"
                 }
-                return false
+                return reject(
+                    "candidate generation expected=${expected.candidateGenerationId} " +
+                        "actual=${record.candidate?.generationId}",
+                )
             }
             if (expected.dependencyFingerprint != null &&
                 expected.dependencyFingerprint != record.candidate?.dependencyFingerprint &&
                 record.candidate != null
             ) {
                 logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey reason=dependency fingerprint changed"
+                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey " +
+                        "reason=dependency fingerprint expected=${expected.dependencyFingerprint} " +
+                        "actual=${record.candidate?.dependencyFingerprint}"
                 }
-                return false
+                return reject(
+                    "dependency fingerprint expected=${expected.dependencyFingerprint} " +
+                        "actual=${record.candidate?.dependencyFingerprint}",
+                )
             }
         } else if (pageLeases[pageKey] != null) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey reason=unfenced active lease"
             }
-            return false
+            return reject("unfenced active lease token=${pageLeases[pageKey]?.token}")
         }
         // Compatibility writers may resume an on-disk candidate after process
         // death before a new page lease is attached. Preserve the durable
@@ -2472,13 +2565,13 @@ class ChapterTranslationStore(
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate open rejected: pageKey=$pageKey reason=${opened.reason}"
                     }
-                    return false
+                    return reject("candidate open rejected: ${opened.reason}")
                 }
             }
             artifactManifest = manifest
         }
         val currentCandidate = manifest.pages.getValue(pageKey).candidate
-            ?: run { return false }
+            ?: run { return reject("candidate missing after open") }
         val expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion
         if (durableFailure != null) {
             val persisted = store.persistLiveCandidateAndFailure(
@@ -2498,7 +2591,7 @@ class ChapterTranslationStore(
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
                     }
-                    return false
+                    return reject("candidate persist rejected: ${persisted.reason}")
                 }
             }
             artifactManifest = manifest
@@ -2523,7 +2616,7 @@ class ChapterTranslationStore(
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
                     }
-                    return false
+                    return reject("candidate promotion rejected: ${promoted.reason}")
                 }
             }
             artifactManifest = manifest
@@ -2548,7 +2641,7 @@ class ChapterTranslationStore(
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
                     }
-                    return false
+                    return reject("manual candidate persist rejected: ${persisted.reason}")
                 }
             }
             artifactManifest = manifest
@@ -2574,7 +2667,7 @@ class ChapterTranslationStore(
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
                     }
-                    return false
+                    return reject("candidate persist rejected: ${persisted.reason}")
                 }
             }
             artifactManifest = manifest
@@ -2595,7 +2688,7 @@ class ChapterTranslationStore(
                         logcat(LogPriority.WARN) {
                             "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
                         }
-                        return false
+                        return reject("candidate promotion rejected: ${promoted.reason}")
                     }
                 }
                 artifactManifest = manifest
@@ -2929,12 +3022,17 @@ class ChapterTranslationStore(
         artifactPageVersion = artifactPageVersion,
     )
 
-    private fun rejected(pageKey: String, description: String, reason: String): PatchResult.Rejected {
+    private fun rejected(
+        pageKey: String,
+        description: String,
+        reason: String,
+        detail: PatchResult.Rejected.Detail? = null,
+    ): PatchResult.Rejected {
         logcat(LogPriority.WARN) {
             "TachiyomiAT store patch rejected: pageKey=$pageKey generation=$generation " +
                 "operation=$description reason=$reason"
         }
-        return PatchResult.Rejected(reason)
+        return PatchResult.Rejected(reason, detail)
     }
 
     private fun snapshotPages(): Map<String, PageTranslation> =

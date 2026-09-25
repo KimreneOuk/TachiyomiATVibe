@@ -1406,6 +1406,8 @@ internal class TranslationCoexistenceHarness private constructor(
         return "chapterId=$CHAPTER_ID, chapterKey=$chapterKey, " +
             "rejectingComponent=BatchLaneWorkers.standardTranslateOutcome -> " +
             "BatchWriteGate.guardedBatchUpdate -> ChapterTranslationStore.updatePageGuarded, " +
+            "lastBatchWriteGateRejection=${store.lastBatchWriteGateRejectionDiagnostic}, " +
+            "lastGuardedWriteRejection=${store.lastGuardedWriteRejectionDiagnostic}, " +
             "activeWriters=$activeWriters, guardedWriteState=$guardedWriteState, " +
             "pageSnapshots=$pageSnapshots, artifactPages=$artifactPages, " +
             "durableFailures=$durableFailures, run=$runSummary, liveTracker={$liveTracker}, " +

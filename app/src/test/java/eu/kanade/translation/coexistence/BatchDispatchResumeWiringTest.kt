@@ -3,6 +3,7 @@ package eu.kanade.translation.coexistence
 import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.TimeoutCancellationException
@@ -60,54 +61,75 @@ class BatchDispatchResumeWiringTest {
             .digest(tag.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
 
-    /** Runs the REAL shell once over a fresh durable store; returns the harness. */
+    /**
+     * Runs the REAL shell until it publishes COMPLETE or returns a typed
+     * retryable stop. Such a result is an explicit retry boundary: a later user
+     * request re-arms the chapter. Model that request with a fresh harness over
+     * the same store.
+     */
     private fun firstRun(pageKeys: List<String>): TranslationCoexistenceHarness {
-        val harness = TranslationCoexistenceHarness.createStandard(pageKeys)
-        try {
-            harness.stubChapterPages(pageKeys)
-            val batch = harness.launchBatch(pageKeys)
-            runBlocking {
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                    batch.reconciliation.await().shouldNotBeNull()
-                }
-            }
-            //  flake hardening (diagnosis §2): a non-null reconciliation is
-            // NOT a completion oracle — a typed non-COMPLETED stop (PAUSED /
-            // FAILED / PERSISTENCE_REJECTED) ALSO reconciles non-null, and the
-            // durable record's last published phase before the translate tail
-            // is TRANSLATE. Poll the record until the run state is COMPLETE;
-            // on timeout, fail naming the record's state and phase counters so
-            // a load-induced typed pause is reported precisely here instead of
-            // surfacing later as a downstream assertion mismatch.
-            val artifact = harness.store.artifactEngine.shouldNotBeNull()
+        var durableStore: ChapterTranslationStore? = null
+        val retryDiagnostics = mutableListOf<String>()
+        val maxAttempts = 4
+        for (attempt in 1..maxAttempts) {
+            val harness = TranslationCoexistenceHarness.createStandard(pageKeys, durableStore)
+            durableStore = harness.store
+            var keepHarness = false
             try {
-                runBlocking {
+                harness.stubChapterPages(pageKeys)
+                val batch = harness.launchBatch(pageKeys)
+                val reconciliation = runBlocking {
                     withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                        while (durableRecord(artifact).second != ChapterRunState.COMPLETE) {
-                            delay(50)
-                        }
+                        batch.reconciliation.await().shouldNotBeNull()
                     }
                 }
-            } catch (_: TimeoutCancellationException) {
-                val manifest = artifact.readManifest().shouldNotBeNull()
-                val record = (
-                    artifact.readRunRecord(manifest.activeRun.shouldNotBeNull())
-                        as ChapterArtifactEngine.RunRecordRead.Usable
-                    ).record
-                error(
-                    "run 1 never reached ChapterRunState.COMPLETE within " +
-                        "${TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS}ms — the run " +
-                        "stopped early (a load-induced typed pause is legal production " +
-                        "behavior): state=${record.state}, runId=${record.runId}, " +
-                        "phaseCounters=${record.phaseCounters}, " +
-                        "diagnostics=${harness.failureDiagnostics(pageKeys)}",
-                )
+                if (reconciliation.nonDurableFailure || reconciliation.retryableCount > 0 || reconciliation.paused) {
+                    retryDiagnostics +=
+                        "attempt=$attempt, reconciliation=$reconciliation: " +
+                        harness.failureDiagnostics(pageKeys)
+                    check(attempt < maxAttempts) {
+                        "run did not publish durably after $maxAttempts user-style attempts: " +
+                            retryDiagnostics.joinToString(" | ")
+                    }
+                    continue
+                }
+
+                // A non-null reconciliation is NOT a completion oracle: a
+                // typed pause can also reconcile non-null. Poll the durable
+                // record until COMPLETE and include the exact failure context
+                // if it stays in an earlier phase.
+                val artifact = harness.store.artifactEngine.shouldNotBeNull()
+                try {
+                    runBlocking {
+                        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                            while (durableRecord(artifact).second != ChapterRunState.COMPLETE) {
+                                delay(50)
+                            }
+                        }
+                    }
+                } catch (_: TimeoutCancellationException) {
+                    val manifest = artifact.readManifest().shouldNotBeNull()
+                    val record = (
+                        artifact.readRunRecord(manifest.activeRun.shouldNotBeNull())
+                            as ChapterArtifactEngine.RunRecordRead.Usable
+                        ).record
+                    error(
+                        "run $attempt never reached ChapterRunState.COMPLETE within " +
+                            "${TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS}ms — state=${record.state}, " +
+                            "runId=${record.runId}, phaseCounters=${record.phaseCounters}, " +
+                            "reconciliation=$reconciliation, diagnostics=${harness.failureDiagnostics(pageKeys)}",
+                    )
+                }
+                keepHarness = true
+                return harness
+            } finally {
+                if (!keepHarness) harness.close()
             }
-        } catch (t: Throwable) {
-            harness.close()
-            throw t
         }
-        return harness
+        error(
+            "run did not reach ChapterRunState.COMPLETE after $maxAttempts attempts: " +
+                retryDiagnostics.joinToString(" | "),
+        )
     }
 
     private fun durableRecord(

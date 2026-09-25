@@ -24,6 +24,10 @@ import java.util.concurrent.ConcurrentHashMap
 // different reasons ("page lease required") and are never healed.
 private const val LEASE_TOKEN_CHANGED = "page lease token changed"
 
+private fun ChapterTranslationStore.PatchResult.Rejected.isLeaseTokenMismatch(): Boolean =
+    reason == LEASE_TOKEN_CHANGED ||
+        detail is ChapterTranslationStore.PatchResult.Rejected.Detail.PageLeaseTokenMismatch
+
 private fun leaseStageFor(stage: BatchStage?): PageStage = when (stage) {
     BatchStage.DETECTION, BatchStage.OCR, null -> PageStage.Ocr
     BatchStage.TRANSLATION -> PageStage.Translation
@@ -104,8 +108,20 @@ internal class BatchWriteGate(
         stage: BatchStage?,
         update: (PageTranslation?) -> PageTranslation,
     ): ChapterTranslationStore.PatchResult {
-        var identity = batchWriteIdentities[pageKey]
-            ?: return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
+        val initialIdentity = batchWriteIdentities[pageKey]
+        if (initialIdentity == null) {
+            val live = store.snapshot(pageKey)
+            store.recordBatchWriteGateRejectionDiagnostic(
+                "pageKey=$pageKey, description=$description, stage=$stage, " +
+                    "result=batch page lease missing, live={generation=${live.generation}, " +
+                    "pageVersion=${live.pageVersion}, leaseToken=${live.leaseToken}, " +
+                    "candidateGenerationId=${live.candidateGenerationId}, " +
+                    "dependencyFingerprint=${live.dependencyFingerprint}, " +
+                    "artifactPageVersion=${live.artifactPageVersion}}",
+            )
+            return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
+        }
+        var identity: BatchWriteIdentity = requireNotNull(initialIdentity)
         fun expected() = ChapterTranslationStore.PatchPrecondition(
             generation = identity.generation,
             pageVersion = identity.pageVersion,
@@ -138,7 +154,7 @@ internal class BatchWriteGate(
                     description = description,
                     update = { current -> stampBatchProvenance(update(current), stage) },
                 )
-            } else if (result.reason == LEASE_TOKEN_CHANGED) {
+            } else if (result.isLeaseTokenMismatch()) {
                 //   owner-proof heal: the cached token no longer
                 // matches the lease table (the   residual flip — a
                 // sibling batch component re-minted the slot while this write
@@ -188,6 +204,19 @@ internal class BatchWriteGate(
             identity.candidateGenerationId = result.snapshot.candidateGenerationId
             identity.dependencyFingerprint = result.snapshot.dependencyFingerprint
             identity.artifactPageVersion = result.snapshot.artifactPageVersion
+        } else if (result is ChapterTranslationStore.PatchResult.Rejected) {
+            val live = store.snapshot(pageKey)
+            store.recordBatchWriteGateRejectionDiagnostic(
+                "pageKey=$pageKey, description=$description, stage=$stage, result=${result.reason}, " +
+                    "expected={generation=${identity.generation}, pageVersion=${identity.pageVersion}, " +
+                    "leaseToken=${identity.leaseToken}, candidateGenerationId=${identity.candidateGenerationId}, " +
+                    "dependencyFingerprint=${identity.dependencyFingerprint}, " +
+                    "artifactPageVersion=${identity.artifactPageVersion}}, " +
+                    "live={generation=${live.generation}, pageVersion=${live.pageVersion}, " +
+                    "leaseToken=${live.leaseToken}, candidateGenerationId=${live.candidateGenerationId}, " +
+                    "dependencyFingerprint=${live.dependencyFingerprint}, " +
+                    "artifactPageVersion=${live.artifactPageVersion}}",
+            )
         }
         return result
     }
