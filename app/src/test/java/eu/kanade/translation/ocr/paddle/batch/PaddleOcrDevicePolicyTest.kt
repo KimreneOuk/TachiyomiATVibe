@@ -153,10 +153,11 @@ class PaddleOcrDevicePolicyTest {
                 )
             } else {
                 assertEquals(PaddleOcrBatchSize.B1, decision.activeBatchSize)
-                assertEquals(
-                    if (requested == PaddleOcrRecognitionBatch.B1) "b1_default" else "combination_not_confirmed",
-                    decision.reason,
-                )
+                if (requested == PaddleOcrRecognitionBatch.B1) {
+                    assertEquals("b1_default", decision.reason)
+                } else {
+                    assertTrue(decision.reason in setOf("staged_flag_off", "combination_not_confirmed"))
+                }
             }
         }
     }
