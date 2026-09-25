@@ -1,0 +1,2 @@
+# Maven Central artifacts are developer-downloaded and must not be committed.
+*.so

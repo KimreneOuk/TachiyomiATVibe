@@ -1,0 +1,33 @@
+* text=auto
+* text eol=lf
+
+# Windows forced line-endings
+/.idea/* text eol=crlf
+
+# Gradle wrapper
+*.jar binary
+
+# Images
+*.webp binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.gz binary
+*.zip binary
+*.7z binary
+*.ttf binary
+*.eot binary
+*.woff binary
+*.pyc binary
+*.swp binary
+
+# Corpus gate binary outputs (raw ARGB int32 — must not be line-ending normalized)
+*.bin binary
+
+# ONNX models (protobuf binary - must not be line-ending normalized)
+*.onnx binary
+
+# PyTorch models (pickle/ZIP binary - must not be line-ending normalized)
+*.pt binary
