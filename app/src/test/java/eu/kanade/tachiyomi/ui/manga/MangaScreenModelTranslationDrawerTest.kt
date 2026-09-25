@@ -247,7 +247,9 @@ class MangaScreenModelTranslationDrawerTest {
             mangaRepository = mockk(relaxed = true),
             filterChaptersForDownload = mockk(relaxed = true),
         )
-        awaitUntil("screen state becomes Success") { successState() != null }
+        // Boot is a one-time wait (not a behavioral assertion): give cold
+        // daemons and full-suite JVM churn headroom beyond the default 5s.
+        awaitUntil("screen state becomes Success", timeoutMs = 30_000) { successState() != null }
     }
 
     @AfterAll
@@ -420,7 +422,13 @@ class MangaScreenModelTranslationDrawerTest {
             val store = cafe.adriel.voyager.core.model.ScreenModelStore
             val getDependencies = store.javaClass.methods.first { it.name == "getDependencies" }
             val dependencies = getDependencies.invoke(store) as? MutableMap<Any?, Any?> ?: return
-            dependencies.keys.removeAll { key -> key is String && "ScreenModelCoroutineScope" in key }
+            // Key type tolerance: voyager versions key this cache differently
+            // (String vs typed key objects); match on the string form so a
+            // stale cancelled scope is evicted regardless of key type.
+            dependencies.keys.removeAll { key ->
+                key is String && "ScreenModelCoroutineScope" in key ||
+                    "ScreenModelCoroutineScope" in key.toString()
+            }
         } catch (_: Exception) {
             // Best effort: only matters when another screen-model fixture ran
             // earlier in this JVM.
