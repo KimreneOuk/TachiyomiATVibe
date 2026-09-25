@@ -1,10 +1,9 @@
 package eu.kanade.translation.translator
-import eu.kanade.translation.translator.retry.currentRequestRetryBudget
-import eu.kanade.translation.translator.retry.currentRequestRetryAttempt
-import eu.kanade.translation.translator.retry.safeAdd
-import eu.kanade.translation.translator.retry.classifyProviderFailure
 import eu.kanade.translation.translator.retry.RequestRetryBudgetExhaustedException
-
+import eu.kanade.translation.translator.retry.classifyProviderFailure
+import eu.kanade.translation.translator.retry.currentRequestRetryAttempt
+import eu.kanade.translation.translator.retry.currentRequestRetryBudget
+import eu.kanade.translation.translator.retry.safeAdd
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -808,6 +807,3 @@ open class BatchRequestSublimitGate(
 object SharedBatchRequestSublimitGate {
     val instance: BatchRequestSublimitGate = BatchRequestSublimitGate()
 }
-
-
-

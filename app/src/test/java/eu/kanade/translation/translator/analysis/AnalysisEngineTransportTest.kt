@@ -10,7 +10,6 @@ import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.translator.providers.AiTranslator
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -78,7 +77,10 @@ class AnalysisEngineTransportTest {
             analysisBackendId = "gemini",
             analysisModelId = "gemini-2.5",
             analysisCredentialScope = null,
-            onRaw = { system, user, max -> captured = Triple(system, user, max); "RAW OUTPUT" },
+            onRaw = { system, user, max ->
+                captured = Triple(system, user, max)
+                "RAW OUTPUT"
+            },
         )
         val transport = AnalysisEngineTransport(engine)
 

@@ -1,11 +1,11 @@
 package eu.kanade.translation.manager
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.orchestration.TranslationSessionState
 import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred

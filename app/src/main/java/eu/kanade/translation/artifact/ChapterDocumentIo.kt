@@ -81,7 +81,7 @@ class UniFileChapterDocumentIo(
      * scan and a 70-page resume revalidation take minutes of silent work.
      * The FIRST access to a directory pays ONE [UniFile.listFiles] call; all
      * further lookups are map hits — including MISSES: absent names are cached
-     * under an [ABSENT] marker, because the publish sweep probes names that do
+     * under an [absent] marker, because the publish sweep probes names that do
      * not exist (`.bak` before the first rotation) on every atomic write.
      * Mutations through this IO keep the index coherent ([delete] and renames
      * mark ABSENT or insert surgically; creates insert directly).
@@ -89,7 +89,7 @@ class UniFileChapterDocumentIo(
     private val fileIndex = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, Any>>()
 
     /** Marks a probed-and-missing name so repeated misses stay O(1). */
-    private val ABSENT = Any()
+    private val absent = Any()
 
     private fun lookupInDir(dir: UniFile, dirPath: String, fileName: String): UniFile? {
         val index = fileIndex[dirPath]
@@ -103,10 +103,10 @@ class UniFileChapterDocumentIo(
                 // rename mark ABSENT, creates insert, nothing else survives).
                 null -> {
                     val found = dir.findFile(fileName)
-                    index[fileName] = found ?: ABSENT
+                    index[fileName] = found ?: absent
                     found
                 }
-                ABSENT -> null
+                absent -> null
                 else -> hit as UniFile
             }
         }
@@ -118,10 +118,10 @@ class UniFileChapterDocumentIo(
         return when (val hit = built[fileName]) {
             null -> {
                 val found = dir.findFile(fileName)
-                built[fileName] = found ?: ABSENT
+                built[fileName] = found ?: absent
                 found
             }
-            ABSENT -> null
+            absent -> null
             else -> hit as UniFile
         }
     }
@@ -239,7 +239,7 @@ class UniFileChapterDocumentIo(
             // Files.move leaves the source UniFile bound to the old path, so
             // only mark the source absent and re-list the target directory
             // (cold path — quarantine restore).
-            fileIndex[from.substringBeforeLast('/', "")]?.put(from.substringAfterLast('/'), ABSENT)
+            fileIndex[from.substringBeforeLast('/', "")]?.put(from.substringAfterLast('/'), absent)
             invalidateIndex(to.substringBeforeLast('/', ""))
             RenameResult.MOVED
         } catch (_: FileAlreadyExistsException) {
@@ -271,7 +271,7 @@ class UniFileChapterDocumentIo(
         val fromDir = from.substringBeforeLast('/', "")
         val toDir = to.substringBeforeLast('/', "")
         if (source.exists()) {
-            fileIndex[fromDir]?.put(from.substringAfterLast('/'), ABSENT)
+            fileIndex[fromDir]?.put(from.substringAfterLast('/'), absent)
             fileIndex[toDir]?.put(to.substringAfterLast('/'), source)
         } else {
             invalidateIndex(fromDir)
@@ -287,7 +287,7 @@ class UniFileChapterDocumentIo(
             // Mark the name absent rather than dropping the entry: a later
             // resolve of the deleted name (publish sweeps `.bak` every round)
             // must not re-walk the directory.
-            fileIndex[name.substringBeforeLast('/', "")]?.put(name.substringAfterLast('/'), ABSENT)
+            fileIndex[name.substringBeforeLast('/', "")]?.put(name.substringAfterLast('/'), absent)
         }
         return deleted
     }

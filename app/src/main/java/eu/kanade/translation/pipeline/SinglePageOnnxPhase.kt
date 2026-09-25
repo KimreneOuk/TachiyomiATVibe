@@ -5,34 +5,33 @@ import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
-import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceStage
-import eu.kanade.translation.pipeline.finalizePostOcrStage
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.isCleanedImageReady
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.resetAttemptCharge
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.pipeline.OcrStagePatch
+import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
+import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
+import eu.kanade.translation.pipeline.finalizePostOcrStage
+import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.TextTranslatorLanguage
-import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ensureActive
@@ -45,6 +44,7 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
 import java.io.InputStream
+import kotlin.coroutines.coroutineContext
 
 /**
  * Permit-held ONNX phase of the reader single-page path moved from

@@ -1,9 +1,7 @@
 package eu.kanade.translation.orchestration
 
-import eu.kanade.translation.*
-import eu.kanade.translation.storage.*
-
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.storage.ChapterTranslationStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream

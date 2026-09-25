@@ -1,9 +1,8 @@
 package eu.kanade.translation.translator
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
-
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test

@@ -1,7 +1,7 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.ProviderAdmissionDecision
 import eu.kanade.translation.translator.ProviderQuotaPolicy

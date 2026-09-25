@@ -2,8 +2,8 @@ package eu.kanade.translation.store
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.storage.ChapterTranslationStore
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob

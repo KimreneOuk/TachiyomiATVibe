@@ -1,10 +1,10 @@
 package eu.kanade.translation.coexistence
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.pipeline.toPrecondition
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -160,8 +160,10 @@ class NextPageAdmittedDuringParkedPublicationTest {
                             "permitHolder=${harness.engineLane.permitHolderPageKeySnapshot()} " +
                             "p1JobActive=${p1Job?.isActive} " +
                             "p1Outcomes=[$outcomes] " +
-                            "p1Store=${p1Page?.let { "ocr=${it.ocrStatus} tr=${it.translationStatus} " +
-                                "inp=${it.inpaintStatus} err=${it.errorMessage}" }}",
+                            "p1Store=${p1Page?.let {
+                                "ocr=${it.ocrStatus} tr=${it.translationStatus} " +
+                                    "inp=${it.inpaintStatus} err=${it.errorMessage}"
+                            }}",
                         timedOut,
                     )
                 }

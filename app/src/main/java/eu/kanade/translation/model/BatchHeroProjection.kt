@@ -52,7 +52,7 @@ enum class BatchHeroPhase {
     ADMISSION_FAILED,
 
     /**
- * Phase 5 (spec §2.1): real committed pages exist, but the page
+     * Phase 5 (spec §2.1): real committed pages exist, but the page
      * set is not the trusted source total (partial download). The available
      * count must never render as a percentage or a complete chapter.
      */

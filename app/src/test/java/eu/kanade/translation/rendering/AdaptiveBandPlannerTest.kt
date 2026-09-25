@@ -241,5 +241,4 @@ class AdaptiveBandPlannerTest {
         pinned.fontPx shouldBe 8f
         pinned.stats.fontSteps shouldBe 1
     }
-
 }

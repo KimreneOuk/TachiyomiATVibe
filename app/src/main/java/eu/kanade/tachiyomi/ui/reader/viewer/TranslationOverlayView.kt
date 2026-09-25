@@ -124,6 +124,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     private var blocks: List<TranslationBlock> = emptyList()
     private var pageWidth = 0
     private var pageHeight = 0
+
     //  Stage 7: the translation page key of the current binding, set
     // by the pageKeyed [bind] overload. The background hydrate lambda reads it
     // to resolve the chapter's persisted plan. Null (legacy 4-arg bind path)

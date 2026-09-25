@@ -258,8 +258,10 @@ internal class PaddleOcrV6BatchBufferPool(
     private companion object {
         const val CHANNELS = 3L
         const val HEIGHT = 48L
+
         // The checked-in PP-OCRv6 small model emits width / 8 CTC steps.
         const val OUTPUT_TIME_STEP_STRIDE = 8
+
         // CTC blank plus the dictionary's explicit space token.
         const val OUTPUT_EXTRA_CLASSES = 2
     }

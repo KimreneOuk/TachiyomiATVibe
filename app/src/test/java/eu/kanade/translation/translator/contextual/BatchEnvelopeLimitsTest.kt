@@ -1,9 +1,8 @@
 package eu.kanade.translation.translator.contextual
 
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner.Profile
-
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner.Profile
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

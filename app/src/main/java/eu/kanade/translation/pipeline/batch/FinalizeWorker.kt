@@ -1,103 +1,17 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.CheckpointOcrResult
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.context.SeriesProfileRegistry
-import eu.kanade.translation.model.PageStage
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.artifact.AnalysisChunkCoverage
-import eu.kanade.translation.artifact.AnalysisChunkResult
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.EvidenceStrength
-import eu.kanade.translation.artifact.FactConflictState
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.FactScope
-import eu.kanade.translation.artifact.FactType
-import eu.kanade.translation.artifact.ProfileFact
-import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.artifact.EnvelopePlan
-import eu.kanade.translation.artifact.ExtractedEntity
-import eu.kanade.translation.artifact.ExtractedRelationship
-import eu.kanade.translation.artifact.ExtractedTerm
-import eu.kanade.translation.artifact.ExtractedTermKind
-import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.OcrCheckpointMode
-import eu.kanade.translation.artifact.PageRange
 import eu.kanade.translation.artifact.ProfilePointer
-import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.RunConfigSnapshot
-import eu.kanade.translation.artifact.SceneRegister
-import eu.kanade.translation.artifact.SidecarPointer
-import eu.kanade.translation.artifact.SidecarRead
-import eu.kanade.translation.artifact.StageFingerprints
-import eu.kanade.translation.artifact.ToneFlag
-import eu.kanade.translation.artifact.isSha256Hex
-import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.hasCommittedDisplay
-import eu.kanade.translation.model.hasRecognizedTranslation
-import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.contextual.ContextualTextTranslator
-import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
-import eu.kanade.translation.translator.BatchRequestSublimitGate
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.translator.analysis.AnalysisRequestBuilder
-import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.translator.analysis.GlossaryEntryKind
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
-import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.translator.analysis.AnalyzerProvenanceFactory
-import eu.kanade.translation.translator.contextual.AnalysisChunkPlanResult
-import eu.kanade.translation.translator.contextual.AnalysisChunkPlanner
-import eu.kanade.translation.translator.contextual.AnalysisChunkPolicy
-import eu.kanade.translation.translator.contextual.ChunkPlannerPage
-import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy
-import eu.kanade.translation.translator.contextual.EnvelopePlanResult
-import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
-import eu.kanade.translation.translator.contextual.OcrCorpusManifest
-import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.util.ShortHash
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.yield
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import java.security.MessageDigest
-
 
 internal class FinalizeWorkerContext(
     val store: ChapterTranslationStore,
@@ -214,9 +128,11 @@ internal class FinalizeWorker(
                     // finalize keys + the full overlap snapshot would push the
                     // COMPLETE record past it (36 > 32 — the COMPLETE
                     // publication would be silently rejected, wave-7b fix).
-                    (overlapScheduler?.let { scheduler ->
-                        scheduler.counters.snapshot().mapValues { it.value.toInt() }
-                    } ?: emptyMap()),
+                    (
+                        overlapScheduler?.let { scheduler ->
+                            scheduler.counters.snapshot().mapValues { it.value.toInt() }
+                        } ?: emptyMap()
+                        ),
                 ocrCorpusFingerprint = corpusFingerprint,
                 profilePointer = store.artifactManifest?.profile,
             ),
@@ -440,5 +356,4 @@ internal class FinalizeWorker(
      *     in-pass render, exactly like the AI lane (display rides the live
      *     overlay + candidate snapshots; renderStatus stays PENDING).
      */
-
 }

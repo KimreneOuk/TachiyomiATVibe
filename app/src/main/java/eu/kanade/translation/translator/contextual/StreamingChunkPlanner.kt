@@ -1,8 +1,7 @@
 package eu.kanade.translation.translator.contextual
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner.Constraints
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner.constraintsFor
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner.estimateTokens

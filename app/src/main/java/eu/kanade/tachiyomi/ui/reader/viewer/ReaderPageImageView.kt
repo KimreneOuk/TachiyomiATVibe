@@ -266,6 +266,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var pendingTranslationBlocks: List<eu.kanade.translation.model.TranslationBlock> = emptyList()
     private var pendingPageWidth = 0
     private var pendingPageHeight = 0
+
     //  Stage 7: page key of the pending binding (see setTranslationBlocks).
     private var pendingPageKey: String? = null
 

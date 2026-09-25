@@ -1,10 +1,8 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
-import eu.kanade.translation.model.TranslationBlock
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.MutableStateFlow

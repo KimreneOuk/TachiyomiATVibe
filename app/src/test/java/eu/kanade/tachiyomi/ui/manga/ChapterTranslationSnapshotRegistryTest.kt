@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.model.Manga
 
 /**
  *  slice 1: full chapter-list rebuilds reconstruct every

@@ -1,8 +1,7 @@
 package eu.kanade.translation.translator.providers
-import eu.kanade.translation.translator.TextTranslator
-
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.translator.TextTranslator
 
 /**
  * TachiyomiAT: Base class for standard, non-LLM translation engines (Google, DeepL, MLKit, etc.).

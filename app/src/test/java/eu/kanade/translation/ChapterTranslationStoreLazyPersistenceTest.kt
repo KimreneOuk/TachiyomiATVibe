@@ -9,8 +9,8 @@ import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.pipeline.toPrecondition
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.CompletableDeferred

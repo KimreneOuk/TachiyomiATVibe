@@ -1,10 +1,8 @@
 package eu.kanade.translation.ui
 
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
-import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.Translation
@@ -12,6 +10,8 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import java.text.DateFormat
@@ -232,7 +232,7 @@ object TranslationUiTruth {
             actions = setOf(UiAction.RETRY, UiAction.DETAILS),
             terminalSuccess = false,
             contentDescription =
-                "Chapter translation ready with warnings; some pages need attention.",
+            "Chapter translation ready with warnings; some pages need attention.",
         )
         Translation.State.PAUSED -> PageUiTruth(
             label = "Paused.",
@@ -400,7 +400,7 @@ object TranslationUiTruth {
                         severity = UiSeverity.WARNING,
                         label = "Translated with warnings.",
                         contentDescription =
-                            "Chapter translation ready with warnings; a page failed but readable results remain.",
+                        "Chapter translation ready with warnings; a page failed but readable results remain.",
                     )
                 } else {
                     failureTruth
@@ -581,7 +581,7 @@ object TranslationUiTruth {
         actions = setOf(UiAction.CANCEL, UiAction.RETRY, UiAction.DETAILS),
         terminalSuccess = false,
         contentDescription =
-            "Translation stalled; the ONNX/native result timer expired while work remains occupied.",
+        "Translation stalled; the ONNX/native result timer expired while work remains occupied.",
     )
 
     private val NOT_SAVED = PageUiTruth(
@@ -592,7 +592,7 @@ object TranslationUiTruth {
         actions = setOf(UiAction.RETRY, UiAction.DETAILS),
         terminalSuccess = false,
         contentDescription =
-            "Translation was produced but could not be saved; no durable result is available. Retry is required.",
+        "Translation was produced but could not be saved; no durable result is available. Retry is required.",
     )
 
     private val BATCH_SESSION_SWITCH = PageUiTruth(
@@ -691,7 +691,6 @@ object TranslationUiTruth {
             snapshot.state != Translation.State.ERROR &&
             snapshot.state != Translation.State.PAUSED &&
             !hasPagesNeedingAttention(snapshot)
-
 
     /**
      * The single chapter-level status-line priority chain (U.3):

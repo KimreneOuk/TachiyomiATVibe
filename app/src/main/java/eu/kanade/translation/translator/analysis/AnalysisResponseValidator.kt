@@ -103,7 +103,9 @@ object AnalysisResponseValidator {
         val evidenceRefs: List<EvidenceRef>,
     ) {
         val hasExtractionContent: Boolean
-            get() = terms.isNotEmpty() || entities.isNotEmpty() || scenes.isNotEmpty() ||
+            get() = terms.isNotEmpty() ||
+                entities.isNotEmpty() ||
+                scenes.isNotEmpty() ||
                 !narrativeSummary.isNullOrBlank()
     }
 
@@ -242,12 +244,21 @@ object AnalysisResponseValidator {
                     }
                     strengthOf(gender, violations, "entities[$index].gender")
                     val count = validateEvidenceArray(
-                        gender, request, corePageKeys, contextPageKeys, evidence, violations,
+                        gender,
+                        request,
+                        corePageKeys,
+                        contextPageKeys,
+                        evidence,
+                        violations,
                         "entities[$index].gender",
                     )
                     if (count == 0) violations += "V3 entities[$index].gender requires evidence"
                     validateCoreDuty(
-                        gender, request, corePageKeys, violations, "entities[$index].gender",
+                        gender,
+                        request,
+                        corePageKeys,
+                        violations,
+                        "entities[$index].gender",
                     )
                 }
                 (entity["pronounFacts"] as? kotlinx.serialization.json.JsonArray)?.forEachIndexed { pIndex, fact ->
@@ -257,7 +268,12 @@ object AnalysisResponseValidator {
                     }
                     strengthOf(pronoun, violations, "entities[$index].pronounFacts[$pIndex]")
                     val count = validateEvidenceArray(
-                        pronoun, request, corePageKeys, contextPageKeys, evidence, violations,
+                        pronoun,
+                        request,
+                        corePageKeys,
+                        contextPageKeys,
+                        evidence,
+                        violations,
                         "entities[$index].pronounFacts[$pIndex]",
                     )
                     if (count == 0) violations += "V3 entities[$index].pronounFacts[$pIndex] requires evidence"
@@ -271,7 +287,12 @@ object AnalysisResponseValidator {
                     overlong(noteText, 500, violations, "entities[$index].conflicts[$cIndex].note")
                     strengthOf(conflict, violations, "entities[$index].conflicts[$cIndex]")
                     validateEvidenceArray(
-                        conflict, request, corePageKeys, contextPageKeys, evidence, violations,
+                        conflict,
+                        request,
+                        corePageKeys,
+                        contextPageKeys,
+                        evidence,
+                        violations,
                         "entities[$index].conflicts[$cIndex]",
                     )
                     if (conflictNotes.size < MAX_TOTAL_EVIDENCE_REFS) {
@@ -403,7 +424,12 @@ object AnalysisResponseValidator {
                 violations += "V3 unresolvedQuestions[$index].question required"
             }
             validateEvidenceArray(
-                question, request, corePageKeys, contextPageKeys, evidence, violations,
+                question,
+                request,
+                corePageKeys,
+                contextPageKeys,
+                evidence,
+                violations,
                 "unresolvedQuestions[$index]",
             )
         }
@@ -415,7 +441,10 @@ object AnalysisResponseValidator {
             val equivalence = element as? kotlinx.serialization.json.JsonObject ?: return@forEachIndexed
             requiredId(equivalence, "id", violations, "candidateEquivalences[$index]") ?: return@forEachIndexed
             val sourceForms = textList(
-                equivalence, "sourceForms", violations, "candidateEquivalences[$index].sourceForms",
+                equivalence,
+                "sourceForms",
+                violations,
+                "candidateEquivalences[$index].sourceForms",
             )
             if (sourceForms.isNullOrEmpty()) {
                 violations += "V3 candidateEquivalences[$index].sourceForms must be non-empty"
@@ -429,7 +458,12 @@ object AnalysisResponseValidator {
                 violations += "V5 candidateEquivalences[$index].confidence invalid: $confidence"
             }
             validateEvidenceArray(
-                equivalence, request, corePageKeys, contextPageKeys, evidence, violations,
+                equivalence,
+                request,
+                corePageKeys,
+                contextPageKeys,
+                evidence,
+                violations,
                 "candidateEquivalences[$index]",
             )
         }

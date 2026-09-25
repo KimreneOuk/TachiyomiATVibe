@@ -1,9 +1,8 @@
 package eu.kanade.translation.translator.retry
-import eu.kanade.translation.translator.ProviderFailureException
-import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailure
-
+import eu.kanade.translation.translator.ProviderFailureException
+import eu.kanade.translation.translator.ProviderFailureKind
+import eu.kanade.translation.translator.ProviderFailureRetryability
 import kotlinx.coroutines.CancellationException
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter

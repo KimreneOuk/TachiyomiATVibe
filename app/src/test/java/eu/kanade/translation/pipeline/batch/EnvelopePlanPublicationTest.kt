@@ -1,16 +1,16 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.LegacyMigrationHealth
 import eu.kanade.translation.artifact.LegacyMigrationMetadata
+import eu.kanade.translation.translator.contextual.EnvelopePlanResult
 import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
 import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
-import eu.kanade.translation.translator.contextual.EnvelopePlanResult
 import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

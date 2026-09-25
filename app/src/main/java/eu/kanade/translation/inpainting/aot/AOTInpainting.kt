@@ -1,18 +1,17 @@
 package eu.kanade.translation.inpainting.aot
-import eu.kanade.translation.inpainting.InpaintingMode
-import eu.kanade.translation.inpainting.bubble.BubbleMaskBuilder
-import eu.kanade.translation.inpainting.bubble.SmartBubbleTextCleaner
-import eu.kanade.translation.inpainting.opencv.OpenCvInpaintEngine
-
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtProvider
 import ai.onnxruntime.OrtSession
+import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
-import android.app.Application
 import android.os.Build
+import eu.kanade.translation.inpainting.InpaintingMode
+import eu.kanade.translation.inpainting.bubble.BubbleMaskBuilder
+import eu.kanade.translation.inpainting.bubble.SmartBubbleTextCleaner
+import eu.kanade.translation.inpainting.opencv.OpenCvInpaintEngine
 import eu.kanade.translation.runtime.onnx.DeviceCapability
 import eu.kanade.translation.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.runtime.onnx.ModelRoutingEngine
@@ -167,7 +166,9 @@ class AOTInpainting(
                     }
                     QnnContextCacheManager.invalidate(app, modelFile, htpOptions)
                 } finally {
-                    try { loadOpts?.close() } catch (_: Throwable) {}
+                    try {
+                        loadOpts?.close()
+                    } catch (_: Throwable) {}
                 }
             }
         }

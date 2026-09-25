@@ -10,9 +10,9 @@ import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceReason
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.util.ShortHash
-import java.util.Locale
 import logcat.LogPriority
 import logcat.logcat
+import java.util.Locale
 
 /**
  *  Phase 4: compatibility facade over `translation_trace_v1`

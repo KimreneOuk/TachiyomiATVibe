@@ -1,7 +1,6 @@
 package eu.kanade.translation.artifact
 
 import eu.kanade.translation.artifact.loadArtifact
-
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus

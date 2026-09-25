@@ -97,9 +97,12 @@ class MaskGeometryOrderedRleTest {
         val width = 100
         val height = 12
         val runs = listOf(
-            2 * width + 50, 1, // row 2 — first appearance
-            5 * width + 90, 1, // row 5
-            10 * width + 10, 1, // row 10 — string-sorted keys would rank this first
+            2 * width + 50,
+            1, // row 2 — first appearance
+            5 * width + 90,
+            1, // row 5
+            10 * width + 10,
+            1, // row 10 — string-sorted keys would rank this first
         )
         val geometry = success(MaskGeometry.fromOrderedRle(rle(width, height, runs), MaskConversionBudgets()))
 

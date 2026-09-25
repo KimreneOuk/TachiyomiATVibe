@@ -1,7 +1,5 @@
 package eu.kanade.translation.storage
 
-import eu.kanade.translation.*
-
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat

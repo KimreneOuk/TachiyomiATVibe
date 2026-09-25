@@ -2,14 +2,13 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.AnalysisChunkStatus
 import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.EvidenceRef
 import eu.kanade.translation.artifact.ExtractedEntity
 import eu.kanade.translation.artifact.ExtractedRelationship
@@ -17,6 +16,7 @@ import eu.kanade.translation.artifact.ExtractedTerm
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -138,7 +138,7 @@ class AnalysisChunkPublicationTest {
         // Content-addressed idempotence: the operational timestamp is not part
         // of the identity, so an equal chunk re-publishes to the equal name.
         AnalysisChunkPublication.contentFingerprint(result.copy(createdAtEpochMs = 9_000L)) shouldBe fingerprint
-        }
+    }
 
     @Test
     fun `chunks append in ordinal order and an out-of-order append is rejected`() = runTest {
@@ -163,7 +163,7 @@ class AnalysisChunkPublicationTest {
             AnalysisChunkPublication.contentFingerprint(validResult(0)),
             AnalysisChunkPublication.contentFingerprint(validResult(1)),
         )
-        }
+    }
 
     @Test
     fun `invalid chunks are never persisted`() = runTest {
@@ -186,7 +186,7 @@ class AnalysisChunkPublicationTest {
             .reason shouldStartWith "analysis chunk invalid"
 
         artifact.readManifest().shouldNotBeNull().analysisChunks.shouldHaveSize(0)
-        }
+    }
 
     @Test
     fun `stale manifest publication is rejected and the prior manifest stays authoritative`() = runTest {

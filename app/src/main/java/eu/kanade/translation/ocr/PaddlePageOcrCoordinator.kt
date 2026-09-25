@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import eu.kanade.translation.model.Detection
 import eu.kanade.translation.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
+import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatch
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchPlanner
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchSize
@@ -13,7 +14,6 @@ import eu.kanade.translation.ocr.paddle.batch.PaddleOcrLeafWork
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrPageGeneration
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrParentRegion
 import eu.kanade.translation.ocr.paddle.batch.PaddleOcrWidthBucket
-import eu.kanade.translation.ocr.TextRecognizerLanguage
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.CancellationException

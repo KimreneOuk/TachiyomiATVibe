@@ -500,8 +500,10 @@ internal object CollisionRelaxation {
                     for (footprint in placed) {
                         if (hardCellsDisjoint(hardCell, footprint.cellRect)) continue
                         val other = footprint.occupancy
-                        if (other.top < occupancy.bottom && occupancy.top < other.bottom &&
-                            other.left < occupancy.left && other.right > x1
+                        if (other.top < occupancy.bottom &&
+                            occupancy.top < other.bottom &&
+                            other.left < occupancy.left &&
+                            other.right > x1
                         ) {
                             x1 = other.right
                         }
@@ -517,8 +519,10 @@ internal object CollisionRelaxation {
                     for (footprint in placed) {
                         if (hardCellsDisjoint(hardCell, footprint.cellRect)) continue
                         val other = footprint.occupancy
-                        if (other.top < occupancy.bottom && occupancy.top < other.bottom &&
-                            other.right > occupancy.right && other.left < x2
+                        if (other.top < occupancy.bottom &&
+                            occupancy.top < other.bottom &&
+                            other.right > occupancy.right &&
+                            other.left < x2
                         ) {
                             x2 = other.left
                         }
@@ -534,8 +538,10 @@ internal object CollisionRelaxation {
                     for (footprint in placed) {
                         if (hardCellsDisjoint(hardCell, footprint.cellRect)) continue
                         val other = footprint.occupancy
-                        if (other.left < occupancy.right && occupancy.left < other.right &&
-                            other.top < occupancy.top && other.bottom > y1
+                        if (other.left < occupancy.right &&
+                            occupancy.left < other.right &&
+                            other.top < occupancy.top &&
+                            other.bottom > y1
                         ) {
                             y1 = other.bottom
                         }
@@ -551,8 +557,10 @@ internal object CollisionRelaxation {
                     for (footprint in placed) {
                         if (hardCellsDisjoint(hardCell, footprint.cellRect)) continue
                         val other = footprint.occupancy
-                        if (other.left < occupancy.right && occupancy.left < other.right &&
-                            other.bottom > occupancy.bottom && other.top < y2
+                        if (other.left < occupancy.right &&
+                            occupancy.left < other.right &&
+                            other.bottom > occupancy.bottom &&
+                            other.top < y2
                         ) {
                             y2 = other.top
                         }
@@ -586,13 +594,14 @@ internal object CollisionRelaxation {
                 gapHalf = gapHalf,
                 measurer = measurer,
             )
-            val refitWithinCap = block.segmentationMask == null || relocationWithinCap(
-                layout.originX,
-                layout.originY,
-                clipCandidate.originX,
-                clipCandidate.originY,
-                maskedShiftCap,
-            )
+            val refitWithinCap = block.segmentationMask == null ||
+                relocationWithinCap(
+                    layout.originX,
+                    layout.originY,
+                    clipCandidate.originX,
+                    clipCandidate.originY,
+                    maskedShiftCap,
+                )
             if (refitWithinCap) {
                 tryCandidate(clipCandidate)?.let { return FinalResolution(it, attempts) }
             }
@@ -690,7 +699,6 @@ internal object CollisionRelaxation {
             lines = if (isVertical) emptyList() else cjkWrap(text, font, boxW, measurer),
         )
     }
-
 
     internal fun resolveMinimalDisplacementX(
         preferredX: Float,

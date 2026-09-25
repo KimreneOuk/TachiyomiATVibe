@@ -1,11 +1,5 @@
 package eu.kanade.translation.pipeline
 
-import eu.kanade.translation.*
-import eu.kanade.translation.orchestration.*
-import eu.kanade.translation.storage.*
-
-import eu.kanade.translation.storage.*
-
 /**
  *  Slice A2: Writer registry (N2).
  *
@@ -23,7 +17,7 @@ enum class WriterOrigin(val description: String) {
     STATUS_RESOLVER("durable chapter status resolver"),
     MIGRATION_SOURCE("legacy chapter migration source"),
     HEALTH_VERIFY("legacy artifact health verification"),
-    GLOSSARY_LANE("glossary update lane");
+    GLOSSARY_LANE("glossary update lane"),
 }
 
 data class ActiveWriter(

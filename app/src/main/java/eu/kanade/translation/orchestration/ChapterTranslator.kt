@@ -1,10 +1,5 @@
 package eu.kanade.translation.orchestration
 
-import eu.kanade.translation.pipeline.*
-
-import eu.kanade.translation.*
-import eu.kanade.translation.storage.*
-
 import android.content.Context
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -12,11 +7,15 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.pipeline.batch.ReconciliationResult
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.pipeline.MemoryPressureClass
+import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.pipeline.batch.ReconciliationResult
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.storage.TranslationQueueStore
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationEngineBuilder
 import kotlinx.coroutines.CancellationException
@@ -25,7 +24,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,7 +37,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.CopyOnWriteArrayList
 import logcat.LogPriority
 import mihon.core.archive.ArchiveReader
 import mihon.core.archive.archiveReader
@@ -57,6 +54,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 internal fun <T> mergeRestoredQueueEntries(
     durableIds: List<Long>,
@@ -463,64 +461,64 @@ class ChapterTranslator(
             if (isRunning) return
 
             translationJob = scope.launch {
-            val activeTranslationFlow = queueState.transformLatest { queue ->
-                if (queue.isEmpty()) return@transformLatest
-                // Translation.status is mutable state inside each queue item, so observing only
-                // queueState misses a transition to PAUSED/TRANSLATED and leaves the scheduler
-                // waiting forever for the old ERROR-only wake-up. Recompute active membership
-                // whenever any queued item's status changes; a paused item therefore releases
-                // its source lane while another source/chapter may continue.
-                combine(queue.map(Translation::statusFlow)) {
-                    val candidates = queue.asSequence().filter {
-                        it.status == Translation.State.QUEUE ||
-                            it.status == Translation.State.TRANSLATING
-                    }.toList()
-                    // A rearmed paused entry must not preempt a chapter that is
-                    // already translating. The queue still serializes by source;
-                    // this preference only keeps a live worker stable while the
-                    // rearm is idempotently recorded.
-                    val active = candidates.filter { it.status == Translation.State.TRANSLATING }
-                    val activeSource = active.firstOrNull()?.source
-                    val selected = if (active.isNotEmpty()) {
-                        // S11 wave lookahead (Milestone M4): allow chapter N (active translating)
-                        // + chapter N+1 (preflight queue) on the same source to pipeline native OCR/inpaint
-                        // while provider waits are in flight.
-                        val nextQueue = candidates.firstOrNull {
-                            it.status == Translation.State.QUEUE &&
-                                it !in active &&
-                                (activeSource == null || it.source == activeSource)
-                        }
-                        if (nextQueue != null) {
-                            active.take(1) + listOf(nextQueue)
+                val activeTranslationFlow = queueState.transformLatest { queue ->
+                    if (queue.isEmpty()) return@transformLatest
+                    // Translation.status is mutable state inside each queue item, so observing only
+                    // queueState misses a transition to PAUSED/TRANSLATED and leaves the scheduler
+                    // waiting forever for the old ERROR-only wake-up. Recompute active membership
+                    // whenever any queued item's status changes; a paused item therefore releases
+                    // its source lane while another source/chapter may continue.
+                    combine(queue.map(Translation::statusFlow)) {
+                        val candidates = queue.asSequence().filter {
+                            it.status == Translation.State.QUEUE ||
+                                it.status == Translation.State.TRANSLATING
+                        }.toList()
+                        // A rearmed paused entry must not preempt a chapter that is
+                        // already translating. The queue still serializes by source;
+                        // this preference only keeps a live worker stable while the
+                        // rearm is idempotently recorded.
+                        val active = candidates.filter { it.status == Translation.State.TRANSLATING }
+                        val activeSource = active.firstOrNull()?.source
+                        val selected = if (active.isNotEmpty()) {
+                            // S11 wave lookahead (Milestone M4): allow chapter N (active translating)
+                            // + chapter N+1 (preflight queue) on the same source to pipeline native OCR/inpaint
+                            // while provider waits are in flight.
+                            val nextQueue = candidates.firstOrNull {
+                                it.status == Translation.State.QUEUE &&
+                                    it !in active &&
+                                    (activeSource == null || it.source == activeSource)
+                            }
+                            if (nextQueue != null) {
+                                active.take(1) + listOf(nextQueue)
+                            } else {
+                                active.take(1)
+                            }
                         } else {
-                            active.take(1)
+                            candidates.take(1)
                         }
-                    } else {
-                        candidates.take(1)
-                    }
-                    selected.asSequence()
-                        .groupBy { it.source }
-                        .toList()
-                        .take(1)
-                        .flatMap { (_, translations) -> translations.take(2) }
-                }.distinctUntilChanged().collect { emit(it) }
-            }.distinctUntilChanged()
-            supervisorScope {
-                val translationJobs = mutableMapOf<Translation, Job>()
+                        selected.asSequence()
+                            .groupBy { it.source }
+                            .toList()
+                            .take(1)
+                            .flatMap { (_, translations) -> translations.take(2) }
+                    }.distinctUntilChanged().collect { emit(it) }
+                }.distinctUntilChanged()
+                supervisorScope {
+                    val translationJobs = mutableMapOf<Translation, Job>()
 
-                activeTranslationFlow.collectLatest { activeTranslations ->
-                    val translationJobsToStop = translationJobs.filter { it.key !in activeTranslations }
-                    translationJobsToStop.forEach { (download, job) ->
-                        job.cancel()
-                        translationJobs.remove(download)
-                    }
+                    activeTranslationFlow.collectLatest { activeTranslations ->
+                        val translationJobsToStop = translationJobs.filter { it.key !in activeTranslations }
+                        translationJobsToStop.forEach { (download, job) ->
+                            job.cancel()
+                            translationJobs.remove(download)
+                        }
 
-                    val translationsToStart = activeTranslations.filter { it !in translationJobs }
-                    translationsToStart.forEach { translation ->
-                        translationJobs[translation] = launchTranslationJob(translation)
+                        val translationsToStart = activeTranslations.filter { it !in translationJobs }
+                        translationsToStart.forEach { translation ->
+                            translationJobs[translation] = launchTranslationJob(translation)
+                        }
                     }
                 }
-            }
             }
         }
     }
@@ -673,7 +671,8 @@ class ChapterTranslator(
         // defaults keep every legacy caller byte-identical.
         probedSourcePageCount: Int? = null,
         sourceCountKnown: Boolean = false,
-    ) {        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+    ) {
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return
         if (queueState.value.any { it.chapter.id == chapter.id }) return
         // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
         // (corrupted/migrated pref). This runs on a UI action, so a thrown

@@ -1,33 +1,26 @@
 package eu.kanade.translation.translator.providers
-import eu.kanade.translation.translator.retry.withTranslationRetry
-import eu.kanade.translation.translator.currentProviderRequestPriority
-import eu.kanade.translation.translator.ProviderFailureException
-import eu.kanade.translation.translator.retry.classifyHttpFailure
-import eu.kanade.translation.translator.contextual.applyBatchToChunk
-import eu.kanade.translation.translator.contextual.TranslationPrompts
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-import eu.kanade.translation.translator.SharedProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.ProviderRequestKey
-import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.ProviderFailureKind
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
-import eu.kanade.translation.translator.contextual.ContextualResponseParser
-import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
-import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
-import eu.kanade.translation.translator.InputAccountingContract
-
 import eu.kanade.tachiyomi.network.await
+import eu.kanade.translation.translator.InputAccountingContract
+import eu.kanade.translation.translator.ProviderFailure
+import eu.kanade.translation.translator.ProviderFailureException
+import eu.kanade.translation.translator.ProviderFailureKind
+import eu.kanade.translation.translator.ProviderFailureRetryability
+import eu.kanade.translation.translator.ProviderRequestGovernor
+import eu.kanade.translation.translator.ProviderRequestKey
+import eu.kanade.translation.translator.ProviderRequestMetadata
+import eu.kanade.translation.translator.SharedProviderRequestGovernor
+import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
+import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
+import eu.kanade.translation.translator.contextual.ContextualResponseParser
+import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
+import eu.kanade.translation.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.contextual.TranslationPrompts
+import eu.kanade.translation.translator.contextual.applyBatchToChunk
+import eu.kanade.translation.translator.currentProviderRequestPriority
+import eu.kanade.translation.translator.retry.classifyHttpFailure
+import eu.kanade.translation.translator.retry.withTranslationRetry
 import eu.kanade.translation.util.ShortHash
-import logcat.LogPriority
-import logcat.logcat
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -36,6 +29,12 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import logcat.LogPriority
+import logcat.logcat
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -45,7 +44,7 @@ abstract class OpenAiCompatibleTranslator(
     open val customAccountingContract: InputAccountingContract? = null,
 ) : AiTranslator() {
 
-    override open val inputAccountingContract: InputAccountingContract?
+    open override val inputAccountingContract: InputAccountingContract?
         get() = customAccountingContract ?: defaultAccountingContract()
 
     protected abstract fun defaultAccountingContract(): InputAccountingContract

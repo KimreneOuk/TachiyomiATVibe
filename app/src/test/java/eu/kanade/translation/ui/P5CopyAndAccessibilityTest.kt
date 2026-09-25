@@ -1,7 +1,5 @@
 package eu.kanade.translation.ui
 
-import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.Translation
@@ -341,7 +339,7 @@ class P5CopyAndAccessibilityTest {
     fun `an unknown source total says the total is unknown`() {
         partialBody(listOf(3 to null)) shouldBe
             "The download is still in progress and the page total is unknown. " +
-                "Translate the pages that exist now, or finish the download first?"
+            "Translate the pages that exist now, or finish the download first?"
     }
 
     @Test

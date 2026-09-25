@@ -157,14 +157,20 @@ class TranslationOverlayViewRenderingInstrumentedTest {
 
     private fun squareGeometry() = MaskGeometry.fromSpans(64, 64, (10 until 54).map { MaskGeometry.RowSpan(it, 10, 54) })
 
-    private fun concaveGeometry() = MaskGeometry.fromSpans(64, 64, buildList {
-        for (y in 8 until 56) {
-            if (y !in 24 until 40) add(MaskGeometry.RowSpan(y, 8, 56)) else {
-                add(MaskGeometry.RowSpan(y, 8, 24))
-                add(MaskGeometry.RowSpan(y, 40, 56))
+    private fun concaveGeometry() = MaskGeometry.fromSpans(
+        64,
+        64,
+        buildList {
+            for (y in 8 until 56) {
+                if (y !in 24 until 40) {
+                    add(MaskGeometry.RowSpan(y, 8, 56))
+                } else {
+                    add(MaskGeometry.RowSpan(y, 8, 24))
+                    add(MaskGeometry.RowSpan(y, 40, 56))
+                }
             }
-        }
-    })
+        },
+    )
 
     private fun assertOnlyComponentHasInk(bitmap: Bitmap, geometry: MaskGeometry) {
         var ink = 0
@@ -260,11 +266,15 @@ class TranslationOverlayViewRenderingInstrumentedTest {
         var top = height
         var right = 0
         var bottom = 0
-        for (y in 0 until height) for (x in 0 until width) if (Color.alpha(getPixel(x, y)) != 0) {
-            left = minOf(left, x)
-            top = minOf(top, y)
-            right = maxOf(right, x + 1)
-            bottom = maxOf(bottom, y + 1)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                if (Color.alpha(getPixel(x, y)) != 0) {
+                    left = minOf(left, x)
+                    top = minOf(top, y)
+                    right = maxOf(right, x + 1)
+                    bottom = maxOf(bottom, y + 1)
+                }
+            }
         }
         return android.graphics.Rect(left, top, right, bottom)
     }

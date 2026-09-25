@@ -1,24 +1,26 @@
 package eu.kanade.translation.orchestration
 
-import eu.kanade.translation.pipeline.*
-
-import eu.kanade.translation.*
-import eu.kanade.translation.storage.*
-
 import android.content.Context
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ArtifactManifestProbe
-import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.toUiPauseReason
-import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.manager.ChapterDataResetController
+import eu.kanade.translation.manager.CleanedImageLifecycleController
+import eu.kanade.translation.manager.DurableChapterKey
+import eu.kanade.translation.manager.DurableChapterStatusResolver
+import eu.kanade.translation.manager.DurableDocumentKey
+import eu.kanade.translation.manager.DurableStatus
+import eu.kanade.translation.manager.ReaderTeardownCoordinator
+import eu.kanade.translation.manager.TranslationDocument
+import eu.kanade.translation.manager.TranslationProgressProjection
+import eu.kanade.translation.manager.TranslationRequestCoordinator
+import eu.kanade.translation.manager.isReconstructibleDurableState
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -28,27 +30,24 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.model.translationQueueAdmissionFailureKind
-import eu.kanade.translation.manager.TranslationProgressProjection
-import eu.kanade.translation.manager.ChapterDataResetController
-import eu.kanade.translation.manager.CleanedImageLifecycleController
-import eu.kanade.translation.manager.DurableChapterKey
-import eu.kanade.translation.manager.DurableChapterStatusResolver
-import eu.kanade.translation.manager.DurableDocumentKey
-import eu.kanade.translation.manager.isReconstructibleDurableState
-import eu.kanade.translation.manager.DurableStatus
-import eu.kanade.translation.manager.ReaderTeardownCoordinator
-import eu.kanade.translation.manager.TranslationRequestCoordinator
-import eu.kanade.translation.manager.TranslationDocument
 import eu.kanade.translation.model.findRunningSameSourceConflict
 import eu.kanade.translation.model.staleQueuedChaptersToEvict
 import eu.kanade.translation.model.toQueuedChapterView
+import eu.kanade.translation.model.translationQueueAdmissionFailureKind
 import eu.kanade.translation.orchestration.BatchSessionIntent
 import eu.kanade.translation.orchestration.ReaderSessionIntent
 import eu.kanade.translation.orchestration.SessionAdmission
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.orchestration.TranslationSessionState
+import eu.kanade.translation.pipeline.MemoryPressurePolicy
+import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.storage.ActiveChapterStoreRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.storage.TranslationPendingRequestStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -62,11 +61,10 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
@@ -331,6 +329,7 @@ class TranslationManager(
 
     private val activeStores = ActiveChapterStoreRegistry()
     private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
+
     /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
     private val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -1229,7 +1228,7 @@ class TranslationManager(
                 //  Phase 5: trusted totals come from the manifest;
                 // a partial download's available pages are never "all pages".
                 expectedPageCountTrusted =
-                    store.artifactManifest?.expectedPageCountTrusted == true,
+                store.artifactManifest?.expectedPageCountTrusted == true,
             ).withDurablePause(store)
         }
     }

@@ -171,16 +171,16 @@ class AotBoxGeometryTest {
     @Test
     fun `clusterFreeTextGroups clusters multi-panel page into separate spatial groups`() {
         // Panel 1 (top): 3 text lines
-        val p1_1 = listOf(intArrayOf(50, 100, 90, 250))
-        val p1_2 = listOf(intArrayOf(110, 120, 150, 260))
-        val p1_3 = listOf(intArrayOf(170, 100, 210, 240))
+        val p1First = listOf(intArrayOf(50, 100, 90, 250))
+        val p1Second = listOf(intArrayOf(110, 120, 150, 260))
+        val p1Third = listOf(intArrayOf(170, 100, 210, 240))
 
         // Panel 2 (bottom): 2 text lines
-        val p2_1 = listOf(intArrayOf(60, 900, 100, 1050))
-        val p2_2 = listOf(intArrayOf(120, 920, 160, 1060))
+        val p2First = listOf(intArrayOf(60, 900, 100, 1050))
+        val p2Second = listOf(intArrayOf(120, 920, 160, 1060))
 
         val clusters = AotBoxGeometry.clusterFreeTextGroups(
-            listOf(p1_1, p1_2, p1_3, p2_1, p2_2),
+            listOf(p1First, p1Second, p1Third, p2First, p2Second),
             maxContextSize = 512,
         )
 

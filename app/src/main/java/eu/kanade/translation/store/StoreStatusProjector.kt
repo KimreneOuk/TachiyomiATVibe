@@ -1,12 +1,10 @@
 package eu.kanade.translation.store
 
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.pipeline.batch.BatchProgressReconciler
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
@@ -17,6 +15,8 @@ import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toPageDisplayProjection
+import eu.kanade.translation.pipeline.batch.BatchProgressReconciler
+import eu.kanade.translation.storage.ChapterTranslationStore
 import kotlinx.coroutines.flow.StateFlow
 
 /**

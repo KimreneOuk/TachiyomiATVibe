@@ -1,9 +1,9 @@
 package eu.kanade.translation.manager
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import logcat.LogPriority

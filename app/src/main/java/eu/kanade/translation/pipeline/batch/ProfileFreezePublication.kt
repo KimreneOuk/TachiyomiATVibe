@@ -1,11 +1,11 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.ProfilePointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.storage.ChapterTranslationStore
 
 /**
  *  Stage 5 slice B — profile freeze publication.
@@ -115,7 +115,7 @@ internal object ProfileFreezePublication {
     }
 
     /**
- * OCR_PLAN skip rule read path (:114): a frozen profile is
+     * OCR_PLAN skip rule read path (:114): a frozen profile is
      * reusable only when ALL of
      *
      *  1. the manifest pointer is well-formed,

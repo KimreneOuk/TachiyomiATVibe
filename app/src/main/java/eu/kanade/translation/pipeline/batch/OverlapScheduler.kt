@@ -1,12 +1,12 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderRequestMetadata
 import kotlinx.coroutines.CancellationException
@@ -130,6 +130,7 @@ internal class OverlapScheduler(
         val serialInpaintsExecuted = AtomicLong(0)
         val overlapWindowsCount = AtomicLong(0)
         val overlapWindowsMs = AtomicLong(0)
+
         /** Windows during which no inpaint could run (no work / lane busy / lease denied). */
         val serialFallbacks = AtomicLong(0)
 
@@ -423,8 +424,10 @@ internal class OverlapScheduler(
         for (pageKey in orderedPageKeys) {
             val candidate = store.snapshot(pageKey).page ?: continue
             val displayComplete =
-                (candidate.translationStatus == StageStatus.READY ||
-                    candidate.translationStatus == StageStatus.PARTIAL) &&
+                (
+                    candidate.translationStatus == StageStatus.READY ||
+                        candidate.translationStatus == StageStatus.PARTIAL
+                    ) &&
                     candidate.inpaintStatus == StageStatus.READY &&
                     candidate.cleanedImageName != null &&
                     candidate.renderStatus == StageStatus.PENDING &&

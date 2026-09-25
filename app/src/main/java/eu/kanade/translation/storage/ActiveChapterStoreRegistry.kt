@@ -1,10 +1,8 @@
 package eu.kanade.translation.storage
 
-import eu.kanade.translation.pipeline.*
-
-import eu.kanade.translation.*
-
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.pipeline.ActiveWriter
+import eu.kanade.translation.pipeline.WriterOrigin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -280,8 +278,10 @@ internal class ActiveChapterStoreRegistry {
             origin: WriterOrigin,
         ): Boolean = synchronized(globalMutex) {
             globalWriters.any {
-                ((chapterId != null && it.chapterId == chapterId) ||
-                    (chapterKey != null && it.chapterKey == chapterKey)) &&
+                (
+                    (chapterId != null && it.chapterId == chapterId) ||
+                        (chapterKey != null && it.chapterKey == chapterKey)
+                    ) &&
                     it.origin == origin
             }
         }

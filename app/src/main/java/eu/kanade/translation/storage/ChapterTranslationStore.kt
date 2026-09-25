@@ -1,57 +1,66 @@
 package eu.kanade.translation.storage
 
-import eu.kanade.translation.pipeline.*
-
-import eu.kanade.translation.*
-import eu.kanade.translation.orchestration.*
-
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.ArtifactManifestProbe
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.AttemptOrigin
-import eu.kanade.translation.artifact.CommitPoint
-import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
+import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterArtifactManifestReader
-import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterRunRecord
+import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.CleanedImageProbe
+import eu.kanade.translation.artifact.CommitPoint
 import eu.kanade.translation.artifact.CommittedDisplayRef
 import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.FailureCategory
+import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.artifact.OcrCheckpointMode
+import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.PageOcrCheckpoint
 import eu.kanade.translation.artifact.PartialBatchDetermination
 import eu.kanade.translation.artifact.PartialBatchInfo
-import eu.kanade.translation.artifact.PageArtifactRecord
-import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.SourceIdentity
 import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.artifact.toUiPauseReason
 import eu.kanade.translation.context.ChapterContextService
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.blockFingerprints
+import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.orchestration.ChapterResetPreflight
+import eu.kanade.translation.orchestration.chapterResetPreflight
+import eu.kanade.translation.pipeline.InpaintStagePatch
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.OcrStagePatch
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.RenderStagePatch
+import eu.kanade.translation.pipeline.StagePatch
+import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.TranslationStagePatch
+import eu.kanade.translation.pipeline.inpaintMaskFingerprint
+import eu.kanade.translation.pipeline.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.ocrFingerprint
+import eu.kanade.translation.pipeline.toArtifactOrigin
 import eu.kanade.translation.store.ChapterAttemptLedger
 import eu.kanade.translation.store.ChapterGlossaryStore
 import eu.kanade.translation.store.PageStageLeaseTable
@@ -61,14 +70,14 @@ import eu.kanade.translation.store.StoreStatusProjector
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -112,9 +121,14 @@ private fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
     val committed = committed
     val displayBase = committed?.displayBase
     val hasCommittedDisplay = committed != null &&
-        (displayBase?.kind == eu.kanade.translation.artifact.DisplayBaseKind.ORIGINAL_SOURCE ||
-            (displayBase?.kind == eu.kanade.translation.artifact.DisplayBaseKind.CLEANED_IMAGE &&
-                displayBase.fileName != null && !displayBase.legacyLayout))
+        (
+            displayBase?.kind == eu.kanade.translation.artifact.DisplayBaseKind.ORIGINAL_SOURCE ||
+                (
+                    displayBase?.kind == eu.kanade.translation.artifact.DisplayBaseKind.CLEANED_IMAGE &&
+                        displayBase.fileName != null &&
+                        !displayBase.legacyLayout
+                    )
+            )
     val displayReady = displayState == PageDisplayState.DISPLAY_READY ||
         displayState == PageDisplayState.TEXTLESS_COMPLETE ||
         displayState == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT ||
@@ -340,9 +354,11 @@ class ChapterTranslationStore(
     //  Phase 17b: internal so the moved StorePersistenceScheduler's
     // flushDirtyLocked can reach the glossary dirty flag through it.
     internal val glossaryStore = ChapterGlossaryStore(this)
+
     //  Phase 3: durable attempt ledger collaborator (delegates under
     // the store mutex; fail-open persistence; memory-only no-op writes).
     private val attemptLedger = ChapterAttemptLedger(this)
+
     //  Phase 17b: the flush/close/debounce/retention machinery moved to
     // store/StorePersistenceScheduler.kt; the scheduler owns persistScope and
     // is constructed eagerly (its ctor resolves no store state). `dirty` and
@@ -2049,7 +2065,8 @@ class ChapterTranslationStore(
                 _state.value = snapshotPages()
             }
             if (engineMode !is eu.kanade.translation.store.ChapterStoreEngineMode.Durable &&
-                artifactParent != null && artifactFileName != null
+                artifactParent != null &&
+                artifactFileName != null
             ) {
                 ensureArtifactStoreLocked()
             }
@@ -2354,7 +2371,7 @@ class ChapterTranslationStore(
                                 currentFirstReaderBaseline,
                             ).takeIf { it > 0 },
                             expectedPageCountTrusted =
-                                current.expectedPageCountTrusted || pendingExpectedPageCountTrusted,
+                            current.expectedPageCountTrusted || pendingExpectedPageCountTrusted,
                         )
                     },
                     nowEpochMs = System.currentTimeMillis(),
@@ -2461,7 +2478,7 @@ class ChapterTranslationStore(
             artifactManifest = manifest
         }
         val currentCandidate = manifest.pages.getValue(pageKey).candidate
-            ?: run {  return false }
+            ?: run { return false }
         val expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion
         if (durableFailure != null) {
             val persisted = store.persistLiveCandidateAndFailure(
@@ -2801,7 +2818,7 @@ class ChapterTranslationStore(
         return mutex.withLock {
             val artifact = artifactEngine ?: return@withLock false
             val manifest = artifactManifest ?: return@withLock false
-        when (val outcome = artifact.retireActiveRun(manifest, reason)) {
+            when (val outcome = artifact.retireActiveRun(manifest, reason)) {
                 is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                     artifactManifest = outcome.manifest
                     logcat(LogPriority.INFO) {

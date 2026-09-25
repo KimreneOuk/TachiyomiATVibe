@@ -225,7 +225,6 @@ enum class TranslationTraceReason(val token: String) {
     ENVELOPE_SUCCEEDED("envelope_succeeded"),
     ENVELOPE_FAILED("envelope_failed"),
     ENVELOPE_CANCELLED("envelope_cancelled"),
-    ;
 }
 
 /** Bounded plan tokens for `run_start`/`run_end`. */
@@ -518,6 +517,7 @@ class TranslationScheduleTrace internal constructor(
     private var slowestPageToken: String = TranslationPipelineDiagnostics.NONE
     private var slowestRunMs: Long = 0
     private var lastStateKey: String? = null
+
     //  Phase 3: runs that terminated with a non-success outcome under this
     // schedule. Lets a natural shutdown after a fully successful window emit
     // schedule_end success instead of a misleading cancelled.
@@ -776,6 +776,7 @@ class TranslationRunTrace internal constructor(
     private val stageLock = Any()
     private val stageNanos = EnumMap<TranslationTraceStage, Long>(TranslationTraceStage::class.java)
     private val retries = AtomicInteger(0)
+
     //  Phase 3 deviation (documented): run_start is emitted before the
     // resume plan is known (the scheduler/coordinator creates the run before
     // the onnx phase resolves PageWorkPlanner.plan). The resolved plan is

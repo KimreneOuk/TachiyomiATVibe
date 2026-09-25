@@ -1,9 +1,8 @@
 package eu.kanade.translation.translator.contextual
-import eu.kanade.translation.translator.TextTranslatorLanguage
-
 import eu.kanade.translation.artifact.ProfileGender
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.TextTranslatorLanguage
 
 /**
  * Single source of truth for the AI-translator prompts,

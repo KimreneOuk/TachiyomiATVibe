@@ -6,14 +6,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
-import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.ui.NotificationAction
 import eu.kanade.translation.ui.SurfaceVisibility
 import eu.kanade.translation.ui.TranslationNotificationCopy
@@ -27,13 +28,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import android.os.PowerManager
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 import java.text.DateFormat
 import java.util.Date
 

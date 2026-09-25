@@ -5,15 +5,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Typeface
 import androidx.core.content.res.ResourcesCompat
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LayoutFailureException
-import eu.kanade.translation.pipeline.RenderBlockPatch
-import eu.kanade.translation.pipeline.RenderStagePatch
-import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactEngine
@@ -21,7 +14,6 @@ import eu.kanade.translation.artifact.ColorStylePreparation
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.StageArtifactRecord
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
@@ -33,11 +25,17 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.pipeline.LayoutFailureException
+import eu.kanade.translation.pipeline.RenderBlockPatch
+import eu.kanade.translation.pipeline.RenderStagePatch
+import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.rendering.DrawPlanFingerprint
 import eu.kanade.translation.rendering.LayoutPlanPublication
 import eu.kanade.translation.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.rendering.ProductionTextMeasurer
 import eu.kanade.translation.rendering.RenderColorEstimator
+import eu.kanade.translation.storage.ChapterTranslationStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -45,6 +43,8 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -227,28 +227,28 @@ internal class BatchRenderJoin(
                     )
                     try {
                         RenderStagePatch(
-                    pageKey = pageKey,
-                    generation = renderInput.generation,
-                    expectedPageVersion = renderInput.pageVersion,
-                    expectedLeaseToken = renderInput.leaseToken,
-                    expectedCleanedImageName = renderInput.page?.cleanedImageName ?: "",
-                    expectedInpaintRevision = renderInput.page?.inpaintRevision ?: 0,
-                    expectedOcrBlockFingerprints = renderInput.page?.ocrBlockFingerprints().orEmpty(),
-                    expectedCandidateGenerationId = renderInput.candidateGenerationId,
-                    expectedDependencyFingerprint = renderInput.dependencyFingerprint,
-                    expectedArtifactPageVersion = renderInput.artifactPageVersion,
-                    layoutFingerprint = expectedBatchFingerprints.layout,
-                    blocks = page.blocks.mapIndexed { index, block ->
-                        RenderBlockPatch(
-                            blockIndex = index,
-                            expectedBlockFingerprint = renderInput.page?.blocks?.getOrNull(index)?.stableFingerprint() ?: "",
-                            textColor = block.textColor,
-                            strokeColor = block.strokeColor,
-                            strokeWidth = block.strokeWidth,
+                            pageKey = pageKey,
+                            generation = renderInput.generation,
+                            expectedPageVersion = renderInput.pageVersion,
+                            expectedLeaseToken = renderInput.leaseToken,
+                            expectedCleanedImageName = renderInput.page?.cleanedImageName ?: "",
+                            expectedInpaintRevision = renderInput.page?.inpaintRevision ?: 0,
+                            expectedOcrBlockFingerprints = renderInput.page?.ocrBlockFingerprints().orEmpty(),
+                            expectedCandidateGenerationId = renderInput.candidateGenerationId,
+                            expectedDependencyFingerprint = renderInput.dependencyFingerprint,
+                            expectedArtifactPageVersion = renderInput.artifactPageVersion,
+                            layoutFingerprint = expectedBatchFingerprints.layout,
+                            blocks = page.blocks.mapIndexed { index, block ->
+                                RenderBlockPatch(
+                                    blockIndex = index,
+                                    expectedBlockFingerprint = renderInput.page?.blocks?.getOrNull(index)?.stableFingerprint() ?: "",
+                                    textColor = block.textColor,
+                                    strokeColor = block.strokeColor,
+                                    strokeWidth = block.strokeWidth,
+                                )
+                            },
+                            renderStatus = StageStatus.READY,
                         )
-                    },
-                    renderStatus = StageStatus.READY,
-                    )
                     } finally {
                         renderSpan.end()
                     }
@@ -465,7 +465,7 @@ internal class BatchRenderJoin(
         val compatInputs = LayoutPlanPublication.CompatInputs(
             translationArtifactId = page.ocrArtifactId.orEmpty(),
             cleanedImageArtifactIdOrOriginalSourceId =
-                page.cleanedImageName ?: "original:${page.sourceFingerprint.orEmpty()}",
+            page.cleanedImageName ?: "original:${page.sourceFingerprint.orEmpty()}",
         )
         val prepared = LayoutPlanPublication.prepare(
             blocks = page.blocks,

@@ -1,12 +1,12 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -196,7 +196,11 @@ class BatchTerminalExitTest {
             ),
         )
         val ordered: List<Pair<String, () -> InputStream>> = listOf(
-            "001.jpg", "002.jpg", "003.jpg", "004.jpg", "005.jpg",
+            "001.jpg",
+            "002.jpg",
+            "003.jpg",
+            "004.jpg",
+            "005.jpg",
         ).map { key -> key to { error("no stream expected in a pure abort-key computation") } }
 
         val remaining = BatchChapterTranslator.remainingAbortKeys(ordered, store)

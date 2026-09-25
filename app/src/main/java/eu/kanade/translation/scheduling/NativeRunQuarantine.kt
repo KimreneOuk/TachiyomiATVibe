@@ -31,15 +31,18 @@ class NativeRunQuarantine(
         scope: CoroutineScope,
         onLaneOccupied: ((token: Long, pageKey: String, startedAtEpochMs: Long) -> Unit)?,
         onLaneReleased: ((token: Long) -> Unit)?,
-    ) : this(scope, object : OccupancyObserver {
-        override fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long) {
-            onLaneOccupied?.invoke(token, pageKey, startedAtEpochMs)
-        }
+    ) : this(
+        scope,
+        object : OccupancyObserver {
+            override fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long) {
+                onLaneOccupied?.invoke(token, pageKey, startedAtEpochMs)
+            }
 
-        override fun onLaneReleased(token: Long) {
-            onLaneReleased?.invoke(token)
-        }
-    })
+            override fun onLaneReleased(token: Long) {
+                onLaneReleased?.invoke(token)
+            }
+        },
+    )
     private val admission = Mutex()
     private val generation = AtomicLong(0L)
 

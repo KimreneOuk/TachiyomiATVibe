@@ -1,11 +1,13 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.orchestration.TranslationPageRequest
-import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.artifact.GroupCommitConfiguration
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceMode
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTracePlan
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -16,15 +18,13 @@ import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.lifecycle
-import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
-import eu.kanade.translation.diagnostics.TranslationTrace
-import eu.kanade.translation.diagnostics.TranslationTraceMode
-import eu.kanade.translation.diagnostics.TranslationTraceOutcome
-import eu.kanade.translation.diagnostics.TranslationTracePlan
-import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.orchestration.ReaderSessionIntent
 import eu.kanade.translation.orchestration.SessionAdmission
+import eu.kanade.translation.orchestration.TranslationPageRequest
+import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -973,7 +973,8 @@ class TranslationScheduler(
         val runningKeys = store.state.value.entries
             .asSequence()
             .filter { (pageKey, page) ->
-                page != null && page!!.isStageRunning &&
+                page != null &&
+                    page!!.isStageRunning &&
                     (origin == null || store.pageLeaseOwner(pageKey)?.let { it == origin } != false)
             }
             .map { it.key }

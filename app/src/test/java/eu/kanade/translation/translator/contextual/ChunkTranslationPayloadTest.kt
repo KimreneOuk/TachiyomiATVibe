@@ -1,13 +1,12 @@
 package eu.kanade.translation.translator.contextual
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.contextual.TargetLocation
-import eu.kanade.translation.translator.providers.BaseTranslator
-import eu.kanade.translation.translator.contextual.AnchoredTargetKey
-
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.TextTranslatorLanguage
+import eu.kanade.translation.translator.contextual.AnchoredTargetKey
+import eu.kanade.translation.translator.contextual.TargetLocation
+import eu.kanade.translation.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.translator.providers.BaseTranslator
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import kotlinx.coroutines.test.runTest

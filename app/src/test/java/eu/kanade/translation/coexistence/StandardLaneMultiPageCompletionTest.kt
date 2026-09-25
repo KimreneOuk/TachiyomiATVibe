@@ -1,6 +1,5 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation

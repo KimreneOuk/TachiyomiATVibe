@@ -1,8 +1,9 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.ProviderQuotaPolicy
 import eu.kanade.translation.translator.ProviderRequestGovernor
@@ -11,7 +12,6 @@ import eu.kanade.translation.translator.ProviderRequestMetadata
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.currentProviderRequestPriority
-import eu.kanade.translation.ocr.TextRecognizerLanguage
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CompletableDeferred
@@ -162,7 +162,9 @@ class ForegroundProviderWindowFairnessTest {
             try {
                 val field = cls.getDeclaredField("manualOutcomes")
                 field.isAccessible = true
-                val map = @Suppress("UNCHECKED_CAST") (field.get(scheduler) as Map<String, Any>)
+                val map =
+                    @Suppress("UNCHECKED_CAST")
+                    (field.get(scheduler) as Map<String, Any>)
                 return map[jobKey]
             } catch (_: NoSuchFieldException) {
                 cls = cls.superclass

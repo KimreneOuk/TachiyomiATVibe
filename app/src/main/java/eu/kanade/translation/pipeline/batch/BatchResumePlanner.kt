@@ -1,9 +1,8 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchPlannerInput
 import eu.kanade.translation.model.BatchStage
@@ -12,7 +11,8 @@ import eu.kanade.translation.model.PageWorkPlanner
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.inpainting.InpaintingMode
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.storage.ChapterTranslationStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority

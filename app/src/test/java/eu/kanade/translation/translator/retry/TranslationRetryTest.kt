@@ -1,6 +1,5 @@
 package eu.kanade.translation.translator.retry
 import eu.kanade.translation.translator.providers.GeminiApiException
-
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CancellationException

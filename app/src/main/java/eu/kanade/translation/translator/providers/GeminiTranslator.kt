@@ -1,32 +1,30 @@
 package eu.kanade.translation.translator.providers
-import eu.kanade.translation.translator.retry.withTranslationRetry
-import eu.kanade.translation.translator.currentProviderRequestPriority
-import eu.kanade.translation.translator.ProviderFailureException
-import eu.kanade.translation.translator.retry.parseRetryAfterMillis
-import eu.kanade.translation.translator.retry.classifyHttpFailureWithRetryAfterMillis
-import eu.kanade.translation.translator.retry.classifyHttpFailure
-import eu.kanade.translation.translator.contextual.applyBatchToChunk
-import eu.kanade.translation.translator.contextual.TranslationPrompts
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.SharedProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.ProviderRequestKey
-import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.GeminiInputAccountingContract
-import eu.kanade.translation.translator.InputAccountingContract
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.ProviderFailureKind
-import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
-import eu.kanade.translation.translator.contextual.ContextualResponseParser
-import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
-import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
-
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.GeminiInputAccountingContract
+import eu.kanade.translation.translator.InputAccountingContract
+import eu.kanade.translation.translator.ProviderFailure
+import eu.kanade.translation.translator.ProviderFailureException
+import eu.kanade.translation.translator.ProviderFailureKind
+import eu.kanade.translation.translator.ProviderFailureRetryability
+import eu.kanade.translation.translator.ProviderRequestGovernor
+import eu.kanade.translation.translator.ProviderRequestKey
+import eu.kanade.translation.translator.ProviderRequestMetadata
+import eu.kanade.translation.translator.SharedProviderRequestGovernor
+import eu.kanade.translation.translator.TextTranslatorLanguage
+import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
+import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
+import eu.kanade.translation.translator.contextual.ContextualResponseParser
+import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
+import eu.kanade.translation.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.translator.contextual.TranslationPrompts
+import eu.kanade.translation.translator.contextual.applyBatchToChunk
+import eu.kanade.translation.translator.currentProviderRequestPriority
+import eu.kanade.translation.translator.retry.classifyHttpFailure
+import eu.kanade.translation.translator.retry.classifyHttpFailureWithRetryAfterMillis
+import eu.kanade.translation.translator.retry.parseRetryAfterMillis
+import eu.kanade.translation.translator.retry.withTranslationRetry
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
@@ -61,7 +59,7 @@ open class GeminiTranslator(
     val customAccountingContract: InputAccountingContract? = null,
 ) : AiTranslator() {
 
-    override open val inputAccountingContract: InputAccountingContract?
+    open override val inputAccountingContract: InputAccountingContract?
         get() = customAccountingContract ?: GeminiInputAccountingContract(modelName)
 
     private val client = OkHttpClient.Builder()

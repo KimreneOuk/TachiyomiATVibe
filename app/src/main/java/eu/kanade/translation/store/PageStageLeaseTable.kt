@@ -1,10 +1,10 @@
 package eu.kanade.translation.store
 
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageStageLease
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.model.PageStage
+import eu.kanade.translation.storage.ChapterTranslationStore
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -250,5 +250,4 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = synchronized(pageLeases) {
         pageLeases[pageKey]?.origin
     }
-
 }

@@ -4,16 +4,16 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.storage.CleanedImagePublisher
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import kotlinx.coroutines.Dispatchers
+import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.storage.CleanedImagePublisher
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -334,32 +334,34 @@ internal class CleanedPublication(
 
                 override fun delete(name: String): Boolean = companionDir?.findFile(name)?.delete() ?: true
             })
-            when (val publication = publisher.publish(
-                chapter = chapter.name,
-                pageKey = pageKey,
-                previousName = previousName,
-                commit = {
-                    if (store.isLazyGenerationCurrent(generation)) {
-                        ChapterTranslationStore.PatchResult.Accepted(accepted.snapshot)
-                    } else {
-                        ChapterTranslationStore.PatchResult.Rejected("store generation changed")
-                    }
-                },
-                mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
-                retirePrevious = { name, delete ->
-                    chapter.id?.let { stableChapterId ->
-                        streamRegistry.retireCleanedImage(
-                            sourceId = source.id,
-                            mangaId = manga.id,
-                            chapterId = stableChapterId,
-                            pageKey = pageKey,
-                            imageName = name,
-                        ) {
-                            if (store.mayDeleteCleanedImage(pageKey, name)) delete()
+            when (
+                val publication = publisher.publish(
+                    chapter = chapter.name,
+                    pageKey = pageKey,
+                    previousName = previousName,
+                    commit = {
+                        if (store.isLazyGenerationCurrent(generation)) {
+                            ChapterTranslationStore.PatchResult.Accepted(accepted.snapshot)
+                        } else {
+                            ChapterTranslationStore.PatchResult.Rejected("store generation changed")
                         }
-                    }
-                },
-            )) {
+                    },
+                    mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
+                    retirePrevious = { name, delete ->
+                        chapter.id?.let { stableChapterId ->
+                            streamRegistry.retireCleanedImage(
+                                sourceId = source.id,
+                                mangaId = manga.id,
+                                chapterId = stableChapterId,
+                                pageKey = pageKey,
+                                imageName = name,
+                            ) {
+                                if (store.mayDeleteCleanedImage(pageKey, name)) delete()
+                            }
+                        }
+                    },
+                )
+            ) {
                 is CleanedImagePublisher.Result.Published -> true
                 else -> {
                     // A write failure must not leave the live page pointing at

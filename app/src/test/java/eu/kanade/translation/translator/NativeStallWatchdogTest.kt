@@ -2,9 +2,8 @@ package eu.kanade.translation.translator
 
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Proxy
 import kotlin.coroutines.Continuation
@@ -42,6 +41,7 @@ class NativeStallWatchdogTest {
                     "nowEpochMs" -> now
                     "delay" -> {
                         val millis = (args!![0] as Long)
+
                         @Suppress("UNCHECKED_CAST")
                         val continuation = args[1] as Continuation<Any?>
                         pending += Pending(now + millis, continuation)

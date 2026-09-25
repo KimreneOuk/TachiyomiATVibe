@@ -2,17 +2,12 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.artifact.AnalyzerProvenance
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactEngine
+import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.artifact.EvidenceRef
@@ -24,7 +19,12 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.OcrStagePatch
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
@@ -32,15 +32,15 @@ import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.translator.analysis.AnalysisCoverage
 import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
+import eu.kanade.translation.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.translator.analysis.ValidatedEntity
 import eu.kanade.translation.translator.analysis.ValidatedTerm
 import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
@@ -313,7 +313,12 @@ class ProfileEnvelopeDispatchTest {
             ),
             expectedBlockFingerprint = block.stableFingerprint(),
             description = "t924 test user edit",
-        ) { it.apply { userEditedAt = 123L; translation = "human" } }
+        ) {
+            it.apply {
+                userEditedAt = 123L
+                translation = "human"
+            }
+        }
             .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
     }
 

@@ -3,9 +3,9 @@ package eu.kanade.translation.ocr
 import android.graphics.Bitmap
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
-import eu.kanade.translation.inpainting.aot.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.PageInpaintingEngine
+import eu.kanade.translation.inpainting.aot.AOTInpainting
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus

@@ -1,5 +1,6 @@
 package eu.kanade.translation.ocr.paddle.batch
 
+import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.runtime.onnx.PaddleOcrProviderTarget
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -144,8 +145,12 @@ class PaddleOcrDevicePolicyTest {
                 requestedProvider = PaddleOcrExecutionProvider.CPU,
             )
 
-            assertEquals(active, decision.activeBatchSize)
-            assertEquals(if (active == PaddleOcrBatchSize.B1) "b1_default" else "debug_provisional_optin", decision.reason)
+            val expectedActive = if (BuildConfig.DEBUG) active else PaddleOcrBatchSize.B1
+            assertEquals(expectedActive, decision.activeBatchSize)
+            assertEquals(
+                if (expectedActive == PaddleOcrBatchSize.B1) "b1_default" else "debug_provisional_optin",
+                decision.reason,
+            )
         }
     }
 }

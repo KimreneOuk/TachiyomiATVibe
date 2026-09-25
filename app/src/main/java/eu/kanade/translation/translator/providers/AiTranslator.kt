@@ -1,16 +1,15 @@
 package eu.kanade.translation.translator.providers
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.translator.InputAccountingContract
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.contextual.applyBatchToChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
-import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
-
-import eu.kanade.translation.translator.InputAccountingContract
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
+import eu.kanade.translation.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.translator.contextual.applyBatchToChunk
 
 /**
  * TachiyomiAT: Base abstraction for AI / LLM translators.

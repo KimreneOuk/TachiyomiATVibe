@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test
  *     real ActiveChapterStoreRegistry — observeActiveDisplayStore is null and
  *     selectActiveStore only ever emits the empty map;
  *  3. no extra decode: the fake-decode arrival counter (NATIVE_ACQUIRE log)
-     *  is zero for the disabled chapter while remaining a live counter for the
+ *  is zero for the disabled chapter while remaining a live counter for the
  *     active chapter's pages (positive control), and the paid provider lane
  *     saw exactly the active chapter's two pages.
  *
@@ -60,9 +60,11 @@ class NormalMangaIsolationTest {
             val reconciliation = checkNotNull(
                 withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.reconciliation.await() },
             ) { "batch reconciliation missing" }
-            println("DBG store=" + harness.store.state.value.mapValues { (_, p) ->
-                "ocr=${p.ocrStatus}/tr=${p.translationStatus}/inp=${p.inpaintStatus}/rend=${p.renderStatus}/cl=${p.cleanedImageName}/blocks=${p.blocks.size}"
-            })
+            println(
+                "DBG store=" + harness.store.state.value.mapValues { (_, p) ->
+                    "ocr=${p.ocrStatus}/tr=${p.translationStatus}/inp=${p.inpaintStatus}/rend=${p.renderStatus}/cl=${p.cleanedImageName}/blocks=${p.blocks.size}"
+                },
+            )
             println("DBG recon=$reconciliation paid=${harness.fakeTransport.callsByPage}")
             withClue("active batch must complete normally for this gate to be meaningful") {
                 batch.translation.status shouldBe Translation.State.TRANSLATED

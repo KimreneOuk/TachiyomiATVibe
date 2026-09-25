@@ -1,12 +1,12 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.orchestration.*
-
-import eu.kanade.translation.storage.*
-
 import android.content.Context
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.orchestration.acknowledgePendingTranslationState
+import eu.kanade.translation.storage.TranslationPendingRequestRecord
+import eu.kanade.translation.storage.TranslationPendingRequestStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.every

@@ -1,12 +1,11 @@
 package eu.kanade.translation.translator.providers
-import eu.kanade.translation.translator.TextTranslatorLanguage
-
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.util.await
 
 class MLKitTranslator(

@@ -373,8 +373,10 @@ internal object MaskTextRegionPlanner {
         }
 
     private fun spanIntersectsRect(span: MaskGeometry.RowSpan, rect: FloatRect): Boolean =
-        span.y + 1 > rect.top && span.y < rect.bottom &&
-            span.endExclusive > rect.left && span.start < rect.right
+        span.y + 1 > rect.top &&
+            span.y < rect.bottom &&
+            span.endExclusive > rect.left &&
+            span.start < rect.right
 
     private fun boundingBox(spans: List<MaskGeometry.RowSpan>): FloatRect {
         var left = Int.MAX_VALUE

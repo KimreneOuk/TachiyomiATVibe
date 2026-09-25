@@ -1,6 +1,5 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.model.AiBatchProgress
 import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.BatchRebuildProgress
@@ -15,6 +14,7 @@ import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toPageDisplayProjection
+import eu.kanade.translation.storage.ChapterTranslationStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -361,7 +361,7 @@ class TranslationBatchProgressTracker(
              */
             cancelledPageKeys: Set<String> = emptySet(),
             /**
- * Phase 5 (spec §2.1): whether [TranslationProgressSnapshot.totalPages]
+             * Phase 5 (spec §2.1): whether [TranslationProgressSnapshot.totalPages]
              * is the trusted source total. Defaults to false — trust must be
              * earned from a registered batch work set or a trusted manifest.
              */

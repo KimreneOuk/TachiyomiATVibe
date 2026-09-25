@@ -1,22 +1,10 @@
 package eu.kanade.translation.pipeline
-import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
-import eu.kanade.translation.translator.retry.withRequestRetryBudget
-
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
-import eu.kanade.translation.pipeline.toArtifactOrigin
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
-import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
@@ -28,26 +16,36 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
+import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
+import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.toArtifactOrigin
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
-import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
-import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
-import eu.kanade.translation.translator.contextual.ContextualTextTranslator
-import eu.kanade.translation.translator.providers.LmStudioTranslator
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.retry.RequestRetryBudget
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationBlockValidation
 import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
+import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
+import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.providers.LmStudioTranslator
+import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
+import eu.kanade.translation.translator.retry.RequestRetryBudget
 import eu.kanade.translation.translator.retry.classifyProviderFailure
+import eu.kanade.translation.translator.retry.withRequestRetryBudget
 import eu.kanade.translation.util.ShortHash
-import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import logcat.LogPriority
@@ -56,6 +54,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.TranslationPreferences
 import java.io.InputStream
+import kotlin.coroutines.coroutineContext
 
 /**
  * Single-page HTTP+render phase moved from `TranslationPipeline` ( Phase 12).

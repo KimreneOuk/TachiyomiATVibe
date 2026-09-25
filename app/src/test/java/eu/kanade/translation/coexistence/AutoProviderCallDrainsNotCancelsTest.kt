@@ -1,27 +1,26 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.artifact.loadArtifact
-
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ArtifactSeed
+import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactEngine
+import eu.kanade.translation.artifact.ChapterArtifactLayout
+import eu.kanade.translation.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.artifact.loadArtifact
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.PreparedPage
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
+import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.tachiyomi.source.online.HttpSource
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.mockk.every

@@ -1,19 +1,17 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.pipeline.*
-
-import eu.kanade.translation.orchestration.*
-
-import eu.kanade.translation.storage.*
-
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.orchestration.ChapterTranslator
+import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.storage.TranslationQueueStore
 import eu.kanade.translation.util.getChapterPages
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
@@ -77,11 +75,13 @@ class ChapterTranslatorTerminalExitsTest {
     private val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var activeStoreResolver: ((Translation) -> ChapterTranslationStore?)? = null
-    private var trackerFactory: ((
-        Long,
-        ChapterTranslationStore,
-        List<String>,
-    ) -> TranslationBatchProgressTracker?)? = { id, store, keys ->
+    private var trackerFactory: (
+        (
+            Long,
+            ChapterTranslationStore,
+            List<String>,
+        ) -> TranslationBatchProgressTracker?
+    )? = { id, store, keys ->
         registry.createTracker(id, store, keys, trackerScope)
     }
 
