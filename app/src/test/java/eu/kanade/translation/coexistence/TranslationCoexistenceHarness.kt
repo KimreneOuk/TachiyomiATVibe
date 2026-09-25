@@ -1031,6 +1031,7 @@ internal class TranslationCoexistenceHarness private constructor(
 
     private var batchJobStub: Job? = null
     private val activeTeardownJobs = ConcurrentHashMap.newKeySet<Job>()
+
     @Volatile
     private var graphicsShimsInstalled = false
     private var pageDecodeShimInstalled = false
