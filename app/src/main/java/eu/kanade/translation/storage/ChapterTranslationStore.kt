@@ -343,6 +343,8 @@ class ChapterTranslationStore(
             val detail: Detail? = null,
         ) : PatchResult {
             sealed interface Detail {
+                data object BatchPageLeaseMissing : Detail
+
                 data class PageLeaseTokenMismatch(
                     val expectedToken: Long,
                     val actualToken: Long?,
@@ -857,6 +859,12 @@ class ChapterTranslationStore(
         stage: PageStage,
         origin: PageWriteOrigin,
     ): LeaseAcquisition = pageStageLeaseTable.tryAcquirePageStageLease(pageKey, stage, origin)
+
+    internal suspend fun tryAcquirePageStageLeaseIfUnowned(
+        pageKey: String,
+        stage: PageStage,
+        origin: PageWriteOrigin,
+    ): LeaseAcquisition = pageStageLeaseTable.tryAcquirePageStageLeaseIfUnowned(pageKey, stage, origin)
 
     suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) =
         pageStageLeaseTable.releasePageStageLease(pageKey, origin)

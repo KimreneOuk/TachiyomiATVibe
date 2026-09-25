@@ -12,21 +12,39 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.pipeline.LeaseAcquisition
+import eu.kanade.translation.pipeline.PageStageLease
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureKind
 import java.util.concurrent.ConcurrentHashMap
 
-//   ChapterTranslationStore's lease-fence rejection reason (emitted by
-// pageWriteRejection for every guarded write). The only string that proves the
-// cached token no longer matches the lease table; absent-lease rejects carry
-// different reasons ("page lease required") and are never healed.
+//   ChapterTranslationStore's legacy lease-fence rejection reason. Newer
+// stores also expose a typed expected/actual mismatch detail.
 private const val LEASE_TOKEN_CHANGED = "page lease token changed"
 
 private fun ChapterTranslationStore.PatchResult.Rejected.isLeaseTokenMismatch(): Boolean =
     reason == LEASE_TOKEN_CHANGED ||
         detail is ChapterTranslationStore.PatchResult.Rejected.Detail.PageLeaseTokenMismatch
+
+private fun ChapterTranslationStore.PatchResult.Rejected.isBatchPageLeaseMissing(): Boolean =
+    detail is ChapterTranslationStore.PatchResult.Rejected.Detail.BatchPageLeaseMissing
+
+private fun BatchWriteIdentity.matchesRun(lease: PageStageLease): Boolean =
+    generation == lease.generation && candidateGenerationId == lease.candidateGenerationId
+
+private fun ChapterTranslationStore.PageSnapshot.matchesRun(lease: PageStageLease): Boolean =
+    generation == lease.generation && candidateGenerationId == lease.candidateGenerationId
+
+private suspend fun ChapterTranslationStore.acquireBatchPageLease(
+    pageKey: String,
+    stage: PageStage,
+    onlyIfUnowned: Boolean = false,
+): LeaseAcquisition = if (onlyIfUnowned) {
+    tryAcquirePageStageLeaseIfUnowned(pageKey, stage, PageWriteOrigin.BATCH)
+} else {
+    tryAcquirePageStageLease(pageKey, stage, PageWriteOrigin.BATCH)
+}
 
 private fun leaseStageFor(stage: BatchStage?): PageStage = when (stage) {
     BatchStage.DETECTION, BatchStage.OCR, null -> PageStage.Ocr
@@ -109,19 +127,84 @@ internal class BatchWriteGate(
         update: (PageTranslation?) -> PageTranslation,
     ): ChapterTranslationStore.PatchResult {
         val initialIdentity = batchWriteIdentities[pageKey]
+        val missingIdentity = ChapterTranslationStore.PatchResult.Rejected(
+            "batch page lease missing",
+            ChapterTranslationStore.PatchResult.Rejected.Detail.BatchPageLeaseMissing,
+        )
+        var identity: BatchWriteIdentity
+        var leaseTokenMismatchHeal = "not attempted"
         if (initialIdentity == null) {
             val live = store.snapshot(pageKey)
+            val leaseOwner = store.pageLeaseOwner(pageKey)
             store.recordBatchWriteGateRejectionDiagnostic(
                 "pageKey=$pageKey, description=$description, stage=$stage, " +
-                    "result=batch page lease missing, live={generation=${live.generation}, " +
+                    "result=${missingIdentity.reason}, leaseOwner=$leaseOwner, live={generation=${live.generation}, " +
                     "pageVersion=${live.pageVersion}, leaseToken=${live.leaseToken}, " +
                     "candidateGenerationId=${live.candidateGenerationId}, " +
                     "dependencyFingerprint=${live.dependencyFingerprint}, " +
                     "artifactPageVersion=${live.artifactPageVersion}}",
             )
-            return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
+            if (!missingIdentity.isBatchPageLeaseMissing() ||
+                live.leaseToken != null ||
+                leaseOwner != null
+            ) {
+                return missingIdentity
+            }
+
+            // The batch identity can be absent after a prior lane releases its
+            // lease just before a sibling lane's last durable publication. A
+            // null lease plus no lease-table owner proves there is no active
+            // page writer to preempt. Re-acquire through the same BATCH owner
+            // proof as the token-mismatch heal, then adopt only if the grant
+            // still describes the same generation and candidate run. The
+            // lease grant carries the current page/artifact versions.
+            val granted = when (
+                val acquisition = store.acquireBatchPageLease(
+                    pageKey,
+                    leaseStageFor(stage),
+                    onlyIfUnowned = true,
+                )
+            ) {
+                is LeaseAcquisition.Granted -> acquisition.lease
+                is LeaseAcquisition.Denied -> {
+                    store.recordBatchWriteGateRejectionDiagnostic(
+                        "pageKey=$pageKey, description=$description, result=${missingIdentity.reason}, " +
+                            "ownerProofDenied={owner=${acquisition.owner}, reason=${acquisition.reason}}, " +
+                            "live={generation=${live.generation}, pageVersion=${live.pageVersion}, " +
+                            "candidateGenerationId=${live.candidateGenerationId}}",
+                    )
+                    return missingIdentity
+                }
+            }
+            if (!live.matchesRun(granted)) {
+                store.releasePageStageLeaseIfUnattached(
+                    pageKey,
+                    PageWriteOrigin.BATCH,
+                    granted.token,
+                )
+                return missingIdentity
+            }
+            val reacquiredIdentity = BatchWriteIdentity(
+                generation = granted.generation,
+                pageVersion = granted.pageVersion,
+                leaseToken = granted.token,
+                candidateGenerationId = granted.candidateGenerationId,
+                dependencyFingerprint = granted.dependencyFingerprint,
+                artifactPageVersion = granted.artifactPageVersion,
+            )
+            val racedIdentity = batchWriteIdentities.putIfAbsent(pageKey, reacquiredIdentity)
+            identity = racedIdentity ?: reacquiredIdentity
+            if (racedIdentity != null && !racedIdentity.matchesRun(granted)) {
+                store.releasePageStageLeaseIfUnattached(
+                    pageKey,
+                    PageWriteOrigin.BATCH,
+                    granted.token,
+                )
+                return missingIdentity
+            }
+        } else {
+            identity = initialIdentity
         }
-        var identity: BatchWriteIdentity = requireNotNull(initialIdentity)
         fun expected() = ChapterTranslationStore.PatchPrecondition(
             generation = identity.generation,
             pageVersion = identity.pageVersion,
@@ -165,37 +248,42 @@ internal class BatchWriteGate(
                 // today), and a grant whose run identity (generation +
                 // candidateGenerationId) differs is a resumed/re-planned run —
                 // never healed.
-                val granted = when (
-                    val reAcquired = store.tryAcquirePageStageLease(
-                        pageKey,
-                        leaseStageFor(stage),
-                        PageWriteOrigin.BATCH,
-                    )
-                ) {
-                    is LeaseAcquisition.Granted -> reAcquired.lease
-                    is LeaseAcquisition.Denied -> null
-                }
-                if (granted != null &&
-                    granted.generation == identity.generation &&
-                    granted.candidateGenerationId == identity.candidateGenerationId
-                ) {
-                    // The table structurally proved BATCH ownership (a grant
-                    // is impossible across origins) with THIS run's identity:
-                    // re-arm from the GRANTED lease — never a bare snapshot —
-                    // and retry once.
-                    identity = identity.copy(
-                        pageVersion = granted.pageVersion,
-                        leaseToken = granted.token,
-                        dependencyFingerprint = granted.dependencyFingerprint,
-                        artifactPageVersion = granted.artifactPageVersion,
-                    )
-                    batchWriteIdentities[pageKey] = identity
-                    result = store.updatePageGuarded(
-                        pageKey = pageKey,
-                        expected = expected(),
-                        description = description,
-                        update = { current -> stampBatchProvenance(update(current), stage) },
-                    )
+                when (val acquisition = store.acquireBatchPageLease(pageKey, leaseStageFor(stage))) {
+                    is LeaseAcquisition.Denied -> {
+                        leaseTokenMismatchHeal =
+                            "denied owner=${acquisition.owner} reason=${acquisition.reason}"
+                    }
+                    is LeaseAcquisition.Granted -> {
+                        val granted = acquisition.lease
+                        if (identity.matchesRun(granted)) {
+                            // The table structurally proved BATCH ownership (a grant
+                            // is impossible across origins) with THIS run's identity:
+                            // re-arm from the GRANTED lease — never a bare snapshot —
+                            // and retry once.
+                            identity = identity.copy(
+                                pageVersion = granted.pageVersion,
+                                leaseToken = granted.token,
+                                dependencyFingerprint = granted.dependencyFingerprint,
+                                artifactPageVersion = granted.artifactPageVersion,
+                            )
+                            batchWriteIdentities[pageKey] = identity
+                            result = store.updatePageGuarded(
+                                pageKey = pageKey,
+                                expected = expected(),
+                                description = description,
+                                update = { current -> stampBatchProvenance(update(current), stage) },
+                            )
+                            leaseTokenMismatchHeal =
+                                "granted token=${granted.token} runMatched retryResult=$result"
+                        } else {
+                            leaseTokenMismatchHeal =
+                                "granted token=${granted.token} runMismatch=" +
+                                "expectedGeneration=${identity.generation}, " +
+                                "expectedCandidate=${identity.candidateGenerationId}, " +
+                                "actualGeneration=${granted.generation}, " +
+                                "actualCandidate=${granted.candidateGenerationId}"
+                        }
+                    }
                 }
             }
         }
@@ -215,7 +303,8 @@ internal class BatchWriteGate(
                     "live={generation=${live.generation}, pageVersion=${live.pageVersion}, " +
                     "leaseToken=${live.leaseToken}, candidateGenerationId=${live.candidateGenerationId}, " +
                     "dependencyFingerprint=${live.dependencyFingerprint}, " +
-                    "artifactPageVersion=${live.artifactPageVersion}}",
+                    "artifactPageVersion=${live.artifactPageVersion}}, " +
+                    "leaseTokenMismatchHeal=$leaseTokenMismatchHeal",
             )
         }
         return result

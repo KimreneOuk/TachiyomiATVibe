@@ -14,6 +14,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.storage.ChapterTranslationStore
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.matchers.types.shouldNotBeInstanceOf
@@ -139,15 +140,20 @@ class BatchWriteGateHealTest {
     }
 
     @Test
-    fun `a lease-missing page keeps the fast rejection`() = runTest {
+    fun `a missing identity heals when the page has no active owner`() = runTest {
         val store = lazyStore()
         val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
         val gate = newGate(store, identities)
         store.preRegisterPages(listOf("001.jpg"))
 
-        val rejected = gate.guardedBatchUpdate("001.jpg", "batch translation running", BatchStage.TRANSLATION) { page ->
+        val healed = gate.guardedBatchUpdate("001.jpg", "batch translation running", BatchStage.TRANSLATION) { page ->
             page ?: PageTranslation(sourceFileName = "001.jpg")
         }
-        rejected.shouldNotBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        healed.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        identities["001.jpg"].shouldNotBeNull()
+        store.pageLeaseOwner("001.jpg") shouldBe PageWriteOrigin.BATCH
+
+        store.releasePageStageLease("001.jpg", PageWriteOrigin.BATCH)
+        store.closeAndFlush()
     }
 }

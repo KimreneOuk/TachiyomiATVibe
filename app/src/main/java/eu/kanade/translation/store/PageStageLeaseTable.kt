@@ -134,6 +134,44 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
         )
     }
 
+    /** Acquires only when the page has no current owner; same-origin attach is not allowed. */
+    suspend fun tryAcquirePageStageLeaseIfUnowned(
+        pageKey: String,
+        stage: PageStage,
+        origin: PageWriteOrigin,
+    ): LeaseAcquisition = mutex.withLock {
+        if (defunct) return@withLock LeaseAcquisition.Denied("store is defunct", null)
+        val existing = pageLeases[pageKey]
+        if (existing != null) {
+            return@withLock LeaseAcquisition.Denied(
+                "page owned by ${existing.origin} at stage ${existing.stage}",
+                existing.origin,
+            )
+        }
+        val current = pages[pageKey]
+        val currentSnapshot = snapshotLocked(pageKey)
+        val token = ++nextLeaseToken
+        pageLeases[pageKey] = PageLeaseRecord(
+            token = token,
+            origin = origin,
+            stage = stage,
+            generation = generation,
+        )
+        LeaseAcquisition.Granted(
+            PageStageLease(
+                pageKey = pageKey,
+                stage = stage,
+                origin = origin,
+                generation = generation,
+                pageVersion = current?.pageVersion ?: 0L,
+                token = token,
+                candidateGenerationId = currentSnapshot.candidateGenerationId,
+                dependencyFingerprint = currentSnapshot.dependencyFingerprint,
+                artifactPageVersion = currentSnapshot.artifactPageVersion,
+            ),
+        )
+    }
+
     suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) {
         withContext(NonCancellable) {
             mutex.withLock {

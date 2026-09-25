@@ -250,6 +250,80 @@ class BatchLeaseFlipHealTest {
     }
 
     @Test
+    fun `a typed batch lease mismatch with no active owner re-acquires and writes`() = runTest {
+        val store = lazyStore()
+        val pageKey = "001.jpg"
+        store.preRegisterPages(listOf(pageKey))
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val gate = newGate(store, identities)
+        val staleToken = registerBatchIdentity(store, identities, pageKey, PageStage.Translation)
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+
+        store.snapshot(pageKey).leaseToken shouldBe null
+        store.pageLeaseOwner(pageKey) shouldBe null
+        gate.guardedBatchUpdate(pageKey, "batch translation running", BatchStage.TRANSLATION) { page ->
+            page!!.apply { translationStatus = StageStatus.RUNNING }
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+
+        identities[pageKey]!!.leaseToken shouldNotBe staleToken
+        store.snapshot(pageKey).leaseToken shouldBe identities[pageKey]!!.leaseToken
+        store.pageLeaseOwner(pageKey) shouldBe PageWriteOrigin.BATCH
+
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+        store.closeAndFlush()
+    }
+
+    @Test
+    fun `a missing batch identity does not attach to another active batch writer`() = runTest {
+        val store = lazyStore()
+        val pageKey = "001.jpg"
+        store.preRegisterPages(listOf(pageKey))
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val gate = newGate(store, identities)
+        val activeLease = store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val versionBefore = store.snapshot(pageKey).pageVersion
+
+        val rejected = gate.guardedBatchUpdate(pageKey, "batch translation running", BatchStage.TRANSLATION) { page ->
+            page!!.apply { translationStatus = StageStatus.RUNNING }
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+
+        rejected.reason shouldBe "batch page lease missing"
+        rejected.detail shouldBe ChapterTranslationStore.PatchResult.Rejected.Detail.BatchPageLeaseMissing
+        store.snapshot(pageKey).pageVersion shouldBe versionBefore
+        store.snapshot(pageKey).leaseToken shouldBe activeLease.token
+        store.pageLeaseOwner(pageKey) shouldBe PageWriteOrigin.BATCH
+
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+        store.closeAndFlush()
+    }
+
+    @Test
+    fun `a missing batch identity does not preempt a manual writer`() = runTest {
+        val store = lazyStore()
+        val pageKey = "001.jpg"
+        store.preRegisterPages(listOf(pageKey))
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val gate = newGate(store, identities)
+        val activeLease = store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.MANUAL)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val versionBefore = store.snapshot(pageKey).pageVersion
+
+        val rejected = gate.guardedBatchUpdate(pageKey, "batch translation running", BatchStage.TRANSLATION) { page ->
+            page!!.apply { translationStatus = StageStatus.RUNNING }
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+
+        rejected.reason shouldBe "batch page lease missing"
+        rejected.detail shouldBe ChapterTranslationStore.PatchResult.Rejected.Detail.BatchPageLeaseMissing
+        store.snapshot(pageKey).pageVersion shouldBe versionBefore
+        store.snapshot(pageKey).leaseToken shouldBe activeLease.token
+        store.pageLeaseOwner(pageKey) shouldBe PageWriteOrigin.MANUAL
+
+        store.releasePageStageLease(pageKey, PageWriteOrigin.MANUAL)
+        store.closeAndFlush()
+    }
+
+    @Test
     fun `a manual owner denies the owner-proof heal - rejection kept with no write`() = runTest {
         val store = lazyStore()
         val pageKey = "001.jpg"
