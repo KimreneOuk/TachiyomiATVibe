@@ -8,7 +8,6 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestFailureKind
@@ -707,22 +706,9 @@ class TranslationManager(
         it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING
     }
 
-    fun isPageActive(chapterId: Long, pageKey: String): Boolean {
-        val store = activeStores.get(chapterId) ?: return false
-        val page = store.state.value[pageKey] ?: return false
-        return page.ocrStatus == StageStatus.RUNNING ||
-            page.translationStatus == StageStatus.RUNNING ||
-            page.inpaintStatus == StageStatus.RUNNING ||
-            page.renderStatus == StageStatus.RUNNING
-    }
-
     /** Canonical batch projection used by every UI surface and the notification. */
     fun getTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
         observeBatchProgress(chapterId)
-
-    fun isTranslationActive(chapterId: Long): Boolean {
-        return isBatchTranslationActive(chapterId)
-    }
 
     fun translatorStop(reason: String? = null, closeEngines: Boolean = false) = translator.stop(reason, closeEngines)
 

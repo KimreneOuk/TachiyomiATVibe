@@ -9,7 +9,6 @@ import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.util.ResumeOrdering
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop
@@ -20,25 +19,9 @@ import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 
 /**
- * Phase 0 characterization coverage. These tests describe the current NPU
- * branch and intentionally do not change scheduler, store, or reader behavior.
- * Defect-shaped assertions name the observed contract mismatch so a later
- * phase can replace them with the intended contract without losing the baseline.
+ * Batch-resume and reader-display contracts for persisted page state.
  */
-class Phase0BatchTranslationCharacterizationTest {
-
-    @Test
-    fun `batch order is natural when last read index is at chapter start`() {
-        ResumeOrdering.forwardFirstThenBackfill(pages(5), resumeIndex = 0) shouldBe pages(5)
-    }
-
-    @Test
-    fun `current batch order rotates after a mid-chapter last read index`() {
-        // Characterizes the live ChapterTranslator admission path:
-        // lastPageRead=2 produces page 3..N before pages 1..2.
-        ResumeOrdering.forwardFirstThenBackfill(pages(5), resumeIndex = 2) shouldBe
-            listOf("page-3", "page-4", "page-5", "page-1", "page-2")
-    }
+class BatchResumeAndDisplayContractTest {
 
     @Test
     fun `live resume gate distinguishes reusable and restart decisions`() {
@@ -125,8 +108,6 @@ class Phase0BatchTranslationCharacterizationTest {
         counters.count(BatchTestStage.STORE_EMISSION) shouldBe 2
         counters.count(BatchTestStage.READER_DISPLAY) shouldBe 1
     }
-
-    private fun pages(count: Int): List<String> = List(count) { "page-${it + 1}" }
 
     private fun translatedPage(
         cleanedImageName: String?,

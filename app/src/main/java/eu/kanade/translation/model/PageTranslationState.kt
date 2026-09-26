@@ -174,12 +174,6 @@ val PageTranslation.hasRecognizedTranslation: Boolean
 val PageTranslation.hasExhaustedRetries: Boolean
     get() = isStageFailed && attemptCount >= StageStatus.MAX_STAGE_RETRIES
 
-val PageTranslation.shouldSkipAutoScheduling: Boolean
-    get() = hasRenderedResult ||
-        isStageRunning ||
-        hasExhaustedRetries ||
-        isTextlessTerminal
-
 val PageTranslation.lifecycle: PageLifecycle
     get() = when {
         hasRenderedResult -> PageLifecycle.Done

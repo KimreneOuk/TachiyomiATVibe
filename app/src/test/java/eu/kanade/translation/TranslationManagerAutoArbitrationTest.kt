@@ -73,7 +73,6 @@ class TranslationManagerAutoArbitrationTest {
             manager.isTranslating() shouldBe false
             manager.isAnyBatchTranslationActive shouldBe false
             manager.isBatchTranslationActive(10L) shouldBe false
-            manager.isTranslationActive(10L) shouldBe false
             Unit
         } finally {
             scheduler.close()

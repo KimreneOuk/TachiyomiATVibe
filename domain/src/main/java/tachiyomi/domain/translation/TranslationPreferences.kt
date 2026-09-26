@@ -270,10 +270,6 @@ class TranslationPreferences(
         TranslationReadingOrder.RTL_MANGA,
     )
 
-    fun translationEnableReasoning() = preferenceStore.getBoolean("translation_enable_reasoning", true)
-
-    fun translationRateLimitSafe() = preferenceStore.getBoolean("translation_rate_limit_safe", false)
-
     /**
      * Persisted LAYOUT_PREPARE — durable draw-plan publication and
      * reader hydration with mandatory fallback to the runtime async planner.
