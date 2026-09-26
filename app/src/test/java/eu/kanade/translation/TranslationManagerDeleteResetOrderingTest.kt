@@ -6,7 +6,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationProvider
-import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.workflow.ChapterTranslator

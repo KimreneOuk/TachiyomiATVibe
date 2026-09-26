@@ -16,7 +16,7 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.batch.BatchProgressReconciler
+import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import kotlinx.coroutines.flow.StateFlow
 
 /**

@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.progress
 
 import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.BatchPhase
@@ -9,6 +9,8 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
+import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

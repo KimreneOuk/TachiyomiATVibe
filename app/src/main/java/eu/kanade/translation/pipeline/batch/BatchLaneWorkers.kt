@@ -1,5 +1,4 @@
 package eu.kanade.translation.pipeline.batch
-
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -37,6 +36,7 @@ import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.scheduling.CrossOriginBitmapBudget
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException

@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.progress
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
@@ -7,6 +7,8 @@ import eu.kanade.translation.model.isStageCancelled
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
+import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat

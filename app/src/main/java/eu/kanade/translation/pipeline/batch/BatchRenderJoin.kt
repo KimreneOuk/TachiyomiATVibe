@@ -1,5 +1,4 @@
 package eu.kanade.translation.pipeline.batch
-
 import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
@@ -36,6 +35,7 @@ import eu.kanade.translation.pipeline.LayoutFailureException
 import eu.kanade.translation.pipeline.RenderBlockPatch
 import eu.kanade.translation.pipeline.RenderStagePatch
 import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex

@@ -50,6 +50,7 @@ import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.ints.shouldBeLessThan

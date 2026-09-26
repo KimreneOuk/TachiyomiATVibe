@@ -1,10 +1,12 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.progress
 
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
+import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

@@ -14,7 +14,7 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
-import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import io.kotest.assertions.withClue
@@ -383,7 +383,7 @@ class P5HonestOutcomeTypingTest {
     fun `batch persistence rejection carries the non-durable warning on the progress snapshot`() = runBlocking<Unit> {
         // Durable truth oracle: the reconciler already keeps the rejected page
         // pending and flags nonDurableFailure (fail-closed store contract).
-        val reconciled = eu.kanade.translation.pipeline.batch.BatchProgressReconciler.reconcile(
+        val reconciled = eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler.reconcile(
             pageMap = mapOf("p0" to PageTranslation(sourceFileName = "p0")),
             orderedKeys = listOf("p0", "p1"),
             activeGeneration = 1L,

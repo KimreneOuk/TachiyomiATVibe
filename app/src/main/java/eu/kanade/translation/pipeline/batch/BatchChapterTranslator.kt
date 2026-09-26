@@ -1,5 +1,4 @@
 package eu.kanade.translation.pipeline.batch
-
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -43,6 +42,8 @@ import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
+import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -207,7 +208,7 @@ internal class BatchChapterTranslator(
         orderedStreams: List<Pair<String, () -> InputStream>>,
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
-    ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
+    ): eu.kanade.translation.pipeline.batch.progress.ReconciliationResult? {
         //  Phase 4 (plan §4.4 batch): ONE schedule trace per batch
         // invocation, created before engine setup and closed in the OUTER
         // finally on EVERY exit (empty batch, setup timeout, OOM, pause,
@@ -277,7 +278,7 @@ internal class BatchChapterTranslator(
         naturalPageIndexes: Map<String, Int>,
         scheduleTrace: TranslationScheduleTrace,
         setScheduleOutcome: (TranslationTraceOutcome) -> Unit,
-    ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
+    ): eu.kanade.translation.pipeline.batch.progress.ReconciliationResult? {
         val resolvedNaturalPageIndexes = if (naturalPageIndexes.isNotEmpty()) {
             naturalPageIndexes
         } else {

@@ -39,7 +39,7 @@ import eu.kanade.translation.pipeline.SinglePageOnnxPhase
 import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.batch.NativeLaneRunner
-import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.scheduling.PreparedPage
@@ -1083,7 +1083,7 @@ class TranslationPipeline(
         orderedStreams: List<Pair<String, () -> InputStream>>,
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
-    ): eu.kanade.translation.pipeline.batch.ReconciliationResult? =
+    ): eu.kanade.translation.pipeline.batch.progress.ReconciliationResult? =
         batchChapterTranslator.translateBatch(manga, chapter, source, store, orderedStreams, tracker, naturalPageIndexes)
 
     private suspend fun markBatchTranslationFailed(

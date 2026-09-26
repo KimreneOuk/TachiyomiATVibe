@@ -20,8 +20,8 @@ import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
-import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow

@@ -43,8 +43,8 @@ import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.NativeLaneRunner
-import eu.kanade.translation.pipeline.batch.ReconciliationResult
-import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.NativeRunQuarantine

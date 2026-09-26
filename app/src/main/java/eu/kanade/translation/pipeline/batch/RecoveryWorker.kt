@@ -1,5 +1,4 @@
 package eu.kanade.translation.pipeline.batch
-
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation

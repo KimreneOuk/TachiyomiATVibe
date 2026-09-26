@@ -16,7 +16,7 @@ import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.batch.ReconciliationResult
+import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -711,7 +711,7 @@ class ChapterTranslator(
     // async queue worker.
     internal suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
         var store: ChapterTranslationStore? = null
-        var tracker: eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker? = null
+        var tracker: eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker? = null
         var batchReconciliation: ReconciliationResult? = null
         var batchOrderedPageKeys: List<String> = emptyList()
         try {
@@ -890,7 +890,7 @@ class ChapterTranslator(
                     // the queue entry ERROR (same  class as the pass-1
                     // post-pass projection).
                     val reconciliation =
-                        eu.kanade.translation.pipeline.batch.BatchProgressReconciler
+                        eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
                             .reconcileFlaggedCompleted(
                                 pageMap = pageStates,
                                 orderedKeys = batchOrderedPageKeys,
