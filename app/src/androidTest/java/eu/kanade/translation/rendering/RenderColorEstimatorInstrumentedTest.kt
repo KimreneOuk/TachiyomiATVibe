@@ -1,4 +1,4 @@
-package eu.kanade.translation.rendering
+package eu.kanade.translation.engines.rendering
 
 import android.graphics.Bitmap
 import android.graphics.Canvas

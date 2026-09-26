@@ -4,14 +4,14 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.persistence.chapter.TranslationProvider
-import eu.kanade.translation.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.CleanedImagePublisher
+import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

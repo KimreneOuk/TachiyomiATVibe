@@ -2,17 +2,19 @@ package eu.kanade.translation
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.orchestration.mergeRestoredQueueEntries
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.PageWriteOrigin
@@ -24,8 +26,6 @@ import eu.kanade.translation.pipeline.batch.OcrReadyPageRef
 import eu.kanade.translation.pipeline.batch.PageKey
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull

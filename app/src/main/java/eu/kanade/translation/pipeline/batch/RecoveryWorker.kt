@@ -1,13 +1,5 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
-import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
-import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -16,9 +8,17 @@ import eu.kanade.translation.model.hasCommittedDisplay
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat

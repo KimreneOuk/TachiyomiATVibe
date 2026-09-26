@@ -2,10 +2,8 @@ package eu.kanade.translation.pipeline
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
-import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.diagnostics.BatchDiagnosticDecision
 import eu.kanade.translation.diagnostics.BatchDiagnosticReason
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
@@ -15,36 +13,38 @@ import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.engines.rendering.RenderColorEstimator
+import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.engines.translator.ProviderFailureException
+import eu.kanade.translation.engines.translator.ProviderFailureKind
+import eu.kanade.translation.engines.translator.ProviderFailureRetryability
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.translator.TranslationBlockValidation
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.engines.translator.contextual.ChapterGlossaryBuilder
+import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
+import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
+import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPlanner
+import eu.kanade.translation.engines.translator.retry.RequestRetryBudget
+import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
+import eu.kanade.translation.engines.translator.retry.withRequestRetryBudget
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.persistence.artifact.AttemptOrigin
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.toArtifactOrigin
-import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.ProviderFailureException
-import eu.kanade.translation.translator.ProviderFailureKind
-import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslationBlockValidation
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
-import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
-import eu.kanade.translation.translator.contextual.ContextualTextTranslator
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.providers.LmStudioTranslator
-import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
-import eu.kanade.translation.translator.retry.RequestRetryBudget
-import eu.kanade.translation.translator.retry.classifyProviderFailure
-import eu.kanade.translation.translator.retry.withRequestRetryBudget
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -335,7 +335,7 @@ internal class SinglePageHttpRenderPhase(
                     rollingContext = "",
                     estimatedPromptTokens = estPrompt,
                     maxOutputTokens = requestedOutputTokens,
-                    protocol = eu.kanade.translation.translator.contextual.ContextualRequestProtocol.LEGACY,
+                    protocol = eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol.LEGACY,
                 )
                 // Recent translated pairs give on-demand single-page translation the
                 // same voice/speaker continuity the batch path gets.

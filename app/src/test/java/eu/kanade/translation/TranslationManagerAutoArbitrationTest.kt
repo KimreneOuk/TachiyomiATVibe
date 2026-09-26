@@ -10,12 +10,12 @@ import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.orchestration.TranslationSessionState
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -142,7 +142,7 @@ class TranslationManagerAutoArbitrationTest {
                 pageCount = 1,
                 session = session,
                 pageResolver = { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                computeClass = eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
+                computeClass = eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
 
@@ -166,7 +166,7 @@ class TranslationManagerAutoArbitrationTest {
                 1,
                 session,
                 { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
+                eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             val reArmedWhileQueued = autoWindowReArmed()
             withClue(
@@ -194,7 +194,7 @@ class TranslationManagerAutoArbitrationTest {
                 1,
                 session,
                 { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
+                eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
         } finally {

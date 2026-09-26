@@ -166,7 +166,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 object : BroadcastReceiver() {
                     override fun onReceive(context: Context, intent: Intent) {
                         scope.launch(Dispatchers.IO) {
-                            eu.kanade.translation.runtime.onnx.QnnDiagnostics.runOnce()
+                            eu.kanade.translation.engines.runtime.onnx.QnnDiagnostics.runOnce()
                         }
                     }
                 },

@@ -1,12 +1,6 @@
 package eu.kanade.translation.orchestration
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
-import eu.kanade.translation.persistence.artifact.FailureCategory
-import eu.kanade.translation.persistence.artifact.toUiPauseReason
 import eu.kanade.translation.model.BatchRebuildProgress
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -16,12 +10,18 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.persistence.artifact.toUiPauseReason
+import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow

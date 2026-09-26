@@ -5,11 +5,11 @@ import android.graphics.Canvas
 import android.graphics.Color
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import eu.kanade.translation.engines.rendering.BlockLayout
+import eu.kanade.translation.engines.rendering.FloatRect
+import eu.kanade.translation.engines.rendering.TextAlign
+import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.rendering.BlockLayout
-import eu.kanade.translation.rendering.FloatRect
-import eu.kanade.translation.rendering.TextAlign
-import eu.kanade.translation.segmentation.MaskGeometry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

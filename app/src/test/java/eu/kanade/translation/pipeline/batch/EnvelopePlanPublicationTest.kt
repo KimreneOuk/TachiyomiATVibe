@@ -1,5 +1,9 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlanResult
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerBlock
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPage
+import eu.kanade.translation.engines.translator.contextual.GlobalEnvelopePlanner
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
@@ -8,10 +12,6 @@ import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.LegacyMigrationHealth
 import eu.kanade.translation.persistence.artifact.LegacyMigrationMetadata
-import eu.kanade.translation.translator.contextual.EnvelopePlanResult
-import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
-import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain

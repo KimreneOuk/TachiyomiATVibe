@@ -1,16 +1,16 @@
 package eu.kanade.translation.pipeline
 
 import android.content.Context
-import eu.kanade.translation.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.translator.TranslationEngineBuilder
+import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
+import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
+import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.ocr.OcrModelCatalog
-import eu.kanade.translation.ocr.PageRecognitionEngine
-import eu.kanade.translation.ocr.RoiPageRecognitionEngine
-import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.NativeRunQuarantine
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope

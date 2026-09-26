@@ -1,14 +1,14 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.BatchRequestSublimitGate
-import eu.kanade.translation.translator.ProviderRequestMetadata
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

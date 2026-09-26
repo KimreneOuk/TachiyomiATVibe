@@ -2,11 +2,11 @@ package eu.kanade.translation.orchestration
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import tachiyomi.domain.source.service.SourceManager

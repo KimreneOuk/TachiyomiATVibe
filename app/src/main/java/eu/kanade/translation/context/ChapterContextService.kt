@@ -1,12 +1,12 @@
 package eu.kanade.translation.context
 
+import eu.kanade.translation.engines.translator.contextual.ChapterGlossaryBuilder
+import eu.kanade.translation.engines.translator.contextual.ProfileSubsetMatcher
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.engines.translator.contextual.TranslationPrompts
 import eu.kanade.translation.persistence.artifact.ChapterContextSnapshot
 import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
-import eu.kanade.translation.translator.contextual.ProfileSubsetMatcher
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.contextual.TranslationPrompts
 
 enum class LaneCapability {
     MANUAL,

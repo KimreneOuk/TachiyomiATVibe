@@ -1,8 +1,8 @@
 package eu.kanade.translation.persistence.internal
 
+import eu.kanade.translation.engines.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.MutationAdmission
-import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat

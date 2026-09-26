@@ -5,9 +5,9 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
-import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.scheduling.TranslationScheduler
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk

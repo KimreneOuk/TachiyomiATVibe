@@ -2,14 +2,14 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceSink
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.orchestration.TranslationSession
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.util.TranslationMemoryBudget
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf

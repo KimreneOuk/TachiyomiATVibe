@@ -1,10 +1,10 @@
 package eu.kanade.translation.persistence.artifact
 
-import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.persistence.artifact.loadArtifact
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull

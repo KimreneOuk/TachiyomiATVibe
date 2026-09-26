@@ -1,9 +1,9 @@
 package eu.kanade.translation.pipeline
 
-import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import java.security.MessageDigest
 

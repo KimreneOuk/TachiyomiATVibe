@@ -1,6 +1,6 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.ocr.BoxGeometry
+import eu.kanade.translation.engines.vision.ocr.BoxGeometry
 import kotlin.math.abs
 
 class PageTranslationHelper {

@@ -5,9 +5,6 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
-import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
-import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -18,15 +15,18 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
+import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
+import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
+import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -104,7 +104,7 @@ class TranslationManager(
         pendingTranslationRequestsState.asStateFlow()
 
     /**  reader-visible native lane stall projection. */
-    val nativeStall: StateFlow<eu.kanade.translation.translator.NativeStallState?>
+    val nativeStall: StateFlow<eu.kanade.translation.engines.translator.NativeStallState?>
         get() = pipeline.nativeStall
 
     /** Serializes request versioning, state publication, and durable writes. */
@@ -1560,7 +1560,7 @@ class TranslationManager(
         pageCount: Int,
         session: TranslationSession,
         pageResolver: (Int) -> eu.kanade.translation.scheduling.RollingAutoCoordinator.PageWorkItem?,
-        computeClass: eu.kanade.translation.translator.TranslatorComputeClass,
+        computeClass: eu.kanade.translation.engines.translator.TranslatorComputeClass,
     ) {
         when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(identity.chapterId))) {
             is SessionAdmission.Admitted,

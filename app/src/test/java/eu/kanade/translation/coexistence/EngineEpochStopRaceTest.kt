@@ -1,6 +1,7 @@
 package eu.kanade.translation.coexistence
 
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -9,11 +10,10 @@ import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.loadArtifact
-import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CancellationException

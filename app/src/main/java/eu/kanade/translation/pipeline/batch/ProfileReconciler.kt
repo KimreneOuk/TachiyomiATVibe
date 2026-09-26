@@ -1,5 +1,10 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.context.SeriesProfileRegistry
+import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.engines.translator.analysis.GlossaryEntryKind
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesisOutcome
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
 import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -16,12 +21,7 @@ import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.persistence.artifact.StageFingerprints
-import eu.kanade.translation.context.SeriesProfileRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.analysis.GlossaryEntryKind
-import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 

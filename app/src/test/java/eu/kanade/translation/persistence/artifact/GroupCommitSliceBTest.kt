@@ -3,9 +3,9 @@ package eu.kanade.translation.persistence.artifact
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.WriterOrigin
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.WriterOrigin
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf

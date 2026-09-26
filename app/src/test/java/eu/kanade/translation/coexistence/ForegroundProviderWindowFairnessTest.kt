@@ -1,17 +1,17 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.engines.translator.AdmissionPriority
+import eu.kanade.translation.engines.translator.ProviderQuotaPolicy
+import eu.kanade.translation.engines.translator.ProviderRequestGovernor
+import eu.kanade.translation.engines.translator.ProviderRequestKey
+import eu.kanade.translation.engines.translator.ProviderRequestMetadata
+import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.translator.currentProviderRequestPriority
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.AdmissionPriority
-import eu.kanade.translation.translator.ProviderQuotaPolicy
-import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderRequestKey
-import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.currentProviderRequestPriority
+import eu.kanade.translation.scheduling.TranslationScheduler
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CompletableDeferred

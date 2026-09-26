@@ -1,8 +1,8 @@
 package eu.kanade.translation.persistence.artifact
 
-import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.persistence.artifact.loadArtifact
 import io.kotest.matchers.shouldBe
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json

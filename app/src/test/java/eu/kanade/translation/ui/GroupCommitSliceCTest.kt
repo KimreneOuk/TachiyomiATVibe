@@ -3,6 +3,8 @@ package eu.kanade.translation.ui
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageFeedbackState
 import eu.kanade.tachiyomi.ui.reader.viewer.readerManualOutcomeFeedback
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
@@ -12,8 +14,7 @@ import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.ProbedImage
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.toPrecondition
@@ -22,7 +23,6 @@ import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStageListener
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

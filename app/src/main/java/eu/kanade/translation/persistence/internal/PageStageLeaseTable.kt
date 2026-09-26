@@ -1,10 +1,10 @@
 package eu.kanade.translation.persistence.internal
 
 import eu.kanade.translation.model.PageStage
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageStageLease
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext

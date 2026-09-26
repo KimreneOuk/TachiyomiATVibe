@@ -1,6 +1,8 @@
 package eu.kanade.translation.persistence.internal
 
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -17,10 +19,8 @@ import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.StageArtifactRecord
 import eu.kanade.translation.persistence.artifact.loadArtifact
-import eu.kanade.translation.model.PageDisplayState
-import eu.kanade.translation.model.Translation
-import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf

@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 
 import android.content.Context
 import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationSlotState
+import eu.kanade.translation.engines.translator.NativeStallState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasExhaustedRetries
@@ -12,7 +13,6 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.SinglePageOutcome
-import eu.kanade.translation.translator.NativeStallState
 import eu.kanade.translation.ui.PageUiTruth
 import eu.kanade.translation.ui.TranslationUiTruth
 import eu.kanade.translation.ui.UiSeverity

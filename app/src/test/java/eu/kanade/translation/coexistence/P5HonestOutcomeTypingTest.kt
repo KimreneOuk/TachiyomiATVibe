@@ -1,22 +1,22 @@
 package eu.kanade.translation.coexistence
 
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.engines.translator.ProviderFailureException
+import eu.kanade.translation.engines.translator.ProviderFailureKind
+import eu.kanade.translation.engines.translator.ProviderFailureRetryability
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.SinglePageOutcome
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.ProviderFailureException
-import eu.kanade.translation.translator.ProviderFailureKind
-import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.TextTranslatorLanguage
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
@@ -332,7 +332,7 @@ class P5HonestOutcomeTypingTest {
         // Swap the engine lane's translator for a terminal-failing fake: the
         // HTTP phase catches the typed ProviderFailureException and returns
         // ChunkCompletionOutcome.Failed as a VALUE (never throws).
-        val failingTransport = object : eu.kanade.translation.translator.TextTranslator {
+        val failingTransport = object : eu.kanade.translation.engines.translator.TextTranslator {
             override val fromLang = TextRecognizerLanguage.JAPANESE
             override val toLang = TextTranslatorLanguage.ENGLISH
 

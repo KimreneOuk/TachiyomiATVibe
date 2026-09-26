@@ -1,14 +1,14 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.engines.translator.AdmissionPriority
+import eu.kanade.translation.engines.translator.ProviderAdmissionDecision
+import eu.kanade.translation.engines.translator.ProviderQuotaPolicy
+import eu.kanade.translation.engines.translator.ProviderRequestGovernor
+import eu.kanade.translation.engines.translator.ProviderRequestKey
+import eu.kanade.translation.engines.translator.ProviderRequestMetadata
+import eu.kanade.translation.engines.translator.SystemProviderRequestClock
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.translator.AdmissionPriority
-import eu.kanade.translation.translator.ProviderAdmissionDecision
-import eu.kanade.translation.translator.ProviderQuotaPolicy
-import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderRequestKey
-import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.SystemProviderRequestClock
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

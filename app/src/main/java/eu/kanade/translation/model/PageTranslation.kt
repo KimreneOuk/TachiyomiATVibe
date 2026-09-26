@@ -361,6 +361,6 @@ data class TranslationBlock(
      * Encoded as RLE for compact persistence. Used by the inpainter
      * (Interior Median Solid Fill) and the layout planner (Symmetrical Growth).
      */
-    val segmentationMask: eu.kanade.translation.segmentation.BubbleMaskRle? = null,
+    val segmentationMask: eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle? = null,
     var userEditedAt: Long? = null,
 )

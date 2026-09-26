@@ -1,5 +1,7 @@
 package eu.kanade.translation.context
 
+import eu.kanade.translation.engines.translator.contextual.ProfileSubsetMatcher
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -18,10 +20,8 @@ import eu.kanade.translation.persistence.artifact.ProfileFact
 import eu.kanade.translation.persistence.artifact.ProfileScene
 import eu.kanade.translation.persistence.artifact.SceneRegister
 import eu.kanade.translation.persistence.artifact.StageFingerprints
-import eu.kanade.translation.pipeline.batch.ProfileFreezePublication
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.contextual.ProfileSubsetMatcher
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.pipeline.batch.ProfileFreezePublication
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

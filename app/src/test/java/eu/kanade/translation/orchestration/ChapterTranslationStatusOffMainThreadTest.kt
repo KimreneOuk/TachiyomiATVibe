@@ -1,11 +1,11 @@
 package eu.kanade.translation.orchestration
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

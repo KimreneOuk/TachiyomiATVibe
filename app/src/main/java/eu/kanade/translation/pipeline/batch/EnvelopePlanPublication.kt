@@ -166,7 +166,7 @@ internal object EnvelopePlanPublication {
      * re-encoded JSON of the DTO with the operational fields excluded
      * (`createdAtEpochMs` zeroed; `planFingerprint` blanked — a value cannot
      * contain its own hash). Byte-identical to the pure planner's hash
-     * ([eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner]).
+     * ([eu.kanade.translation.engines.translator.contextual.GlobalEnvelopePlanner]).
      */
     private fun recomputedContentFingerprint(plan: EnvelopePlan): String {
         val hashingView = plan.copy(planFingerprint = "", createdAtEpochMs = 0L)

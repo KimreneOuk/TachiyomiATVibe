@@ -1,5 +1,13 @@
 package eu.kanade.translation.milestone
 
+import eu.kanade.translation.context.SeriesProfileRegistry
+import eu.kanade.translation.engines.translator.AdmissionPriority
+import eu.kanade.translation.engines.translator.ProviderQuotaPolicy
+import eu.kanade.translation.engines.translator.ProviderRequestGovernor
+import eu.kanade.translation.engines.translator.ProviderRequestKey
+import eu.kanade.translation.engines.translator.ProviderRequestMetadata
+import eu.kanade.translation.engines.translator.providers.OpenAiCompatibleTranslator
+import eu.kanade.translation.engines.translator.routing.MultiBackendRouter
 import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
 import eu.kanade.translation.persistence.artifact.EvidenceRef
@@ -13,15 +21,7 @@ import eu.kanade.translation.persistence.artifact.ProfileFact
 import eu.kanade.translation.persistence.artifact.ProfileScene
 import eu.kanade.translation.persistence.artifact.SceneRegister
 import eu.kanade.translation.persistence.artifact.StageFingerprints
-import eu.kanade.translation.context.SeriesProfileRegistry
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
-import eu.kanade.translation.translator.AdmissionPriority
-import eu.kanade.translation.translator.ProviderQuotaPolicy
-import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderRequestKey
-import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.providers.OpenAiCompatibleTranslator
-import eu.kanade.translation.translator.routing.MultiBackendRouter
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.async

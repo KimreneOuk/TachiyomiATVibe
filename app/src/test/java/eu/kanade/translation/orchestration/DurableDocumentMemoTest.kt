@@ -2,8 +2,8 @@ package eu.kanade.translation.orchestration
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

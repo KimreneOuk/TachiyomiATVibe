@@ -2,6 +2,11 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.model.PageStage
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -11,17 +16,12 @@ import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.model.PageStage
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull

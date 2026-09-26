@@ -1,5 +1,8 @@
 package eu.kanade.translation.context
 
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -11,10 +14,7 @@ import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.ProbedImage
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

@@ -8,23 +8,29 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.InMemorySharedPreferences
+import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.rendering.RenderColorEstimator
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.BatchExpectedFingerprints
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.orchestration.ChapterTranslator
+import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.loadArtifact
-import eu.kanade.translation.inpainting.InpaintingMode
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.ocr.OcrModelCatalog
-import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
+import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.EngineLane
@@ -44,16 +50,10 @@ import eu.kanade.translation.pipeline.batch.ReconciliationResult
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
-import eu.kanade.translation.persistence.queue.TranslationQueueStore
-import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.getChapterPages
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -289,7 +289,7 @@ internal class TranslationCoexistenceHarness private constructor(
             val fakeTransport = newTransport()
 
             val nativeRunScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            val nativeStallWatchdog = eu.kanade.translation.translator.NativeStallWatchdog(
+            val nativeStallWatchdog = eu.kanade.translation.engines.translator.NativeStallWatchdog(
                 scope = nativeRunScope,
                 thresholdMs = stallThresholdMs ?: TranslationPipeline.NATIVE_STALL_THRESHOLD_MS,
             )

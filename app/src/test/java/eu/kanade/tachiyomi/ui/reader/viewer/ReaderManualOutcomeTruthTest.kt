@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 
 import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationSlot
 import eu.kanade.tachiyomi.ui.reader.projectReaderAutoTranslationUiState
+import eu.kanade.translation.engines.translator.NativeStallState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
@@ -14,7 +15,6 @@ import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.AutoTranslationSnapshot
 import eu.kanade.translation.scheduling.AutoWindowSlot
 import eu.kanade.translation.scheduling.SinglePageOutcome
-import eu.kanade.translation.translator.NativeStallState
 import eu.kanade.translation.ui.TranslationUiTruth
 import eu.kanade.translation.ui.UiRetryMode
 import eu.kanade.translation.ui.UiSeverity

@@ -1,11 +1,11 @@
 package eu.kanade.translation.persistence.artifact
 
-import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.artifact.loadArtifact
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

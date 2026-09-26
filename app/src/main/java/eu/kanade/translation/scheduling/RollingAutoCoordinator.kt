@@ -1,6 +1,5 @@
 package eu.kanade.translation.scheduling
 
-import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationRunTrace
 import eu.kanade.translation.diagnostics.TranslationScheduleState
@@ -13,15 +12,16 @@ import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceReason
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.engines.translator.ProviderFailureKind
+import eu.kanade.translation.engines.translator.ProviderFailureRetryability
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.orchestration.TranslationSession
+import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.ProviderFailureKind
-import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget
 import kotlinx.coroutines.CancellationException

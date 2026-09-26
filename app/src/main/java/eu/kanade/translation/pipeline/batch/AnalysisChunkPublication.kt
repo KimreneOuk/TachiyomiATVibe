@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.persistence.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
 import eu.kanade.translation.persistence.artifact.AnalysisChunkStatus
@@ -13,7 +14,6 @@ import eu.kanade.translation.persistence.artifact.ExtractedTerm
 import eu.kanade.translation.persistence.artifact.ProfileScene
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import java.security.MessageDigest
 
 /**

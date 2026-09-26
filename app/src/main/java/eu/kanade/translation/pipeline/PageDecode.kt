@@ -3,13 +3,13 @@ package eu.kanade.translation.pipeline
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.ocr.PageRecognitionEngine
-import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.translator.TextTranslatorLanguage
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
@@ -140,7 +140,7 @@ internal object PageDecode {
         currentTranslatorSignature: Any,
         currentOcrModel: OcrModel,
         currentReadingOrder: tachiyomi.domain.translation.TranslationReadingOrder,
-        currentInpaintingMode: eu.kanade.translation.inpainting.InpaintingMode,
+        currentInpaintingMode: eu.kanade.translation.engines.inpainting.InpaintingMode,
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
     ): BatchExpectedFingerprints {

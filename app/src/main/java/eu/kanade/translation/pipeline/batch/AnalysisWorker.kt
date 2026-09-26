@@ -1,5 +1,14 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
+import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
+import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.engines.translator.contextual.AnalysisChunkPlanResult
+import eu.kanade.translation.engines.translator.contextual.AnalysisChunkPlanner
+import eu.kanade.translation.engines.translator.contextual.AnalysisChunkPolicy
+import eu.kanade.translation.engines.translator.contextual.ChunkPlannerPage
+import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
@@ -7,15 +16,6 @@ import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.translator.contextual.AnalysisChunkPlanResult
-import eu.kanade.translation.translator.contextual.AnalysisChunkPlanner
-import eu.kanade.translation.translator.contextual.AnalysisChunkPolicy
-import eu.kanade.translation.translator.contextual.ChunkPlannerPage
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.yield

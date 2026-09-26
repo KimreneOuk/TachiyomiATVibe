@@ -1,5 +1,31 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.SharedBatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
+import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
+import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
+import eu.kanade.translation.engines.translator.analysis.AnalysisRequestBuilder
+import eu.kanade.translation.engines.translator.analysis.AnalyzerProvenanceFactory
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlanResult
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerBlock
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPage
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPolicy
+import eu.kanade.translation.engines.translator.contextual.GlobalEnvelopePlanner
+import eu.kanade.translation.engines.translator.contextual.OcrCorpusManifest
+import eu.kanade.translation.engines.translator.contextual.OcrCorpusPageEntry
+import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.model.PageStage
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
@@ -28,39 +54,13 @@ import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.ToneFlag
 import eu.kanade.translation.persistence.artifact.isSha256Hex
-import eu.kanade.translation.model.PageStage
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.BatchRequestSublimitGate
-import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.translator.analysis.AnalysisRequestBuilder
-import eu.kanade.translation.translator.analysis.AnalyzerProvenanceFactory
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
-import eu.kanade.translation.translator.contextual.EnvelopePlanResult
-import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy
-import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
-import eu.kanade.translation.translator.contextual.OcrCorpusManifest
-import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
@@ -1679,7 +1679,7 @@ internal class ChapterProfileBatchCoordinator(
          * authority): redefining Batch completion as DISPLAY_READY (all reader
          * paths hydrate durable plans instead of translating committed) is
          * allowed ONLY after gate 7.5 — restart/LRU rehydrate with ZERO
-         * [TextLayoutPlanner][eu.kanade.translation.rendering.TextLayoutPlanner]
+         * [TextLayoutPlanner][eu.kanade.translation.engines.rendering.TextLayoutPlanner]
          * invocations — has passed ON DEVICE for Pager AND Webtoon (evidence
          * rows owed per `evidence/stage2/wp9-report.md` §6 + Stage-7 device
          * evidence). It MUST remain `false` in this slice: runs complete under
@@ -1724,7 +1724,7 @@ internal class ChapterProfileBatchCoordinator(
          * Analysis output budget (`outputBudget`): free-form
          * chunk summaries are ~120 words, so the reservation is small and
          * the input side keeps the 8k window. Mirrors
-         * [eu.kanade.translation.translator.analysis.AnalysisEngineTransport
+         * [eu.kanade.translation.engines.translator.analysis.AnalysisEngineTransport
          * .ANALYSIS_MAX_OUTPUT_TOKENS].
          */
         const val ANALYSIS_MAX_OUTPUT_TOKENS = 512

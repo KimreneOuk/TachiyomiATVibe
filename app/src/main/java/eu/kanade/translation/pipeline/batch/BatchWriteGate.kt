@@ -1,10 +1,8 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
-import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageStage
@@ -12,12 +10,14 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageStageLease
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.ProviderFailureKind
 import java.util.concurrent.ConcurrentHashMap
 
 //   ChapterTranslationStore's legacy lease-fence rejection reason. Newer

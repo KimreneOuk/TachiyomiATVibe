@@ -1,13 +1,13 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.cancelInFlightStages
@@ -18,9 +18,9 @@ import eu.kanade.translation.orchestration.ReaderSessionIntent
 import eu.kanade.translation.orchestration.SessionAdmission
 import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.pipeline.PageWriteOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

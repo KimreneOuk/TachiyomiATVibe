@@ -13,18 +13,18 @@ import android.view.View
 import androidx.core.content.res.ResourcesCompat
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.R
+import eu.kanade.translation.engines.rendering.BlockLayout
+import eu.kanade.translation.engines.rendering.ComponentClipCache
+import eu.kanade.translation.engines.rendering.DrawPlanFingerprint
+import eu.kanade.translation.engines.rendering.PersistedLayoutReaderBridge
+import eu.kanade.translation.engines.rendering.PersistedLayoutRuntime
+import eu.kanade.translation.engines.rendering.ReaderTextLayoutCache
+import eu.kanade.translation.engines.rendering.TextAlign
+import eu.kanade.translation.engines.rendering.TextLayoutBindResult
+import eu.kanade.translation.engines.rendering.TextLayoutCoordinator
+import eu.kanade.translation.engines.rendering.TextLayoutPlanner
+import eu.kanade.translation.engines.rendering.TextMeasurer
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.rendering.BlockLayout
-import eu.kanade.translation.rendering.ComponentClipCache
-import eu.kanade.translation.rendering.DrawPlanFingerprint
-import eu.kanade.translation.rendering.PersistedLayoutReaderBridge
-import eu.kanade.translation.rendering.PersistedLayoutRuntime
-import eu.kanade.translation.rendering.ReaderTextLayoutCache
-import eu.kanade.translation.rendering.TextAlign
-import eu.kanade.translation.rendering.TextLayoutBindResult
-import eu.kanade.translation.rendering.TextLayoutCoordinator
-import eu.kanade.translation.rendering.TextLayoutPlanner
-import eu.kanade.translation.rendering.TextMeasurer
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import kotlin.math.max
@@ -266,7 +266,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         canvas.restore()
     }
 
-    private fun drawVerticalLayout(canvas: Canvas, layout: eu.kanade.translation.rendering.BlockLayout) {
+    private fun drawVerticalLayout(canvas: Canvas, layout: eu.kanade.translation.engines.rendering.BlockLayout) {
         val chars = layout.text.filterNot { it == '\r' || it == '\n' || it == ' ' }
         if (chars.isEmpty()) return
         val charStep = layout.fontSizePx * VERTICAL_CHAR_STEP
@@ -349,8 +349,8 @@ internal class TranslationOverlayView @JvmOverloads constructor(
      */
     private fun drawPositionedLayout(
         canvas: Canvas,
-        layout: eu.kanade.translation.rendering.BlockLayout,
-        lines: List<eu.kanade.translation.rendering.PositionedLine>,
+        layout: eu.kanade.translation.engines.rendering.BlockLayout,
+        lines: List<eu.kanade.translation.engines.rendering.PositionedLine>,
     ) {
         fill.textAlign = Paint.Align.LEFT
         stroke.textAlign = Paint.Align.LEFT

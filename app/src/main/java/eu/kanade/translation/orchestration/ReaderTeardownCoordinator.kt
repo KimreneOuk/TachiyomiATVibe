@@ -1,8 +1,8 @@
 package eu.kanade.translation.orchestration
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.scheduling.TranslationScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred

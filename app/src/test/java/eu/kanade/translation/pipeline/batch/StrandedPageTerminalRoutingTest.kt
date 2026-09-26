@@ -2,6 +2,32 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
+import eu.kanade.translation.engines.translator.analysis.AnalysisCoverage
+import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
+import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
+import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
+import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesisOutcome
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
+import eu.kanade.translation.engines.translator.analysis.ValidatedTerm
+import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
+import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
+import eu.kanade.translation.engines.translator.contextual.ContextualTranslationResult
+import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.engines.translator.providers.AiTranslator
+import eu.kanade.translation.model.InpaintMaskBox
+import eu.kanade.translation.model.PageStage
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -10,38 +36,12 @@ import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.persistence.artifact.EvidenceRef
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.model.InpaintMaskBox
-import eu.kanade.translation.model.PageStage
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.translator.BatchRequestSublimitGate
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.translator.analysis.AnalysisCoverage
-import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
-import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
-import eu.kanade.translation.translator.analysis.ValidatedEntity
-import eu.kanade.translation.translator.analysis.ValidatedTerm
-import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
-import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
-import eu.kanade.translation.translator.contextual.ContextualTranslationResult
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-import eu.kanade.translation.translator.providers.AiTranslator
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -243,8 +243,8 @@ class StrandedPageTerminalRoutingTest {
     ) : AiTranslator() {
         val requests = mutableListOf<TranslationContextChunk>()
 
-        override val fromLang: eu.kanade.translation.ocr.TextRecognizerLanguage =
-            eu.kanade.translation.ocr.TextRecognizerLanguage.JAPANESE
+        override val fromLang: eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage =
+            eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage.JAPANESE
         override val toLang: TextTranslatorLanguage = TextTranslatorLanguage.ENGLISH
 
         override suspend fun translateContextualStructured(
@@ -263,7 +263,7 @@ class StrandedPageTerminalRoutingTest {
     ): ContextualTranslationBatch {
         val request = ContextualRequestBuilder.build(
             chunk,
-            eu.kanade.translation.ocr.TextRecognizerLanguage.JAPANESE,
+            eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
         val results = request.orderedIds.filterNot(omit::contains).map { id ->
