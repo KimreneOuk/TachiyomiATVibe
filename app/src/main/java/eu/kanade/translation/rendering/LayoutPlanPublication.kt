@@ -1,11 +1,11 @@
 package eu.kanade.translation.rendering
 
-import eu.kanade.translation.artifact.CleanedImageReference
-import eu.kanade.translation.artifact.ColorImageSourceKind
-import eu.kanade.translation.artifact.ColorStyleEntry
-import eu.kanade.translation.artifact.ColorStylePreparation
-import eu.kanade.translation.artifact.PageLayoutDrawPlan
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.CleanedImageReference
+import eu.kanade.translation.persistence.artifact.ColorImageSourceKind
+import eu.kanade.translation.persistence.artifact.ColorStyleEntry
+import eu.kanade.translation.persistence.artifact.ColorStylePreparation
+import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.model.TranslationBlock
 
 /**
@@ -178,14 +178,14 @@ object LayoutPlanPublication {
 
     /** Canonical encode of the color sub-result ( shared Json only). */
     fun encodeColorPreparation(preparation: ColorStylePreparation): String =
-        eu.kanade.translation.artifact.ArtifactDocumentJson.encodeToString(
+        eu.kanade.translation.persistence.artifact.ArtifactDocumentJson.encodeToString(
             ColorStylePreparation.serializer(),
             preparation,
         )
 
     /** Canonical decode of the color sub-result. */
     fun decodeColorPreparation(json: String): ColorStylePreparation =
-        eu.kanade.translation.artifact.ArtifactDocumentJson.decodeFromString(
+        eu.kanade.translation.persistence.artifact.ArtifactDocumentJson.decodeFromString(
             ColorStylePreparation.serializer(),
             json,
         )

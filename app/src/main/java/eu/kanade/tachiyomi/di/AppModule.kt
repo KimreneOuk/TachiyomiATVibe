@@ -20,7 +20,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
-import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.orchestration.TranslationManager
 import io.requery.android.database.sqlite.RequerySQLiteOpenHelperFactory
 import kotlinx.serialization.json.Json

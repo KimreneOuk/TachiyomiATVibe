@@ -6,7 +6,7 @@ import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

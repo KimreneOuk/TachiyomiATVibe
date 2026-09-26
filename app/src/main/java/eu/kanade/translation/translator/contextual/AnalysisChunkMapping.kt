@@ -1,14 +1,14 @@
 package eu.kanade.translation.translator.contextual
 
-import eu.kanade.translation.artifact.AnalysisChunkResult
-import eu.kanade.translation.artifact.AnalysisChunkStatus
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.ExtractedEntity
-import eu.kanade.translation.artifact.ExtractedRelationship
-import eu.kanade.translation.artifact.ExtractedTerm
-import eu.kanade.translation.artifact.ProfileScene
-import eu.kanade.translation.artifact.SidecarPointer
+import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
+import eu.kanade.translation.persistence.artifact.AnalysisChunkStatus
+import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.ExtractedEntity
+import eu.kanade.translation.persistence.artifact.ExtractedRelationship
+import eu.kanade.translation.persistence.artifact.ExtractedTerm
+import eu.kanade.translation.persistence.artifact.ProfileScene
+import eu.kanade.translation.persistence.artifact.SidecarPointer
 
 /**
  *  WP5 handoff (wave-2 review gap 4 / deviation 8): pure mapping from the
@@ -17,7 +17,7 @@ import eu.kanade.translation.artifact.SidecarPointer
  * §1.3). No IO, no coroutines; identity fields, contributing sets and
  * fingerprints are carried over verbatim, so the mapped record re-validates
  * against the DTO's own schema rules and round-trips through the canonical
- * [eu.kanade.translation.artifact.ArtifactDocumentJson] instance.
+ * [eu.kanade.translation.persistence.artifact.ArtifactDocumentJson] instance.
  */
 
 /**

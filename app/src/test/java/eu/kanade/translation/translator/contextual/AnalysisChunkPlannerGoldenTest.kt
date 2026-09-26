@@ -1,6 +1,6 @@
 package eu.kanade.translation.translator.contextual
 
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import kotlinx.serialization.json.Json

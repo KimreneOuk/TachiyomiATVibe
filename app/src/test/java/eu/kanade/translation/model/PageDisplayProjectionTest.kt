@@ -1,13 +1,13 @@
 package eu.kanade.translation.model
 
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
-import eu.kanade.translation.artifact.ArtifactOrigin
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.CommittedBundleMetadata
-import eu.kanade.translation.artifact.DisplayBaseKind
-import eu.kanade.translation.artifact.DisplayBaseReference
-import eu.kanade.translation.artifact.PageArtifactRecord
-import eu.kanade.translation.artifact.StageArtifactRecord
+import eu.kanade.translation.persistence.artifact.ArtifactOrigin
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
+import eu.kanade.translation.persistence.artifact.DisplayBaseKind
+import eu.kanade.translation.persistence.artifact.DisplayBaseReference
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.StageArtifactRecord
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.markOriginalImageFallback
 import io.kotest.matchers.shouldBe

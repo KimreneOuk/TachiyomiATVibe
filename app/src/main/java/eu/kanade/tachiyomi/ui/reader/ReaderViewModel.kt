@@ -61,7 +61,7 @@ import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.NativeStallState
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
@@ -356,7 +356,7 @@ class ReaderViewModel @JvmOverloads constructor(
     internal var translationBatchProgressJob: kotlinx.coroutines.Job? = null
     internal var translationStateJob: kotlinx.coroutines.Job? = null
     internal var autoSnapshotJob: kotlinx.coroutines.Job? = null
-    internal var currentTranslationStore: eu.kanade.translation.storage.ChapterTranslationStore? = null
+    internal var currentTranslationStore: eu.kanade.translation.persistence.chapter.ChapterTranslationStore? = null
 
     /** Resolver indirection is invalidated before any chapter/page resources are recycled. */
     internal val autoPageResolver = ReaderAutoTranslationPageResolver(chapterCache)

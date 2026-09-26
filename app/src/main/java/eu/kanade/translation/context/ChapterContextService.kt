@@ -1,8 +1,8 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.artifact.ChapterContextSnapshot
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.artifact.ChapterContextSnapshot
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.translator.contextual.ProfileSubsetMatcher
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner

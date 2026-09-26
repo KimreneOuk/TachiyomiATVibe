@@ -1,6 +1,6 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.artifact.ArtifactOrigin
+import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

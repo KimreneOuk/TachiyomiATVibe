@@ -1,9 +1,9 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.RunConfigSnapshot
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.FactProvenance
+import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 

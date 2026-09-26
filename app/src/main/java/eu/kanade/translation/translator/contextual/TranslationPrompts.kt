@@ -1,5 +1,5 @@
 package eu.kanade.translation.translator.contextual
-import eu.kanade.translation.artifact.ProfileGender
+import eu.kanade.translation.persistence.artifact.ProfileGender
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.TextTranslatorLanguage

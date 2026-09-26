@@ -3,7 +3,7 @@ package eu.kanade.translation.coexistence
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.ProviderQuotaPolicy
 import eu.kanade.translation.translator.ProviderRequestGovernor

@@ -2,16 +2,16 @@ package eu.kanade.translation
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.ArtifactOrigin
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.PageOcrCheckpoint
-import eu.kanade.translation.artifact.SidecarPointer
-import eu.kanade.translation.artifact.SourceIdentity
-import eu.kanade.translation.artifact.StageFingerprints
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.ArtifactOrigin
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.PageOcrCheckpoint
+import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.artifact.SourceIdentity
+import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -22,8 +22,8 @@ import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.CheckpointOcrResult
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.CheckpointOcrResult
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe

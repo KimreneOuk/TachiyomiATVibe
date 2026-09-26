@@ -1,6 +1,6 @@
 package eu.kanade.translation.translator.contextual
 
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 
 /**
  *  WP3 (pure planner, S4): global OCR corpus manifest assembly.

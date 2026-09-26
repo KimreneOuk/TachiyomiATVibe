@@ -16,7 +16,7 @@ import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.ListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
 import eu.kanade.tachiyomi.BuildConfig
-import eu.kanade.translation.data.TranslationFont
+import eu.kanade.translation.model.TranslationFont
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AiTranslatorKind

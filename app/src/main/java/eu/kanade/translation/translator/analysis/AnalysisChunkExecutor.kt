@@ -296,7 +296,7 @@ sealed interface AnalysisChunkRunOutcome {
         val response: AnalysisResponseValidator.ValidatedAnalysisResponse,
         val coverage: AnalysisCoverage,
         val droppedAuthorityKeys: List<String>,
-        val provenance: eu.kanade.translation.artifact.AnalyzerProvenance,
+        val provenance: eu.kanade.translation.persistence.artifact.AnalyzerProvenance,
     ) : AnalysisChunkRunOutcome
 
     data class Paused(
@@ -310,15 +310,15 @@ sealed interface AnalysisChunkRunOutcome {
     ) : AnalysisChunkRunOutcome
 }
 
-/** Builds the persisted [eu.kanade.translation.artifact.AnalyzerProvenance]. */
+/** Builds the persisted [eu.kanade.translation.persistence.artifact.AnalyzerProvenance]. */
 object AnalyzerProvenanceFactory {
 
     /** v2: free-form chunk summaries (Director decision, summary-glossary redesign). */
     const val PROMPT_VERSION = 2
     const val ANALYSIS_SCHEMA_VERSION = AnalysisRequestBuilder.SCHEMA_VERSION
 
-    fun from(transport: AnalysisTextTransport): eu.kanade.translation.artifact.AnalyzerProvenance =
-        eu.kanade.translation.artifact.AnalyzerProvenance(
+    fun from(transport: AnalysisTextTransport): eu.kanade.translation.persistence.artifact.AnalyzerProvenance =
+        eu.kanade.translation.persistence.artifact.AnalyzerProvenance(
             providerId = transport.providerId,
             modelId = transport.modelId,
             promptVersion = PROMPT_VERSION,

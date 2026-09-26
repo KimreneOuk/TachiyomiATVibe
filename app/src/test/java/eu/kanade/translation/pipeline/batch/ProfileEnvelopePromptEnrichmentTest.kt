@@ -2,16 +2,16 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.EnvelopePolicySnapshot
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.StageFingerprints
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -23,7 +23,7 @@ import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslatorComputeClass
@@ -716,7 +716,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             planArtifactPageVersion = snapshot.artifactPageVersion,
             blocks = listOf(plannedBlock),
         )
-        val envelope = eu.kanade.translation.artifact.PlannedEnvelope(
+        val envelope = eu.kanade.translation.persistence.artifact.PlannedEnvelope(
             envelopeId = "e-0",
             orderedPageKeys = listOf(pageKey),
             blockIds = listOf("p0_b1"),
@@ -727,7 +727,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             contributingPageCount = 1,
         )
         // The SC-10 plan fingerprint, computed exactly like the publication.
-        val hashingView = eu.kanade.translation.artifact.EnvelopePlan(
+        val hashingView = eu.kanade.translation.persistence.artifact.EnvelopePlan(
             planFingerprint = "",
             planInputFingerprint = hex64("plan-input"),
             plannerVersion = 1,
@@ -735,11 +735,11 @@ class ProfileEnvelopePromptEnrichmentTest {
             createdAtEpochMs = 0L,
         )
         val canonical = ArtifactDocumentJson.encodeToString(
-            eu.kanade.translation.artifact.EnvelopePlan.serializer(),
+            eu.kanade.translation.persistence.artifact.EnvelopePlan.serializer(),
             hashingView,
         )
         val planFingerprint = StageFingerprints.envelopePlanContentFingerprint(canonical)
-        val plan = eu.kanade.translation.artifact.EnvelopePlan(
+        val plan = eu.kanade.translation.persistence.artifact.EnvelopePlan(
             planFingerprint = planFingerprint,
             planInputFingerprint = hex64("plan-input"),
             plannerVersion = 1,
@@ -753,25 +753,25 @@ class ProfileEnvelopePromptEnrichmentTest {
         // does in production.
         val artifact = store.artifactEngine.shouldNotBeNull()
         if (artifact.readManifest() == null) {
-            artifact.publishManifest(eu.kanade.translation.artifact.ChapterArtifactManifest(chapterKey = "Chapter 1"))
+            artifact.publishManifest(eu.kanade.translation.persistence.artifact.ChapterArtifactManifest(chapterKey = "Chapter 1"))
         }
-        val draft = eu.kanade.translation.artifact.ChapterTranslationProfile(
+        val draft = eu.kanade.translation.persistence.artifact.ChapterTranslationProfile(
             version = 1,
             contentFingerprint = "",
             profileInputFingerprint = hex64("fp04"),
             sourceRunId = "run-1",
-            analyzerProvenance = eu.kanade.translation.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
+            analyzerProvenance = eu.kanade.translation.persistence.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
             entities = listOf(
-                eu.kanade.translation.artifact.ProfileFact(
+                eu.kanade.translation.persistence.artifact.ProfileFact(
                     factId = "f-1",
-                    type = eu.kanade.translation.artifact.FactType.ENTITY_IDENTITY,
+                    type = eu.kanade.translation.persistence.artifact.FactType.ENTITY_IDENTITY,
                     canonicalSourceForm = "カイル",
                     canonicalTargetForm = "Kyle",
-                    evidenceStrength = eu.kanade.translation.artifact.EvidenceStrength.STRONG_CONTEXTUAL,
+                    evidenceStrength = eu.kanade.translation.persistence.artifact.EvidenceStrength.STRONG_CONTEXTUAL,
                     evidenceRefs = listOf(EvidenceRef("p1", "p1_b1", hex64("excerpt"))),
-                    scope = eu.kanade.translation.artifact.FactScope.CANONICAL_CHAPTER_WIDE,
-                    provenance = eu.kanade.translation.artifact.FactProvenance.CHAPTER_ANALYSIS,
-                    conflictState = eu.kanade.translation.artifact.FactConflictState.RESOLVED,
+                    scope = eu.kanade.translation.persistence.artifact.FactScope.CANONICAL_CHAPTER_WIDE,
+                    provenance = eu.kanade.translation.persistence.artifact.FactProvenance.CHAPTER_ANALYSIS,
+                    conflictState = eu.kanade.translation.persistence.artifact.FactConflictState.RESOLVED,
                 ),
             ),
             frozenAtEpochMs = 42L,

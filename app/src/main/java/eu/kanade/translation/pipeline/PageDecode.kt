@@ -3,8 +3,8 @@ package eu.kanade.translation.pipeline
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.PageRecognitionEngine

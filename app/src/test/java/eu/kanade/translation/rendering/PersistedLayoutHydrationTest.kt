@@ -1,6 +1,6 @@
 package eu.kanade.translation.rendering
 
-import eu.kanade.translation.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf

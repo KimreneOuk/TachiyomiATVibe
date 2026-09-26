@@ -5,9 +5,9 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.artifact.ArtifactManifestProbe
-import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
-import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
+import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -24,9 +24,9 @@ import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.storage.ActiveChapterStoreRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers

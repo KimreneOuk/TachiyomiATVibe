@@ -1,11 +1,11 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.ProfilePointer
-import eu.kanade.translation.artifact.SidecarRead
-import eu.kanade.translation.artifact.StageFingerprints
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.ProfilePointer
+import eu.kanade.translation.persistence.artifact.SidecarRead
+import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 
 /**
  *  Stage 5 slice B — profile freeze publication.
@@ -45,7 +45,7 @@ internal object ProfileFreezePublication {
      */
     suspend fun publish(
         store: ChapterTranslationStore,
-        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
+        manifest: eu.kanade.translation.persistence.artifact.ChapterArtifactManifest,
         profile: ChapterTranslationProfile,
         nowEpochMs: Long,
     ): ChapterArtifactEngine.TransactionOutcome {
@@ -132,7 +132,7 @@ internal object ProfileFreezePublication {
      */
     suspend fun readReusableFrozenProfile(
         store: ChapterTranslationStore,
-        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
+        manifest: eu.kanade.translation.persistence.artifact.ChapterArtifactManifest,
         expectedInputFingerprint: String,
     ): FrozenProfileRead {
         return store.withArtifactEngineLocked { artifact ->

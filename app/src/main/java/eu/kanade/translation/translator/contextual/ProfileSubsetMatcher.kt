@@ -1,12 +1,12 @@
 package eu.kanade.translation.translator.contextual
 
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.FactScope
-import eu.kanade.translation.artifact.FactType
-import eu.kanade.translation.artifact.ProfileFact
-import eu.kanade.translation.artifact.ProfileGender
-import eu.kanade.translation.artifact.SceneRegister
-import eu.kanade.translation.artifact.ToneFlag
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.FactScope
+import eu.kanade.translation.persistence.artifact.FactType
+import eu.kanade.translation.persistence.artifact.ProfileFact
+import eu.kanade.translation.persistence.artifact.ProfileGender
+import eu.kanade.translation.persistence.artifact.SceneRegister
+import eu.kanade.translation.persistence.artifact.ToneFlag
 
 /**
  *  Stage-6 slice B (design §7.1/§7.2): the PURE frozen-profile subset

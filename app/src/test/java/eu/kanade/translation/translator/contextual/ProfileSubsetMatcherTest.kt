@@ -1,20 +1,20 @@
 package eu.kanade.translation.translator.contextual
 
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.BlockRange
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.FactConflictState
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.FactScope
-import eu.kanade.translation.artifact.FactType
-import eu.kanade.translation.artifact.PageBlockRef
-import eu.kanade.translation.artifact.PageRange
-import eu.kanade.translation.artifact.ProfileFact
-import eu.kanade.translation.artifact.ProfileGender
-import eu.kanade.translation.artifact.ProfileScene
-import eu.kanade.translation.artifact.SceneRegister
-import eu.kanade.translation.artifact.ToneFlag
+import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.persistence.artifact.BlockRange
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.FactConflictState
+import eu.kanade.translation.persistence.artifact.FactProvenance
+import eu.kanade.translation.persistence.artifact.FactScope
+import eu.kanade.translation.persistence.artifact.FactType
+import eu.kanade.translation.persistence.artifact.PageBlockRef
+import eu.kanade.translation.persistence.artifact.PageRange
+import eu.kanade.translation.persistence.artifact.ProfileFact
+import eu.kanade.translation.persistence.artifact.ProfileGender
+import eu.kanade.translation.persistence.artifact.ProfileScene
+import eu.kanade.translation.persistence.artifact.SceneRegister
+import eu.kanade.translation.persistence.artifact.ToneFlag
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.shouldBe
@@ -51,8 +51,8 @@ class ProfileSubsetMatcherTest {
         availableFrom: Int? = null,
         gender: ProfileGender? = null,
         note: String? = null,
-        evidenceStrength: eu.kanade.translation.artifact.EvidenceStrength =
-            eu.kanade.translation.artifact.EvidenceStrength.EXPLICIT,
+        evidenceStrength: eu.kanade.translation.persistence.artifact.EvidenceStrength =
+            eu.kanade.translation.persistence.artifact.EvidenceStrength.EXPLICIT,
     ) = ProfileFact(
         factId = id,
         type = type,
@@ -60,7 +60,7 @@ class ProfileSubsetMatcherTest {
         canonicalTargetForm = target,
         aliases = aliases,
         evidenceStrength = evidenceStrength,
-        evidenceRefs = if (evidenceStrength == eu.kanade.translation.artifact.EvidenceStrength.WEAK) {
+        evidenceRefs = if (evidenceStrength == eu.kanade.translation.persistence.artifact.EvidenceStrength.WEAK) {
             emptyList()
         } else {
             listOf(evidence())

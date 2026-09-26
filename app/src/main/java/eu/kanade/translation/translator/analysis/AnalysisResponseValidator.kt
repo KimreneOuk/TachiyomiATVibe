@@ -1,7 +1,7 @@
 package eu.kanade.translation.translator.analysis
 
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.providers.OcrArtifactSanitizer
 import kotlinx.serialization.json.Json
@@ -42,7 +42,7 @@ object AnalysisResponseValidator {
     private const val MAX_SUMMARY_CHARS = 2000
     private const val MAX_RELATIONSHIPS_PER_ENTITY = 12
     private const val MAX_TOTAL_EVIDENCE_REFS =
-        eu.kanade.translation.artifact.AnalysisChunkResult.MAX_EVIDENCE_REFS
+        eu.kanade.translation.persistence.artifact.AnalysisChunkResult.MAX_EVIDENCE_REFS
 
     /** Record id pattern, scoped per chunk. */
     private val RECORD_ID_REGEX = Regex("^[tesuc]\\d{3,4}$")

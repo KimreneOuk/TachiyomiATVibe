@@ -1,6 +1,6 @@
 package eu.kanade.translation.translator.analysis
 
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind

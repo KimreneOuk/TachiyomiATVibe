@@ -1,12 +1,12 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.artifact.EnvelopePlan
-import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.PlannedEnvelope
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.EnvelopePlan
+import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.persistence.artifact.PlannedEnvelope
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -20,7 +20,7 @@ import eu.kanade.translation.pipeline.TranslationBlockPatch
 import eu.kanade.translation.pipeline.TranslationStagePatch
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderFailure

@@ -59,7 +59,7 @@ data class AnalysisEvidenceTexts(
 
 /**
  * One validated term record — the persistable subset of the
- * response term (schemas contract §1.3 [eu.kanade.translation.artifact.ExtractedTerm]).
+ * response term (schemas contract §1.3 [eu.kanade.translation.persistence.artifact.ExtractedTerm]).
  */
 data class ValidatedTerm(
     val termId: String,
@@ -71,7 +71,7 @@ data class ValidatedTerm(
 
 /**
  * One validated entity record — the persistable subset of the
- * response entity ([eu.kanade.translation.artifact.ExtractedEntity]). Gender,
+ * response entity ([eu.kanade.translation.persistence.artifact.ExtractedEntity]). Gender,
  * pronoun and conflict facts are VALIDATED here (V1..V9) but deliberately not
  * persisted on the chunk: the frozen-profile reconcile stage (slice B) is
  * their consumer; the chunk DTO carries relationships + conflict notes.
@@ -94,7 +94,7 @@ data class ValidatedRelationship(
 /**
  * A validated scene draft: page/block bounds in WIRE identities plus the
  * model-emitted register/tone strings. The coordinator maps these onto the
- * durable [eu.kanade.translation.artifact.ProfileScene] with natural page
+ * durable [eu.kanade.translation.persistence.artifact.ProfileScene] with natural page
  * indexes at persistence time.
  */
 data class ValidatedScene(

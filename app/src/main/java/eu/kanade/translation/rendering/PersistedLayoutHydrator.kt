@@ -1,8 +1,8 @@
 package eu.kanade.translation.rendering
 
-import eu.kanade.translation.artifact.PageLayoutDrawPlan
-import eu.kanade.translation.artifact.SidecarPointer
-import eu.kanade.translation.artifact.SidecarRead
+import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.MaskGeometry
 
@@ -49,7 +49,7 @@ class PersistedLayoutHydrator(
      * final-target §3). Null disables component-clip reconstruction (hydrated
      * layouts keep cell/legacy clips only — safe degradation, never re-planning).
      */
-    private val maskGeometryResolver: ((dtoRef: eu.kanade.translation.artifact.DrawPlanMaskComponentRef) -> MaskGeometry?)? = null,
+    private val maskGeometryResolver: ((dtoRef: eu.kanade.translation.persistence.artifact.DrawPlanMaskComponentRef) -> MaskGeometry?)? = null,
     /** Injectable platform key (production: [DrawPlanFingerprint.platformShapingKey]). */
     private val platformShapingKey: () -> String = { DrawPlanFingerprint.platformShapingKey() },
 ) {

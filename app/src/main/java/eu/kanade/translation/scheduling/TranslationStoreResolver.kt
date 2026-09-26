@@ -1,6 +1,6 @@
 package eu.kanade.translation.scheduling
 
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 
 /**
  * TachiyomiAT: resolves the live [ChapterTranslationStore] for a chapter id.

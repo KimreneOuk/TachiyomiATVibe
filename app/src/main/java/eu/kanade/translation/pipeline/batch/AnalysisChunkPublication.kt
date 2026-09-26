@@ -1,18 +1,18 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.AnalysisChunkCoverage
-import eu.kanade.translation.artifact.AnalysisChunkResult
-import eu.kanade.translation.artifact.AnalysisChunkStatus
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.ExtractedEntity
-import eu.kanade.translation.artifact.ExtractedRelationship
-import eu.kanade.translation.artifact.ExtractedTerm
-import eu.kanade.translation.artifact.ProfileScene
-import eu.kanade.translation.artifact.SidecarPointer
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.artifact.AnalysisChunkCoverage
+import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
+import eu.kanade.translation.persistence.artifact.AnalysisChunkStatus
+import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.ExtractedEntity
+import eu.kanade.translation.persistence.artifact.ExtractedRelationship
+import eu.kanade.translation.persistence.artifact.ExtractedTerm
+import eu.kanade.translation.persistence.artifact.ProfileScene
+import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import java.security.MessageDigest
 
@@ -45,7 +45,7 @@ internal object AnalysisChunkPublication {
      */
     suspend fun publish(
         store: ChapterTranslationStore,
-        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest,
+        manifest: eu.kanade.translation.persistence.artifact.ChapterArtifactManifest,
         result: AnalysisChunkResult,
         nowEpochMs: Long,
     ): ChapterArtifactEngine.TransactionOutcome {

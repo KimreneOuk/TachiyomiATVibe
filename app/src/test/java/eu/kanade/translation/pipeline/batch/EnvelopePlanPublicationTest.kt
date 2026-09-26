@@ -1,13 +1,13 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.EnvelopePlan
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.LegacyMigrationHealth
-import eu.kanade.translation.artifact.LegacyMigrationMetadata
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.EnvelopePlan
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.LegacyMigrationHealth
+import eu.kanade.translation.persistence.artifact.LegacyMigrationMetadata
 import eu.kanade.translation.translator.contextual.EnvelopePlanResult
 import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
 import eu.kanade.translation.translator.contextual.EnvelopePlannerPage

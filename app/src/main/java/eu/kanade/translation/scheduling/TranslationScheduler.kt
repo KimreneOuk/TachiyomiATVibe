@@ -1,7 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.artifact.GroupCommitConfiguration
+import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceMode
@@ -19,7 +19,7 @@ import eu.kanade.translation.orchestration.SessionAdmission
 import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope

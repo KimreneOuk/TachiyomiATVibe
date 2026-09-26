@@ -8,12 +8,12 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.InMemorySharedPreferences
-import eu.kanade.translation.artifact.ArtifactSeed
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.loadArtifact
+import eu.kanade.translation.persistence.artifact.ArtifactSeed
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
@@ -49,10 +49,10 @@ import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.storage.ActiveChapterStoreRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.TranslationPendingRequestStore
-import eu.kanade.translation.storage.TranslationQueueStore
+import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.getChapterPages
@@ -218,7 +218,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 every { getSharedPreferences(any(), any()) } returns InMemorySharedPreferences()
             }
             val preferences = harnessPreferences()
-            val provider = mockk<eu.kanade.translation.data.TranslationProvider>(relaxed = true)
+            val provider = mockk<eu.kanade.translation.persistence.chapter.TranslationProvider>(relaxed = true)
             if (cleanedImagesOnDisk.isNotEmpty()) {
                 val onDisk = mockk<UniFile> {
                     every { exists() } returns true
@@ -903,7 +903,7 @@ internal class TranslationCoexistenceHarness private constructor(
             val artifact = ChapterArtifactEngine(
                 AtomicChapterDocuments(documentIo),
                 layout,
-                displayBaseProbe = { eu.kanade.translation.artifact.ProbedImage(100, 100) },
+                displayBaseProbe = { eu.kanade.translation.persistence.artifact.ProbedImage(100, 100) },
             )
             var manifest = artifact
                 .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))

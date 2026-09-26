@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 
 /**
  * The single readiness projection shared by batch progress and the reader.

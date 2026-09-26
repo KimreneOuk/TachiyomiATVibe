@@ -2,14 +2,14 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.EnvelopePolicySnapshot
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -21,7 +21,7 @@ import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslatorComputeClass
@@ -233,7 +233,7 @@ class StrandedPageTerminalRoutingTest {
                 response = response,
                 coverage = AnalysisCoverage(AnalysisCoverageKind.COMPLETE, emptyList()),
                 droppedAuthorityKeys = emptyList(),
-                provenance = eu.kanade.translation.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
+                provenance = eu.kanade.translation.persistence.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
             )
         }
     }
@@ -277,7 +277,7 @@ class StrandedPageTerminalRoutingTest {
         return ContextualRequestBuilder.toBatch(request, results)
     }
 
-    private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.artifact.ChapterRunRecord {
+    private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.artifact.ChapterRunRecord {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
         return (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record

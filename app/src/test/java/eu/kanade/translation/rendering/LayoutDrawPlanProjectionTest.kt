@@ -1,6 +1,6 @@
 package eu.kanade.translation.rendering
 
-import eu.kanade.translation.artifact.DrawPlanFontIdentity
+import eu.kanade.translation.persistence.artifact.DrawPlanFontIdentity
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.segmentation.MaskGeometry

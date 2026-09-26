@@ -5,7 +5,7 @@ import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
@@ -42,7 +42,7 @@ import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.NativeStallState
 import eu.kanade.translation.translator.NativeStallWatchdog

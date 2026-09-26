@@ -2,10 +2,10 @@ package eu.kanade.translation.pipeline
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.artifact.AttemptOrigin
+import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
-import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.diagnostics.BatchDiagnosticDecision
 import eu.kanade.translation.diagnostics.BatchDiagnosticReason
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
@@ -27,7 +27,7 @@ import eu.kanade.translation.pipeline.toArtifactOrigin
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind

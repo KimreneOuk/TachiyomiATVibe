@@ -8,7 +8,7 @@ import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.util.ResumeOrdering
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.collect

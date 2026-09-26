@@ -1,12 +1,12 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterRunRecord
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.ProfilePointer
-import eu.kanade.translation.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.ProfilePointer
+import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.EnvelopeWorkBuild
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator

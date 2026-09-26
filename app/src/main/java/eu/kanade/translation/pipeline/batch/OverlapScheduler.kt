@@ -6,7 +6,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.ProviderRequestMetadata
 import kotlinx.coroutines.CancellationException

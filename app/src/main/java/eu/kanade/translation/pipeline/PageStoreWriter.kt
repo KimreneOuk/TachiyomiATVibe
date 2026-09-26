@@ -7,7 +7,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.ui.TranslationUiTruth
 import eu.kanade.translation.util.TranslationMemoryBudget

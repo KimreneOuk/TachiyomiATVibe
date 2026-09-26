@@ -1,11 +1,11 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.AnalysisChunkResult
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.EnvelopePlan
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.EnvelopePlan
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.runBlocking
 
 /**

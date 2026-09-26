@@ -58,7 +58,7 @@ data class PageTranslation(
     var translationFingerprint: String? = null,
     var layoutFingerprint: String? = null,
     /**
-     * TachiyomiAT   the chapter glossary version ([eu.kanade.translation.artifact.GlossaryPointer])
+     * TachiyomiAT   the chapter glossary version ([eu.kanade.translation.persistence.artifact.GlossaryPointer])
      * live in the store when this page's translation was durably committed
      * (stamped at commit-provenance time). Comparable, NOT
      * hashed into [translationFingerprint]: hash-embedding would blanket-stale

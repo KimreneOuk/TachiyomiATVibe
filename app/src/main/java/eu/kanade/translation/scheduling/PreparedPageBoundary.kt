@@ -5,7 +5,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import logcat.LogPriority
 import logcat.logcat
 

@@ -3,8 +3,8 @@ package eu.kanade.translation
 import android.content.Context
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.storage.TranslationPendingRequestRecord
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestRecord
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.nulls.shouldBeNull

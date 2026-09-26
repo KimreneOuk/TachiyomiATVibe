@@ -1,10 +1,10 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.artifact.ArtifactOrigin
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.artifact.FailureCategory
+import eu.kanade.translation.persistence.artifact.ArtifactOrigin
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.FailureCategory
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

@@ -1,16 +1,16 @@
 package eu.kanade.translation.rendering
 
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ColorStylePreparation
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.PageArtifactRecord
-import eu.kanade.translation.artifact.PageLayoutDrawPlan
-import eu.kanade.translation.artifact.SidecarPointer
-import eu.kanade.translation.artifact.SidecarRead
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ColorStylePreparation
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.segmentation.MaskGeometry
@@ -142,10 +142,10 @@ class DrawPlanDtoRoundTripTest {
                 current.copy(
                     pages = current.pages + (
                         PAGE_KEY to page.copy(
-                            layout = eu.kanade.translation.artifact.StageArtifactRecord(
+                            layout = eu.kanade.translation.persistence.artifact.StageArtifactRecord(
                                 status = ArtifactStageStatus.READY,
                                 fingerprint = prepared.compatibilityFingerprint,
-                                origin = eu.kanade.translation.artifact.ArtifactOrigin.BATCH,
+                                origin = eu.kanade.translation.persistence.artifact.ArtifactOrigin.BATCH,
                                 artifactFileName = planFileName,
                                 updatedAtEpochMs = 2L,
                             ),

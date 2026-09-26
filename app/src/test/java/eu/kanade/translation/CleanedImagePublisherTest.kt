@@ -2,8 +2,8 @@ package eu.kanade.translation
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.CleanedImagePublisher
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.CleanedImagePublisher
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CancellationException

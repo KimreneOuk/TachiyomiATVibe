@@ -10,7 +10,7 @@ import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
  * WAVE-2 REVIEW F4 / GAP-3 (BINDING): the `pages` array is emitted in
  * CORE-THEN-CONTEXT order — the contributing set order of
  * [PlannedAnalysisChunk.contributingPageKeys], which the S4 planner defines
- * and the persisted [eu.kanade.translation.artifact.AnalysisChunkResult]
+ * and the persisted [eu.kanade.translation.persistence.artifact.AnalysisChunkResult]
  * fingerprints hash (`naturalOrderProven=true`). The request payload order
  * MUST reproduce that order exactly; it is pinned end-to-end by
  * `AnalysisRequestOrderTest`.

@@ -13,8 +13,8 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.translation.artifact.GroupCommitConfiguration
-import eu.kanade.translation.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
+import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -46,7 +46,7 @@ import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.translator.providers.AiModelFetcher
 import kotlinx.coroutines.Dispatchers

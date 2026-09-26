@@ -1,14 +1,14 @@
 package eu.kanade.translation.rendering
 
-import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.DrawPlanAlign
-import eu.kanade.translation.artifact.DrawPlanBlock
-import eu.kanade.translation.artifact.DrawPlanFontIdentity
-import eu.kanade.translation.artifact.DrawPlanMaskComponentRef
-import eu.kanade.translation.artifact.DrawPlanPositionedLine
-import eu.kanade.translation.artifact.DrawPlanRect
-import eu.kanade.translation.artifact.PageLayoutDrawPlan
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+import eu.kanade.translation.persistence.artifact.DrawPlanAlign
+import eu.kanade.translation.persistence.artifact.DrawPlanBlock
+import eu.kanade.translation.persistence.artifact.DrawPlanFontIdentity
+import eu.kanade.translation.persistence.artifact.DrawPlanMaskComponentRef
+import eu.kanade.translation.persistence.artifact.DrawPlanPositionedLine
+import eu.kanade.translation.persistence.artifact.DrawPlanRect
+import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.MaskGeometry
 

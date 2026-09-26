@@ -1,8 +1,8 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.artifact.ArtifactOrigin
-import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.ArtifactOrigin
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 

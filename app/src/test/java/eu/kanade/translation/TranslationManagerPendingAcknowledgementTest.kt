@@ -4,8 +4,8 @@ import android.content.Context
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.storage.TranslationPendingRequestRecord
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestRecord
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.every

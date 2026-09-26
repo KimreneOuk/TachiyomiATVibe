@@ -2,11 +2,11 @@ package eu.kanade.translation
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterRunRecord
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -24,7 +24,7 @@ import eu.kanade.translation.pipeline.batch.OcrReadyPageRef
 import eu.kanade.translation.pipeline.batch.PageKey
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.TranslatorComputeClass
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
@@ -232,7 +232,7 @@ class ChapterTranslatorQueueRestoreTest {
         // phase pointer advanced past RUN_SNAPSHOT with p1's checkpointed OCR
         // (OCR_PLAN, done=1) and p2's mid-preflight death left it there. The
         // next explicit run resumes from this pointer; restore starts nothing.
-        record.state shouldBe eu.kanade.translation.artifact.ChapterRunState.OCR_PLAN
+        record.state shouldBe eu.kanade.translation.persistence.artifact.ChapterRunState.OCR_PLAN
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] shouldBe 1
     }
 }

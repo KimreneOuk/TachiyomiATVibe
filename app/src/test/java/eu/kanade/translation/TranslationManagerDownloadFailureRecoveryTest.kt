@@ -12,8 +12,8 @@ import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
-import eu.kanade.translation.storage.TranslationPendingRequestRecord
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestRecord
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.just

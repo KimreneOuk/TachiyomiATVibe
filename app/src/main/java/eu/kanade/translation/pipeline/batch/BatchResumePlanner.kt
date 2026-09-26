@@ -1,7 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchPlannerInput
@@ -12,7 +12,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
@@ -134,7 +134,7 @@ internal class BatchResumePlanner(
             },
             terminalFailure = { pageKey, page ->
                 val durableRetryable = store.durableFailure(pageKey)?.status ==
-                    eu.kanade.translation.artifact.ArtifactStageStatus.FAILED_RETRYABLE
+                    eu.kanade.translation.persistence.artifact.ArtifactStageStatus.FAILED_RETRYABLE
                 val plannedTerminal = batchPagePlans[pageKey]
                     ?.stages
                     ?.firstOrNull { it.stage == BatchStage.TRANSLATION }

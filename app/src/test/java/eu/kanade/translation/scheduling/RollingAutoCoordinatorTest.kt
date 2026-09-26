@@ -6,7 +6,7 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.translator.TranslatorComputeClass
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
