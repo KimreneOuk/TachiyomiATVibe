@@ -59,6 +59,13 @@ import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatchWork
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatcher
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatcherContext
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
+import eu.kanade.translation.pipeline.batch.envelope.PageDispatchWork
+import eu.kanade.translation.pipeline.batch.envelope.PlannedBlock
+import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
 import eu.kanade.translation.util.ShortHash

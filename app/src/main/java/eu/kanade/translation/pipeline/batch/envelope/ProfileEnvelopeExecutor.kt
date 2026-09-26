@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.envelope
 
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
@@ -42,6 +42,7 @@ import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.TranslationBlockPatch
 import eu.kanade.translation.pipeline.TranslationStagePatch
+import eu.kanade.translation.pipeline.batch.BatchContextFrontier
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
 import eu.kanade.translation.util.ShortHash

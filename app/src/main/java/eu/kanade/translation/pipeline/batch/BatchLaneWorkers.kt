@@ -82,7 +82,7 @@ interface NativeLaneRunner {
  *  zero-legacy: the legacy AI-chunk engine (`translateChunkAi`,
  * `completeChunklessPage`, the chunk-completion bridge) had no surviving
  * caller after the SequentialBatchCoordinator deletion — the PROFILE lane
- * translates through [ProfileEnvelopeExecutor] — and was removed.
+ * translates through [eu.kanade.translation.pipeline.batch.envelope.ProfileEnvelopeExecutor] — and was removed.
  */
 internal class BatchLaneWorkers(
     private val store: ChapterTranslationStore,

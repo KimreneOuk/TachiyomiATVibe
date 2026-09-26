@@ -12,6 +12,7 @@ import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.LegacyMigrationHealth
 import eu.kanade.translation.persistence.artifact.LegacyMigrationMetadata
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain

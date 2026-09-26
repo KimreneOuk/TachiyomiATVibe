@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.envelope
 
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
