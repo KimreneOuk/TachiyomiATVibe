@@ -1,14 +1,10 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.pipeline.planning
 
+import eu.kanade.translation.model.InpaintMaskBox
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
-import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
-import eu.kanade.translation.pipeline.planning.BatchPageWorkPlan
-import eu.kanade.translation.pipeline.planning.BatchPlannerInput
-import eu.kanade.translation.pipeline.planning.BatchStage
-import eu.kanade.translation.pipeline.planning.PageWorkPlan
-import eu.kanade.translation.pipeline.planning.PageWorkPlanner
-import eu.kanade.translation.pipeline.planning.StageDecision
-import eu.kanade.translation.pipeline.planning.StageWorkDecision
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
