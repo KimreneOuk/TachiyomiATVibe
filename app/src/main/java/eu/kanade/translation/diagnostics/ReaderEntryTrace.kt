@@ -1,4 +1,4 @@
-package eu.kanade.translation.orchestration
+package eu.kanade.translation.diagnostics
 
 import android.os.Handler
 import android.os.Looper

@@ -1,7 +1,7 @@
 package eu.kanade.translation.translator.retry
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
-import eu.kanade.translation.pipeline.batch.BatchEnvelopeLifecycle
-import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
+import eu.kanade.translation.diagnostics.BatchDiagnosticReason
+import eu.kanade.translation.diagnostics.BatchEnvelopeLifecycle
+import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind

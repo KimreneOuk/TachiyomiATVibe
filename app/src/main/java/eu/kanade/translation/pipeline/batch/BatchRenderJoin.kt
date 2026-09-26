@@ -14,6 +14,7 @@ import eu.kanade.translation.artifact.ColorStylePreparation
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.StageArtifactRecord
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome

@@ -8,6 +8,7 @@ import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation

@@ -207,9 +207,8 @@ enum class TranslationTraceReason(val token: String) {
     CPU_FALLBACK("cpu_fallback"),
     DEVICE_PREFERENCE("device_preference"),
 
-    //  Phase 4 (batch): bounded reason tokens migrated from the legacy
-    // BatchTranslationDiagnostics vocabulary (stage decisions, artifact reuse,
-    // provider envelope lifecycle). Same tokens, now schema-sanctioned.
+    // Bounded reason tokens used by batch stage decisions, artifact reuse,
+    // and provider envelope lifecycle events.
     REFERENCE_READY("reference_ready"),
     NO_REFERENCE("no_reference"),
     CACHE_HIT("cache_hit"),

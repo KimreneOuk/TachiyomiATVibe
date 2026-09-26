@@ -4,6 +4,7 @@ import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.DurableFailureMetadata
 import eu.kanade.translation.artifact.FailureCategory
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageStage

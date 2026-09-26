@@ -1,20 +1,12 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.diagnostics
 
-import eu.kanade.translation.diagnostics.TranslationIdentityKeys
-import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
-import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
-import eu.kanade.translation.diagnostics.TranslationTraceMode
-import eu.kanade.translation.diagnostics.TranslationTraceOutcome
-import eu.kanade.translation.diagnostics.TranslationTraceSink
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldNotContain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 4: the legacy TachiyomiAT.Batch timing/status surface is now a
- * compatibility facade over `translation_trace_v1` (tag TachiyomiAT.Translation).
- * These tests verify the migrated behavior contract:
+ * Verifies the batch diagnostic adapter's current behavior:
  *
  * 1. delegated events carry ONLY bounded tokens (raw page keys, fingerprints,
  *    and error class names never survive);

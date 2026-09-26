@@ -6,6 +6,7 @@ import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactEngine
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.InpaintMaskBox

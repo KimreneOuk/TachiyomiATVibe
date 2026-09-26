@@ -53,7 +53,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.orchestration.ReaderEntryTrace
+import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.orchestration.TranslationSessionState
 import eu.kanade.translation.rendering.PersistedLayoutReaderBridge

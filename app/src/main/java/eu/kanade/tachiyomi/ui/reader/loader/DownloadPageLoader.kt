@@ -13,7 +13,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.displayImageName
-import eu.kanade.translation.orchestration.ReaderEntryTrace
+import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.orchestration.TranslationManager
 import logcat.LogPriority
 import mihon.core.archive.archiveReader

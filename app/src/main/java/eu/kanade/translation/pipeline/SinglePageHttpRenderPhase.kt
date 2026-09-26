@@ -6,6 +6,10 @@ import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.BatchDiagnosticDecision
+import eu.kanade.translation.diagnostics.BatchDiagnosticReason
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
@@ -18,10 +22,6 @@ import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
-import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.toArtifactOrigin
 import eu.kanade.translation.rendering.RenderColorEstimator

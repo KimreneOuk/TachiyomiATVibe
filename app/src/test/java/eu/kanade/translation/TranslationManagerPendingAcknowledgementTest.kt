@@ -1,9 +1,9 @@
 package eu.kanade.translation
 
 import android.content.Context
+import eu.kanade.translation.manager.acknowledgePendingTranslationState
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.manager.acknowledgePendingTranslationState
 import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.storage.TranslationPendingRequestRecord
 import eu.kanade.translation.storage.TranslationPendingRequestStore

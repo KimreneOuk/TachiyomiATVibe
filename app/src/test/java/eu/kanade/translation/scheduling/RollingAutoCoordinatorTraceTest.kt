@@ -447,7 +447,7 @@ private class TraceControllableExecutor(
         if (prepared.pageKey in persistenceRejectedFor) {
             return ChunkCompletionOutcome.PersistenceRejected(
                 anchorPageKey = prepared.pageKey,
-                stage = eu.kanade.translation.pipeline.batch.BatchDiagnosticStage.TRANSLATION,
+                stage = eu.kanade.translation.diagnostics.BatchDiagnosticStage.TRANSLATION,
                 reason = "lease rejected by manual owner",
             )
         }

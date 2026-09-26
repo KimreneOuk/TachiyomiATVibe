@@ -10,6 +10,7 @@ import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.toUiPauseReason
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.manager.ChapterDataResetController
 import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey

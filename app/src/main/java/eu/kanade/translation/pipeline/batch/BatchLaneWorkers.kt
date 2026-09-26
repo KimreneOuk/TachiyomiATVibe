@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome

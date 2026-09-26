@@ -1,14 +1,14 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.diagnostics.BatchDiagnosticReason
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.orchestration.ReaderEntryTrace
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
-import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
+import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject

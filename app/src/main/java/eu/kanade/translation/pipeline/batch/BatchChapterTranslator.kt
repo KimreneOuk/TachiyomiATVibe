@@ -6,6 +6,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationScheduleTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane

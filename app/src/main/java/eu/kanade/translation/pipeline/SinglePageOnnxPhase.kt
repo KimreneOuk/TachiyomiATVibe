@@ -6,6 +6,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
@@ -22,7 +23,6 @@ import eu.kanade.translation.model.resetAttemptCharge
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
 import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
 import eu.kanade.translation.pipeline.finalizePostOcrStage
 import eu.kanade.translation.pipeline.ocrBlockFingerprints

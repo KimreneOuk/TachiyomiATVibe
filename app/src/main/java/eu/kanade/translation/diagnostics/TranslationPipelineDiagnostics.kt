@@ -581,9 +581,8 @@ object TranslationPipelineDiagnostics {
     }
 
     // ------------------------------------------------------------------
-    //  Phase 4: batch facade helpers. Standalone, already-measured
-    // emissions for the legacy BatchTranslationDiagnostics compatibility
-    // surface. They correlate with the resolved identity but record into no
+    // Standalone, already-measured emissions for batch diagnostic callers.
+    // They correlate with the resolved identity but record into no
     // run/schedule state machine (no stage map, no accumulator), so legacy
     // events can never double-count against the trace-native spans.
     // ------------------------------------------------------------------

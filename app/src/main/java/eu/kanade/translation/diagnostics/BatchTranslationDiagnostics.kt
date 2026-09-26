@@ -1,31 +1,16 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.diagnostics
 
-import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
-import eu.kanade.translation.diagnostics.TranslationRunIdentity
-import eu.kanade.translation.diagnostics.TranslationScheduleState
-import eu.kanade.translation.diagnostics.TranslationScheduleTrace
-import eu.kanade.translation.diagnostics.TranslationTrace
-import eu.kanade.translation.diagnostics.TranslationTraceLane
-import eu.kanade.translation.diagnostics.TranslationTraceOutcome
-import eu.kanade.translation.diagnostics.TranslationTraceReason
-import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import logcat.logcat
 import java.util.Locale
 
 /**
- *  Phase 4: compatibility facade over `translation_trace_v1`
- * ([TranslationPipelineDiagnostics], tag `TachiyomiAT.Translation`).
+ * Adapts batch-stage event vocabulary to the structured translation trace.
  *
- * The legacy `TachiyomiAT.Batch` timing/status lines are migrated: every
- * method below now delegates to a schema event under the unified tag. The
- * public surface is unchanged for out-of-scope callers (artifact store,
- * single-page render phase, AI retry controller). Delegated events correlate
- * with the caller's current [TranslationTrace] run when one is installed,
- * else with the active batch schedule registered by
- * [BatchChapterTranslator]; with neither, they fail open (no identity, no
- * emission — a fabricated sid is never invented).
+ * Events correlate with the caller's current [TranslationTrace] run, then the
+ * active batch schedule registered by the batch coordinator. Without either
+ * identity, they fail open and emit nothing.
  *
  * Delegated events are standalone: they never record into a run stage map or
  * the schedule overlap accumulator, so they can never double-count against
@@ -40,10 +25,8 @@ object BatchTranslationDiagnostics {
     private const val TAG = "TachiyomiAT.Batch"
 
     /**
-     * The batch schedule owned by the in-flight [BatchChapterTranslator]
-     * invocation, registered for correlation by facade callers that hold no
-     * page run (AI retry controller, artifact store). One @Volatile
-     * reference; cleared at schedule end.
+     * The in-flight batch schedule used to correlate callers that hold no page
+     * run, such as the retry controller and artifact store. Cleared at schedule end.
      */
     @Volatile
     internal var activeSchedule: TranslationScheduleTrace? = null
@@ -183,7 +166,7 @@ object BatchTranslationDiagnostics {
         TranslationTrace.currentRun()?.identity
             ?: activeSchedule?.takeIf { !it.isClosed }?.identity
 
-    /** Bounded stage token per legacy diagnostic stage. */
+    /** Maps a batch stage to the corresponding trace stage. */
     private fun BatchDiagnosticStage.toTraceStage(): TranslationTraceStage = when (this) {
         BatchDiagnosticStage.OCR -> TranslationTraceStage.OCR
         BatchDiagnosticStage.INPAINT -> TranslationTraceStage.INPAINT
@@ -199,7 +182,7 @@ object BatchTranslationDiagnostics {
         BatchDiagnosticStage.ARTIFACT -> TranslationTraceLane.STORAGE
     }
 
-    /** Legacy reason vocabulary -> bounded schema reason tokens. */
+    /** Maps batch diagnostic reasons to bounded trace tokens. */
     private fun BatchDiagnosticReason.toTraceToken(): TranslationTraceReason = when (this) {
         BatchDiagnosticReason.SUCCESS -> TranslationTraceReason.ADMITTED
         BatchDiagnosticReason.REFERENCE_READY -> TranslationTraceReason.REFERENCE_READY
