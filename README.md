@@ -4,7 +4,7 @@ TachiyomiATVibe is an unofficial, independent fork of [TachiyomiAT](https://gith
 
 Most of the fork-specific development (translation pipeline, tests, tooling) was produced with AI coding assistants under human direction and review.
 
-This repository contains application source and third-party notices, but no prebuilt application downloads or reading content. Runtime model files are distributed separately through the `models-v1` release; check each project's license and notices when redistributing code or assets.
+This repository contains application source and third-party notices, but no prebuilt application downloads, reading content, or model binaries. Source builds fetch pinned model files and generate converted models locally; check each project's license and notices when redistributing code or assets.
 
 ## About
 
@@ -12,23 +12,26 @@ A Mihon-based Android reader with chapter translation and reader workflow change
 
 ## Models and building
 
-The model files are hosted as assets of the [models-v1 GitHub release](https://github.com/KimreneOuk/TachiyomiATVibe/releases/tag/models-v1), rather than in Git. Before building, install Python 3 and fetch them from the repository root:
+Before building, install Python 3, install the pinned converter dependencies, and fetch model assets from the repository root:
 
 ```sh
+python3 -m pip install -r scripts/converters/requirements.txt
 python3 scripts/fetch_models.py
 ```
 
-On Windows PowerShell, use `py -3 scripts/fetch_models.py`. The standard-library-only fetcher checks every file against the size and full SHA-256 in [scripts/models.manifest](scripts/models.manifest); it skips files that already pass verification and fails if the release cannot be reached or a file does not match. The app continues seeding the downloaded assets into its private files directory at runtime. See [docs/MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for model provenance, conversion notes, and license status.
+On Windows PowerShell, use `py -3 -m pip install -r scripts/converters/requirements.txt` and `py -3 scripts/fetch_models.py`. The fetcher downloads direct upstream files and locally converts derived files, checking source and output size and full SHA-256 values from [scripts/models.manifest](scripts/models.manifest). It skips verified files and fails if a source is unreachable, a converter fails, or any hash does not match. The app continues seeding fetched assets into its private files directory at runtime. See [docs/MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for model provenance, conversion notes, and license status.
 
 You also need JDK 17 and the Android SDK installed. Android Studio can install the SDK components required by the project.
 
 ```sh
 git clone https://github.com/KimreneOuk/TachiyomiATVibe.git
 cd TachiyomiATVibe
+python3 -m pip install -r scripts/converters/requirements.txt
+python3 scripts/fetch_models.py
 ./gradlew :app:assembleStandardDebug
 ```
 
-On Windows PowerShell, run `.\gradlew.bat :app:assembleStandardDebug`. The Standard debug APKs are written under `app/build/outputs/apk/standard/debug/`.
+On Windows PowerShell, run `py -3 -m pip install -r scripts/converters/requirements.txt`, `py -3 scripts/fetch_models.py`, then `.\gradlew.bat :app:assembleStandardDebug`. The Standard debug APKs are written under `app/build/outputs/apk/standard/debug/`.
 
 Run the JVM unit tests with:
 
@@ -58,7 +61,7 @@ Stabilizing these tests and removing the tag is tracked work.
 
 ## License and third-party assets
 
-The project is distributed under the [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the bundled model and font asset manifest.
+The project is distributed under the [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for fetched model and bundled font notices.
 
 ## Disclaimer
 
