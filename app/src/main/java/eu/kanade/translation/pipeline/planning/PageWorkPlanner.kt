@@ -1,6 +1,5 @@
 package eu.kanade.translation.pipeline.planning
 
-import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isTextlessTerminal
@@ -10,6 +9,7 @@ import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.toPageDisplayProjection
 
 /**
  * Plans the stages a page or ordered chapter batch can safely reuse.
@@ -115,7 +115,7 @@ object PageWorkPlanner {
         }
 
         val displayReady = page?.toPageDisplayProjection()?.displayReady == true ||
-            artifact?.let { PageDisplayProjection.from(it).displayReady } == true
+            artifact?.toPageDisplayProjection()?.displayReady == true
         val firstIncomplete = decisions.values.firstOrNull {
             it.decision != StageDecision.REUSE && it.decision != StageDecision.TERMINAL_COMPLETE
         }?.stage

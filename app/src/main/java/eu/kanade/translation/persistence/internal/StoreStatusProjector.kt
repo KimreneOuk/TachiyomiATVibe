@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence.internal
 
-import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
@@ -15,6 +14,7 @@ import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.toPageDisplayProjection
 import eu.kanade.translation.persistence.chapter.ChapterPageReconciler
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.flow.StateFlow
@@ -169,7 +169,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
      * the run record claims completion the manifest cannot show.
      *
      * Done evidence per page: a committed display bundle
-     * ([eu.kanade.translation.model.PageDisplayProjection.from] displayReady),
+     * ([eu.kanade.translation.persistence.artifact.toPageDisplayProjection] displayReady),
      * a TEXTLESS_COMPLETE display state, or an open candidate snapshot — the
      * flagged lane keeps the translated page snapshot addressable through the
      * candidate pointer (promotion to a committed bundle requires a rendered
@@ -190,7 +190,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
         var partialCount = 0
         var unevidencedCount = 0
         pageRecords.forEach { pageRecord ->
-            val projection = PageDisplayProjection.from(pageRecord)
+            val projection = pageRecord.toPageDisplayProjection()
             val livePartial = pagesSnapshot[pageRecord.pageKey]?.translationStatus ==
                 eu.kanade.translation.model.StageStatus.PARTIAL
             val done = projection.displayReady ||
