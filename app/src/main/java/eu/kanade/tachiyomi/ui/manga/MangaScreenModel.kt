@@ -43,13 +43,13 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.TranslationSettingsSummary
 import eu.kanade.translation.model.TranslationUiProjection
 import eu.kanade.translation.model.snapshotTranslationSummary
+import eu.kanade.translation.orchestration.ChapterQueuePreflight
 import eu.kanade.translation.orchestration.TranslationManager
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -1817,7 +1817,7 @@ class MangaScreenModel(
         // copy and for cancelRunningChapterForReplace.
         data class RunningTranslationConflict(
             val item: ChapterList.Item,
-            val conflict: eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict,
+            val conflict: ChapterQueuePreflight.RunningConflict,
         ) : Dialog
 
         // A probed "downloaded"

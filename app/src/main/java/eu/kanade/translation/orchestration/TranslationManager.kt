@@ -21,7 +21,6 @@ import eu.kanade.translation.manager.TranslationDocument
 import eu.kanade.translation.manager.TranslationProgressProjection
 import eu.kanade.translation.manager.TranslationRequestCoordinator
 import eu.kanade.translation.manager.isReconstructibleDurableState
-import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
@@ -30,9 +29,6 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.model.findRunningSameSourceConflict
-import eu.kanade.translation.model.staleQueuedChaptersToEvict
-import eu.kanade.translation.model.toQueuedChapterView
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
 import eu.kanade.translation.orchestration.BatchSessionIntent
 import eu.kanade.translation.orchestration.ReaderSessionIntent

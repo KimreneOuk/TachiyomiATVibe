@@ -18,11 +18,11 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.TranslationSettingsSummary
 import eu.kanade.translation.model.snapshotTranslationSummary
+import eu.kanade.translation.orchestration.ChapterQueuePreflight
 import eu.kanade.translation.orchestration.TranslationManager
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe

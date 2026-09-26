@@ -1,9 +1,10 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.orchestration
+
+import eu.kanade.translation.model.Translation
 
 /**
- * TachiyomiAT bug 3 fix: minimal view over a queue entry used by the pure
- * conflict/eviction helpers below. Extracted so the logic is unit-testable
- * without constructing a full [Translation] (which requires an HttpSource).
+ * Queue fields needed to apply same-source admission rules without constructing
+ * a full [Translation] and its source dependency.
  */
 data class QueuedChapterView(
     val chapterId: Long,
@@ -13,17 +14,10 @@ data class QueuedChapterView(
 )
 
 /**
- * TachiyomiAT bug 3 fix: pure conflict detection extracted from
- * [eu.kanade.translation.orchestration.TranslationManager.translateChapterPreflight] so the
- * queue-scan logic is unit-testable without constructing the full manager.
+ * Returns the first active same-source chapter that conflicts with a new request.
  *
- * Returns the first actively translating chapter of [sourceId] in [queue] that
- * is NOT [requestedChapterId]. Returns null when there is no conflict.
- *
- * Stale QUEUE entries are intentionally ignored here: dropping a not-yet-started
- * queue entry preserves artifacts, so it does not need user confirmation. Only
- * an actively TRANSLATING chapter requires confirmation because cancelling it
- * mid-OCR/inpaint discards in-flight native work.
+ * Queued entries are handled separately: removing a not-yet-started item keeps
+ * its artifacts, while cancelling a running item can discard native stage work.
  */
 fun findRunningSameSourceConflict(
     queue: List<QueuedChapterView>,
@@ -37,10 +31,8 @@ fun findRunningSameSourceConflict(
     .firstOrNull()
 
 /**
- * TachiyomiAT bug 3 fix: pure selection of stale QUEUE entries to evict when a
- * new chapter of [sourceId] is queued. Returns every queued (status == QUEUE)
- * chapter of [sourceId] that is NOT [keepChapterId]. Evicting these preserves
- * their artifacts (the store is untouched); only the queue entry is dropped.
+ * Selects queued same-source chapters to remove when admitting [keepChapterId].
+ * Eviction drops only the queue entry and leaves each chapter's artifacts intact.
  */
 fun staleQueuedChaptersToEvict(
     queue: List<QueuedChapterView>,

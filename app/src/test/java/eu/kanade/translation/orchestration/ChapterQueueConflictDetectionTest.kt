@@ -1,21 +1,17 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.orchestration
 
+import eu.kanade.translation.model.Translation
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * B3 pure-logic coverage for the queue conflict detection and stale-entry
- * eviction that backs [eu.kanade.translation.orchestration.TranslationManager.translateChapterPreflight]
- * and `evictStaleQueuedChapters`. The manager wraps these helpers; they own the
- * actual queue-scan rules, so testing them directly proves the bug-3 contract
- * without constructing a full TranslationManager (which needs HttpSource + DI).
+ * Covers same-source conflicts and stale queue eviction used by
+ * [TranslationManager.translateChapterPreflight].
  *
- * The artifact-scan half of bug 3 — a re-queued chapter reuses READY OCR/
- * inpaint/translation and only reruns missing work — is already covered by
- * [eu.kanade.translation.pipeline.batch.BatchResumeGateDeciderTest], which is the
- * helper translateBatch consults per page.
+ * Artifact reuse for re-queued work is covered by
+ * [eu.kanade.translation.pipeline.batch.BatchResumeGateDeciderTest].
  */
 class ChapterQueueConflictDetectionTest {
 
