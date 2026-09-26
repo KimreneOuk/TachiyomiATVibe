@@ -1,4 +1,4 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.presentation
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

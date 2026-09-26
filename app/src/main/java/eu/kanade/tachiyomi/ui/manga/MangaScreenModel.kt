@@ -46,9 +46,9 @@ import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.model.TranslationSettingsSummary
-import eu.kanade.translation.model.snapshotTranslationSummary
+import eu.kanade.translation.presentation.TranslationSettingsSummary
 import eu.kanade.translation.presentation.TranslationUiProjection
+import eu.kanade.translation.presentation.snapshotTranslationSummary
 import eu.kanade.translation.workflow.ChapterQueuePreflight
 import eu.kanade.translation.workflow.TranslationManager
 import kotlinx.collections.immutable.ImmutableList

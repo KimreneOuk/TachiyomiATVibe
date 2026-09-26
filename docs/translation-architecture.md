@@ -41,7 +41,7 @@ The session coordinator in `workflow` arbitrates reader and batch admission. Pag
 | `model` | Shared translation values, page state and domain types. Keep feature policy and projections with their owning subsystem. |
 | `engines/runtime/onnx` | ONNX initialization, model availability and device/runtime integration. |
 | `diagnostics` | Trace/event vocabulary and diagnostic projections shared across execution paths. |
-| `presentation` | Reader-facing translation truth, projections and notification copy. |
+| `presentation` | Reader and confirmation-dialog projections, including the active translation settings summary and notification copy. |
 | `util` | Small general helpers only. Put translation policy beside the subsystem that owns it. |
 
 For a provider, follow an existing implementation in `engines/translator/providers`, implement the established translator contract, and wire it through the existing engine builder/router. Do not add provider parsing or policy to `workflow/TranslationManager` or batch execution.

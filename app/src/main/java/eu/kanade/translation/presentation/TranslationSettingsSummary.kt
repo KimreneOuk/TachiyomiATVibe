@@ -1,4 +1,4 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.presentation
 
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
