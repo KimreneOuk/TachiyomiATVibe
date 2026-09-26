@@ -1,138 +1,68 @@
+# TachiyomiATVibe
 
-<div align="center">  
-
-<a href="https://github.com/mannu691/TachiyomiAT">  
-    <img src="./.github/assets/logo.png" alt="TachiyomiAT logo" title="TachiyomiAT logo" width="80"/>  
-</a>  
-
-# TachiyomiAT [App](#)
+TachiyomiATVibe is an unofficial, independent fork of [TachiyomiAT](https://github.com/mannu691/TachiyomiAT). It is based on [Mihon](https://github.com/mihonapp/mihon), which continues the [Tachiyomi](https://github.com/tachiyomiorg/Tachiyomi) project. This fork is not affiliated with or endorsed by those projects or their maintainers.
 
 Most of the fork-specific development (translation pipeline, tests, tooling) was produced with AI coding assistants under human direction and review.
 
->[12-02-2025] Note : This project isn't abandoned,but current release might not work as intended, i am currently in process of rebasing it on latest mihon build and making it more robust with better text bubble placement. i don't release dev builds so next release might take some time
+This repository contains application source and third-party notices, but no prebuilt application downloads, reading content, or model binaries. Source builds fetch pinned model files and generate converted models locally; check each project's license and notices when redistributing code or assets.
 
-### Full-featured reader with Automatic Managa Translations
-Discover,Translate and read manga, webtoons, comics, and more – easier than ever on your Android device.
+## About
 
-[![Discord server](https://img.shields.io/discord/801338287012053042.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.com/invite/rkvXfVPRdq)
-[![GitHub downloads](https://img.shields.io/github/downloads/mannu691/TachiyomiAT/total?label=downloads&labelColor=27303D&color=0D1117&logo=github&logoColor=FFFFFF&style=flat)](https://github.com/mannu691/TachiyomiAT/releases)  
-[![License: Apache-2.0](https://img.shields.io/github/license/mihonapp/mihon?labelColor=27303D&color=0877d2)](/LICENSE)  
-[![Translation status](https://img.shields.io/weblate/progress/mihon?labelColor=27303D&color=946300)](https://hosted.weblate.org/engage/mihon/)
+A Mihon-based Android reader with chapter translation and reader workflow changes maintained in this fork. The minimum supported Android version is Android 8.0 (API 26). Some translation providers require credentials that you supply yourself.
 
 ## Models and building
 
-The model files are hosted as assets of the [models-v1 GitHub release](https://github.com/KimreneOuk/TachiyomiATVibe/releases/tag/models-v1), rather than in Git. Before building, install Python 3 and fetch them from the repository root:
+Before building, install Python 3, install the pinned converter dependencies, and fetch model assets from the repository root:
 
 ```sh
+python3 -m pip install -r scripts/converters/requirements.txt
 python3 scripts/fetch_models.py
 ```
 
-On Windows PowerShell, use `py -3 scripts/fetch_models.py`. The standard-library-only fetcher checks every file against the size and full SHA-256 in [scripts/models.manifest](scripts/models.manifest); it skips files that already pass verification and fails if the release cannot be reached or a file does not match. The app continues seeding the downloaded assets into its private files directory at runtime. See [docs/MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for model provenance, conversion notes, and license status.
+On Windows PowerShell, use `py -3 -m pip install -r scripts/converters/requirements.txt` and `py -3 scripts/fetch_models.py`. The fetcher downloads direct upstream files and locally converts derived files, checking source and output size and full SHA-256 values from [scripts/models.manifest](scripts/models.manifest). It skips verified files and fails if a source is unreachable, a converter fails, or any hash does not match. The app continues seeding fetched assets into its private files directory at runtime. See [docs/MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for model provenance, conversion notes, and license status.
 
 You also need JDK 17 and the Android SDK installed. Android Studio can install the SDK components required by the project.
 
-[![Discord Banner 3](https://discord.com/api/guilds/801338287012053042/widget.png?style=banner3)](https://discord.com/invite/rkvXfVPRdq)
-## Download
+```sh
+git clone https://github.com/KimreneOuk/TachiyomiATVibe.git
+cd TachiyomiATVibe
+python3 -m pip install -r scripts/converters/requirements.txt
+python3 scripts/fetch_models.py
+./gradlew :app:assembleStandardDebug
+```
 
-[Download - 0.16.7](https://github.com/mannu691/TachiyomiAT/releases)
+On Windows PowerShell, run `py -3 -m pip install -r scripts/converters/requirements.txt`, `py -3 scripts/fetch_models.py`, then `.\gradlew.bat :app:assembleStandardDebug`. The Standard debug APKs are written under `app/build/outputs/apk/standard/debug/`.
 
-*Requires Android 8.0 or higher.*
+Run the JVM unit tests with:
 
-## Features
+```sh
+./gradlew test
+```
 
-<div align="left">  
+The CI build uses the Standard release variant. Automated release creation remains disabled for this fork until its maintainers configure a release policy and signing credentials.
 
-* All Features of the latest version of [Mihon](https://github.com/mihonapp/mihon)
-* Translate Chapters into any language
-* Choose Font You Like
-* Automatic Translation on Download
-* Many options for Translators
-</div>  
+## Project lineage
 
-## Supported Languages
-
-<div align="left">
-
-* Chinese
-* Korean
-* Japanase
-
-> You can Translate From These to Any  Other Language
->
-</div>  
-
-## Available Translators
-<div align="left">
-
-* MLkit : On Device Translations
-* Google Translate : Web Based
-* Gemini : [Get API Key Here](https://makersuite.google.com/app/apikey "Get API Key Here")
-* OpenRouter: [Get API Key Here](https://openrouter.ai/ "Get API Key Here")
-
-</div>  
-
-## Translation Comparison
-
-Source : Tian Zuan : Chapter 615
-| Gemini | Google Translate  | MLKit (On Device) | Raw  |
-| ------------- | ------------- | ------------- | ------------- |
-| ![ManhuaPlus](./.github/assets/gemini.png)  | ![Gemini](./.github/assets/gt.png)  | ![GoogleTranslate](./.github/assets/mlkit.png)  | ![mlkit](./.github/assets/raw.png)  |
-
-
-## Before You Begin
-
-<div align="left">
-
-1. You can Translate a Chapter after Downloading it , there will be a button beside the download button
-2. You can Turn on Auto Translate to Automatically Start Translating a chapter after it is Translated
-3. For Api Based Translators Please add your own api key in the Settings
-4. Please select the appropriate language you want to translate from and translate to in Settings
-5. For OpenRouter translator you have to also provide the model you want to use in settings default is : google/gemma-2-9b-it:free
-
-</div>  
+The TachiyomiAT, Mihon, and Tachiyomi projects retain their own histories and contributor attribution. This repository is a curated source snapshot with a fresh Git history; it does not reproduce the upstream commit history.
 
 ## Contributing
 
-[Code of conduct](./CODE_OF_CONDUCT.md) · [Contributing guide](./CONTRIBUTING.md)
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Open an issue or pull request in this repository for changes to TachiyomiATVibe.
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+## Test stability quarantine
 
-Before reporting a new issue, take a look at the [FAQ](https://mihon.app/docs/faq/general), the [changelog](https://mihon.app/changelogs/) and the already opened [issues](https://github.com/mihonapp/mihon/issues); if you got any questions, join our [Discord server](https://discord.gg/mihon).
+A small number of integration tests in the batch-translation coexistence suite — plus one screen-model fixture whose boot await can starve on 2-core CI runners — are load-ordering sensitive under full-suite JVM churn and are temporarily tagged `quarantined-flaky` and excluded from CI. They remain part of the tree and can be run explicitly with:
 
+```
+./gradlew :app:testDevReleaseUnitTest -PincludeQuarantinedTests
+```
 
-### Repositories
+Stabilizing these tests and removing the tag is tracked work.
 
-[![mihonapp/website - GitHub](https://github-readme-stats.vercel.app/api/pin/?username=mihonapp&repo=website&bg_color=161B22&text_color=c9d1d9&title_color=0877d2&icon_color=0877d2&border_radius=8&hide_border=true)](https://github.com/mihonapp/website/)  
-[![mihonapp/bitmap.kt - GitHub](https://github-readme-stats.vercel.app/api/pin/?username=mihonapp&repo=bitmap.kt&bg_color=161B22&text_color=c9d1d9&title_color=0877d2&icon_color=0877d2&border_radius=8&hide_border=true)](https://github.com/mihonapp/bitmap.kt/)
+## License and third-party assets
 
-### Credits
+The project is distributed under the [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for fetched model and bundled font notices.
 
-Thank you to all the people who have contributed!
+## Disclaimer
 
-<a href="https://github.com/mihonapp/mihon/graphs/contributors">  
-    <img src="https://contrib.rocks/image?repo=mannu691/TachiyomiAT" alt="Mihon app contributors" title="Mihon app contributors" width="800"/>  
-</a>  
-
-### Disclaimer
-
-The developer(s) of this application does not have any affiliation with the content providers available, and this application hosts zero content.
-
-### License
-
-<pre>  
-Copyright © 2015 Javier Tomás  
-  
-Licensed under the Apache License, Version 2.0 (the "License");  
-you may not use this file except in compliance with the License.  
-You may obtain a copy of the License at  
-  
-http://www.apache.org/licenses/LICENSE-2.0  
-  
-Unless required by applicable law or agreed to in writing, software  
-distributed under the License is distributed on an "AS IS" BASIS,  
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  
-See the License for the specific language governing permissions and  
-limitations under the License.  
-</pre>  
-
-</div>
+The developers are not affiliated with content providers. The application does not include or host reading content; users are responsible for the sources and content they choose to use.

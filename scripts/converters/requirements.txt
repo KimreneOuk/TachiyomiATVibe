@@ -1,0 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+numpy==2.2.2
+onnx==1.20.1
+onnxruntime==1.24.2
+onnxslim==0.1.94
+torch==2.9.1+cpu
+torchvision==0.24.1+cpu
+ultralytics==8.4.163
