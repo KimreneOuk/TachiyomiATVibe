@@ -72,7 +72,7 @@ class TranslationManagerStartupReconciliationTest {
             manager,
             "scheduler",
             eu.kanade.translation.scheduling.TranslationScheduler(
-                executor = mockk<eu.kanade.translation.scheduling.TranslationExecutor>(relaxed = true),
+                executor = mockk<eu.kanade.translation.pipeline.execution.TranslationExecutor>(relaxed = true),
                 storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { null },
                 immediateStoreResolver = { null },
             ),

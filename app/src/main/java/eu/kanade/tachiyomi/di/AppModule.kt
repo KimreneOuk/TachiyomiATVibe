@@ -128,7 +128,7 @@ class AppModule(val app: Application) : InjektModule {
 
         // TachiyomiAT
         addSingletonFactory { TranslationProvider(app) }
-        addSingletonFactory { eu.kanade.translation.scheduling.TranslationStreamRegistry() }
+        addSingletonFactory { eu.kanade.translation.pipeline.execution.TranslationStreamRegistry() }
         addSingletonFactory { TranslationManager(app) }
         addSingletonFactory { get<TranslationManager>().scheduler }
 

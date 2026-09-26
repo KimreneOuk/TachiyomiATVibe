@@ -13,8 +13,8 @@ import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.scheduling.AutoSlotState
-import eu.kanade.translation.scheduling.SinglePageOutcome
 import java.text.DateFormat
 import java.util.Date
 

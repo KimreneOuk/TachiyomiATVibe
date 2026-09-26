@@ -13,14 +13,14 @@ import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.AutoChapterIdentity
-import eu.kanade.translation.scheduling.PreparedPage
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
-import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationSession
-import eu.kanade.translation.scheduling.TranslationStageEvent
-import eu.kanade.translation.scheduling.TranslationStageListener
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -412,8 +412,8 @@ class AutoProviderCallDrainsNotCancelsTest {
             force: Boolean,
             stageListener: TranslationStageListener?,
             origin: eu.kanade.translation.persistence.chapter.PageWriteOrigin,
-        ): eu.kanade.translation.scheduling.SinglePageOutcome =
-            eu.kanade.translation.scheduling.SinglePageOutcome.Completed
+        ): eu.kanade.translation.pipeline.execution.SinglePageOutcome =
+            eu.kanade.translation.pipeline.execution.SinglePageOutcome.Completed
 
         private fun displayReady(pageKey: String, current: PageTranslation?): PageTranslation =
             (current ?: PageTranslation(sourceFileName = pageKey)).apply {

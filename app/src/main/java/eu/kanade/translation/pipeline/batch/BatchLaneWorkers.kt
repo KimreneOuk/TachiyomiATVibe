@@ -39,7 +39,6 @@ import eu.kanade.translation.pipeline.batch.recovery.BatchResumeGate
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
-import eu.kanade.translation.scheduling.CrossOriginBitmapBudget
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers

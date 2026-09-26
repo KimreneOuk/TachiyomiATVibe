@@ -45,12 +45,12 @@ import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.getChapterPages
 import eu.kanade.translation.workflow.ChapterTranslator

@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.pipeline.execution
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred

@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.pipeline.execution
 
 import android.graphics.Bitmap
 import eu.kanade.translation.model.PageTranslation

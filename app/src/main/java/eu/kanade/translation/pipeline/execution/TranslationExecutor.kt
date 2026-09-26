@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.pipeline.execution
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
@@ -8,8 +8,8 @@ import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream
 
 /**
- * TachiyomiAT: the per-page translation contract that [TranslationScheduler]
- * depends on, decoupled from the concrete executor.
+ * The per-page translation contract used by the scheduler, decoupled from the
+ * concrete executor.
  *
  * Today this is satisfied by [eu.kanade.translation.workflow.ChapterTranslator], which
  * delegates to [eu.kanade.translation.pipeline.TranslationPipeline]'s

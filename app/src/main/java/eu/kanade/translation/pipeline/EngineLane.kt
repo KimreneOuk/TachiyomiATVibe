@@ -10,7 +10,7 @@ import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.scheduling.NativeRunQuarantine
+import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope

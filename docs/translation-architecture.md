@@ -20,8 +20,8 @@ reader or batch request
 
 | Mode | Entry and owner | Shared pieces | Mode-specific work |
 | --- | --- | --- | --- |
-| Manual page | `workflow/TranslationManager` → `scheduling/TranslationScheduler` | `pipeline/TranslationPipeline`, `EngineLane`, chapter store, vision/translator/rendering engines | A user request is admitted and deduplicated for one page. |
-| Auto reader | `workflow/TranslationManager` / reader session → `scheduling/TranslationScheduler` and `RollingAutoCoordinator` | Same page pipeline, chapter store, provider and native lane | Reader windows, auto ownership/generations, pause and teardown rules. |
+| Manual page | `workflow/TranslationManager` → `scheduling/TranslationScheduler` | `pipeline/execution/TranslationExecutor`, `pipeline/TranslationPipeline`, `EngineLane`, chapter store, vision/translator/rendering engines | A user request is admitted and deduplicated for one page. |
+| Auto reader | `workflow/TranslationManager` / reader session → `scheduling/TranslationScheduler` and `RollingAutoCoordinator` | Same page execution contract, pipeline, chapter store, provider and native lane | Reader windows, auto ownership/generations, pause and teardown rules. |
 | Batch chapter | `workflow/ChapterTranslator` → `pipeline/batch/BatchChapterTranslator` and batch workers | Chapter store, artifact engine, OCR/translator/inpainting/rendering engines and diagnostics | Batch preflight, envelopes, ordered chunk work, candidate publication and resume/recovery. Chapter-wide analysis and durable chunk publication are grouped in `pipeline/batch/analysis`; AI profile envelope dispatch and plan publication are grouped in `pipeline/batch/envelope`; batch progress events, tracking and reconciliation are grouped in `pipeline/batch/progress`; resume decisions and recovery workers are grouped in `pipeline/batch/recovery`. |
 
 The session coordinator in `workflow` arbitrates reader and batch admission. Page leases and write fences remain the final protection against stale or competing writers; do not treat admission policy as a replacement for those checks. Manual, auto and batch paths share engines and chapter state, but use different scheduling and publication flows.
@@ -31,8 +31,8 @@ The session coordinator in `workflow` arbitrates reader and batch admission. Pag
 | Package | Put this concern here |
 | --- | --- |
 | `workflow` | Request admission, reader/batch session ownership, chapter lifecycle and reader teardown. `TranslationManager` is the public façade. |
-| `scheduling` | Which page jobs run and when: manual/auto reader jobs, rolling windows, cancellation and native-run quarantine. Workflow decides ownership and intent. |
-| `pipeline` | Page execution, engine lane, stage contracts, writes, decoding, memory governance and single-page phases. `pipeline.planning` owns page-stage planning; `pipeline.batch` owns chapter coordination and mode-specific work; `pipeline.batch.analysis` owns chapter-wide analysis and durable chunk publication; `pipeline.batch.envelope` owns AI profile envelope dispatch and plan publication; `pipeline.batch.progress` owns progress events, tracking and reconciliation; `pipeline.batch.recovery` owns resume-stage policy and batch recovery workers. |
+| `scheduling` | Which page jobs run and when: manual/auto reader jobs, rolling windows, cancellation and auto reader windows. Workflow decides ownership and intent. |
+| `pipeline` | Page execution, engine lane, stage contracts, writes, decoding, memory governance and single-page phases. `pipeline.execution` owns the page executor contract, prepared-page boundary, native-run quarantine and image-stream registry. `pipeline.planning` owns page-stage planning; `pipeline.batch` owns chapter coordination and mode-specific work plus its shared bitmap budget; `pipeline.batch.analysis` owns chapter-wide analysis and durable chunk publication; `pipeline.batch.envelope` owns AI profile envelope dispatch and plan publication; `pipeline.batch.progress` owns progress events, tracking and reconciliation; `pipeline.batch.recovery` owns resume-stage policy and batch recovery workers. |
 | `engines/vision/{detection,segmentation,ocr,webtoon}` | Text/panel detection, bubble masks, recognition engines and webtoon image behavior. OCR engines compose the specialized recognition stages. |
 | `engines/translator` | Translation contracts and provider behavior. Add a provider under `engines/translator/providers`; keep provider request/response details there. `contextual`, `analysis`, `retry` and `routing` retain their focused roles. |
 | `context` | Chapter and series context used to prepare translation requests. |
@@ -58,7 +58,7 @@ Keep candidate output separate from committed display output until the artifact 
 
 - A page-stage lease grants one writer origin ownership. A lease binds the store generation and page version; each guarded write must still match the lease token and artifact candidate fences.
 - Session admission coordinates manual/auto reader and batch work. Manual preemption of auto work, batch admission, and teardown ordering are intentional ownership transitions.
-- Cancellation does not prove native work has exited. `NativeRunQuarantine` retains admission until the actual native call returns; `EngineLane` serializes native engine use and close/rebuild operations.
+- Cancellation does not prove native work has exited. `pipeline/execution/NativeRunQuarantine` retains admission until the actual native call returns; `EngineLane` serializes native engine use and close/rebuild operations.
 - Durable publication must remain atomic through the artifact document/manifest protocol. Coroutine cancellation and `NonCancellable` lease cleanup paths preserve this contract.
 - Keep dependencies pointed toward concrete owners: presentation/workflow → scheduling and pipeline → engines → live state, persistence and domain types. Low-level model, persistence/artifact, diagnostics and engine code should not reach up into batch execution or reader workflow.
 - Add no package cycle, process-global state, or general-purpose abstraction without a real boundary. Prefer an existing concrete owner and a focused test seam.

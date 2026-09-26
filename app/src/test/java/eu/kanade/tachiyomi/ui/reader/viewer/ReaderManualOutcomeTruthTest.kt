@@ -9,6 +9,7 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.presentation.TranslationUiTruth
 import eu.kanade.translation.presentation.UiRetryMode
 import eu.kanade.translation.presentation.UiSeverity
@@ -17,7 +18,6 @@ import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.AutoTranslationSnapshot
 import eu.kanade.translation.scheduling.AutoWindowSlot
-import eu.kanade.translation.scheduling.SinglePageOutcome
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

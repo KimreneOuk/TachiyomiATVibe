@@ -1,7 +1,7 @@
 package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.scheduling.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import io.kotest.matchers.shouldBe
@@ -123,7 +123,7 @@ class TranslationSessionCoordinatorTest {
         scheduler.translatePage(manga, chapter, source, "p0")
 
         scheduler.manualOutcomeFor(10L, "p0")
-            .shouldBeInstanceOf<eu.kanade.translation.scheduling.SinglePageOutcome.Rejected>()
+            .shouldBeInstanceOf<eu.kanade.translation.pipeline.execution.SinglePageOutcome.Rejected>()
             .reason shouldBe "reader session rejected: BATCH_ACTIVE"
         scheduler.close()
     }

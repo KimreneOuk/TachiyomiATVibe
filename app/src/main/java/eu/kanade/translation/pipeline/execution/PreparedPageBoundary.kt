@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.pipeline.execution
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -24,10 +24,10 @@ import logcat.logcat
  * the durable write below will fail because the durable snapshot will have
  * empty blocks and `ocrStatus = RUNNING` instead of `READY`.
  *
- * Phase 3: the persist is a preconditioned detection/OCR stage merge carrying
- * the page version observed before the native pass, so a stale worker cannot
- * clobber a page a newer writer owns. A rejection is logged and the durable
- * winner's snapshot is returned — the reader observes the winner's progress.
+ * The persist is a preconditioned detection/OCR stage merge carrying the page
+ * version observed before the native pass, so a stale worker cannot clobber a
+ * page a newer writer owns. A rejection is logged and the durable winner's
+ * snapshot is returned — the reader observes the winner's progress.
  */
 internal suspend fun publishPreparedPageFromOcr(
     store: ChapterTranslationStore,

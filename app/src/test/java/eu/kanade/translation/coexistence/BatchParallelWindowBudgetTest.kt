@@ -1,6 +1,6 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.scheduling.CrossOriginBitmapBudget
+import eu.kanade.translation.pipeline.batch.CrossOriginBitmapBudget
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

@@ -43,9 +43,9 @@ import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.persistence.chapter.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
-import eu.kanade.translation.scheduling.TranslationStageEvent
-import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -66,7 +66,7 @@ import kotlin.coroutines.coroutineContext
 internal class SinglePageHttpRenderPhase(
     private val translationPreferences: TranslationPreferences,
     private val provider: TranslationProvider,
-    private val streamRegistry: eu.kanade.translation.scheduling.TranslationStreamRegistry,
+    private val streamRegistry: eu.kanade.translation.pipeline.execution.TranslationStreamRegistry,
     private val engines: EngineLane,
     private val cleanedPublication: CleanedPublication,
     // Engine-cache reads (translator signature/model/mode change on rebuild),

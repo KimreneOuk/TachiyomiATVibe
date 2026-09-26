@@ -55,7 +55,7 @@ class TranslationManagerAutoArbitrationTest {
         every { manga.source } returns 1L
         every { chapter.id } returns 10L
         val scheduler = TranslationScheduler(
-            executor = mockk<eu.kanade.translation.scheduling.TranslationExecutor>(relaxed = true),
+            executor = mockk<eu.kanade.translation.pipeline.execution.TranslationExecutor>(relaxed = true),
             storeResolver = TranslationStoreResolver { null },
             immediateStoreResolver = { null },
         )
@@ -107,7 +107,7 @@ class TranslationManagerAutoArbitrationTest {
         every { chapter.scanlator } returns null
         val session = TranslationSession("manager-arbitration", manga, chapter, source, store)
         val identity = AutoChapterIdentity(10L, "manager-arbitration")
-        val executor = mockk<eu.kanade.translation.scheduling.TranslationExecutor>(relaxed = true)
+        val executor = mockk<eu.kanade.translation.pipeline.execution.TranslationExecutor>(relaxed = true)
         val scheduler = TranslationScheduler(
             executor = executor,
             storeResolver = TranslationStoreResolver { store },

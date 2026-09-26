@@ -28,11 +28,11 @@ import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.pipeline.finalizePostOcrStage
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
-import eu.kanade.translation.scheduling.TranslationStageEvent
-import eu.kanade.translation.scheduling.TranslationStageListener
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ensureActive

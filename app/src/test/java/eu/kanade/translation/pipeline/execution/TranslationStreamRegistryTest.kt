@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.pipeline.execution
 
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest

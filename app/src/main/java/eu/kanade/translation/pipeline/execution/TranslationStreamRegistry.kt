@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.pipeline.execution
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CoroutineScope
@@ -13,19 +13,15 @@ import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * TachiyomiAT: per-process registry of reader page image streams.
+ * Per-process registry of reader page image streams.
  *
- * Previously this state lived as a process-global `ConcurrentHashMap` on the
- * `ChapterTranslator` companion object. Each entry holds a `() -> InputStream`
+ * Each entry holds a `() -> InputStream`
  * factory closure — often capturing a downloaded [ByteArray] or a
- * `ReaderPage` reference — so the registry doubles as a memory owner for those
- * bytes. Extracting it into its own class lets the reader (which registers
- * streams) and the translator (which peeks them) share one well-named,
- * testable collaborator instead of touching a static map, and makes the
- * memory-eviction rules (per-chapter clear, clear-all on background/stop)
- * explicit on a single type.
+ * `ReaderPage` reference — so the registry also owns those bytes until entries
+ * are cleared. The reader registers streams and the translator peeks them; the
+ * per-chapter and reader-lifecycle eviction rules live here.
  *
- * The key shape is unchanged from the previous companion implementation:
+ * The key shape is:
  * `"$sourceId:$mangaId:$chapterId:$pageKey"`, so the prefix-based chapter
  * eviction continues to match the same entries it did before.
  */
