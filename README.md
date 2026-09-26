@@ -38,7 +38,7 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF
 
 ## Test stability quarantine
 
-A small number of integration tests in the batch-translation coexistence suite are load-ordering sensitive under full-suite JVM churn and are temporarily tagged `quarantined-flaky` and excluded from CI. They remain part of the tree and can be run explicitly with:
+A small number of integration tests in the batch-translation coexistence suite — plus one screen-model fixture whose boot await can starve on 2-core CI runners — are load-ordering sensitive under full-suite JVM churn and are temporarily tagged `quarantined-flaky` and excluded from CI. They remain part of the tree and can be run explicitly with:
 
 ```
 ./gradlew :app:testDevReleaseUnitTest -PincludeQuarantinedTests
