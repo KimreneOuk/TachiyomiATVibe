@@ -226,7 +226,7 @@ private data class AiTranslationAccumulator(
  *
  * [retryBudget] is shared by every provider transport attempt in this
  * envelope. Concrete translators inherit it through [withRequestRetryBudget],
- * and the Phase 1 governor consumes it only after admission. A translator
+ * and the provider request governor consumes it only after admission. A translator
  * double that does not expose a governor boundary is charged once per retry
  * attempt, keeping tests and legacy adapters bounded without charging real
  * HTTP twice.
@@ -973,61 +973,4 @@ private fun normalizedPageIndexes(chunk: TranslationContextChunk): LinkedHashMap
 private fun StringBuilder.appendIdentityField(value: Any?) {
     val text = value?.toString() ?: "<null>"
     append(text.length).append(':').append(text).append('|')
-}
-
-/**
- * Explicit compatibility adapter for the pre-Phase-2 live pipeline.
- *
- * The controller is side-effect-free; this helper is the only Phase-2 bridge
- * that applies accepted detached results to live page objects. It preserves
- * user edits and assigns IDs on the live snapshot only when the caller has not
- * already assigned them. Phase 3 owns whether a provisional outcome may be
- * durably published.
- */
-internal fun applyAiChunkOutcomeToPages(
-    outcome: AiChunkOutcome,
-    pages: Map<String, PageTranslation>,
-    pageIndexes: Map<String, Int> = emptyMap(),
-    pageKeys: Set<String>? = null,
-) {
-    if (outcome.blockTranslations.isEmpty()) return
-    val indexes = normalizedAdapterPageIndexes(pages.keys, pageIndexes)
-    val targetPages = if (pageKeys == null) pages else pages.filterKeys { it in pageKeys }
-    targetPages.forEach { (pageKey, page) ->
-        StableBlockIds.assign(page, indexes.getValue(pageKey))
-    }
-    val blocksById = targetPages.values
-        .asSequence()
-        .flatMap { it.blocks.asSequence() }
-        .mapNotNull { block ->
-            block.blockId
-                ?.let(ContextualResponseParser::normalizeBatchId)
-                ?.let { it to block }
-        }
-        .toMap()
-    outcome.blockTranslations.forEach { (rawId, translation) ->
-        val block = blocksById[ContextualResponseParser.normalizeBatchId(rawId)] ?: return@forEach
-        if (block.userEditedAt == null) block.translation = translation
-    }
-}
-
-private fun normalizedAdapterPageIndexes(
-    pageKeys: Set<String>,
-    supplied: Map<String, Int>,
-): LinkedHashMap<String, Int> {
-    val used = mutableSetOf<Int>()
-    var next = supplied.values.maxOrNull()?.let { if (it == Int.MAX_VALUE) 0 else it + 1 } ?: 0
-    return linkedMapOf<String, Int>().apply {
-        pageKeys.forEach { pageKey ->
-            val candidate = supplied[pageKey]
-            val index = if (candidate != null && candidate >= 0 && used.add(candidate)) {
-                candidate
-            } else {
-                while (next in used) next = if (next == Int.MAX_VALUE) 0 else next + 1
-                used += next
-                next.also { next = if (next == Int.MAX_VALUE) 0 else next + 1 }
-            }
-            put(pageKey, index)
-        }
-    }
 }
