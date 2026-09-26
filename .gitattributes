@@ -23,7 +23,7 @@
 *.pyc binary
 *.swp binary
 
-# Corpus gate binary outputs (raw ARGB int32 — must not be line-ending normalized)
+# Corpus gate binary outputs (raw ARGB int32 ΓÇö must not be line-ending normalized)
 *.bin binary
 
 # ONNX models (protobuf binary - must not be line-ending normalized)
@@ -31,3 +31,6 @@
 
 # PyTorch models (pickle/ZIP binary - must not be line-ending normalized)
 *.pt binary
+
+# Binary artifacts: never normalize line endings
+*.aar binary
