@@ -1,4 +1,4 @@
-package eu.kanade.translation.workflow
+package eu.kanade.translation.persistence.chapter
 
 import eu.kanade.translation.model.PageTranslation
 

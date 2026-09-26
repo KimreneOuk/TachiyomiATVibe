@@ -1801,7 +1801,7 @@ class MangaScreenModel(
         data class TranslationProgress(val chapterId: Long) : Dialog
         data class ChapterReset(
             val item: ChapterList.Item,
-            val preflight: eu.kanade.translation.workflow.ChapterResetPreflight,
+            val preflight: eu.kanade.translation.persistence.chapter.ChapterResetPreflight,
         ) : Dialog
         data class ConfirmTranslation(
             val item: ChapterList.Item,

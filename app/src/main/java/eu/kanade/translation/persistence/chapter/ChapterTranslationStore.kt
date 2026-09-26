@@ -63,8 +63,6 @@ import eu.kanade.translation.pipeline.inpaintMaskFingerprint
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
 import eu.kanade.translation.pipeline.toArtifactOrigin
-import eu.kanade.translation.workflow.ChapterResetPreflight
-import eu.kanade.translation.workflow.chapterResetPreflight
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap

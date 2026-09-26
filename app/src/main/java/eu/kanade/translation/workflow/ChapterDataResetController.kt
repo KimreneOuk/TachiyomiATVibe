@@ -6,6 +6,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactDeletionPlan
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterResetPreflight
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.scheduling.TranslationScheduler
