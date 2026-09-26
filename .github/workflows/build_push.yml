@@ -37,6 +37,21 @@ jobs:
       - name: Fetch and verify model assets
         run: python3 scripts/fetch_models.py
 
+      - name: Warm up dependency resolution (retries through JitPack outages)
+        run: |
+          attempt=1
+          until ./gradlew -q :app:mergeStandardReleaseNativeLibs > /dev/null 2>&1; do
+            if [ "$attempt" -ge 6 ]; then
+              echo "dependency resolution failed after $attempt attempts"
+              ./gradlew :app:mergeStandardReleaseNativeLibs || true
+              exit 1
+            fi
+            echo "resolution attempt $attempt failed; retrying in 60s"
+            attempt=$((attempt + 1))
+            sleep 60
+          done
+          echo "runtime classpath resolved on attempt $attempt"
+
       - name: Build app and run unit tests
         run: ./gradlew assembleStandardRelease testDevReleaseUnitTest testStandardReleaseUnitTest
 
