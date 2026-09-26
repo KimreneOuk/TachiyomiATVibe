@@ -2,6 +2,8 @@
 
 TachiyomiATVibe is an unofficial, independent fork of [TachiyomiAT](https://github.com/mannu691/TachiyomiAT). It is based on [Mihon](https://github.com/mihonapp/mihon), which continues the [Tachiyomi](https://github.com/tachiyomiorg/Tachiyomi) project. This fork is not affiliated with or endorsed by those projects or their maintainers.
 
+Most of the fork-specific development (translation pipeline, tests, tooling) was produced with AI coding assistants under human direction and review.
+
 This repository contains application source and third-party notices, but no prebuilt application downloads or reading content. Runtime model files are distributed separately through the `models-v1` release; check each project's license and notices when redistributing code or assets.
 
 ## About
