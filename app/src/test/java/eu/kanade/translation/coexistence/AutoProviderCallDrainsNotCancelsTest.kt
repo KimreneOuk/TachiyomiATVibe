@@ -415,17 +415,6 @@ class AutoProviderCallDrainsNotCancelsTest {
         ): eu.kanade.translation.scheduling.SinglePageOutcome =
             eu.kanade.translation.scheduling.SinglePageOutcome.Completed
 
-        override suspend fun translateSinglePageFromStream(
-            manga: Manga,
-            chapter: Chapter,
-            source: HttpSource,
-            pageKey: String,
-            streamFn: () -> InputStream,
-            force: Boolean,
-            stageListener: TranslationStageListener?,
-        ) {
-        }
-
         private fun displayReady(pageKey: String, current: PageTranslation?): PageTranslation =
             (current ?: PageTranslation(sourceFileName = pageKey)).apply {
                 // The paid call's terminal commit is the translate+persist

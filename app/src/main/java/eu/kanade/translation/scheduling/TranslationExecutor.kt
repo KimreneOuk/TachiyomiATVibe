@@ -19,7 +19,7 @@ import java.io.InputStream
  *
  * The `force` flag: `false` resumes from the latest persisted stage (no
  * re-OCR when valid blocks exist, no re-translate when blocks are translated,
- * no re-inpaint when a cleaned image exists — see Tracks G/H); `true` redoes
+ * and no re-inpaint when a cleaned image exists); `true` redoes
  * the whole pipeline AND calls [PageTranslation.prepareForcedRetry], which
  * resets the per-attempt exhaustion counter ([PageTranslation.attemptCount])
  * and clears prior FAILED/cleaned/rendered state. That reset is load-bearing:
@@ -28,14 +28,12 @@ import java.io.InputStream
  * blacklisted by [PageTranslation.hasExhaustedRetries] — the "cannot reprocess
  * / retranslate" bug.
  *
- * The MANUAL per-page translate button (ReaderViewModel.translateSinglePage)
- * resolves `force` from the page's live state: `true` when a stage is FAILED
+ * The per-page translate button resolves `force` from the page's live state:
+ * `true` when a stage is FAILED
  * (so [PageTranslation.prepareForcedRetry] resets the bookkeeping and the page
  * can be reprocessed), `false` otherwise (resume optimization for healthy /
- * partially-translated pages). The AUTO-prefetch path
- * (TranslationScheduler.requestAutoWindow) does NOT go through that method and
- * keeps `force=false` (resume) semantics; the scheduler's [translatePage]
- * threads the caller's `force` value through to this executor.
+ * partially-translated pages). The scheduler passes that decision through to
+ * this executor.
  */
 interface TranslationExecutor {
 
@@ -48,16 +46,6 @@ interface TranslationExecutor {
         stageListener: TranslationStageListener? = null,
         origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
     ): SinglePageOutcome
-
-    suspend fun translateSinglePageFromStream(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        streamFn: () -> InputStream,
-        force: Boolean = false,
-        stageListener: TranslationStageListener? = null,
-    )
 
     /**
      * Native phase of the prepared-page boundary: decode → detect/OCR → inpaint
@@ -109,7 +97,7 @@ interface TranslationExecutor {
      *   preparation (no cleaned image produced) also surfaces as null: the
      *   caller should re-prepare the page rather than mark the slot Failed.
      * @throws Throwable on a genuine translate/render failure or timeout (after
-     *   durable failure writes), matching the legacy [translateSinglePage]
+     *   durable failure writes), matching [translateSinglePage]
      *   propagation so callers can attribute failures correctly instead of
      *   mistaking them for a race loss.
      *
@@ -126,20 +114,20 @@ interface TranslationExecutor {
 }
 
 /**
- *   (design note §2.4): typed outcome of one single-page intent. Replaces
+ * A typed outcome of one single-page intent. It replaces
  * the previous silent `Unit` return so a denied lease can never again look like
  * a completed intent: the scheduler records the outcome and its
  * cancel path can tell "owned the page" from "only observed the owner".
  */
 sealed interface SinglePageOutcome {
-    /**  R1: the page intent was admitted and is queued in-memory awaiting pipeline execution. */
+    /** The page intent was admitted and is queued in memory awaiting pipeline execution. */
     data object Admitted : SinglePageOutcome
 
     /** The executor ran the page itself (including resume-skip soft exits). */
     data object Completed : SinglePageOutcome
 
     /**
-     *  Phase 3 ( §2.2a): the paid call was typed-deferred by the provider
+     * The paid call was deferred by the provider
      * request governor (window/foreground budget) instead of completing, so the
      * intent neither failed nor finished. [nextEligibleRetryAtEpochMs] is the
      * epoch ms after which a retry may be admitted, when the governor knows it.

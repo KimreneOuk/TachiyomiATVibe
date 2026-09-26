@@ -91,8 +91,8 @@ val PageTranslation.isStageFailed: Boolean
 /**
  * Flip every non-terminal RUNNING/PENDING stage to CANCELLED in place, used to
  * clear a page stranded in-flight after a cancellation (chapter switch, reader
- * exit, per-page cancel). Centralises the per-stage rewrite that was previously
- * copy-pasted in the scheduler's [markPageCancelled] / [markPageAutoSoftSkipped].
+ * exit, per-page cancel). Centralises the per-stage rewrite used by the
+ * scheduler's cancellation paths.
  * A cancel is NOT a failure, so retryCount is left untouched.
  */
 fun PageTranslation.cancelInFlightStages() {

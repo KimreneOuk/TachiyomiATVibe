@@ -464,16 +464,6 @@ private class TraceControllableExecutor(
         origin: PageWriteOrigin,
     ): SinglePageOutcome = SinglePageOutcome.Completed
 
-    override suspend fun translateSinglePageFromStream(
-        manga: tachiyomi.domain.manga.model.Manga,
-        chapter: tachiyomi.domain.chapter.model.Chapter,
-        source: eu.kanade.tachiyomi.source.online.HttpSource,
-        pageKey: String,
-        streamFn: () -> InputStream,
-        force: Boolean,
-        stageListener: TranslationStageListener?,
-    ) {}
-
     suspend fun awaitAndCompletePrepare(callIndex: Int) {
         gate(prepareStarted, callIndex).await()
         gate(prepareGate, callIndex).complete(Unit)

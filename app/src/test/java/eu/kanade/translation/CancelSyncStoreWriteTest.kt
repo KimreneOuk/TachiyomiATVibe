@@ -55,15 +55,7 @@ class CancelSyncStoreWriteTest {
                 stageListener: TranslationStageListener?,
                 origin: PageWriteOrigin,
             ): SinglePageOutcome = SinglePageOutcome.Completed
-            override suspend fun translateSinglePageFromStream(
-                manga: Manga,
-                chapter: Chapter,
-                source: HttpSource,
-                pageKey: String,
-                streamFn: () -> InputStream,
-                force: Boolean,
-                stageListener: TranslationStageListener?,
-            ) {}
+
             override suspend fun prepareSinglePage(
                 manga: Manga,
                 chapter: Chapter,

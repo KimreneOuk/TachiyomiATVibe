@@ -234,14 +234,4 @@ private class ManualFakeExecutor(
         prepared: PreparedPage,
         stageListener: TranslationStageListener?,
     ): ChunkCompletionOutcome? = null
-
-    override suspend fun translateSinglePageFromStream(
-        manga: tachiyomi.domain.manga.model.Manga,
-        chapter: tachiyomi.domain.chapter.model.Chapter,
-        source: eu.kanade.tachiyomi.source.online.HttpSource,
-        pageKey: String,
-        streamFn: () -> InputStream,
-        force: Boolean,
-        stageListener: TranslationStageListener?,
-    ) {}
 }

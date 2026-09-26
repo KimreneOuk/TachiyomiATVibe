@@ -95,16 +95,6 @@ class GroupCommitSliceCTest {
             prepared: PreparedPage,
             stageListener: TranslationStageListener?,
         ): ChunkCompletionOutcome? = null
-
-        override suspend fun translateSinglePageFromStream(
-            manga: tachiyomi.domain.manga.model.Manga,
-            chapter: tachiyomi.domain.chapter.model.Chapter,
-            source: HttpSource,
-            pageKey: String,
-            streamFn: () -> InputStream,
-            force: Boolean,
-            stageListener: TranslationStageListener?,
-        ) {}
     }
 
     private fun mockSession(chapterId: Long = 42L): Triple<

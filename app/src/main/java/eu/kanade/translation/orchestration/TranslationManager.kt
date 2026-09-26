@@ -866,7 +866,7 @@ class TranslationManager(
      *
      * [admissionContexts] carries the per-chapter
      * download-probe cross-check for subset admissions; chapters without an
-     * entry keep the legacy no-cross-check behavior.
+     * entry keep the current no-cross-check behavior.
      */
     fun translateChaptersIfCurrent(
         manga: Manga,
@@ -1539,25 +1539,6 @@ class TranslationManager(
         ) ?: return null
         val key = "${source.id}:${manga.id}:$chapterId"
         return TranslationSession(key, manga, chapter, source, store)
-    }
-
-    fun requestAutoWindow(
-        session: TranslationSession,
-        requests: List<TranslationPageRequest>,
-    ) {
-        //   same-chapter auto is suppressed for the WHOLE chapter-batch
-        // lifetime (queue entry in QUEUE|TRANSLATING|PAUSED retained state).
-        // This legacy auto entry launches real page work, so it must not arm
-        // while the chapter's batch is queued; the reader's next window update
-        // after the queue drains re-arms normally.
-        val requestChapterId = session.chapter.id
-        if (requestChapterId != null && isBatchTranslationRetained(requestChapterId)) {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=$requestChapterId"
-            }
-            return
-        }
-        scheduler.requestAutoWindow(session, requests)
     }
 
     fun cancelAutoTranslations(chapterId: Long? = null): Boolean =
