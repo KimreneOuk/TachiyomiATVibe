@@ -9,7 +9,7 @@ import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
-import eu.kanade.translation.persistence.artifact.toPageDisplayProjection
+import eu.kanade.translation.persistence.artifact.toArtifactDisplayProjection
 
 /**
  * Plans the stages a page or ordered chapter batch can safely reuse.
@@ -115,7 +115,7 @@ object PageWorkPlanner {
         }
 
         val displayReady = page?.toPageDisplayProjection()?.displayReady == true ||
-            artifact?.toPageDisplayProjection()?.displayReady == true
+            artifact?.toArtifactDisplayProjection()?.displayReady == true
         val firstIncomplete = decisions.values.firstOrNull {
             it.decision != StageDecision.REUSE && it.decision != StageDecision.TERMINAL_COMPLETE
         }?.stage

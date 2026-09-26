@@ -8,7 +8,7 @@ import eu.kanade.translation.persistence.artifact.DisplayBaseKind
 import eu.kanade.translation.persistence.artifact.DisplayBaseReference
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.StageArtifactRecord
-import eu.kanade.translation.persistence.artifact.toPageDisplayProjection
+import eu.kanade.translation.persistence.artifact.toArtifactDisplayProjection
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.markOriginalImageFallback
 import io.kotest.matchers.shouldBe
@@ -188,9 +188,9 @@ class PageDisplayProjectionTest {
             layout = StageArtifactRecord(ArtifactStageStatus.READY, artifactFileName = "layout.json"),
         )
 
-        record.toPageDisplayProjection().displayReady shouldBe true
+        record.toArtifactDisplayProjection().displayReady shouldBe true
         record.copy(layout = StageArtifactRecord(ArtifactStageStatus.ABSENT))
-            .toPageDisplayProjection().displayReady shouldBe false
+            .toArtifactDisplayProjection().displayReady shouldBe false
     }
 
     private fun readyPage() = PageTranslation(

@@ -18,15 +18,6 @@ data class PageDisplayProjection(
 
     /** A textless terminal page is processed but is not translated-ready. */
     val isTextless: Boolean get() = state == PageDisplayState.TEXTLESS_COMPLETE
-
-    companion object {
-        fun from(page: PageTranslation): PageDisplayProjection = page.singlePageProjection()
-
-        fun from(
-            candidate: PageTranslation,
-            committed: PageTranslation?,
-        ): PageDisplayProjection = candidate.toPageDisplayProjection(committed)
-    }
 }
 
 /**

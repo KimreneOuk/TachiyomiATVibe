@@ -9,7 +9,7 @@ import eu.kanade.translation.model.hasCommittedDisplay
  * A committed pointer and validated display base are required before a page
  * counts as translated-ready.
  */
-fun PageArtifactRecord.toPageDisplayProjection(): PageDisplayProjection {
+fun PageArtifactRecord.toArtifactDisplayProjection(): PageDisplayProjection {
     val committed = committed
     val committedBaseValid = committed?.displayBase?.validated == true
     val committedDisplayState = displayState
