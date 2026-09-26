@@ -25,6 +25,8 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage

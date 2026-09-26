@@ -12,7 +12,7 @@ import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.CheckpointOcrResult
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException

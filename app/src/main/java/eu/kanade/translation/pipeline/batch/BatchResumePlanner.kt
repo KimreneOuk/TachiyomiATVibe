@@ -11,8 +11,9 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.TranslationProvider
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority

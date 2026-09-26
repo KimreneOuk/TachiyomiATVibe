@@ -16,8 +16,8 @@ import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat

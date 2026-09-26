@@ -3,7 +3,7 @@ package eu.kanade.translation.scheduling
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
 import eu.kanade.translation.diagnostics.TranslationTraceSink
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import io.kotest.matchers.shouldBe
 import io.mockk.every

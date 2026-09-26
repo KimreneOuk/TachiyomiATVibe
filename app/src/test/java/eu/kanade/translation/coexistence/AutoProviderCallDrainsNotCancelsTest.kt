@@ -411,7 +411,7 @@ class AutoProviderCallDrainsNotCancelsTest {
             pageKey: String,
             force: Boolean,
             stageListener: TranslationStageListener?,
-            origin: eu.kanade.translation.pipeline.PageWriteOrigin,
+            origin: eu.kanade.translation.persistence.chapter.PageWriteOrigin,
         ): eu.kanade.translation.scheduling.SinglePageOutcome =
             eu.kanade.translation.scheduling.SinglePageOutcome.Completed
 

@@ -15,9 +15,9 @@ import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageStageLease
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageStageLease
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import java.util.concurrent.ConcurrentHashMap
 
 //   ChapterTranslationStore's legacy lease-fence rejection reason. Newer

@@ -38,11 +38,12 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.TranslationProvider
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.persistence.chapter.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.pipeline.toArtifactOrigin
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.util.ShortHash

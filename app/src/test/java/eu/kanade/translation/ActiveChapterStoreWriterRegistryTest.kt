@@ -2,7 +2,7 @@ package eu.kanade.translation
 
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.WriterOrigin
+import eu.kanade.translation.persistence.chapter.WriterOrigin
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe

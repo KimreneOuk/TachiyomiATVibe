@@ -7,7 +7,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.toPageDisplayProjection
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.presentation.TranslationUiTruth
 import eu.kanade.translation.presentation.UiRetryMode

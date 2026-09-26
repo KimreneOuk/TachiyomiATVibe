@@ -1,8 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.pipeline.ActiveWriter
-import eu.kanade.translation.pipeline.WriterOrigin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

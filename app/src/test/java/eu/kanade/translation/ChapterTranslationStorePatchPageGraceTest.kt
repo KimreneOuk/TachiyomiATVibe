@@ -12,8 +12,8 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.toPrecondition
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldNotBeNull

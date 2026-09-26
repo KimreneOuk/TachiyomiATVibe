@@ -55,10 +55,12 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.ToneFlag
 import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.analysis.AnalysisChunkPublication
 import eu.kanade.translation.pipeline.batch.analysis.AnalysisWorker
 import eu.kanade.translation.pipeline.batch.analysis.AnalysisWorkerContext
@@ -69,8 +71,6 @@ import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
 import eu.kanade.translation.pipeline.batch.envelope.PageDispatchWork
 import eu.kanade.translation.pipeline.batch.envelope.PlannedBlock
 import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority

@@ -1,7 +1,7 @@
 package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CoroutineScope

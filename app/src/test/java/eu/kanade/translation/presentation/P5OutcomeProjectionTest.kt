@@ -4,7 +4,7 @@ import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.SinglePageOutcome

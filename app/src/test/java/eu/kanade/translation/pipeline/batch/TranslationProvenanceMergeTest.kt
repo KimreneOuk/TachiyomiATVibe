@@ -4,10 +4,11 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.TranslationBlockPatch
-import eu.kanade.translation.pipeline.TranslationStagePatch
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.TranslationBlockPatch
+import eu.kanade.translation.persistence.chapter.TranslationStagePatch
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -112,7 +113,7 @@ class TranslationProvenanceMergeTest {
         )
 
         val result = store.mergeTranslation(legacyPatch)
-        result.shouldBeInstanceOf<eu.kanade.translation.pipeline.StagePatchResult.Accepted>()
+        result.shouldBeInstanceOf<StagePatchResult.Accepted>()
         store.state.value["p1"]!!.blocks[0].translation shouldBe "ONE"
         store.state.value["p1"]!!.translationStatus shouldBe StageStatus.READY
     }
@@ -130,7 +131,7 @@ class TranslationProvenanceMergeTest {
                 profileContentFingerprint = "a".repeat(64),
             ),
         )
-        val rejected = result.shouldBeInstanceOf<eu.kanade.translation.pipeline.StagePatchResult.Rejected>()
+        val rejected = result.shouldBeInstanceOf<StagePatchResult.Rejected>()
         rejected.reason shouldContain "translation provenance rejected: frozen profile changed"
         // Nothing committed: the translation never landed.
         store.state.value["p1"]!!.blocks[0].translation shouldBe ""
@@ -149,7 +150,7 @@ class TranslationProvenanceMergeTest {
                 envelopePlanFingerprint = "b".repeat(64),
             ),
         )
-        val rejected = result.shouldBeInstanceOf<eu.kanade.translation.pipeline.StagePatchResult.Rejected>()
+        val rejected = result.shouldBeInstanceOf<StagePatchResult.Rejected>()
         rejected.reason shouldContain "translation provenance rejected: envelope plan changed"
         store.state.value["p1"]!!.blocks[0].translation shouldBe ""
     }

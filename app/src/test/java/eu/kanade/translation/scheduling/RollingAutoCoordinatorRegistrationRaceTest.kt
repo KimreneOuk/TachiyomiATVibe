@@ -219,6 +219,6 @@ private class ParkingExecutor : TranslationExecutor {
         pageKey: String,
         force: Boolean,
         stageListener: TranslationStageListener?,
-        origin: eu.kanade.translation.pipeline.PageWriteOrigin,
+        origin: eu.kanade.translation.persistence.chapter.PageWriteOrigin,
     ): SinglePageOutcome = SinglePageOutcome.Completed
 }

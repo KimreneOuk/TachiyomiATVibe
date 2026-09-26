@@ -15,8 +15,8 @@ import eu.kanade.translation.persistence.artifact.DisplayBaseReference
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe

@@ -31,12 +31,12 @@ import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.StageArtifactRecord
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.RenderBlockPatch
+import eu.kanade.translation.persistence.chapter.RenderStagePatch
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.LayoutFailureException
-import eu.kanade.translation.pipeline.RenderBlockPatch
-import eu.kanade.translation.pipeline.RenderStagePatch
-import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

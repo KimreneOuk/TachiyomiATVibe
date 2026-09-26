@@ -23,12 +23,13 @@ import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.resetAttemptCharge
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.TranslationProvider
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
 import eu.kanade.translation.pipeline.finalizePostOcrStage
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStreamRegistry

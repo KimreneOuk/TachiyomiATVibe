@@ -29,12 +29,12 @@ import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.pipeline.DecodedPage
-import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
-import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.scheduling.CrossOriginBitmapBudget

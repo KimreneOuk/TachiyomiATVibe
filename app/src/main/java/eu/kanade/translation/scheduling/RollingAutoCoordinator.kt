@@ -19,7 +19,7 @@ import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget

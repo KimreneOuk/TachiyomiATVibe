@@ -199,7 +199,7 @@ internal class DurableChapterStatusResolver(
         val statusWriter = ActiveChapterStoreRegistry.registerWriter(
             chapterId = chapterId,
             chapterKey = document.registryKey,
-            origin = eu.kanade.translation.pipeline.WriterOrigin.STATUS_RESOLVER,
+            origin = eu.kanade.translation.persistence.chapter.WriterOrigin.STATUS_RESOLVER,
         )
         val probeStage = ReaderEntryTrace.begin("probe.status", chapterId)
         return try {

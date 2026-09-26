@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline
+package eu.kanade.translation.persistence.chapter
 
 /**
  *  Slice A2: Writer registry (N2).

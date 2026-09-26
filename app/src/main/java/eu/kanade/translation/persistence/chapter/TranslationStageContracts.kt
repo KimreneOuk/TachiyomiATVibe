@@ -1,10 +1,9 @@
-package eu.kanade.translation.pipeline
+package eu.kanade.translation.persistence.chapter
 
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import java.security.MessageDigest
 
 /**
@@ -40,14 +39,6 @@ fun PageWriteOrigin?.toArtifactOrigin(): ArtifactOrigin = when (this) {
     PageWriteOrigin.MANUAL, PageWriteOrigin.AUTO, null -> ArtifactOrigin.READER_ADHOC
     PageWriteOrigin.BATCH -> ArtifactOrigin.BATCH
 }
-
-/** Small immutable reference queued after OCR has committed and native resources are released. */
-data class OcrReadyPageRef(
-    val pageKey: String,
-    val pageIndex: Int,
-    val generation: Long,
-    val blockFingerprints: List<String>,
-)
 
 /**
  * Detection/OCR-owned fields and the preconditions captured before the native
