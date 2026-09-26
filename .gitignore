@@ -56,3 +56,6 @@ kilo.json
 /EXECUTION_HANDOFF.md
 /_gui_probe/
 /_merge_backup_*/
+
+# Runtime models are fetched from the models-v1 release; retain empty placeholders
+/app/src/main/assets/models/**

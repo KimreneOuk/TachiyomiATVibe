@@ -17,6 +17,18 @@ Discover,Translate and read manga, webtoons, comics, and more – easier than ev
 [![License: Apache-2.0](https://img.shields.io/github/license/mihonapp/mihon?labelColor=27303D&color=0877d2)](/LICENSE)  
 [![Translation status](https://img.shields.io/weblate/progress/mihon?labelColor=27303D&color=946300)](https://hosted.weblate.org/engage/mihon/)
 
+## Models and building
+
+The model files are hosted as assets of the [models-v1 GitHub release](https://github.com/KimreneOuk/TachiyomiATVibe/releases/tag/models-v1), rather than in Git. Before building, install Python 3 and fetch them from the repository root:
+
+```sh
+python3 scripts/fetch_models.py
+```
+
+On Windows PowerShell, use `py -3 scripts/fetch_models.py`. The standard-library-only fetcher checks every file against the size and full SHA-256 in [scripts/models.manifest](scripts/models.manifest); it skips files that already pass verification and fails if the release cannot be reached or a file does not match. The app continues seeding the downloaded assets into its private files directory at runtime. See [docs/MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for model provenance, conversion notes, and license status.
+
+You also need JDK 17 and the Android SDK installed. Android Studio can install the SDK components required by the project.
+
 [![Discord Banner 3](https://discord.com/api/guilds/801338287012053042/widget.png?style=banner3)](https://discord.com/invite/rkvXfVPRdq)
 ## Download
 

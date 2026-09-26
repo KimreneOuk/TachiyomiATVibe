@@ -31,6 +31,9 @@ jobs:
       - name: Set up gradle
         uses: gradle/actions/setup-gradle@cc4fc85e6b35bafd578d5ffbc76a5518407e1af0 # v4.2.1
 
+      - name: Fetch and verify model assets
+        run: python3 scripts/fetch_models.py
+
       - name: Build app and run unit tests
         run: ./gradlew assembleStandardRelease testDevReleaseUnitTest testStandardReleaseUnitTest
 
