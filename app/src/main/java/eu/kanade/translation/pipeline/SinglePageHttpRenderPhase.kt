@@ -447,7 +447,7 @@ internal class SinglePageHttpRenderPhase(
                 )
                 try {
                     val readingOrder = translationPreferences.translationReadingOrder().get()
-                    pageTranslation.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(
+                    pageTranslation.blocks = eu.kanade.translation.engines.vision.ocr.TranslationBlockSorter.sort(
                         pageTranslation.blocks,
                         fromLang,
                         readingOrder,

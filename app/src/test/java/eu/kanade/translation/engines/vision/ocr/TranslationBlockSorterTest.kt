@@ -1,4 +1,4 @@
-package eu.kanade.translation.util
+package eu.kanade.translation.engines.vision.ocr
 
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.TranslationBlock

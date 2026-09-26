@@ -1,8 +1,8 @@
 package eu.kanade.translation.engines.vision.webtoon
 
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.engines.vision.ocr.TranslationBlockSorter
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.util.TranslationBlockSorter
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.translation.TranslationReadingOrder

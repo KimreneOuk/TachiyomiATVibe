@@ -976,7 +976,7 @@ internal class BatchLaneWorkers(
             // user-selected reading-order sort so RTL/LTR changes never rename a block.
             StableBlockIds.assign(p, ref.pageIndex)
             val readingOrder = translationPreferences.translationReadingOrder().get()
-            p.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(p.blocks, fromLang, readingOrder)
+            p.blocks = eu.kanade.translation.engines.vision.ocr.TranslationBlockSorter.sort(p.blocks, fromLang, readingOrder)
             translationRegistry[pageKey] = p
             val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
             if (sourceBlocks == 0) {
