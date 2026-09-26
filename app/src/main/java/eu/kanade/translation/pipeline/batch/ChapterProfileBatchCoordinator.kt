@@ -59,6 +59,8 @@ import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
 import eu.kanade.translation.pipeline.batch.envelope.PageDispatchWork
 import eu.kanade.translation.pipeline.batch.envelope.PlannedBlock
 import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority

@@ -18,7 +18,7 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.EngineLane
 import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.batch.BatchContextFrontier
-import eu.kanade.translation.pipeline.batch.BatchResumePlanner
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.pipeline.planning.StageDecision

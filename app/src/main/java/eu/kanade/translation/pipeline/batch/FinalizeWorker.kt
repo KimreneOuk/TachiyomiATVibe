@@ -7,6 +7,7 @@ import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext

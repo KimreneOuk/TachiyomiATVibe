@@ -4,6 +4,7 @@ import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumeGateDecider
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.recovery
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
@@ -10,6 +10,7 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.batch.BatchContextFrontier
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchPlannerInput
 import eu.kanade.translation.pipeline.planning.BatchStage

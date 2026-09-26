@@ -42,6 +42,7 @@ import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_T
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
 import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.util.ShortHash

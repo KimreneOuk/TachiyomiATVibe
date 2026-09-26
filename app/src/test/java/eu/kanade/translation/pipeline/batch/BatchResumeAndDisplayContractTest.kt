@@ -9,6 +9,7 @@ import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumeGateDecider
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop

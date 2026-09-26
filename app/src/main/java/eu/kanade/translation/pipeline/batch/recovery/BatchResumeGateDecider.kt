@@ -1,9 +1,8 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.recovery
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageRunning
-import eu.kanade.translation.scheduling.TranslationLifecyclePolicy
 
 /**
  * Selects which batch stages can be reused from the current page snapshot.
@@ -32,12 +31,12 @@ internal object BatchResumeGateDecider {
         // previous attempt; the batch must rebuild that page rather than
         // treating it as a completed resume candidate.
         if (page?.isStageRunning == true && page.ocrStatus != StageStatus.READY) return Decision.FULL
-        return when (TranslationLifecyclePolicy.nextStage(page, cleanedFileValid, inpaintModeMatches)) {
-            TranslationLifecyclePolicy.NextStage.SKIP,
-            TranslationLifecyclePolicy.NextStage.RENDER,
+        return when (BatchResumePolicy.nextStage(page, cleanedFileValid, inpaintModeMatches)) {
+            BatchResumePolicy.NextStage.SKIP,
+            BatchResumePolicy.NextStage.RENDER,
             -> Decision.SKIP_ALL
-            TranslationLifecyclePolicy.NextStage.INPAINT -> Decision.INPAINT_ONLY
-            TranslationLifecyclePolicy.NextStage.FULL -> Decision.FULL
+            BatchResumePolicy.NextStage.INPAINT -> Decision.INPAINT_ONLY
+            BatchResumePolicy.NextStage.FULL -> Decision.FULL
         }
     }
 }

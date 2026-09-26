@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.pipeline.batch.recovery
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -14,7 +14,7 @@ import eu.kanade.translation.model.isTextlessTerminal
  * translation data. The caller supplies file validity and current inpainting
  * mode because this policy does not perform storage or preference reads.
  */
-object TranslationLifecyclePolicy {
+internal object BatchResumePolicy {
     enum class NextStage {
         SKIP,
         RENDER,
