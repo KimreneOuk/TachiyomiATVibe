@@ -179,7 +179,7 @@ class BubbleMaskBuilderTest {
     }
 
     // ---- buildRectMask (paddle_boxes erase mask) ----
-    // Port of build_rect_mask in tools/inpaint-debug-viewer/server.py: every
+    // Port of the prototype's build_rect_mask function: every
     // PaddleOCR-v6 line box → solid padded rectangle → disk dilate. This is the
     // erase target for both the AOT/neural and FAST free-text paths.
 

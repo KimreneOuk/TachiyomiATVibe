@@ -1182,8 +1182,8 @@ class MangaScreenModel(
                 translationManager.isTranslationRequestCurrent(chapterId, generation)
             }
             if (pendingDownloaded.isEmpty()) return@launch
-            //  Phase 4 ( phase4-design §3.2): a directory-exists hit can
-            // still be a MID-DOWNLOAD chapter (audit M-08 — the downloader owns
+            // A directory-exists hit can
+            // still be a MID-DOWNLOAD chapter (the downloader owns
             // a partial dir while the trigger reads it as "downloaded").
             // Cross-check every candidate that still has a live queue entry;
             // a settled download has none, so there is nothing to probe and
@@ -1324,7 +1324,7 @@ class MangaScreenModel(
     }
 
     /**
-     *  Phase 4 ( phase4-design §3.2): the user chose FINISH first —
+     *  When the user chooses FINISH first —
      * route through the EXISTING fenced WAITING_FOR_DOWNLOAD path (the same
      * one the awaiting partition uses); the downloader's post-finalization
      * handoff admits the batch only after the download completes. Zero batch
@@ -1358,7 +1358,7 @@ class MangaScreenModel(
     }
 
     /**
-     *  Phase 4 ( phase4-design §3.3): the user chose TRANSLATE WHAT
+     *  When the user chooses TRANSLATE WHAT
      * EXISTS — subset admission carrying the probe's cross-check so the batch
      * records its partial truth (manifest `PartialBatchInfo`, source-total or
      * honestly-unknown expected count), never a fake 100%.
@@ -1820,8 +1820,8 @@ class MangaScreenModel(
             val conflict: eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict,
         ) : Dialog
 
-        //  Phase 4 ( phase4-design §3.2): a probed "downloaded"
-        // candidate is actually MID-DOWNLOAD (audit M-08). The user picks per
+        // A probed "downloaded"
+        // candidate is actually MID-DOWNLOAD. The user picks per
         // chapter: finish the download first (the existing fenced
         // WAITING_FOR_DOWNLOAD path) or translate the found subset (honest
         // partial accounting in the manifest). [decisions] is keyed by chapter

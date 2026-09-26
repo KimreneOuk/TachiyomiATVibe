@@ -25,8 +25,7 @@ object ContextualResponseParser {
     private val canonicalBatchIdRegex = Regex("p\\d+_b\\d+")
 
     /**
-     *  separator-salvage rule (see
-     * `Plan/active/2026-09-16__resume-rebuild-and-parallelism/team/diagnosis-omitted-blocks.md`):
+     *  The separator-salvage rule addresses this observed failure:
      * the deployed 7B model deterministically corrupts the `ID|text` frame on
      * short emphatic lines concentrated on the envelope's LAST page, substituting
      * another glyph for the required `|` separator (`>` for `|` observed 7/7 on

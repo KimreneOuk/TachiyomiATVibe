@@ -147,7 +147,7 @@ internal class SinglePageHttpRenderPhase(
      * alive on [PageTranslation]), translates text blocks via HTTP, renders
      * translated text onto the cleaned bitmap via Canvas, and persists the result.
      *
-     *  Phase 4 ( phase4-design §1.2) — epoch/drain contract: this is the
+     *  Epoch/drain contract: this is the
      * SINGLE translator borrow site. The phase registers the borrow on
      * [engines] (`beginTranslatorUse`, released in `finally`) so a concurrent
      * [EngineLane.closeEngines] (stop / toggle-off / queue emptied) can DRAIN it
@@ -505,7 +505,7 @@ internal class SinglePageHttpRenderPhase(
                         }
                         store.foldPageContribution(pageKey, pairs)
                     }
-                    //   (phase3-design §1.3): stamp the live glossary version AFTER
+                    // Stamp the live glossary version AFTER
                     // this page's own pairs folded, before the durable write — a pre-fold
                     // stamp would record the version BELOW the one this page's own fold
                     // creates, guaranteeing one wasted batch repair per manually translated

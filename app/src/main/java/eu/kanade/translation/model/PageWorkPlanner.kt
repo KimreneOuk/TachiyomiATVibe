@@ -310,7 +310,7 @@ object PageWorkPlanner {
             else -> StageWorkDecision(stage, StageDecision.REUSE, StageReasonCode.VALID_ARTIFACT)
         }
 
-        // TachiyomiAT   glossary-aware reuse gate (phase3-design §1.2):
+        // Glossary-aware reuse gate:
         // when the chapter's current glossary version is greater than the
         // version recorded on the persisted translation (absence = 0), a
         // translation-stage REUSE downgrades to RUN — a targeted, one-time

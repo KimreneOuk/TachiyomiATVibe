@@ -641,7 +641,7 @@ class TranslationManager(
     }
 
     /**
-     *  Phase 3 ( phase3-design §3.2): startup reconciliation for the
+     *  Startup reconciliation for the
      * durable attempt ledger. Bounded to the caller-supplied chapter set
      * (persisted translation-queue members ∪ pending request ids ∪ active
      * stores) — NEVER a library scan. Every unresolved entry is a paid call a

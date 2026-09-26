@@ -128,7 +128,7 @@ interface TranslationExecutor {
 /**
  *   (design note §2.4): typed outcome of one single-page intent. Replaces
  * the previous silent `Unit` return so a denied lease can never again look like
- * a completed intent (audit C-01): the scheduler records the outcome and its
+ * a completed intent: the scheduler records the outcome and its
  * cancel path can tell "owned the page" from "only observed the owner".
  */
 sealed interface SinglePageOutcome {

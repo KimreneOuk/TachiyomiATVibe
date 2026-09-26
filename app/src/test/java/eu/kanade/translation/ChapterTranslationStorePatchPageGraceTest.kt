@@ -24,7 +24,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 3 backlog fold-in (phase3-design §4, §5.4): `patchPage` must grant
+ *  The `patchPage` path must grant
  * the same `record.candidate != null` grace `persistArtifactMutationLocked`
  * already applies to the dependency-fingerprint check.
  *

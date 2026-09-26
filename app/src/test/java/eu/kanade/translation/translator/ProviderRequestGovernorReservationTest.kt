@@ -12,7 +12,7 @@ import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 3 —  §2.1 interactive token reserve (phase3-design §2.1).
+ *  Interactive token reserve behavior.
  *
  * Pure unit tests over the real [ProviderRequestGovernor] with a virtual
  * clock. The reserve: while a bucket holds at least one INTERACTIVE waiter, a
@@ -29,10 +29,9 @@ import org.junit.jupiter.api.Test
  * bucket, with no real-time or interleaving race. All waits run on the virtual
  * clock (advance + yield), so nothing sleeps for real time.
  *
- * RED (committed first, phase3-design §6 step 6): the reserve does not exist,
- * so test 1's background request is admitted on the full window while an
- * interactive waiter waits, and test 5 finds no `interactiveTokenReserveFraction`
- * parameter to validate. Tests 2–4 are non-regression guards pinning shapes the
+ * Before this reserve existed, test 1 admitted a background request on the
+ * full window while an interactive waiter waited, and test 5 found no
+ * `interactiveTokenReserveFraction` parameter to validate. Tests 2–4 are non-regression guards pinning shapes the
  * reserve must not change.
  */
 class ProviderRequestGovernorReservationTest {

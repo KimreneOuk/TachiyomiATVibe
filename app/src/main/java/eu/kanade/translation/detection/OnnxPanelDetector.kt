@@ -18,7 +18,7 @@ import java.nio.FloatBuffer
  * TachiyomiAT: YOLO26-nano manga panel detector.
  *
  * Loads `manga_panel_detector_int8.onnx` (exported from
- * `leoxs22/manga-panel-detector-yolo26n` via tools/export_panel_detector_onnx.py)
+ * `leoxs22/manga-panel-detector-yolo26n` for ONNX inference)
  * and returns the page's panel bounding boxes in original-image coordinates.
  *
  * The model is a YOLO detector with output `[1, N, 4+nc]` (decoded xyxy + per-class
@@ -262,8 +262,8 @@ class OnnxPanelDetector {
         const val IMG_SIZE = 640
         const val INPUT_FLOATS = 3 * IMG_SIZE * IMG_SIZE
 
-        // Confidence threshold for class-0 (panel). Matches the tools/ eval conf
-        // (0.5) at which the model was validated across the Okiraku chapter.
+        // Confidence threshold for class-0 (panel), set to 0.5 after validation
+        // across the Okiraku chapter.
         const val CONF_THRESHOLD = 0.5f
 
         // Standard YOLO NMS IoU. Lower = more aggressive dedupe of overlapping

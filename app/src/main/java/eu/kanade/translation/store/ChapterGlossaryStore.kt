@@ -33,7 +33,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
 
     /**
      * TachiyomiAT   the live glossary version for the reuse gate and
-     * provenance stamps (phase3-design §1.2/§1.3). `null` means the gate is
+     * provenance stamps. `null` means the gate is
      * OFF — a legacy-authority manifest, or no glossary ever published — which
      * keeps glossary-less chapters and the standard engine lane at REUSE with
      * zero extra paid calls. Pure in-memory read (`artifactManifest` is

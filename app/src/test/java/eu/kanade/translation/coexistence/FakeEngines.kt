@@ -162,16 +162,15 @@ internal class SharedTransportState {
  *   identity check → [signalTransportStarted] → native inpaint → cleaned
  *   publication ([waitForNativeStage] returns) → paid call → commit → render.
  *
- *  Phase 4  additions (test-infra only, per phase4-design §1.4):
+ *  Engine-epoch support for the test fakes:
  *  - [instanceId] — every instance exposes an id so the epoch retry can prove
  *    the second paid call landed on the REBUILT translator;
- *  - [closedFlag]/[closedSignal] — models the production close defect the
- *    audit H-09 evidence names (providers close their executors/pools in
+ *  - [closedFlag]/[closedSignal] — models providers closing their executors/pools in
  *    `close()`): a call that resumes from its PROVIDER_START park after the
  *    fake was closed FAILS instead of silently completing, which is exactly
  *    the mid-call failure closeEngines inflicts on a racing page today;
  *  - [shared] — cross-instance evidence ([SharedTransportState]); null keeps
- *    the phase-1 per-instance behavior byte-identical for existing suites.
+ *    existing per-instance behavior byte-identical for existing suites.
  */
 internal class FakeTransportTranslator(
     private val barrier: CoexistenceBarrier,

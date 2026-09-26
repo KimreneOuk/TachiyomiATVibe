@@ -373,9 +373,7 @@ class ChapterArtifactEngine(
     }
 
     // ------------------------------------------------------------------
-    //  Stage 1 Phase 2a: the checkpointOcr transaction (..).
-    // Contract: Plan/active/2026-09-05__chunk-sizing-and-fast-feedback/
-    // stage0/contracts-state-transactions.md §2. The transaction owns ONLY
+    // The checkpointOcr transaction owns ONLY
     // the durable publication; the caller keeps the page lease until after
     // a Committed outcome and releases it as a separate, strictly-later
     // step. Store-generation/pageVersion/leaseToken fencing

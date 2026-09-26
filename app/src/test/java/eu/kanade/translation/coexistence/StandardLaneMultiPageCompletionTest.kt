@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 6 on-device finding (phase6-multipage-strand-investigation.md):
+ *  On-device finding:
  * a multi-page FRESH standard-lane batch translated only its first page.
  * `PageWorkPlanner.planChapter` bakes `WAIT_FOR_DEPENDENCY/PRIOR_PAGE_INCOMPLETE`
  * into the immutable batch-start plan for every page after the first

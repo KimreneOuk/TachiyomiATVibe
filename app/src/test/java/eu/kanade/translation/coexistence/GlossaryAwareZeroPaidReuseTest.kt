@@ -38,7 +38,7 @@ import tachiyomi.domain.translation.TranslationReadingOrder
 import java.io.ByteArrayInputStream
 
 /**
- *  Phase 3 —  glossary-aware translation reuse gate (phase3-design §1, §5.1).
+ *  Glossary-aware translation reuse gate.
  *
  * Drives the REAL production planning seam: a real [ChapterTranslationStore]
  * with a real ARTIFACTS-authority manifest (production fresh-chapter recipe),
@@ -50,10 +50,9 @@ import java.io.ByteArrayInputStream
  * (transport-level exactly-once for RUN/REUSE lanes is pinned by the Phase-1/2
  * coexistence oracles; this suite pins the decision that bills or skips).
  *
- * RED (committed first, phase3-design §6 step 1): no glossary-aware gate
- * exists, so the batch re-run REUSEs pages whose persisted result predates the
- * glossary they were translated against — the H-07 defect (a page translated
- * while the glossary was empty is REUSEd forever). Each RED assertion below
+ * Without a glossary-aware gate, the batch re-run REUSEs pages whose persisted
+ * result predates the glossary they were translated against. A page translated
+ * while the glossary was empty would be reused forever. Each assertion below
  * documents its expected failure message shape.
  */
 class GlossaryAwareZeroPaidReuseTest {

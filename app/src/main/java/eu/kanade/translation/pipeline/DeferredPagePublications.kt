@@ -3,7 +3,7 @@ package eu.kanade.translation.pipeline
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
- *  Phase 4 ( phase4-design §4.4): storage-tail actions that must run
+ *  Storage-tail actions that must run
  * OUTSIDE the native permit.
  *
  * The resume paths' cleaned-image persistence, their render tails, and the

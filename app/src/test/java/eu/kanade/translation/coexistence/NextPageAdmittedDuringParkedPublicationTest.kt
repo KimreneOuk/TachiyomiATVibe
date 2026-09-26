@@ -16,8 +16,8 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 4 —  safe slice (phase4-design §4.4): release the native
- * permit BEFORE storage publication.
+ *  Releasing the native permit BEFORE storage publication
+ * keeps the storage tail outside the native lane.
  *
  * Drives the REAL manual single-page boundary over the REAL quarantine: a
  * page resumes at the inpaint stage (OCR + translation already committed,
@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test
  * cleaned-image publication is a real store commit. The test parks that
  * publication at a COMMIT barrier MID-COMMIT, then taps a second page.
  *
- * GREEN (§4.4): the second page's native admission must arrive while the
+ * The second page's native admission must arrive while the
  * first page's publication is still parked — the permit covers ONLY native
  * compute. RED (today): the permit spans the publication
  * (SinglePageOnnxPhase resume tail runs inside `withNativeLane`), so the

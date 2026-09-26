@@ -693,7 +693,7 @@ class ChapterTranslationStore(
         statusProjector.durableFailuresSnapshot()
 
     // ------------------------------------------------------------------
-    //  Phase 3: durable attempt ledger (phase3-design §3).
+    // Durable attempt ledger.
     // All methods delegate to store/ChapterAttemptLedger.kt under the store
     // mutex. Ledger writes are fail-open; only AUTO origins can be refused
     // (the crash-loop cap binds auto-retry loops, never the user).
@@ -952,8 +952,8 @@ class ChapterTranslationStore(
                 expected.candidateGenerationId != null &&
                     expected.candidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
                     "candidate generation changed"
-                //  Phase 3 backlog fold-in (phase3-design §4): same
-                // `candidate != null` grace persistArtifactMutationLocked
+                // The same candidate-grace rule as persistArtifactMutationLocked
+                // applies: `candidate != null` grace
                 // applies — a dependency fingerprint expected against a
                 // candidate-LESS record (candidate never opened, cleared by an
                 // abort, or the candidate-less registration a batch start
@@ -2086,7 +2086,7 @@ class ChapterTranslationStore(
      * artifact-authority failure), so the caller can surface a typed terminal
      * error rather than a live zero tracker.
      *
-     *  Phase 4 ( phase4-design §3.3): the trigger may attach its
+     *  The trigger may attach its
      * admission-probe cross-check. When [sourceCountKnown] is true the
      * registered truth is honest about partiality:
      *  - a known SOURCE total ([probedSourcePageCount] != null) makes the

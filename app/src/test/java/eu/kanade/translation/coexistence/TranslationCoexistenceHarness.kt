@@ -830,7 +830,7 @@ internal class TranslationCoexistenceHarness private constructor(
          * fields do not exist yet and today's immediate-close behavior runs,
          * so a missing field is skipped silently — EXCEPT an explicitly
          * requested [drainGraceMs], whose absence IS the defect under test
-         * (phase4-design §1.4: RED fails by named assertion, never timeout).
+         * and must fail by a named assertion, never a timeout.
          * At the GREEN commit every field exists and is required.
          */
         private fun installEngineDrainSeams(
@@ -1090,7 +1090,7 @@ internal class TranslationCoexistenceHarness private constructor(
      * (sourceCountKnown=true with a null count = the offline-unknown total).
      * Tolerant at the RED checkpoint via reflection: absent fields are skipped
      * silently so the test's manifest-truth assertions name the actual defect
-     * (the M-08 self-derived trusted-total lie), never a missing-seam crash.
+     * (the self-derived trusted-total defect), never a missing-seam crash.
      */
     fun launchBatch(
         pageKeys: List<String>? = null,
@@ -1164,13 +1164,13 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     /**
-     * Single-page Android-graphics shims (note §1.2.3): the decode seam the
+     * Single-page Android-graphics shims: the decode seam the
      * single-page path cannot fake through a constructor (mockkObject(PageDecode))
      * and the render color estimator (bitmap.width/getPixels throw on the JVM
      * android.jar). mockkObject makes the whole PageDecode object strict, so the
      * two pure-JVM helpers the REAL batch/manual paths still call through it are
-     * re-stubbed with callOriginal (documented addendum to note §1.2; see
-     * review/phase1-verification.md). Install per test; uninstall with
+     * re-stubbed with callOriginal so pure-JVM test helpers keep their real behavior.
+     * Install per test; uninstall with
      * [removeGraphicsShims].
      */
     fun installGraphicsShims() {
@@ -1196,7 +1196,7 @@ internal class TranslationCoexistenceHarness private constructor(
             colorEstimatorShimInstalled = true
             mockkObject(RenderColorEstimator)
             every { RenderColorEstimator.recomputeFor(any(), any()) } returns Unit
-            //  Phase 4  addendum (documented, phase4-implementation-log §1):
+            // AUTO prepared-page test setup:
             // the AUTO prepared-page translate half (translatePreparedPage) builds a
             // 1x1 dummy DecodedPage via Bitmap.createBitmap, which the unit-test
             // android.jar throws on. Disk/render IO shim only — no coexistence

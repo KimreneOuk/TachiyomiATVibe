@@ -124,8 +124,7 @@ class PaddleOcrV6DetEngine : Closeable {
      * [DbPostProcess.detectLines]. They default to [DbPostProcess.Defaults]
      * (matching `PP-OCRv6_small_det_onnx` `inference.yml`), which is the right
      * setting for the **OCR-rec** path. The **inpaint-mask** path passes the
-     * prototype-validated lower thresholds (0.18 / 0.34) — see
-     * `tools/inpaint-debug-viewer/server.py` — so Paddle finds the same text
+     * prototype-validated lower thresholds (0.18 / 0.34) let Paddle find the same text
      * lines for erasing that it finds for recognition.
      */
     fun detectLines(

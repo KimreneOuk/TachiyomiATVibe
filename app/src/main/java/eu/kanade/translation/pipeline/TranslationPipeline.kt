@@ -525,7 +525,7 @@ class TranslationPipeline(
                 nativeLaneToken?.close()
                 return SinglePageOutcome.Rejected(null, "page already translating")
             }
-            //   (phase4-design §4.4): storage-tail deferral holder. The
+            // Storage-tail deferral holder. The
             // ONNX phase enqueues its resume-path cleaned-image persistence,
             // render tails, and the store flush here instead of running them
             // under the native permit; this boundary drains the queue AFTER
@@ -821,7 +821,7 @@ class TranslationPipeline(
             return null
         }
         try {
-            //   (phase4-design §4.4): same storage-tail deferral as
+            // The same storage-tail deferral as
             // [runGrantedSinglePageBoundary] — the permit is released before
             // the resume paths' storage publication runs; orphaned tails run
             // inline; the normal-path drain is fail-closed.

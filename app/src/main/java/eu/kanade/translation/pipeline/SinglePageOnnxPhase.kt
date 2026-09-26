@@ -224,7 +224,7 @@ internal class SinglePageOnnxPhase(
      * handled (no further work needed). The caller releases the permit after this
      * returns regardless of the result.
      *
-     *   (phase4-design §4.4): when the caller supplies
+     *   When the caller supplies
      * [deferredPublications], the resume paths' storage publication
      * ([resumeInpaintAndRender]'s cleaned-image persist + render tail, the
      * [renderResumedPage]-only resume, and the `finally` store flush + stream

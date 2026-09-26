@@ -81,13 +81,13 @@ class TranslationManagerAutoArbitrationTest {
     }
 
     /**
-     *  contract (v3.0 draft §6, adopted 2026-09-01): same-chapter auto is
-     * suppressed for the WHOLE chapter-batch lifetime, not just at the
+     *  Same-chapter auto is suppressed for the WHOLE chapter-batch lifetime,
+     * not just at the
      * translateChapter shutdown instant. While the queue entry is active,
      * reader-window updates must NOT re-arm the coordinator, and
      * reconcileAutoWindow must not resurrect it. Re-arm succeeds again only
-     * after the queue drains.  Phase 1: RED — the re-arm path still has no
-     * batch-active gate (audit M-06).
+     * after the queue drains. This test enforces the batch-active gate on the
+     * re-arm path.
      */
     @Test
     fun `manager suppresses same-chapter auto while the chapter batch is queued`() = runBlocking<Unit> {
