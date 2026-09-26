@@ -1,5 +1,10 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.pipeline.planning
 
+import eu.kanade.translation.model.PageDisplayProjection
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
@@ -7,7 +12,7 @@ import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 
 /**
- * Pure lifecycle planner for chapter batches.
+ * Plans the stages a page or ordered chapter batch can safely reuse.
  *
  * The input list to [planChapter] is already natural page order.  This class
  * deliberately has no reader position, viewport, or last-read-page input: a
@@ -17,15 +22,9 @@ import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 object PageWorkPlanner {
 
     /**
-     * Compatibility projection for the older four-boolean API.
-     *
-     * R012: a caller that can observe current source/configuration
-     * evidence may supply [expectedFingerprints]/[sourceFingerprint]; a forced
-     * plan then validates its detection/OCR reuse against that evidence.
-     * Callers that supply none (the historical signature) keep the
-     * status/payload-only pass-through, and the non-force path ignores both
-     * parameters entirely (it delegates to [planPage], whose evidence inputs
-     * are unchanged).
+     * Plans the work flags used by the single-page pipeline. A forced run may
+     * reuse OCR only when its recorded source and configuration evidence still
+     * match; inpaint readiness is checked separately.
      */
     fun plan(
         page: PageTranslation?,
@@ -43,7 +42,7 @@ object PageWorkPlanner {
         }
 
         if (force) {
-            // R012: forced translation reuses valid detection/OCR evidence
+            // Forced translation reuses valid detection/OCR evidence
             // independently of inpaint readiness. Inpaint readiness only decides
             // the inpaint stage: a page with valid OCR evidence is no longer
             // re-OCR'd just because its cleaned image is missing or stale. A

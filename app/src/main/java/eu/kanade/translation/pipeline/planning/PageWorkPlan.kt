@@ -1,5 +1,6 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.pipeline.planning
 
+import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
@@ -103,7 +104,7 @@ data class BatchPlannerInput(
     /** Explicit user force-retry bypasses a retryable cooldown. */
     val forceRetry: Boolean = false,
     /**
-     * TachiyomiAT   gate input: the chapter's current glossary version
+     * The chapter's current glossary version
      * (manifest pointer), or `null` when the gate is OFF — the standard
      * engine lane, a legacy-authority manifest, or a chapter with no glossary
      * ever published. Absence keeps REUSE unchanged, so

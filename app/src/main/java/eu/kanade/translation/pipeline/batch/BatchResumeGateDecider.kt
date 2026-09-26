@@ -1,14 +1,12 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.model.BatchPageWorkPlan
-import eu.kanade.translation.model.BatchPlannerInput
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.scheduling.TranslationLifecyclePolicy
 
 /**
- * Batch resume gate, extracted from TranslationPipeline.translateBatch.
+ * Selects which batch stages can be reused from the current page snapshot.
  *
  * Given a (possibly null) persisted [PageTranslation] for a page, decides how
  * much of the ONNX phase to skip on resume:
@@ -24,10 +22,6 @@ import eu.kanade.translation.scheduling.TranslationLifecyclePolicy
 internal object BatchResumeGateDecider {
 
     internal enum class Decision { SKIP_ALL, INPAINT_ONLY, FULL }
-
-    /** Canonical per-stage planner entry point for chapter batches. */
-    internal fun plan(input: BatchPlannerInput): BatchPageWorkPlan =
-        eu.kanade.translation.model.PageWorkPlanner.planPage(input)
 
     internal fun decide(
         page: PageTranslation?,

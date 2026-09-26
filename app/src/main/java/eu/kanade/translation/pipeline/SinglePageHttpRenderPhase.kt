@@ -32,7 +32,6 @@ import eu.kanade.translation.engines.translator.retry.RequestRetryBudget
 import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.translator.retry.withRequestRetryBudget
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
@@ -44,6 +43,7 @@ import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.persistence.chapter.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.util.ShortHash

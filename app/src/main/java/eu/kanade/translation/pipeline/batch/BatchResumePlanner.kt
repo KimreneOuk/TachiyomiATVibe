@@ -2,11 +2,7 @@ package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.BatchPlannerInput
-import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PageWorkPlanner
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.isTextlessTerminal
@@ -14,6 +10,10 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchPlannerInput
+import eu.kanade.translation.pipeline.planning.BatchStage
+import eu.kanade.translation.pipeline.planning.PageWorkPlanner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
@@ -110,9 +110,9 @@ internal class BatchResumePlanner(
             ?.stages
             ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
             ?.decision in setOf(
-            eu.kanade.translation.model.StageDecision.FAILED,
-            eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE,
-            eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
+            eu.kanade.translation.pipeline.planning.StageDecision.FAILED,
+            eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE,
+            eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL,
         )
 
     // Only seed from pages whose current translation plan still proves that
@@ -126,8 +126,8 @@ internal class BatchResumePlanner(
                     ?.stages
                     ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
                     ?.decision in setOf(
-                    eu.kanade.translation.model.StageDecision.REUSE,
-                    eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE,
+                    eu.kanade.translation.pipeline.planning.StageDecision.REUSE,
+                    eu.kanade.translation.pipeline.planning.StageDecision.TERMINAL_COMPLETE,
                 )
             },
             terminalFailure = { pageKey, page ->
@@ -137,8 +137,8 @@ internal class BatchResumePlanner(
                     ?.stages
                     ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
                     ?.decision in setOf(
-                    eu.kanade.translation.model.StageDecision.FAILED,
-                    eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
+                    eu.kanade.translation.pipeline.planning.StageDecision.FAILED,
+                    eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL,
                 )
                 (page.translationStatus == StageStatus.FAILED && !durableRetryable) ||
                     (plannedTerminal && !page.isTextlessTerminal)
@@ -153,8 +153,8 @@ internal class BatchResumePlanner(
     fun recordReusableContextPage(pageKey: String, page: PageTranslation) {
         if (!isAi ||
             plannedTranslationDecision(pageKey) !in setOf(
-                eu.kanade.translation.model.StageDecision.REUSE,
-                eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE,
+                eu.kanade.translation.pipeline.planning.StageDecision.REUSE,
+                eu.kanade.translation.pipeline.planning.StageDecision.TERMINAL_COMPLETE,
             )
         ) {
             return
@@ -173,12 +173,12 @@ internal class BatchResumePlanner(
     }
 
     fun plannedTranslationNeedsWork(pageKey: String): Boolean =
-        plannedTranslationDecision(pageKey) == eu.kanade.translation.model.StageDecision.RUN ||
+        plannedTranslationDecision(pageKey) == eu.kanade.translation.pipeline.planning.StageDecision.RUN ||
             batchPagePlans[pageKey]
                 ?.stages
                 ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
                 ?.let { decision ->
-                    decision.decision == eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE &&
+                    decision.decision == eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE &&
                         decision.retryEligible
                 } == true
 
@@ -187,26 +187,26 @@ internal class BatchResumePlanner(
             val translation = plan.stages.first { it.stage == BatchStage.TRANSLATION }
             val ocr = plan.stages.first { it.stage == BatchStage.OCR }
             if (translation.decision in setOf(
-                    eu.kanade.translation.model.StageDecision.FAILED,
-                    eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE,
-                    eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
+                    eu.kanade.translation.pipeline.planning.StageDecision.FAILED,
+                    eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE,
+                    eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL,
                 ) ||
                 ocr.decision in setOf(
-                    eu.kanade.translation.model.StageDecision.FAILED,
-                    eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE,
-                    eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
+                    eu.kanade.translation.pipeline.planning.StageDecision.FAILED,
+                    eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE,
+                    eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL,
                 ) ||
-                translation.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
-                translation.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE
+                translation.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
+                translation.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE
             ) {
                 false
             } else {
                 plan.stages.any { decision ->
                     decision.stage in setOf(BatchStage.TRANSLATION, BatchStage.INPAINT, BatchStage.LAYOUT) &&
                         (
-                            decision.decision == eu.kanade.translation.model.StageDecision.RUN ||
-                                decision.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
-                                decision.reason == eu.kanade.translation.model.StageReasonCode.DEPENDENCY_INCOMPLETE
+                            decision.decision == eu.kanade.translation.pipeline.planning.StageDecision.RUN ||
+                                decision.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
+                                decision.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.DEPENDENCY_INCOMPLETE
                             )
                 }
             }
@@ -217,10 +217,10 @@ internal class BatchResumePlanner(
         if (planned != null) {
             val ocr = planned.stages.first { it.stage == BatchStage.OCR }
             val inpaint = planned.stages.first { it.stage == BatchStage.INPAINT }
-            val ocrNeedsWork = ocr.decision == eu.kanade.translation.model.StageDecision.RUN ||
-                ocr.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY ||
-                ocr.decision == eu.kanade.translation.model.StageDecision.FAILED
-            if (inpaint.decision == eu.kanade.translation.model.StageDecision.REUSE &&
+            val ocrNeedsWork = ocr.decision == eu.kanade.translation.pipeline.planning.StageDecision.RUN ||
+                ocr.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY ||
+                ocr.decision == eu.kanade.translation.pipeline.planning.StageDecision.FAILED
+            if (inpaint.decision == eu.kanade.translation.pipeline.planning.StageDecision.REUSE &&
                 page.cleanedImageName != null
             ) {
                 val physicallyPresent = withContext(Dispatchers.IO) {
@@ -247,7 +247,7 @@ internal class BatchResumePlanner(
             return when {
                 ocrNeedsWork ->
                     BatchResumeGate.FULL
-                inpaint.decision == eu.kanade.translation.model.StageDecision.RUN ->
+                inpaint.decision == eu.kanade.translation.pipeline.planning.StageDecision.RUN ->
                     BatchResumeGate.INPAINT_ONLY
                 else -> BatchResumeGate.SKIP_ALL
             }

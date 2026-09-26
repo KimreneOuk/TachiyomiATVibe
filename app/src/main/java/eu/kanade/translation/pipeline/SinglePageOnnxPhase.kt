@@ -14,7 +14,6 @@ import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -30,6 +29,7 @@ import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
 import eu.kanade.translation.pipeline.finalizePostOcrStage
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
@@ -268,7 +268,7 @@ internal class SinglePageOnnxPhase(
                 resumeTranslation
             }
 
-            val workPlan = eu.kanade.translation.model.PageWorkPlanner.plan(adjustedResume, force)
+            val workPlan = eu.kanade.translation.pipeline.planning.PageWorkPlanner.plan(adjustedResume, force)
 
             //  Phase 3: resolve the resume plan onto the run trace (run_end
             // carries the resolved plan; run_start held the initial default).

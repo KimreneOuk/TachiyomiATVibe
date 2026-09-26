@@ -19,8 +19,6 @@ import eu.kanade.translation.engines.translator.contextual.TranslationContextChu
 import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -37,6 +35,8 @@ import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.scheduling.CrossOriginBitmapBudget
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
@@ -528,7 +528,7 @@ internal class BatchLaneWorkers(
                 it.stage == BatchStage.INPAINT
             }
             val plannedCleanedPresent = if (
-                plannedInpaint?.decision == eu.kanade.translation.model.StageDecision.REUSE &&
+                plannedInpaint?.decision == eu.kanade.translation.pipeline.planning.StageDecision.REUSE &&
                 latest.cleanedImageName != null
             ) {
                 withContext(Dispatchers.IO) {
@@ -543,8 +543,8 @@ internal class BatchLaneWorkers(
             } else {
                 false
             }
-            if (plannedInpaint?.decision == eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE ||
-                plannedInpaint?.decision == eu.kanade.translation.model.StageDecision.REUSE &&
+            if (plannedInpaint?.decision == eu.kanade.translation.pipeline.planning.StageDecision.TERMINAL_COMPLETE ||
+                plannedInpaint?.decision == eu.kanade.translation.pipeline.planning.StageDecision.REUSE &&
                 plannedCleanedPresent
             ) {
                 target.cleanedImageName = latest.cleanedImageName
@@ -889,11 +889,11 @@ internal class BatchLaneWorkers(
             // keep blocking this page — the static block stranded every page
             // after the first on multi-page chapters.
             val priorPageBlocksStandardTranslation = !isAi &&
-                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
                 !naturalOrderPredecessorTerminal(pageKey)
             val completedAiPageAfterPriorGap = isAi &&
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
-                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
+                plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
                 p.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED) &&
                 (
                     expectedBatchFingerprints.translation == null ||
@@ -909,21 +909,21 @@ internal class BatchLaneWorkers(
             // re-translation of pre-pass state.
             val livePage = store.state.value[pageKey]
             val completedStandardPageAfterPriorGap = !isAi &&
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
-                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
+                plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
                 livePage?.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED)
             val retryableTranslation = plannedTranslation?.decision ==
-                eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE
+                eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE
             val shouldSkipTranslation = plannedTranslation?.decision ==
-                eu.kanade.translation.model.StageDecision.REUSE ||
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE ||
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.FAILED ||
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.FAILED_TERMINAL ||
+                eu.kanade.translation.pipeline.planning.StageDecision.REUSE ||
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.TERMINAL_COMPLETE ||
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.FAILED ||
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL ||
                 retryableTranslation &&
                 plannedTranslation?.retryEligible != true ||
                 completedAiPageAfterPriorGap ||
                 completedStandardPageAfterPriorGap ||
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
                 (
                     priorPageBlocksStandardTranslation ||
                         !dependencyReadyAfterNative
@@ -934,8 +934,8 @@ internal class BatchLaneWorkers(
                 // render join still receives its branch completion.
                 when {
                     plannedTranslation?.decision in setOf(
-                        eu.kanade.translation.model.StageDecision.FAILED,
-                        eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL,
                     ) ||
                         p.translationStatus == StageStatus.FAILED &&
                         store.durableFailure(pageKey)?.status != ArtifactStageStatus.FAILED_RETRYABLE -> tracker?.markAiFailed(
@@ -948,9 +948,9 @@ internal class BatchLaneWorkers(
                 }
                 if (isAi &&
                     plannedTranslation?.decision !in setOf(
-                        eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE,
-                        eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
-                        eu.kanade.translation.model.StageDecision.FAILED,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED,
                     )
                 ) {
                     if (p.translationStatus != StageStatus.PARTIAL) {

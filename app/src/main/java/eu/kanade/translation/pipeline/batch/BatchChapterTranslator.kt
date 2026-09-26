@@ -25,8 +25,6 @@ import eu.kanade.translation.engines.translator.providers.AiTranslator
 import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -44,6 +42,8 @@ import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_T
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
 import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers

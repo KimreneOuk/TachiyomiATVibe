@@ -5,6 +5,14 @@ import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchPageWorkPlan
+import eu.kanade.translation.pipeline.planning.BatchPlannerInput
+import eu.kanade.translation.pipeline.planning.BatchStage
+import eu.kanade.translation.pipeline.planning.PageWorkPlanner
+import eu.kanade.translation.pipeline.planning.StageDecision
+import eu.kanade.translation.pipeline.planning.StageReasonCode
+import eu.kanade.translation.pipeline.planning.StageWorkDecision
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

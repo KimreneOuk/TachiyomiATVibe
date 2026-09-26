@@ -16,8 +16,6 @@ import eu.kanade.translation.engines.rendering.LayoutPlanPublication
 import eu.kanade.translation.engines.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.engines.rendering.ProductionTextMeasurer
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isTextlessTerminal
@@ -37,6 +35,8 @@ import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.LayoutFailureException
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchStage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

@@ -1,17 +1,23 @@
 package eu.kanade.translation.model
 
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchPageWorkPlan
+import eu.kanade.translation.pipeline.planning.BatchPlannerInput
+import eu.kanade.translation.pipeline.planning.BatchStage
+import eu.kanade.translation.pipeline.planning.PageWorkPlan
+import eu.kanade.translation.pipeline.planning.PageWorkPlanner
+import eu.kanade.translation.pipeline.planning.StageDecision
+import eu.kanade.translation.pipeline.planning.StageWorkDecision
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * R012: forced translation must independently reuse valid detection/OCR
- * evidence based on current source + configuration evidence, decoupled from
- * inpaint readiness.
+ * Forced translation may reuse valid detection/OCR evidence based on current
+ * source and configuration evidence, independently of inpaint readiness.
  *
  * Hard constraints pinned here alongside the new behavior:
- *  - non-force planning decisions are byte-identical to the pre-R012
- *    delegation into [PageWorkPlanner.planPage];
+ *  - non-force planning decisions agree with the detailed [PageWorkPlanner.planPage];
  *  - callers that supply no expected fingerprints keep the historical
  *    status/payload-only pass-through;
  *  - force inputs whose OCR evidence is stale keep re-running OCR (and drag
@@ -20,7 +26,7 @@ import org.junit.jupiter.api.Test
 class PageWorkPlannerForceReuseTest {
 
     // ------------------------------------------------------------------
-    // (a) R012: force + valid OCR evidence + inpaint NOT ready ⇒ reuse OCR
+    // Force + valid OCR evidence + inpaint NOT ready ⇒ reuse OCR.
     // ------------------------------------------------------------------
 
     @Test
