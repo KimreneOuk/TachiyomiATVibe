@@ -36,14 +36,6 @@ data class ReaderAutoTranslationUiState(
     /** Monotonic desired-window version within [ownerVersion]. */
     val windowVersion: Long = 0L,
 ) {
-    /** The visible page's current stage, independent of offscreen activity. */
-    val foregroundStage: ReaderAutoTranslationSlotState?
-        get() = foreground?.state
-
-    /** True when a failed foreground or ahead slot needs an error affordance. */
-    val hasFailure: Boolean
-        get() = foreground?.state is ReaderAutoTranslationSlotState.Failed || failedAheadCount > 0
-
     companion object {
         fun empty(identity: AutoChapterIdentity? = null): ReaderAutoTranslationUiState =
             ReaderAutoTranslationUiState(

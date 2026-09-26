@@ -70,13 +70,6 @@ val AutoSlotState.isActive: Boolean
         this is AutoSlotState.Translating ||
         this is AutoSlotState.Rendering
 
-/** Work is past queue admission and inside a real pipeline stage. */
-val AutoSlotState.isProcessing: Boolean
-    get() = this is AutoSlotState.ReadingText ||
-        this is AutoSlotState.Cleaning ||
-        this is AutoSlotState.Translating ||
-        this is AutoSlotState.Rendering
-
 /** A translated, displayable result exists for this slot. */
 val AutoSlotState.isReady: Boolean
     get() = this is AutoSlotState.Ready
@@ -230,10 +223,6 @@ data class AutoTranslationSnapshot(
      */
     val readyAheadCount: Int
         get() = aheadSlots.count { it.state.isReady }
-
-    /** Ahead slots currently queued or executing through a real stage. */
-    val activeAheadCount: Int
-        get() = aheadSlots.count { it.state.isActive }
 
     /** Ahead slots that have failed and may or may not be retried. */
     val failedAheadCount: Int

@@ -116,7 +116,6 @@ class AutoWindowStateTest {
         )
 
         snapshot.readyAheadCount shouldBe 1
-        snapshot.activeAheadCount shouldBe 2
     }
 
     @Test
@@ -423,8 +422,6 @@ class AutoWindowStateTest {
         AutoSlotState.Ready.isReady shouldBe true
         AutoSlotState.Queued.isReady shouldBe false
         AutoSlotState.Queued.isActive shouldBe true
-        AutoSlotState.Queued.isProcessing shouldBe false
-        AutoSlotState.Translating.isProcessing shouldBe true
     }
 
     private fun fullyReadySnapshot(): AutoTranslationSnapshot = AutoTranslationSnapshot(

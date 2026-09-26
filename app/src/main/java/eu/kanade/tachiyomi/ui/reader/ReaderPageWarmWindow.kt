@@ -31,15 +31,4 @@ object ReaderPageWarmWindow {
         val end = (currentIndex + radius).coerceAtMost(lastIndex)
         return pageIndex in start..end
     }
-
-    fun indices(
-        currentIndex: Int,
-        lastIndex: Int,
-        radius: Int = DEFAULT_RADIUS,
-    ): IntRange {
-        if (currentIndex < 0 || lastIndex < 0) return IntRange.EMPTY
-        val start = (currentIndex - radius).coerceAtLeast(0)
-        val end = (currentIndex + radius).coerceAtMost(lastIndex)
-        return start..end
-    }
 }
