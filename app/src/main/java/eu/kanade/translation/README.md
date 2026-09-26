@@ -5,7 +5,7 @@
 ## Follow the main flow
 
 1. Start at `workflow/TranslationManager.kt` for the public façade, then follow `workflow/TranslationRequestCoordinator.kt` and `workflow/TranslationSessionCoordinator.kt` for request and reader/batch ownership.
-2. Open `pipeline/TranslationPipeline.kt` for shared page execution. `pipeline/SinglePageOnnxPhase.kt` and `pipeline/SinglePageHttpRenderPhase.kt` split its native and provider/render work. For chapter translation, continue through `workflow/ChapterTranslator.kt` into `pipeline/batch/BatchChapterTranslator.kt`. The AI profile envelope lifecycle is in `pipeline/batch/envelope`; progress events, tracking, and reconciliation are in `pipeline/batch/progress`.
+2. Open `pipeline/TranslationPipeline.kt` for shared page execution. `pipeline/SinglePageOnnxPhase.kt` and `pipeline/SinglePageHttpRenderPhase.kt` split its native and provider/render work. For chapter translation, continue through `workflow/ChapterTranslator.kt` into `pipeline/batch/BatchChapterTranslator.kt`. Chapter-wide analysis and durable chunk publication are in `pipeline/batch/analysis`; AI profile envelope dispatch and plan publication are in `pipeline/batch/envelope`; progress events, tracking, and reconciliation are in `pipeline/batch/progress`.
 3. Follow engine calls into `engines/vision`, `engines/translator`, `engines/inpainting`, or `engines/rendering`. Those packages own the specialized recognition, provider, cleanup, and layout behavior.
 4. Follow page mutations and durable writes into `persistence/chapter` and `persistence/artifact`. `model` contains shared values and page state used along the way.
 
@@ -17,7 +17,7 @@ For a new provider, first read `engines/translator/TextTranslator.kt`, `engines/
 | --- | --- |
 | `workflow` | Request admission, reader and batch session ownership, chapter lifecycle, and the `TranslationManager` façade. |
 | `scheduling` | Which page jobs run and when: manual/auto reader windows, cancellation, native-run quarantine, and job coordination. It consumes workflow decisions; it does not define chapter or session intent. |
-| `pipeline` | Shared page execution and stage contracts; `pipeline/batch` contains chapter coordination and mode-specific work; `pipeline/batch/envelope` owns AI profile envelope dispatch and plan publication; `pipeline/batch/progress` owns progress events, tracking, and reconciliation. |
+| `pipeline` | Shared page execution and stage contracts; `pipeline/batch` contains chapter coordination and mode-specific work; `pipeline/batch/analysis` owns chapter-wide analysis and durable chunk publication; `pipeline/batch/envelope` owns AI profile envelope dispatch and plan publication; `pipeline/batch/progress` owns progress events, tracking, and reconciliation. |
 | `engines/vision` | Text and panel detection, bubble segmentation, OCR, and webtoon image behavior. |
 | `engines/translator` | Translator contracts, provider implementations, contextual/analysis requests, retries, and backend routing. |
 | `engines/inpainting` | Page cleanup and inpainting implementations, including AOT, bubble, and OpenCV paths. |

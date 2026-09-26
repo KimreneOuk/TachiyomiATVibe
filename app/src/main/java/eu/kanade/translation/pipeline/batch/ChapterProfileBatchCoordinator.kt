@@ -59,6 +59,9 @@ import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.OcrStagePatch
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisChunkPublication
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisWorker
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisWorkerContext
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatchWork
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatcher
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatcherContext

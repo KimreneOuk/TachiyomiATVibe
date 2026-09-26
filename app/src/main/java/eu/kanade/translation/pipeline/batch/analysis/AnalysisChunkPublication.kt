@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.analysis
 
 import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.persistence.artifact.AnalysisChunkCoverage
@@ -17,22 +17,16 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import java.security.MessageDigest
 
 /**
- *  WP5 slice A — crash-safe chunk persistence (/22, ).
+ * Persists validated analysis chunks as immutable sidecars plus manifest pointers.
  *
- * One validated [AnalysisChunkResult] is ONE `publishSidecarPointers`
- * transaction: the immutable content-addressed sidecar under `analysis/` is
- * published FIRST, then the manifest `analysisChunks` pointer list is
- * appended in ONE atomic manifest publication. A crash between the two leaves
- * at most an orphan sidecar — never a pointer at a missing file — and any
- * precondition or publication failure leaves the PRIOR manifest authoritative
- * (the failed chunk stays unpersisted; resume re-executes the first missing
- * chunk, ).
+ * The sidecar is published before the manifest pointer list is appended in one
+ * atomic manifest publication. A crash between those writes can leave an orphan
+ * sidecar, but never a pointer to a missing file. Any rejected publication keeps
+ * the prior manifest authoritative, so resume retries the first missing chunk.
  *
- * WP1 deviation note (chunk-ordinal order): the pointer list is append-only
- * in chunk-ordinal order. The transaction REJECTS an out-of-order append
- * (`chunkOrdinal != analysisChunks.size`), so the list order always equals
- * the ordinal order and the  resume scan ("skip the persisted prefix")
- * is an O(size) index read.
+ * Pointers are append-only in chunk ordinal order. The transaction rejects any
+ * ordinal other than the current list size, which lets resume treat the existing
+ * pointers as a persisted prefix.
  */
 internal object AnalysisChunkPublication {
 
@@ -91,12 +85,7 @@ internal object AnalysisChunkPublication {
         } ?: ChapterArtifactEngine.TransactionOutcome.Rejected("artifact engine unavailable")
     }
 
-    /**
-     * style semantic content fingerprint: SHA-256 over the
-     * canonical re-encoded JSON with the operational timestamp zeroed, so
-     * re-publication of an equal chunk maps to the equal (idempotent)
-     * content-addressed name.
-     */
+    /** Hashes canonical chunk content with its operational timestamp zeroed. */
     fun contentFingerprint(result: AnalysisChunkResult): String {
         val hashingView = result.copy(createdAtEpochMs = 0L)
         val canonical = ArtifactDocumentJson.encodeToString(

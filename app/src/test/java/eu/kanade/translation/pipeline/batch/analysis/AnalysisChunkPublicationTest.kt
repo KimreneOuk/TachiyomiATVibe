@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.analysis
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
@@ -17,6 +17,7 @@ import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.publish
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

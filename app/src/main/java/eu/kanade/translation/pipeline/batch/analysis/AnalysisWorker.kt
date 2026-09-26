@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.pipeline.batch.analysis
 
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
@@ -16,6 +16,10 @@ import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
+import eu.kanade.translation.pipeline.batch.BatchPass1Status
+import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
+import eu.kanade.translation.pipeline.batch.PageKey
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.yield
