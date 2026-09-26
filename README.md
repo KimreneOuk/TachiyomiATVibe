@@ -7,6 +7,8 @@
 
 # TachiyomiAT [App](#)
 
+Most of the fork-specific development (translation pipeline, tests, tooling) was produced with AI coding assistants under human direction and review.
+
 >[12-02-2025] Note : This project isn't abandoned,but current release might not work as intended, i am currently in process of rebasing it on latest mihon build and making it more robust with better text bubble placement. i don't release dev builds so next release might take some time
 
 ### Full-featured reader with Automatic Managa Translations
