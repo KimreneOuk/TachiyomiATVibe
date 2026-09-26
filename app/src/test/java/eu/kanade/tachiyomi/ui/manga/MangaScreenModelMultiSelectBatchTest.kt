@@ -497,7 +497,7 @@ class MangaScreenModelMultiSelectBatchTest {
             if (System.currentTimeMillis() > deadline) {
                 throw AssertionError("Timed out after ${timeoutMs}ms waiting for: $what")
             }
-            Thread.yield()
+            Thread.sleep(5)
         }
     }
 
