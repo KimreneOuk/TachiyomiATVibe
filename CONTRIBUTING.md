@@ -28,9 +28,9 @@ On Windows, use `gradlew.bat` in place of `./gradlew`.
 
 ## Translation changes
 
-Before changing `eu.kanade.translation`, use the [translation architecture guide](docs/translation-architecture.md) to find the owner for the behavior. Keep provider-specific request logic under `translator/providers`, batch policy under `pipeline/batch`, and state or persistence logic with its current owner. Do not use `util` as a home for translation policy, add package cycles or new global state, or move provider behavior into orchestration.
+Before changing `eu.kanade.translation`, use the [translation architecture guide](docs/translation-architecture.md) to find the owner for the behavior. Put request, session, and chapter lifecycle decisions in `workflow`; use `scheduling` for when page jobs run. Keep shared page execution in `pipeline`, batch policy in `pipeline/batch`, and provider request logic under `engines/translator/providers`. Put recognition, inpainting, rendering, and ONNX runtime changes in their matching `engines` packages. Keep live chapter state and durable records with their owners in `persistence`.
 
-Preserve reader and batch coexistence, cancellation, crash recovery and committed artifact behavior. Add or update focused tests for behavior changes; concurrency, lease, commit and state-machine changes need tests for the affected transitions and races. For a translation-focused JVM pass, run both variants:
+Preserve reader and batch coexistence, cancellation, crash recovery and committed artifact behavior. Keep dependencies directed toward concrete owners; add no package cycles, process-global state, or utility dumping grounds. Add or update focused tests for behavior changes; concurrency, lease, commit and state-machine changes need tests for the affected transitions and races. For a translation-focused JVM pass, run both variants:
 
 ```sh
 ./gradlew testDevReleaseUnitTest testStandardReleaseUnitTest --tests "eu.kanade.translation.*" --max-workers=2

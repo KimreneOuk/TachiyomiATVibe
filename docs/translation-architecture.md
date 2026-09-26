@@ -1,6 +1,6 @@
 # Translation architecture
 
-`eu.kanade.translation` contains the reader's page translation path and the chapter batch path. This guide is a map for contributors: follow the request into orchestration, then into the execution mode and the engine or state owner that actually does the work.
+`eu.kanade.translation` contains the reader's page translation path and the chapter batch path. Start at `workflow`, follow shared execution through `pipeline`, then follow specialized work into `engines` and durable/live state into `persistence`.
 
 ## Main page flow
 
@@ -14,42 +14,43 @@ reader or batch request
   -> live display projection and reader stream
 ```
 
-`TranslationPipeline` is the shared execution entry point. Its single-page work is split between `SinglePageOnnxPhase` (native-lane decode, recognition, inpainting and OCR commit) and `SinglePageHttpRenderPhase` (provider work and rendering outside the native permit). `RoiPageRecognitionEngine` composes detection, optional bubble segmentation and OCR for the ROI path; `MlKitFullPageRecognitionEngine` is the alternate full-page path. `PageStoreWriter` and `ChapterTranslationStore` mediate candidate stage writes and commits. `ChapterArtifactEngine` owns durable chapter artifact documents and recovery.
+`pipeline/TranslationPipeline.kt` is the shared execution entry point. Its single-page work is split between `pipeline/SinglePageOnnxPhase.kt` (native-lane decode, recognition, inpainting and OCR commit) and `pipeline/SinglePageHttpRenderPhase.kt` (provider work and rendering outside the native permit). `engines/vision/ocr/RoiPageRecognitionEngine.kt` composes detection, optional bubble segmentation and OCR for the ROI path; `MlKitFullPageRecognitionEngine` is the alternate full-page path. `pipeline/PageStoreWriter.kt` and `persistence/chapter/ChapterTranslationStore.kt` mediate candidate stage writes and commits. `persistence/artifact/ChapterArtifactEngine.kt` owns durable chapter artifact documents and recovery.
 
 ## Execution modes
 
 | Mode | Entry and owner | Shared pieces | Mode-specific work |
 | --- | --- | --- | --- |
-| Manual page | `TranslationManager` → `TranslationScheduler` | `TranslationPipeline`, `EngineLane`, page store, OCR/provider/rendering | A user request is admitted and deduplicated for one page. |
-| Auto reader | `TranslationManager` / reader session → `TranslationScheduler` and `RollingAutoCoordinator` | Same page pipeline, store, provider and native lane | Reader windows, auto ownership/generations, pause and teardown rules. |
-| Batch chapter | `ChapterTranslator` → `BatchChapterTranslator` and `pipeline.batch` workers | Store, artifact engine, OCR/translator/inpainting/rendering engines and progress diagnostics | Batch preflight, envelopes, ordered chunk work, candidate publication and resume/recovery. |
+| Manual page | `workflow/TranslationManager` → `scheduling/TranslationScheduler` | `pipeline/TranslationPipeline`, `EngineLane`, chapter store, vision/translator/rendering engines | A user request is admitted and deduplicated for one page. |
+| Auto reader | `workflow/TranslationManager` / reader session → `scheduling/TranslationScheduler` and `RollingAutoCoordinator` | Same page pipeline, chapter store, provider and native lane | Reader windows, auto ownership/generations, pause and teardown rules. |
+| Batch chapter | `workflow/ChapterTranslator` → `pipeline/batch/BatchChapterTranslator` and batch workers | Chapter store, artifact engine, OCR/translator/inpainting/rendering engines and diagnostics | Batch preflight, envelopes, ordered chunk work, candidate publication and resume/recovery. |
 
-The session coordinator arbitrates reader and batch admission. Page leases and write fences remain the final protection against stale or competing writers; do not treat admission policy as a replacement for those checks. Manual, auto and batch paths share engines and chapter state, but use different scheduling and publication flows.
+The session coordinator in `workflow` arbitrates reader and batch admission. Page leases and write fences remain the final protection against stale or competing writers; do not treat admission policy as a replacement for those checks. Manual, auto and batch paths share engines and chapter state, but use different scheduling and publication flows.
 
 ## Package ownership
 
 | Package | Put this concern here |
 | --- | --- |
-| `orchestration` | Translation requests, reader/batch session admission, chapter translation queue lifecycle and reader teardown. `TranslationManager` is the public façade. |
-| `scheduling` | Manual and auto reader jobs, rolling windows, cancellation and native-run quarantine. |
+| `workflow` | Request admission, reader/batch session ownership, chapter lifecycle and reader teardown. `TranslationManager` is the public façade. |
+| `scheduling` | Which page jobs run and when: manual/auto reader jobs, rolling windows, cancellation and native-run quarantine. Workflow decides ownership and intent. |
 | `pipeline` | Page execution, engine lane, stage contracts, writes, decoding, memory governance and single-page phases. `pipeline.batch` owns batch-specific preflight, execution, publication and recovery. |
-| `detection`, `segmentation`, `ocr` | Text/panel detection, bubble masks and recognition engines. OCR engines coordinate their specialized detection/segmentation/OCR stages. |
-| `context`, `translator` | Chapter context, translation contracts and provider behavior. Add a provider under `translator/providers`; keep provider request/response details there. `contextual`, `analysis`, `retry` and `routing` retain their focused roles. |
-| `inpainting`, `rendering` | Cleaned-image generation and translated text layout/rendering. |
-| `storage`, `store`, `artifact` | Live chapter state and mutation coordination; extracted state collaborators; durable artifact documents, manifests and recovery. See the authority distinction below. |
+| `engines/vision/{detection,segmentation,ocr,webtoon}` | Text/panel detection, bubble masks, recognition engines and webtoon image behavior. OCR engines compose the specialized recognition stages. |
+| `engines/translator` | Translation contracts and provider behavior. Add a provider under `engines/translator/providers`; keep provider request/response details there. `contextual`, `analysis`, `retry` and `routing` retain their focused roles. |
+| `context` | Chapter and series context used to prepare translation requests. |
+| `engines/inpainting`, `engines/rendering` | Cleaned-image generation and translated text layout/rendering. |
+| `persistence/{artifact,chapter,queue,internal}` | Artifact documents and recovery; live chapter state, mutation coordination and translation-file locations; durable queue records; chapter-state collaborators. See the authority distinction below. |
 | `model` | Shared translation values, page state and domain types. Keep feature policy and projections with their owning subsystem. |
-| `runtime` | Runtime integration such as ONNX initialization and model availability. |
+| `engines/runtime/onnx` | ONNX initialization, model availability and device/runtime integration. |
 | `diagnostics` | Trace/event vocabulary and diagnostic projections shared across execution paths. |
-| `ui`, `webtoon` | Reader-facing translation presentation and webtoon-specific behavior. |
+| `presentation` | Reader-facing translation truth, projections and notification copy. |
 | `util` | Small general helpers only. Put translation policy beside the subsystem that owns it. |
 
-For a provider, follow an existing implementation in `translator/providers`, implement the established translator contract, and wire it through the existing engine builder/router. Do not add provider parsing or policy to `TranslationManager` or batch orchestration.
+For a provider, follow an existing implementation in `engines/translator/providers`, implement the established translator contract, and wire it through the existing engine builder/router. Do not add provider parsing or policy to `workflow/TranslationManager` or batch execution.
 
 ## Live state and durable persistence
 
-`ChapterTranslationStore` is the process-local owner of the current page state, display flows, generation, and mutation/commit coordination. Its lease table, store mutex, lease tokens, source snapshots and generation checks work together. `PageStageLeaseTable` shares the store's lock and lease map; it is not an independent cache.
+`persistence/chapter/ChapterTranslationStore` is the process-local owner of the current page state, display flows, generation, and mutation/commit coordination. Its lease table, store mutex, lease tokens, source snapshots and generation checks work together. `persistence/internal/PageStageLeaseTable` shares the store's lock and lease map; it is not an independent cache.
 
-`ChapterArtifactEngine` and its document/manifest collaborators own durable artifact state: candidates, committed pointers, stage records, sidecars, crash recovery and retention. On restart, the manifest and pointed-to documents are the source for reconstructing page state; the in-memory store is the source for current live projections and guarded mutations. `TranslationQueueStore` and `TranslationPendingRequestStore` own their respective durable queues/requests. Glossary and attempt-ledger collaborators persist their domain records through the artifact path.
+`persistence/artifact/ChapterArtifactEngine` and its document/manifest collaborators own durable artifact state: candidates, committed pointers, stage records, sidecars, crash recovery and retention. On restart, the manifest and pointed-to documents are the source for reconstructing page state; the in-memory chapter store is the source for current live projections and guarded mutations. `persistence/queue/TranslationQueueStore` and `TranslationPendingRequestStore` own their respective durable queues/requests. Glossary and attempt-ledger collaborators persist their domain records through the artifact path.
 
 Keep candidate output separate from committed display output until the artifact commit succeeds. A failed or stale candidate must not replace the currently committed page result.
 
@@ -59,7 +60,7 @@ Keep candidate output separate from committed display output until the artifact 
 - Session admission coordinates manual/auto reader and batch work. Manual preemption of auto work, batch admission, and teardown ordering are intentional ownership transitions.
 - Cancellation does not prove native work has exited. `NativeRunQuarantine` retains admission until the actual native call returns; `EngineLane` serializes native engine use and close/rebuild operations.
 - Durable publication must remain atomic through the artifact document/manifest protocol. Coroutine cancellation and `NonCancellable` lease cleanup paths preserve this contract.
-- Keep dependencies pointed toward concrete owners: UI → orchestration/scheduling → execution and engines → live state, persistence and domain types. Low-level model, artifact, diagnostics and engine code should not reach up into batch execution or reader orchestration.
+- Keep dependencies pointed toward concrete owners: presentation/workflow → scheduling and pipeline → engines → live state, persistence and domain types. Low-level model, persistence/artifact, diagnostics and engine code should not reach up into batch execution or reader workflow.
 - Add no package cycle, process-global state, or general-purpose abstraction without a real boundary. Prefer an existing concrete owner and a focused test seam.
 
 Changes to leases, cancellation, generation fencing, store commits, artifact publication, recovery, or session coexistence need tests that exercise the relevant state transition and race—not only a happy-path output assertion.
