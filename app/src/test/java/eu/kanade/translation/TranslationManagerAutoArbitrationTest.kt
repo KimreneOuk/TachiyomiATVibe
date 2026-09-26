@@ -10,10 +10,10 @@ import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.workflow.ChapterTranslator
 import eu.kanade.translation.workflow.TranslationManager
-import eu.kanade.translation.workflow.TranslationSession
 import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import eu.kanade.translation.workflow.TranslationSessionState
 import io.kotest.assertions.withClue

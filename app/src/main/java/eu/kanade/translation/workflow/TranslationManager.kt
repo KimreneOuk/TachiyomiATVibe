@@ -25,6 +25,7 @@ import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
@@ -184,7 +185,12 @@ class TranslationManager(
             activeStores.get(chapterId)
         },
         immediateStoreResolver = { chapterId -> activeStores.get(chapterId) },
-        sessionCoordinator = sessionCoordinator,
+        readerSessionRejectionReason = { chapterId ->
+            when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
+                is SessionAdmission.Rejected -> admission.reason.name
+                else -> null
+            }
+        },
     )
 
     init {

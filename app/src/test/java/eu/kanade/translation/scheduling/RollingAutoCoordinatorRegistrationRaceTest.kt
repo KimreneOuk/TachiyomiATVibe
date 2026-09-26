@@ -8,7 +8,6 @@ import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.workflow.TranslationSession
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

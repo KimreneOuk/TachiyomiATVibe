@@ -18,9 +18,9 @@ import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.PreparedPage
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationExecutor
+import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
-import eu.kanade.translation.workflow.TranslationSession
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.mockk.every

@@ -54,6 +54,8 @@ import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.getChapterPages
 import eu.kanade.translation.workflow.ChapterTranslator
+import eu.kanade.translation.workflow.ReaderSessionIntent
+import eu.kanade.translation.workflow.SessionAdmission
 import eu.kanade.translation.workflow.TranslationManager
 import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -707,7 +709,12 @@ internal class TranslationCoexistenceHarness private constructor(
                     extraStores[chapterId] ?: store
                 },
                 immediateStoreResolver = { extraStores[it] ?: store },
-                sessionCoordinator = sessionCoordinator,
+                readerSessionRejectionReason = { chapterId ->
+                    when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
+                        is SessionAdmission.Rejected -> admission.reason.name
+                        else -> null
+                    }
+                },
             )
             val schedulerJobMap = CapturingJobMap()
             setFields(

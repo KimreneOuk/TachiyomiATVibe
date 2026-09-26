@@ -108,7 +108,12 @@ class TranslationSessionCoordinatorTest {
         val scheduler = TranslationScheduler(
             executor = mockk<TranslationExecutor>(relaxed = true),
             storeResolver = TranslationStoreResolver { null },
-            sessionCoordinator = coordinator,
+            readerSessionRejectionReason = { chapterId ->
+                when (val admission = coordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
+                    is SessionAdmission.Rejected -> admission.reason.name
+                    else -> null
+                }
+            },
         )
         val manga = mockk<Manga>(relaxed = true)
         val chapter = mockk<Chapter>(relaxed = true)

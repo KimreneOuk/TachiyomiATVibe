@@ -17,10 +17,6 @@ import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.workflow.ReaderSessionIntent
-import eu.kanade.translation.workflow.SessionAdmission
-import eu.kanade.translation.workflow.TranslationSession
-import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,7 +55,7 @@ class TranslationScheduler(
     private val executor: TranslationExecutor,
     private val storeResolver: TranslationStoreResolver,
     private val immediateStoreResolver: ((Long) -> ChapterTranslationStore?)? = null,
-    private val sessionCoordinator: TranslationSessionCoordinator = TranslationSessionCoordinator(),
+    private val readerSessionRejectionReason: (Long?) -> String? = { null },
 ) : java.io.Closeable {
 
     override fun close() {
@@ -162,18 +158,13 @@ class TranslationScheduler(
         pageResolver: (Int) -> RollingAutoCoordinator.PageWorkItem?,
         computeClass: TranslatorComputeClass,
     ) {
-        when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(identity.chapterId))) {
-            is SessionAdmission.Admitted,
-            is SessionAdmission.Switched,
-            -> Unit
-
-            is SessionAdmission.Rejected -> {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT reader auto admission rejected at scheduler gate: " +
-                        "reason=${admission.reason} chapterId=${identity.chapterId}"
-                }
-                return
+        val rejectionReason = readerSessionRejectionReason(identity.chapterId)
+        if (rejectionReason != null) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT reader auto admission rejected at scheduler gate: " +
+                    "reason=$rejectionReason chapterId=${identity.chapterId}"
             }
+            return
         }
         val chapterId = session.chapter.id
         val arbitratedResolver: (Int) -> RollingAutoCoordinator.PageWorkItem? = { idx ->
@@ -319,25 +310,20 @@ class TranslationScheduler(
     }
 
     fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String, force: Boolean = false) {
-        when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapter.id))) {
-            is SessionAdmission.Admitted,
-            is SessionAdmission.Switched,
-            -> Unit
-
-            is SessionAdmission.Rejected -> {
-                chapter.id?.let { chapterId ->
-                    recordManualOutcome(
-                        chapterId,
-                        pageKey,
-                        SinglePageOutcome.Rejected(null, "reader session rejected: ${admission.reason}"),
-                    )
-                }
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT reader manual admission rejected at scheduler gate: " +
-                        "reason=${admission.reason} chapterId=${chapter.id} pageKey=$pageKey"
-                }
-                return
+        val rejectionReason = readerSessionRejectionReason(chapter.id)
+        if (rejectionReason != null) {
+            chapter.id?.let { chapterId ->
+                recordManualOutcome(
+                    chapterId,
+                    pageKey,
+                    SinglePageOutcome.Rejected(null, "reader session rejected: $rejectionReason"),
+                )
             }
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT reader manual admission rejected at scheduler gate: " +
+                    "reason=$rejectionReason chapterId=${chapter.id} pageKey=$pageKey"
+            }
+            return
         }
         val jobKey = "${chapter.id}:$pageKey"
         // TachiyomiAT: do NOT cancel an in-flight job for this page on a
