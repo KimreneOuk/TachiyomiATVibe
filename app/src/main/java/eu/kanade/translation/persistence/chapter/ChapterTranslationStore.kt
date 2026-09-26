@@ -16,8 +16,6 @@ import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.translation.orchestration.ChapterResetPreflight
-import eu.kanade.translation.orchestration.chapterResetPreflight
 import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.ArtifactStage
@@ -65,6 +63,8 @@ import eu.kanade.translation.pipeline.inpaintMaskFingerprint
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
 import eu.kanade.translation.pipeline.toArtifactOrigin
+import eu.kanade.translation.workflow.ChapterResetPreflight
+import eu.kanade.translation.workflow.chapterResetPreflight
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap

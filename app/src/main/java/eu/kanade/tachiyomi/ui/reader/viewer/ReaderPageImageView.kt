@@ -684,7 +684,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val isRunningState = when (state) {
             is ReaderPageFeedbackState.Translated, is ReaderPageFeedbackState.Failed -> false
             is ReaderPageFeedbackState.ManualTruth ->
-                state.truth.severity == eu.kanade.translation.ui.UiSeverity.PROGRESS
+                state.truth.severity == eu.kanade.translation.presentation.UiSeverity.PROGRESS
             else -> true
         }
 

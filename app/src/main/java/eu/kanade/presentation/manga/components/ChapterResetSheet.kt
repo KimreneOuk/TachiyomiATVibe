@@ -17,7 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import eu.kanade.translation.orchestration.ChapterResetPreflight
+import eu.kanade.translation.workflow.ChapterResetPreflight
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.padding

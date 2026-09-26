@@ -87,7 +87,7 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.orchestration.TranslationSessionState
+import eu.kanade.translation.workflow.TranslationSessionState
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull

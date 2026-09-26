@@ -8,7 +8,7 @@ import eu.kanade.translation.engines.translator.ProviderRequestKey
 import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.engines.translator.SystemProviderRequestClock
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.orchestration.ChapterTranslator
+import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

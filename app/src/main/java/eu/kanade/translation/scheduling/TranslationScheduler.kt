@@ -14,13 +14,13 @@ import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
-import eu.kanade.translation.orchestration.ReaderSessionIntent
-import eu.kanade.translation.orchestration.SessionAdmission
-import eu.kanade.translation.orchestration.TranslationSession
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.workflow.ReaderSessionIntent
+import eu.kanade.translation.workflow.SessionAdmission
+import eu.kanade.translation.workflow.TranslationSession
+import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,7 +51,7 @@ import java.util.concurrent.atomic.AtomicReference
  * cancelled on chapter change, reader exit, or translation disable.
  *
  * Job-scheduling + dedup + cancel surface extracted from
- * [eu.kanade.translation.orchestration.TranslationManager]. Per-page work is delegated to
+ * [eu.kanade.translation.workflow.TranslationManager]. Per-page work is delegated to
  * [TranslationExecutor]; the store is resolved through
  * [TranslationStoreResolver] (still owned by TranslationManager).
  */

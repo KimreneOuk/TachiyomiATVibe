@@ -11,7 +11,7 @@ import java.io.InputStream
  * TachiyomiAT: the per-page translation contract that [TranslationScheduler]
  * depends on, decoupled from the concrete executor.
  *
- * Today this is satisfied by [eu.kanade.translation.orchestration.ChapterTranslator], which
+ * Today this is satisfied by [eu.kanade.translation.workflow.ChapterTranslator], which
  * delegates to [eu.kanade.translation.pipeline.TranslationPipeline]'s
  * decode → OCR → translate → inpaint → render pipeline. The scheduler only
  * cares that the executor runs one page to completion (or failure) under its

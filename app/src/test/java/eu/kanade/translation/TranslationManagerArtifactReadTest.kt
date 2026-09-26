@@ -6,14 +6,14 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.orchestration.isFreshOrphanedCleanedImage
 import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.workflow.ChapterTranslator
+import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.workflow.isFreshOrphanedCleanedImage
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

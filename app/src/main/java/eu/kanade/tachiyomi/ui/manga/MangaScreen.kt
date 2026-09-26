@@ -412,16 +412,16 @@ class MangaScreen(
                 //  Phase 5 N2: the decision body describes EVERY chapter in
                 // the group via the pure partialDownloadBody mapper (the
                 // phase-4 dialog showed only the first chapter's counts).
-                val body = eu.kanade.translation.ui.TranslationUiTruth.partialDownloadBody(
+                val body = eu.kanade.translation.presentation.TranslationUiTruth.partialDownloadBody(
                     dialog.group.map { chapterItem ->
                         when (val decision = dialog.decisions[chapterItem.chapter.id]) {
                             is eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Partial ->
-                                eu.kanade.translation.ui.TranslationUiTruth.PartialDecision(
+                                eu.kanade.translation.presentation.TranslationUiTruth.PartialDecision(
                                     downloaded = decision.downloadedPageCount,
                                     expectedSourceTotal = decision.expectedSourcePageCount,
                                 )
                             else ->
-                                eu.kanade.translation.ui.TranslationUiTruth.PartialDecision(
+                                eu.kanade.translation.presentation.TranslationUiTruth.PartialDecision(
                                     downloaded = 0,
                                     expectedSourceTotal = null,
                                 )

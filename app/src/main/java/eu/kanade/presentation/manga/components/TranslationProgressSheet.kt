@@ -77,8 +77,8 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.ui.BatchStatusLineKind
-import eu.kanade.translation.ui.TranslationUiTruth
+import eu.kanade.translation.presentation.BatchStatusLineKind
+import eu.kanade.translation.presentation.TranslationUiTruth
 import kotlinx.coroutines.delay
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR

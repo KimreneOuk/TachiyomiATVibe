@@ -7,13 +7,13 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.workflow.ChapterTranslator
+import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.mockk.every

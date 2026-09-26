@@ -8,7 +8,7 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
  * [TranslationScheduler] needs to read/write the per-chapter store to reset
  * stranded RUNNING statuses on cancellation and to flip stages during auto
  * scheduling — but it does NOT own the store lifecycle (open/evict/observe),
- * which stays on [eu.kanade.translation.orchestration.TranslationManager] because the reader
+ * which stays on [eu.kanade.translation.workflow.TranslationManager] because the reader
  * and translator share a single store instance per chapter.
  *
  * Implementations return null when no store is registered for the chapter

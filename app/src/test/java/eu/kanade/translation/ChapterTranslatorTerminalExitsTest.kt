@@ -4,7 +4,6 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationProvider
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
@@ -13,6 +12,7 @@ import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.util.getChapterPages
+import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
 import io.mockk.every

@@ -3,8 +3,8 @@ package eu.kanade.translation
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.orchestration.ChapterResetPreflight
-import eu.kanade.translation.orchestration.chapterResetPreflight
+import eu.kanade.translation.workflow.ChapterResetPreflight
+import eu.kanade.translation.workflow.chapterResetPreflight
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

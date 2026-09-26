@@ -8,7 +8,6 @@ import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.orchestration.mergeRestoredQueueEntries
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
@@ -26,6 +25,7 @@ import eu.kanade.translation.pipeline.batch.OcrReadyPageRef
 import eu.kanade.translation.pipeline.batch.PageKey
 import eu.kanade.translation.pipeline.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.ocrFingerprint
+import eu.kanade.translation.workflow.mergeRestoredQueueEntries
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull

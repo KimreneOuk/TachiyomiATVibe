@@ -13,8 +13,8 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.displayImageName
-import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.workflow.TranslationManager
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
 import tachiyomi.core.common.util.system.logcat

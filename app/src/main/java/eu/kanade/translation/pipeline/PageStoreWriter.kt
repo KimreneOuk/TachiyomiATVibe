@@ -8,8 +8,8 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
+import eu.kanade.translation.presentation.TranslationUiTruth
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.ui.TranslationUiTruth
 import eu.kanade.translation.util.TranslationMemoryBudget
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -18,7 +18,7 @@ import java.io.InputStream
 /**
  * Store-patch/failure-writer helpers moved from `TranslationPipeline`
  * ( Phase 6). Stateless over the pipeline's store resolver (injected
- * as a getter, it is re-wired by [eu.kanade.translation.orchestration.TranslationManager]),
+ * as a getter, it is re-wired by [eu.kanade.translation.workflow.TranslationManager]),
  * the stream registry, and the pipeline's critical-OOM handler.
  */
 internal class PageStoreWriter(

@@ -5,7 +5,6 @@ import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.orchestration.TranslationSession
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -21,6 +20,7 @@ import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
+import eu.kanade.translation.workflow.TranslationSession
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.mockk.every

@@ -18,9 +18,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -56,6 +53,9 @@ import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.getChapterPages
+import eu.kanade.translation.workflow.ChapterTranslator
+import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.coEvery
 import io.mockk.every

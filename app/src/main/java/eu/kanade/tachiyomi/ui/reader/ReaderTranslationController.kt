@@ -33,10 +33,6 @@ import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
-import eu.kanade.translation.orchestration.ReaderSessionIntent
-import eu.kanade.translation.orchestration.SessionAdmission
-import eu.kanade.translation.orchestration.SessionRejection
-import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -49,6 +45,10 @@ import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.workflow.ReaderSessionIntent
+import eu.kanade.translation.workflow.SessionAdmission
+import eu.kanade.translation.workflow.SessionRejection
+import eu.kanade.translation.workflow.TranslationManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
