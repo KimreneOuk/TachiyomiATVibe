@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "path": "detection/detector-v4-s_int8.onnx",
+      "size_bytes": 11120765,
+      "sha256": "5fe9e4f576e49d4e7e8b0e029d6d3cdc252abd4694113e1cae120e62c931ea79",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/detector-v4-s_int8.onnx",
+      "recipe_ref": "Internal commit cc75e41; T922 engineering/npu-gpu-hardware-acceleration.md §4 records ORT dynamic integer quantization. The exact source checkpoint and quantization invocation were not retained."
+    },
+    {
+      "path": "detection/manga_panel_detector_int8.onnx",
+      "size_bytes": 2872318,
+      "sha256": "6b1728706197d54bf8023ebae890ef1a8d42ddc0de27e3edec22f32dc674075b",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/manga_panel_detector_int8.onnx",
+      "recipe_ref": "Internal commit 1a6f082; T922 engineering/npu-gpu-hardware-acceleration.md §4 records ORT dynamic integer quantization. The exact source checkpoint and quantization invocation were not retained."
+    },
+    {
+      "path": "inpainting/aot-512.onnx",
+      "size_bytes": 61469172,
+      "sha256": "7cafb478c750d0dc7a2e9bad6b034a0fbff5c5df6db95ceb165ba571026c2f8e",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/aot-512.onnx",
+      "recipe_ref": "Internal commit 5563bdb; T922 §3 identifies Qualcomm AI Hub Workbench aihub-2026.07.31.1. The earlier onnxslim recipe in internal commit 24e6411 produced a different 22,854,564-byte model."
+    },
+    {
+      "path": "inpainting/aot.onnx",
+      "size_bytes": 23068213,
+      "sha256": "ffd39ed8e2a275869d3b49180d030f0d8b8b9c2c20ed0e099ecd207201f0eada",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/aot.onnx",
+      "recipe_ref": "Internal commit cc75e41. The exact checkpoint URL and export command for this dynamic model were not retained; see docs/MODEL_SOURCES.md."
+    },
+    {
+      "path": "ocr/decoder_init.onnx",
+      "size_bytes": 24875052,
+      "sha256": "612f97e22848620fb36fcac611467689cb4213d91f2d84f6a19042ad57d475f1",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/decoder_init.onnx",
+      "recipe_ref": "Internal commit cc75e41; T927 DESIGN.md §4.1 records this exact artifact hash. The source checkpoint revision and ONNX export command were not retained."
+    },
+    {
+      "path": "ocr/decoder_step.onnx",
+      "size_bytes": 22776797,
+      "sha256": "a244b814a3a669190f9eae737960997633597cfa055fa186347e872bee834bc9",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/decoder_step.onnx",
+      "recipe_ref": "Internal commit cc75e41; T927 DESIGN.md §4.1 records this exact artifact hash. The source checkpoint revision and ONNX export command were not retained."
+    },
+    {
+      "path": "ocr/encoder.onnx",
+      "size_bytes": 17070003,
+      "sha256": "d1fb455a07c1508cc56a4f4e15e2ed74aca9a4d78fd220ecc0ff39625d67e1b3",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/encoder.onnx",
+      "recipe_ref": "Internal commit cc75e41; T927 DESIGN.md §4.1 records this exact artifact hash. The source checkpoint revision and ONNX export command were not retained."
+    },
+    {
+      "path": "ocr/vocab.txt",
+      "size_bytes": 37193,
+      "sha256": "879d9a69df070dbdf143f64bb3daf73d367741980f18a2f6d08a12e68a598a11",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/vocab.txt",
+      "recipe_ref": "Internal MangaOCR export lineage (commit cc75e41); T927 DESIGN.md §4.1 records the vocabulary as part of the locked model set. Exact upstream tokenizer revision was not retained."
+    },
+    {
+      "path": "ocr/paddle-v6-small/inference.json",
+      "size_bytes": 208004,
+      "sha256": "f0bf53c853937a917affdd74467472167727f8ab0f0f7bded01c4a16c27e46e6",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/inference.json",
+      "upstream_url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.json"
+    },
+    {
+      "path": "ocr/paddle-v6-small/inference.onnx",
+      "size_bytes": 21159378,
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/paddle-v6-small-rec-inference.onnx",
+      "upstream_url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.onnx"
+    },
+    {
+      "path": "ocr/paddle-v6-small/PP-OCRv6_small_rec.txt",
+      "size_bytes": 74947,
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/PP-OCRv6_small_rec.txt",
+      "upstream_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/b03f46425e8ff4442b268ce449e3eef758146cd4/ppocr/utils/dict/ppocrv6_dict.txt"
+    },
+    {
+      "path": "ocr/paddle-v6-small/det/inference.onnx",
+      "size_bytes": 9880512,
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/paddle-v6-small-det-inference.onnx",
+      "upstream_url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx"
+    },
+    {
+      "path": "segmentation/manga109_bubble_int8.onnx",
+      "size_bytes": 3444163,
+      "sha256": "2c80dab0b9df4455b40501614ebdf4bae7a90c3880635635e8d87baa50cdfa94",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/models-v1/manga109_bubble_int8.onnx",
+      "recipe_ref": "Internal commit 1a6f082 adds this artifact. Internal tools/requantize_seg_int8.py documents a later, different calibrated output; it does not reproduce this file. Exact export lineage remains unresolved."
+    }
+  ]
+}

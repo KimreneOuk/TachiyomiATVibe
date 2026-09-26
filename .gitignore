@@ -76,3 +76,8 @@ kilo.json
 *.apk
 *.aab
 /captures/
+
+# Runtime models are fetched from the models-v1 release; retain empty placeholders
+/app/src/main/assets/models/**
+!/app/src/main/assets/models/**/
+!/app/src/main/assets/models/**/.gitkeep
