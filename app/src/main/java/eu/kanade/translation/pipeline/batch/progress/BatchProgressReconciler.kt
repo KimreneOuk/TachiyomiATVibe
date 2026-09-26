@@ -3,15 +3,11 @@ package eu.kanade.translation.pipeline.batch.progress
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isStageCancelled
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.chapter.ChapterPageReconciler
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
-import eu.kanade.translation.util.ShortHash
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 
 data class ReconciliationResult(
     val chapterStatus: Translation.State,
@@ -40,12 +36,7 @@ object BatchProgressReconciler {
         pauseOutcome: BatchPass1Outcome? = null,
     ): ReconciliationResult {
         val expectedKeys = orderedKeys.distinct()
-        val unexpectedPageKeys = pageMap.keys - expectedKeys.toSet()
-        unexpectedPageKeys.forEach { pageKey ->
-            logcat(LogPriority.WARN) {
-                "event=batch_reconciliation reason=unexpected_page pageHash=${ShortHash.hash(pageKey)}"
-            }
-        }
+        val unexpectedPageKeys = ChapterPageReconciler.findUnexpectedPageKeys(pageMap, expectedKeys)
         if (expectedKeys.isEmpty()) {
             return ReconciliationResult(
                 chapterStatus = Translation.State.ERROR,
@@ -66,66 +57,20 @@ object BatchProgressReconciler {
             return reconcilePaused(pageMap, expectedKeys, pausedOutcome, unexpectedPageKeys)
         }
 
-        val strandedPages = linkedMapOf<String, String>()
-        var doneCount = 0
-        var failedCount = 0
-        var partialCount = 0
-
-        for (pageKey in expectedKeys) {
-            val page = pageMap[pageKey]
-            if (page == null) {
-                strandedPages[pageKey] = "Translation incomplete — expected page is missing"
-                failedCount++
-                continue
-            }
-            if (page.runGeneration != activeGeneration && !page.hasRenderedResult && !page.isTextlessTerminal) {
-                // Not owned by the active generation and not successfully terminal.
-                // It was skipped by the planner because it wasn't valid, but never reached by the producer.
-                strandedPages[pageKey] =
-                    "Translation incomplete — expected page was stranded by a prior run and not reached"
-                failedCount++
-                continue
-            }
-            when {
-                page.isStageFailed -> failedCount++
-                page.hasRenderedResult || page.isTextlessTerminal -> doneCount++
-                //  field fix (Chapter 21): this branch is only reachable
-                // when the page is NOT display-ready — a partial candidate with
-                // no rendered result shows nothing readable, so it is
-                // unresolved work (ERROR, retryable), never a usable warning.
-                // Counting it done+partial produced "Ready (Warnings)"
-                // chapters with unrendered pages and no Retry affordance.
-                page.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL -> {
-                    partialCount++
-                    strandedPages[pageKey] =
-                        "Translation incomplete — partial result was never rendered"
-                    failedCount++
-                }
-                page.isStageCancelled || page.isStageRunning || page.isNonTerminalWithoutOutput() -> {
-                    strandedPages[pageKey] = "Translation incomplete — page was left cancelled or non-terminal"
-                    failedCount++
-                }
-                else -> {
-                    strandedPages[pageKey] = "Translation incomplete — expected page has no readable terminal output"
-                    failedCount++
-                }
-            }
-        }
-
-        val chapterStatus = when {
-            failedCount > 0 -> Translation.State.ERROR
-            partialCount > 0 -> Translation.State.READY_WITH_WARNINGS
-            else -> Translation.State.TRANSLATED
-        }
-
-        return ReconciliationResult(
-            chapterStatus = chapterStatus,
-            strandedPages = strandedPages,
+        val projection = ChapterPageReconciler.reconcile(
+            pageMap = pageMap,
+            orderedKeys = expectedKeys,
+            activeGeneration = activeGeneration,
             unexpectedPageKeys = unexpectedPageKeys,
-            doneCount = doneCount,
-            failedCount = failedCount,
-            partialCount = partialCount,
-            terminalCount = failedCount,
+        )
+        return ReconciliationResult(
+            chapterStatus = projection.chapterStatus,
+            strandedPages = projection.strandedPages,
+            unexpectedPageKeys = projection.unexpectedPageKeys,
+            doneCount = projection.doneCount,
+            failedCount = projection.failedCount,
+            partialCount = projection.partialCount,
+            terminalCount = projection.failedCount,
         )
     }
 
@@ -292,15 +237,5 @@ object BatchProgressReconciler {
             pauseReason = outcome.reason,
             nonDurableFailure = persistenceRejected,
         )
-    }
-
-    private fun PageTranslation.isNonTerminalWithoutOutput(): Boolean {
-        return !isStageFailed &&
-            !hasRenderedResult &&
-            !isTextlessTerminal &&
-            (
-                ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                    ocrStatus == eu.kanade.translation.model.StageStatus.PENDING
-                )
     }
 }

@@ -15,8 +15,8 @@ import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.chapter.ChapterPageReconciler
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -138,7 +138,13 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
             expectedKeys += "__missing_expected_page_$index"
         }
         val activeGeneration = pagesSnapshot.values.maxOfOrNull { it.runGeneration } ?: 0L
-        val reconciliation = BatchProgressReconciler.reconcile(pagesSnapshot, expectedKeys, activeGeneration)
+        val unexpectedPageKeys = ChapterPageReconciler.findUnexpectedPageKeys(pagesSnapshot, expectedKeys)
+        val reconciliation = ChapterPageReconciler.reconcile(
+            pageMap = pagesSnapshot,
+            orderedKeys = expectedKeys,
+            activeGeneration = activeGeneration,
+            unexpectedPageKeys = unexpectedPageKeys,
+        )
         //  field fix (Chapter 21): the softener exists for stores whose
         // trusted expected total exceeds the registered pages with no recorded
         // failure (upgrade residue) — reconcile synthesizes placeholder keys
