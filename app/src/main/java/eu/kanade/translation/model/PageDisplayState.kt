@@ -4,7 +4,7 @@ package eu.kanade.translation.model
  * canonical reader/drawer display state derived from the committed
  * display bundle plus candidate/failure metadata. The drawer, chapter-list badge,
  * progress tracker, and reader must all consume this state instead of inferring
- * readiness from OCR or translation flags (batch plan §6).
+ * readiness from OCR or translation flags.
  *
  * The artifact manifest records this state durably, while the live store and
  * progress projection reconstruct it from the committed pointer plus candidate

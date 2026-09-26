@@ -5,7 +5,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Test-only stage trace used by the Phase 0 characterization tests.
+ * Test-only stage trace used to assert batch invocation counts.
  *
  * The trace deliberately records only stage names and page keys. It never keeps
  * source text, prompts, translations, or context, so it is safe to reuse when

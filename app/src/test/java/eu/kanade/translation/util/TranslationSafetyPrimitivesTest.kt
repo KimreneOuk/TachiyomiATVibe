@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Regression guards for the Wave 1 P0-1 race-condition invariant, encoded as a
+ * Regression guards for a race-condition invariant, encoded as a
  * pure helper in [TranslationSafetyPrimitives] so it can be driven without the
  * singleton pipeline or an ONNX engine.
  *

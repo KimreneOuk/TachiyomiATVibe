@@ -832,7 +832,7 @@ internal class BatchLaneWorkers(
 
     // The translator lane performs per-page translation (standard path) as a
     // SINGLE serialized lane so only one provider request is in flight at a
-    // time.  zero-legacy: the legacy SBC AI-chunk machinery (streaming
+    // time.  : the legacy SBC AI-chunk machinery (streaming
     // chunk completion, admission/probe buffering) had no surviving caller and
     // was deleted — the PROFILE lane translates through ProfileEnvelopeExecutor.
     val translatorWorker = object : TranslatorLaneWorker {

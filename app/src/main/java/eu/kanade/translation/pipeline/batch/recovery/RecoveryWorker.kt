@@ -184,7 +184,7 @@ internal class RecoveryWorker(
     fun t924PageTerminalAtFinalize(page: PageTranslation?, activeGeneration: Long): Boolean {
         if (page == null) return false
         if (page.hasRenderedResult || page.isTextlessTerminal) return true
-        //  zero-legacy: a COMMITTED terminal stage is durable
+        //  : a COMMITTED terminal stage is durable
         // regardless of which generation wrote it — a restart after a cancel
         // or process death must never strand (and durable-fail) a prior
         // run's committed work (/ reuse). Only OPEN states

@@ -30,7 +30,7 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- *  zero-legacy  — surviving coverage from the former
+ *    — surviving coverage from the former
  * `OcrPreflightFlagOffMidRunTest`.
  *
  * The  flag completed its A/B lifecycle and was removed: there is no

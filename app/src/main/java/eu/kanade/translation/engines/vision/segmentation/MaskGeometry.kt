@@ -138,7 +138,7 @@ class MaskGeometry private constructor(
     }
 
     /**
-     * TachiyomiAT  repair (R3): DETERMINISTIC component assignment for the
+     * Deterministic component assignment for the
      * layout path — a block is never left cell-less by ambiguity. Resolution:
      *  1. the max-overlap component when the maximum is unique and positive;
      *  2. on an exact overlap tie: among the TIED components, the one whose

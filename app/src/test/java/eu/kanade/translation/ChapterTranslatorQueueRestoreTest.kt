@@ -70,7 +70,7 @@ class ChapterTranslatorQueueRestoreTest {
     }
 
     // -------------------------------------------------------------------------
-    //  wave-2 review gap 2 (queue-restore obligation, zero-legacy form):
+    //  wave-2 review gap 2 (queue-restore obligation,  form):
     // a chapter with an interrupted pipeline run restored from the persisted
     // queue. The harness mirrors the interrupted-run idiom (real store, real
     // interrupted pass) so the run record below is a genuine durable record
@@ -228,7 +228,7 @@ class ChapterTranslatorQueueRestoreTest {
         manifestBefore.ocrCheckpoints.keys shouldBe checkpointedKeys
         store.pageLeaseOwner("p1").shouldBeNull()
         store.pageLeaseOwner("p2").shouldBeNull()
-        //  zero-legacy: the surviving record IS the resume evidence — the
+        //  : the surviving record IS the resume evidence — the
         // phase pointer advanced past RUN_SNAPSHOT with p1's checkpointed OCR
         // (OCR_PLAN, done=1) and p2's mid-preflight death left it there. The
         // next explicit run resumes from this pointer; restore starts nothing.

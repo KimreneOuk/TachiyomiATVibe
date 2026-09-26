@@ -15,7 +15,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * Ticket 02 fixup round 2 — real boundary regression coverage.
+ * Regression coverage for the prepared-page runtime boundary.
  *
  * These tests drive the PRODUCTION boundary helper
  * [publishPreparedPageFromOcr] and the PRODUCTION terminal predicate

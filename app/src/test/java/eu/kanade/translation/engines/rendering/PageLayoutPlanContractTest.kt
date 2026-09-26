@@ -8,7 +8,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- *  slice 3: the explicit [PageLayoutPlan] planner contract — identity
+ * The explicit [PageLayoutPlan] planner contract — identity
  * multiset over nonblank inputs in input order, planning/render ordinals,
  * blank absence, explicit non-draw reasons, and equivalence of the legacy
  * [TextLayoutPlanner.plan] wrapper with the plan's drawable list.
@@ -100,13 +100,9 @@ class PageLayoutPlanContractTest {
     }
 
     @Test
-    fun `empty shared cell falls back to the legacy region and still draws (R1 repair)`() {
-        //  REPAIR (R1, documented deviation): this fixture previously
-        // asserted `NonDraw(EMPTY_SHARED_CELL)` for the middle member of three
-        // near-equal centers (cuts 100/101 with gap 2 make its slab [101,100)
-        // degenerate). The Director's visibility override abolishes the drop:
-        // the block now falls back to its own pre-slice-3 legacy region and
-        // DRAWS without a cell, while the siblings keep their disjoint cells.
+    fun `empty shared cell falls back to legacy region and still draws`() {
+        // An empty shared cell must not drop the middle block. It draws in its
+        // own legacy region while the siblings keep their disjoint cells.
         val mask = fullMask()
         val a = block(90f, 50f, 20f, 20f, "A", score = 0.9f, blockId = "a").copy(segmentationMask = mask)
         val b = block(91f, 50f, 20f, 20f, "B", score = 0.8f, blockId = "b").copy(segmentationMask = mask)

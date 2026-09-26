@@ -458,7 +458,7 @@ internal class PreflightWorker(
         // analysis is skipped: zero OCR, zero provider calls (the
         // fast-feedback core). The probe is LOCAL reads only (durable
         // checkpoints + profile sidecar), never decode/native work.
-        // Wave A: AI-ONLY — the standard lane produces no frozen profile, so
+        // AI-only — the standard lane produces no frozen profile, so
         // the probe is fenced off (it would short-circuit into the envelope
         // phase, which requires one).
         val reusableProfile = if (standardLane) {
@@ -523,7 +523,7 @@ internal class PreflightWorker(
                     //  resume rule: the page's origin-neutral checkpoint matches
                     // the current source identity — no re-OCR, no lease, no decode.
                     //
-                    //  zero-legacy: a reused checkpoint must also BACK the
+                    //  : a reused checkpoint must also BACK the
                     // live store page. A reopened store (real restart, or the
                     // memory-only artifact-authority fixture) holds only a
                     // placeholder page record — its ocrStatus/blocks live in the

@@ -4,7 +4,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * Regression guard for the Wave 3 P1a dedup in `RenderColorEstimator.estimate`:
+ * Regression guard for deduplication in `RenderColorEstimator.estimate`:
  * the duplicate `extractClusters` + `bubbleInteriorMask` work was merged so each
  * runs exactly once per estimate call, with both `colorPolicy` and the inline
  * `bgLuma` derivation consuming the single `sampleClusters` result.

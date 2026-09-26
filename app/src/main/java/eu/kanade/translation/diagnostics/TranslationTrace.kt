@@ -758,7 +758,7 @@ class TranslationScheduleStageSpan internal constructor(
 }
 
 /**
- * One concrete page attempt (plan §4.1). Owns exactly one fixed
+ * One concrete page attempt. Owns exactly one fixed
  * EnumMap&lt;Stage, Long&gt; of summed stage durations — repeated intervals for
  * the same stage (retries, re-entrant substages) accumulate, never overwrite
  * [end] is idempotent and never

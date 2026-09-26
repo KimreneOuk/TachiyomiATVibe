@@ -52,7 +52,7 @@ enum class UiAction { RETRY, CANCEL, DETAILS, REVIEW }
 
 /**
  * Whether a state transition may be announced on an attention surface
- * (spec §3.1 visibility budget): SILENCE is reserved for self-healing
+ * Visibility limits reserve SILENCE for self-healing
  * scheduler maintenance and ordinary coalescing — never for a user
  * decision, pause, stall, durable failure, partial result, or the
  * cancellation of paid work.
@@ -85,7 +85,7 @@ data class PageUiTruth(
 
 /**
  * The single pure mapper owning the state→surface truth precedence
- * (spec §1.2). Precedence: explicit current typed outcome first (a live
+ * Precedence: explicit current typed outcome first (a live
  * request, pause, stall, or rejection is never replaced by an old disk
  * success), then current durable display, then silence for non-user-visible
  * transitions.
@@ -204,7 +204,7 @@ object TranslationUiTruth {
     }
 
     /**
-     * Chapter-level indicator truth (spec §3.1): READY_WITH_WARNINGS must be
+     * Chapter-level indicator truth: READY_WITH_WARNINGS must be
      * conveyed by label, not by tint alone.
      */
     fun forChapterIndicator(
@@ -315,7 +315,7 @@ object TranslationUiTruth {
     }
 
     /**
-     * Drawer page-overview mini chip truth (spec §3.1): failed/partial/queued
+     * Drawer page-overview mini chip truth: failed/partial/queued
      * state is conveyed by a semantic label, never by icon or tint alone.
      */
     fun pageMiniChipLabel(page: TranslationProgressSnapshot.Page): String = when {
@@ -390,7 +390,7 @@ object TranslationUiTruth {
                 val truth = if (current.displayReadyPages > 0) {
                     // Committed readable display + failed candidate refresh:
                     // "ready with warnings", never a red error over the
-                    // readable image (spec §3.1, PageTranslation
+                    // readable image (PageTranslation
                     // .shouldSurfaceError discipline).
                     failureTruth.copy(
                         severity = UiSeverity.WARNING,

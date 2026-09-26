@@ -99,21 +99,21 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  Phase 1 deterministic coexistence harness (design note §1).
+ * Deterministic coexistence harness.
  *
  * Builds the REAL production graph — TranslationManager → TranslationScheduler
  * → TranslationPipeline (real EngineLane, real SinglePageOnnx/HttpRender phases,
  * real BatchChapterTranslator → BatchLaneWorkers → SequentialBatchCoordinator →
  * BatchRenderJoin) → ChapterTranslationStore (memory-only) → ChapterTranslator —
- * using the repo's precedent for JVM-unsafe constructors
- * (`sun.misc.Unsafe.allocateInstance` + reflection field injection; see
- * TranslationManagerAutoArbitrationTest.uninitializedManager and design note §0).
- * Fakes exist only at the sanctioned externals of note §1.2.
+ * using the repository's JVM-only construction pattern
+ * (`sun.misc.Unsafe.allocateInstance` plus reflection field injection; see
+ * TranslationManagerAutoArbitrationTest.uninitializedManager).
+ * Fakes exist only at sanctioned engine and I/O boundaries.
  *
  * Every reflection-injected field name is listed in ONE place per target class
  * inside [create]; a production rename fails loudly with NoSuchFieldException.
  *
- * Determinism (note §2/§5.2): no sleeps, no polling — CompletableDeferred gates
+ * Determinism: no sleeps, no polling — CompletableDeferred gates
  * and `StateFlow.first {}` only; all production components run on their real
  * Dispatchers.IO/Default scopes and every await sits inside
  * `runBlocking { withTimeout(...) }`.
@@ -134,17 +134,17 @@ internal class TranslationCoexistenceHarness private constructor(
     val activeStores: ActiveChapterStoreRegistry,
     val trackerScope: CoroutineScope,
     val managerScope: CoroutineScope,
-    //  Phase 4: exposed so a test can park the cleaned-image
+    // Exposed so a test can park cleaned-image
     // publication at a COMMIT barrier mid-commit (the permit-free-commit
     // choreography). The real instance stays wired into the phases for their
     // internal reads.
     internal val cleanedPublicationMock: CleanedPublication,
-    //  Phase 3: exposed so a test can swap in a governed transport
+    // Exposed so a test can swap in a governed transport
     // (paid calls admitted through a real ProviderRequestGovernor).
     internal val engineLane: EngineLane,
     internal val nativeStageDone: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
     internal val transportStarted: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
-    //  Phase 4: cross-instance transport evidence + the engine-drain
+    // Cross-instance transport evidence and the engine-drain
     // scope. transportInstances includes the primary fakeTransport (instance 1).
     internal val transportShared: SharedTransportState,
     internal val transportInstances: List<FakeTransportTranslator>,
@@ -162,7 +162,7 @@ internal class TranslationCoexistenceHarness private constructor(
         private val nextChapterId = AtomicLong(1_000_000L)
         private val nextArtifactChapterKey = AtomicLong(1L)
 
-        /** Bound for every event-driven await (design note §2/§5.2). */
+        /** Bound for every event-driven await. */
         const val AWAIT_TIMEOUT_MS = 10_000L
 
         /** Keep teardown bounded when a canceled job has a non-cancellable tail. */
@@ -182,27 +182,23 @@ internal class TranslationCoexistenceHarness private constructor(
             preRegisterInStore: Boolean = true,
             storeOverride: ChapterTranslationStore? = null,
             extraStores: Map<Long, ChapterTranslationStore> = emptyMap(),
-            //  Phase 4: engine-drain grace for the EngineLane seams.
-            // Null keeps today's behavior at the RED commit; a non-null value
-            // with the seams missing IS the defect under test and fails by
-            // named assertion (never a timeout).
+            // Engine-drain grace for EngineLane.
+            // Null leaves the production default in place; a non-null value
+            // overrides the grace period for the test.
             drainGraceMs: Long? = null,
-            //  Phase 4: optional test-only occupancy/timeout seams.
-            // Reflection keeps this harness compiling at the RED checkpoint;
-            // requesting either value fails by a named assertion until GREEN.
+            // Optional test-only occupancy and timeout overrides. Reflection
+            // keeps these seams out of the production API.
             stallThresholdMs: Long? = null,
             nativeTimeoutMs: Long? = null,
-            //  Phase 5 (spec §4.1.5 / condition B): optional test-only
-            // HTTP+render result-timer seam. Reflection keeps this harness
-            // compiling at the RED checkpoint; requesting a value with the seam
-            // missing IS the defect under test and fails by a named assertion.
+            // Optional test-only HTTP+render result-timer override. Reflection
+            // keeps this seam out of the production API.
             httpRenderTimeoutMs: Long? = null,
-            //  Phase 4: cleaned-image file names the fake provider
+            // Cleaned-image file names the fake provider
             // reports as physically present on disk (non-empty). Document IO is
             // a sanctioned fake seam; the resume gate's physical-presence check
             // consults it for pages persisted by an earlier batch run.
             cleanedImagesOnDisk: Set<String> = emptySet(),
-            //  zero-legacy: drop the fake transport's per-page
+            //  : drop the fake transport's per-page
             // "native inpaint lands before the paid call returns"
             // serialization. The (only) batch pipeline drains inpaint through
             // the OverlapScheduler — a page is a candidate only AFTER its
@@ -234,19 +230,18 @@ internal class TranslationCoexistenceHarness private constructor(
             val sourceManager = mockk<SourceManager>(relaxed = true)
             val streamRegistry = TranslationStreamRegistry()
 
-            // DEVIATION (documented in the phase log): with
-            // [preRegisterInStore]=false the store starts EMPTY, mirroring
+            // With [preRegisterInStore]=false the store starts EMPTY, matching
             // production's fresh-chapter state where no page record exists
             // until the batch pre-registers (ChapterTranslator.kt:637) or the
             // manual path creates it. Pre-registered PENDING entries would
             // make the single-page planner project WAIT_FOR_DEPENDENCY for
-            // every stage (DETECTION plans RUN and blocks them), and the
+            // every stage (DETECTION plans RUN and blocks them), while the
             // manual path would silently resume-skip before any barrier.
-            //  Phase 3: an artifact-authority store built by the test
+            // An artifact-authority store built by the test
             // (FakeChapterDocumentIo + production fresh-chapter recipe) replaces
             // the memory-only default so durable sidecars (attempt ledger,
             // manifest) are observable across a simulated process death.
-            //  zero-legacy: the (only) batch pipeline REFUSES
+            //  : the (only) batch pipeline REFUSES
             // chapters without artifact authority, so every batch-driving
             // suite passes `storeOverride = artifactAuthorityStore(...)` (
             // recipe: FakeChapterDocumentIo + production fresh-chapter
@@ -268,7 +263,7 @@ internal class TranslationCoexistenceHarness private constructor(
             // Per-page lane serialization (see FakeTransportTranslator doc).
             val transportStarted = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
             val nativeStageDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
-            //  Phase 4: cross-instance evidence + the rebuilt-instance
+            // Cross-instance evidence and the rebuilt-instance
             // factory the EngineLane epoch retry uses. The primary fake shares
             // the state, so call/serving/close-order evidence is observable
             // across every translator instance the graph produces.
@@ -307,7 +302,7 @@ internal class TranslationCoexistenceHarness private constructor(
                     }
                 },
             )
-            //  Phase 4: the engine-drain scope injected into EngineLane
+            // The engine-drain scope injected into EngineLane
             // (production wires nativeRunScope; the harness owns its own so
             // close() can cancel leftover one-shot drains deterministically).
             val engineDrainScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -366,7 +361,7 @@ internal class TranslationCoexistenceHarness private constructor(
             )
             installEngineDrainSeams(engineLane, drainGraceMs, engineDrainScope, ::newTransport)
 
-            //  Phase 3: extra chapter stores make the resolver
+            // Extra chapter stores make the resolver
             // chapter-keyed so a manual tap on ANOTHER chapter shares the same
             // graph (and the same governed provider bucket) as the batch.
             val storeResolverHook: (Translation) -> ChapterTranslationStore? = { translation ->
@@ -542,7 +537,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 println("DBG inpaint $pageKey run")
                 page.inpaintFingerprint = batchFingerprint
                 page.cleanedBitmap = FakeCoexistence.stubBitmap()
-                //  zero-legacy  fake fidelity: the real page inpainter
+                //    fake fidelity: the real page inpainter
                 // settles the in-memory page's inpaintStatus to READY on success
                 // (the durable store record is publishCleanedThroughStore's
                 // job). Without this the worker's done-check fails the phase in
@@ -656,25 +651,24 @@ internal class TranslationCoexistenceHarness private constructor(
                     "nativeRunQuarantine" to nativeRunQuarantine,
                     "nativeStallWatchdog" to nativeStallWatchdog,
                     "nativeStall" to nativeStallWatchdog.state,
-                    //  Phase 4: Unsafe allocation skips the ctor
+                    // Unsafe allocation skips the constructor
                     // defaults, so the native timeout must be injected
                     // explicitly or every native call races a 0 ms deadline.
                     "nativeTimeoutMs" to (nativeTimeoutMs ?: TranslationPipeline.ONNX_PHASE_TIMEOUT_MS),
                     "engines" to engineLane,
-                    // phase/collaborator fields — :223, :472, :481, :497, :803
+                    // Production collaborators injected into the test graph.
                     "pageStoreWriter" to pageStoreWriter,
                     "cleanedPublication" to cleanedPublicationMock,
                     "singlePageHttpRenderPhase" to httpRenderPhase,
                     "singlePageOnnxPhase" to onnxPhase,
                     "batchChapterTranslator" to batchChapterTranslator,
-                    // manager-pattern listeners — :157, :214, :218
+                    // Listener and store-resolution hooks.
                     "onPageStuck" to (null as ((chapterId: Long?, pageKey: String) -> Unit)?),
                     "activeStoreResolver" to storeResolverHook,
                     "onBatchClosed" to (null as (suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit)?),
                 ),
             )
-            // batchTrackerFactory — TranslationPipeline.kt:165 (nullable-tracker
-            // return type; set separately so the lambda type is exact).
+            // Set the tracker factory separately so the nullable return type is exact.
             val trackerRegistry = TranslationBatchTrackerRegistry()
             val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             setField(
@@ -683,10 +677,8 @@ internal class TranslationCoexistenceHarness private constructor(
             ) { chapterId: Long, chapterStore: ChapterTranslationStore, orderedPageKeys: List<String> ->
                 trackerRegistry.createTracker(chapterId, chapterStore, orderedPageKeys, trackerScope)
             }
-            //  Phase 5 (condition B): tolerant HTTP+render result-timer
-            // injection — at the RED checkpoint the field does not exist yet, so
-            // REQUESTING it is the named RED defect; the default keeps today's
-            // timer contract.
+            // Optional HTTP+render result timer override; null uses the
+            // production timeout.
             if (httpRenderTimeoutMs != null) {
                 try {
                     setField(pipeline, "singlePageTimeoutMs", httpRenderTimeoutMs)
@@ -739,14 +731,12 @@ internal class TranslationCoexistenceHarness private constructor(
                 pipeline,
             )
 
-            // ---- manager surface (uninitializedManager recipe) --------------
-            // DEVIATION from the design note: the harness taps the manual path
+            // ---- Manager surface and reader teardown wiring -----------------
+            // The harness taps the manual path
             // through scheduler.translatePage because TranslationManager's
-            // `readerTeardown` is a computed get() property with NO backing
-            // field (TranslationManager.kt:562-575), so it cannot be reflection-
-            // injected; the manager stub at :1573-1574 delegates to exactly this
-            // scheduler entry (ReaderTeardownCoordinator.translatePage →
-            // scheduler.translatePage).
+            // `readerTeardown` is a computed property, not a field for
+            // reflection injection. The coordinator delegates to this same
+            // scheduler entry.
             val activeStores = ActiveChapterStoreRegistry()
             val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             val manager = unsafeAllocate(TranslationManager::class.java) as TranslationManager
@@ -832,13 +822,10 @@ internal class TranslationCoexistenceHarness private constructor(
         }
 
         /**
-         *  Phase 4: injects the engine-epoch + borrow-drain seams into
-         * the Unsafe-allocated [EngineLane]. Tolerant at the RED commit: the
-         * fields do not exist yet and today's immediate-close behavior runs,
-         * so a missing field is skipped silently — EXCEPT an explicitly
-         * requested [drainGraceMs], whose absence IS the defect under test
-         * and must fail by a named assertion, never a timeout.
-         * At the GREEN commit every field exists and is required.
+         * Injects engine-epoch and borrow-drain test state into the
+         * Unsafe-allocated [EngineLane]. Missing optional fields are ignored;
+         * an explicitly requested [drainGraceMs] must be available and fails
+         * with a named assertion otherwise.
          */
         private fun installEngineDrainSeams(
             engineLane: EngineLane,
@@ -892,7 +879,7 @@ internal class TranslationCoexistenceHarness private constructor(
         }
 
         /**
-         *  Phase 4 Wave B: the durable artifact-store recipe for the
+         * The durable artifact-store recipe for the
          * batch pipeline. Production establishes chapter artifact authority the
          * first time a store with an artifact parent persists; tests build the
          * same ARTIFACTS authority directly (the BatchDispatchResumeWiringTest
@@ -935,7 +922,7 @@ internal class TranslationCoexistenceHarness private constructor(
         }
 
         /**
-         *  Phase 4 Wave B: the STANDARD_PIPELINE lane recipe — the REAL
+         * The STANDARD_PIPELINE lane recipe — the real
          * shell (ChapterTranslator → TranslationPipeline → BatchChapterTranslator
          * → ChapterProfileBatchCoordinator with the injected standard seam)
          * driven with the harness's STANDARD engine seeds. The
@@ -964,8 +951,8 @@ internal class TranslationCoexistenceHarness private constructor(
          * Models "cleaned image durable" through the REAL guarded store write —
          * the production persistCleanedBitmap commit without Bitmap.compress.
          *
-         * DEVIATION (documented in the phase log): the precondition is read
-         * fresh at patch time instead of using the worker's captured
+         * The precondition is read fresh at patch time instead of using the
+         * worker's captured
          * [expected]. Production captures it before a ~100ms JPEG encode, so
          * the concurrent standard-lane translation commit lands inside that
          * window and the identity map is re-read downstream; the fake has zero
@@ -1057,11 +1044,8 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     /**
-     * Launches the real manual path for one page. DEVIATION (documented): the
-     * production manager stub (TranslationManager.kt:1573-1574) delegates to
-     * ReaderTeardownCoordinator.translatePage, which is exactly
-     * scheduler.translatePage — the manager has no injectable readerTeardown
-     * field, so the harness drives that same production entry directly.
+     * Launches the real manual page path through the same scheduler entry used
+     * by the reader teardown coordinator.
      */
     fun tapManual(pageKey: String, chapterId: Long = CHAPTER_ID, force: Boolean = false) {
         scheduler.translatePage(manga, chapterFor(chapterId), source, pageKey, force = force)
@@ -1093,12 +1077,11 @@ internal class TranslationCoexistenceHarness private constructor(
      * full batch shell runs: pre-registration, tracker, translateBatch,
      * reconciliation, tracker finish.
      *
-     *  Phase 4: [sourcePageCount]/[sourceCountKnown] carry the
+     * [sourcePageCount]/[sourceCountKnown] carry the
      * trigger's admission-probe cross-check on the batch's [Translation]
      * (sourceCountKnown=true with a null count = the offline-unknown total).
-     * Tolerant at the RED checkpoint via reflection: absent fields are skipped
-     * silently so the test's manifest-truth assertions name the actual defect
-     * (the self-derived trusted-total defect), never a missing-seam crash.
+     * Optional source-count metadata is injected reflectively because it is not
+     * part of the production API. When absent, totals remain unknown.
      */
     fun launchBatch(
         pageKeys: List<String>? = null,
@@ -1118,9 +1101,8 @@ internal class TranslationCoexistenceHarness private constructor(
                 setField(translation, "probedSourcePageCount", sourcePageCount)
                 setField(translation, "sourceCountKnown", sourceCountKnown)
             } catch (_: NoSuchFieldException) {
-                // RED checkpoint: the  context fields are the GREEN
-                // deliverable; the batch runs without them and the test's
-                // manifest assertions fail naming the defect they pin.
+                // Source-count metadata is optional; without it, the batch
+                // runs with an unknown source total.
             }
         }
         val reconciliation = CompletableDeferred<ReconciliationResult?>()
@@ -1324,11 +1306,11 @@ internal class TranslationCoexistenceHarness private constructor(
             "publish shim rejected: ${(published as? ChapterTranslationStore.PatchResult.Rejected)?.reason}"
         }
         // The real HTTP+render phase commits through store.patchPage, whose
-        // dependency-fingerprint clause is manifest-backed. On the harness's
+        // dependency-fingerprint clause is manifest-backed. In the harness's
         // memory-only store the snapshot fingerprint is page-derived and can
         // never match a (nonexistent) manifest candidate, so the shim hands the
-        // phase a manifest-free precondition — generation, pageVersion and the
-        // lease token fencing stay intact (documented deviation).
+        // use a manifest-free precondition; generation, pageVersion and lease
+        // token fences stay intact.
         val legacyStorePrecondition = published.snapshot.toPrecondition().copy(dependencyFingerprint = null)
         nativeStageDone[pageKey]?.complete(Unit)
         return result.copy(commitPrecondition = legacyStorePrecondition)
@@ -1427,7 +1409,7 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     /**
-     *  Phase 4: paid-call count for [pageKey] across EVERY transport
+     * Paid-call count for [pageKey] across every transport
      * instance (the primary fake plus any translator the epoch retry rebuilt).
      */
     fun transportCallsFor(pageKey: String): Int =

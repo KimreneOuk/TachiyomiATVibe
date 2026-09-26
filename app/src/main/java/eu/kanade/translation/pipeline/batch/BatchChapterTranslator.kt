@@ -916,7 +916,7 @@ internal class BatchChapterTranslator(
                         "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
                     }
 
-                    //   / zero-legacy: BOTH surviving lanes end
+                    //   / : BOTH surviving lanes end
                     // COMPLETED runs translation-terminal WITHOUT an in-pass
                     // render, so the post-pass completion projection is ALWAYS
                     // the flagged projection — the legacy done-predicate would
@@ -943,7 +943,7 @@ internal class BatchChapterTranslator(
                         }
                     }
                     store.flush()
-                    //  zero-legacy: no surviving lane emits render events
+                    //  : no surviving lane emits render events
                     // for translatable pages, so the tracker's RENDER phase would
                     // stay processed=0 forever and the processed/total fraction
                     // would top out at 4/5 per display-ready page even at terminal.
@@ -1054,7 +1054,7 @@ internal class BatchChapterTranslator(
 
     internal companion object {
         /**
-         *  zero-legacy: the dispatch decision is ENGINE-CATEGORY
+         *  : the dispatch decision is ENGINE-CATEGORY
          * only — the  flag completed its A/B lifecycle and was removed.
          *  - STANDARD engine → STANDARD_PIPELINE (the same coordinator's
          *    standard tail — pure FULL OCR preflight, then per-page legacy

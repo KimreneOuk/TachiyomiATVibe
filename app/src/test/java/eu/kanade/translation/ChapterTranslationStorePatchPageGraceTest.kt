@@ -38,8 +38,8 @@ import org.junit.jupiter.api.Test
  * `patchPage`'s dependency clause ("candidate dependency fingerprint changed")
  * even though no real candidate ever moved — while the guarded-writer chain
  * (`pageWriteRejection`) and `persistArtifactMutationLocked` both waive the
- * check when `candidate == null`. A retried page, never corruption — but a
- * known false-reject under the  stamp traffic, so it aligns in Phase 3.
+ * check when `candidate == null`. A retried page must not be rejected solely
+ * because of unrelated stamp traffic when no candidate exists.
  *
  * The grace is fail-direction-preserving: the generation, pageVersion,
  * artifact-pageVersion, candidate-generation, block-fingerprint, and

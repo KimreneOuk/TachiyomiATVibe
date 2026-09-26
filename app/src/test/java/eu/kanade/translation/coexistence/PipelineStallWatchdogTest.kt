@@ -15,7 +15,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 4  — graph coverage for the native occupancy watchdog and
+ * Graph coverage for the native occupancy watchdog and
  * honest single-page terminal outcomes. The harness uses real scheduler,
  * pipeline, quarantine, leases, and store; only its documented Android/IO
  * seams are faked.

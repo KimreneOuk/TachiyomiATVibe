@@ -36,7 +36,7 @@ internal enum class PaddlePageOcrMode {
 }
 
 /**
- * Rollout policy. B1 remains the default; the device gate can inject a larger
+ * Batch sizing defaults to B1; the device gate can inject a larger
  * size without changing page ownership or mapping.
  */
 internal data class PaddlePageOcrPolicy(

@@ -56,7 +56,7 @@ data class RunConfigSnapshot(
     /**
      * 01d: historical A/B flag value, once read at dispatch and
      * frozen into the run snapshot. The flag completed its lifecycle
-     * (zero-legacy wave) and every new snapshot freezes `true`; the field
+     * ( wave) and every new snapshot freezes `true`; the field
      * stays in the schema — nullable so pre-field records (written with the
      * flag as a phaseCounters key only) decode unchanged — and it still
      * participates in frozenRunConfigFingerprint by construction, so

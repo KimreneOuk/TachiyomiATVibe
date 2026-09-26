@@ -43,7 +43,7 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
          *   same-origin attach re-grants since this record was minted
          * (the overlap inpaint riding the envelope's token). Read ONLY by
          * [releasePageStageLeaseIfUnattached]; the plain release keeps its
-         * Phase-3 contract — any matching release removes the record.
+         * The plain release removes the record after any matching release.
          */
         val attaches: Int = 0,
     )

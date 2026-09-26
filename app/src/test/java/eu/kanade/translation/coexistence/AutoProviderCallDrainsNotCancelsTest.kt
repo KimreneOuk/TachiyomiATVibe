@@ -153,10 +153,9 @@ class AutoProviderCallDrainsNotCancelsTest {
     // ------------------------------------------------------------------
 
     /**
-     * Builds a coordinator whose drain grace is injectable. At RED the
-     * constructor has no grace parameter, which IS the defect under test, so
-     * this raises an assertion naming the missing seam instead of failing to
-     * compile against commit 4.
+     * Builds a coordinator whose drain grace is injectable. Reflection reports
+     * a missing constructor seam as a named assertion instead of a compile
+     * failure.
      */
     private fun newGraceBoundedCoordinator(
         executor: TranslationExecutor,
@@ -182,9 +181,7 @@ class AutoProviderCallDrainsNotCancelsTest {
     }
 
     /**
-     * Pins the production grace bound.  Phase 4 ( §1.6) CONTRACT CHANGE
-     * (recorded in the phase-4 implementation log): the bound moved from the
-     * pinned 90 s to exactly the drained call chain's own legitimate budget —
+     * Pins the production grace bound to the drained call chain's legitimate budget —
      * [eu.kanade.translation.pipeline.TranslationPipeline.ONNX_PHASE_TIMEOUT_MS] +
      * [eu.kanade.translation.pipeline.TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS] (ONNX 90 s +
      * HTTP/render 120 s, sequential = 210 s) — so a healthy long call is never
@@ -419,10 +416,9 @@ class AutoProviderCallDrainsNotCancelsTest {
             (current ?: PageTranslation(sourceFileName = pageKey)).apply {
                 // The paid call's terminal commit is the translate+persist
                 // stage, so the fake commits the same translation-terminal
-                // shape the harness's manual publish shim does (harness note
-                // §1.2.3): promoting renderStatus to READY additionally needs
-                // a decodable cleaned base file, which a JVM fixture cannot
-                // produce (documented fixture deviation,  harness notes).
+                // shape used by the manual publish shim. Promoting renderStatus
+                // to READY additionally needs a decodable cleaned base file,
+                // which a JVM fixture cannot produce.
                 ocrStatus = StageStatus.READY
                 translationStatus = StageStatus.READY
                 inpaintStatus = StageStatus.READY

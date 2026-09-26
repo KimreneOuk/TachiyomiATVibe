@@ -241,7 +241,7 @@ internal class EnvelopeDispatcher(
         }
 
         //  entry needs a typed AI transport; the plan still publishes so
-        // a later wired run resumes directly into TRANSLATE. Wave A: the
+        // a later wired run resumes directly into TRANSLATE. For AI profiles, the
         // constructor widened to TextTranslator for the standard lane, so the
         // envelope path re-narrows here — a non-contextual translator on the
         // AI lane takes the SAME typed CONFIGURATION pause as a missing one

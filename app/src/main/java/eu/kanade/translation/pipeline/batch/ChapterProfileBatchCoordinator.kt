@@ -601,7 +601,7 @@ internal class ChapterProfileBatchCoordinator(
      *    closure record. Run identity (corpus fingerprint, progress counters)
      *    rides the durable FINALIZE record — the same run, not a new one.
      *  - `COMPLETE`: the run already closed — an idempotent finished outcome
-     *    with zero work and NO new record publication. Since the zero-legacy
+     *    with zero work and NO new record publication. Since the
      *    The shell-level OFF+COMPLETE decision tree is gone; this path is the
      *    only COMPLETE-resume route
      *    for both lanes.

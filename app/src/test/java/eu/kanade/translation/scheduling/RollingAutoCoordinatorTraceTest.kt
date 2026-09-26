@@ -34,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Phase 3 (plan §6.3 cases 2, 5, 6 + amendment §10.2): correlated trace
+ * Correlated trace
  * wiring of [RollingAutoCoordinator] — one schedule per rolling session,
  * correlated page runs with distinct rids, measured prepared-queue waits,
  * exactly-one-terminal ownership under cancel/timeout/eviction, and the

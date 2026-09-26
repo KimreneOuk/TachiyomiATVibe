@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- *  slice 2: budgeted ordered RLE → [MaskGeometry] conversion.
+ * Budgeted ordered RLE → [MaskGeometry] conversion.
  *
  * Pure-JVM. Pins the two-pass contract: no sorting, no dense decode, explicit
  * fallbacks (never exceptions) for empty/invalid/overflow/budget inputs, caps
@@ -91,7 +91,7 @@ class MaskGeometryOrderedRleTest {
 
     @Test
     fun `component ids follow row-major first appearance for three or more components`() {
-        // Strengthens the slice-2 review NOTE 6: with ordered runs the
+        // With ordered runs, the
         // first-appearance order is row-major, so a coordinate-STRING sort
         // would order "10:..." before "2:..." while the ordered path must not.
         val width = 100

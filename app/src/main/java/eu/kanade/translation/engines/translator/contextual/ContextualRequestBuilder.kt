@@ -72,7 +72,7 @@ object ContextualRequestBuilder {
         )
     }
 
-    /** Builds the pre-Phase-1 request retained for reader single-page translation. */
+    /** Builds the request used for reader single-page translation. */
     fun buildLegacy(
         chunk: TranslationContextChunk,
         fromLang: eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage,

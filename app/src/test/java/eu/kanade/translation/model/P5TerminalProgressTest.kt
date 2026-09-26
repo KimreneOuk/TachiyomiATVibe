@@ -16,11 +16,10 @@ import org.junit.jupiter.api.Test
 import java.lang.reflect.Method
 
 /**
- *  Phase 5 (spec §2.1 batch rules, §6.2 commit 5) — RED tests for
- * terminal-only, honest batch progress totals.
+ * Tests for terminal-only, honest batch progress totals.
  *
  * Named defects pinned here (new value fields on [TranslationProgressSnapshot],
- * wired by the tracker/store paths in commit 6):
+ * wired by the tracker and store paths):
  *
  *  1. `terminalPages` — pages in exactly one current-pass terminal category
  *     (translated/reused-valid, textless, failed, partial, cancelled). A
@@ -41,7 +40,7 @@ import java.lang.reflect.Method
 class P5TerminalProgressTest {
 
     // ------------------------------------------------------------------
-    // Reflective readers (named-RED while the value fields are missing)
+    // Reflective readers for progress snapshot fields.
     // ------------------------------------------------------------------
 
     private fun intField(snapshot: TranslationProgressSnapshot, name: String, defect: String): Int =
@@ -266,7 +265,7 @@ class P5TerminalProgressTest {
             scope = scope,
         )
         try {
-            //  slice 3: the first snapshot is derived from the ordered work
+            // The first snapshot is derived from the ordered work
             // keys at construction — the batch's own total is trusted.
             val snapshot = tracker.snapshot.value
             withClue("batch totals come from the registered work set") {

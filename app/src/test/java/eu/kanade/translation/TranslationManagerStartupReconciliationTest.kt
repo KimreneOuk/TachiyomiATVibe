@@ -34,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  slice 2 (R9): the startup reconciler resolves every pending request
+ * The startup reconciler resolves every pending request
  * against its owners exactly once after both queues restore:
  * - pending + translation-queue member -> queue wins, clear pending;
  * - pending + download-queue member -> normalize WAITING;
@@ -285,7 +285,7 @@ class TranslationManagerStartupReconciliationTest {
     }
 
     // -------------------------------------------------------------------------
-    //  hotfix: restore-admitted requests must never auto-start work. The
+    // Restore-admitted requests must never auto-start work. The
     // reconciler marks the chapters it admits (process-local, one-shot) and
     // the gated admission path enqueues them PAUSED instead of starting.
     // -------------------------------------------------------------------------

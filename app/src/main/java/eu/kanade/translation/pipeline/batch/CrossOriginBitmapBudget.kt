@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Process-wide cross-origin decoded-bitmap budget.
  *
  * Preserves the 6 GB bounded memory invariant across concurrent lookahead decode,
- * inpaint re-decode, manual reader taps, and chapter wave preflights.
+ * inpaint re-decode, manual reader taps, and chapter preflights.
  *
  * Tier ceiling: At most [DEFAULT_MAX_CONCURRENT_BITMAPS] batch bitmaps are held in
  * memory simultaneously. Interactive reader taps have guaranteed capacity.

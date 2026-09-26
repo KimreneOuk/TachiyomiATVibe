@@ -9,7 +9,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 
 /**
- * Regression guards for the Wave 4 model-deployment integrity helpers in
+ * Regression guards for the model-deployment integrity helpers in
  * [ModelDeployment]. Each test RED-firsts a class of the original bug: a
  * stale or corrupt cached model surviving an asset update.
  *

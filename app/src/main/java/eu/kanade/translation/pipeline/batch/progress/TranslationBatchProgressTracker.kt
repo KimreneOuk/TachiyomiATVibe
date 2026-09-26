@@ -528,7 +528,7 @@ class TranslationBatchProgressTracker(
         private fun progressStage(page: PageTranslation, committed: PageTranslation? = null): TranslationProgressStage = when {
             page.toPageDisplayProjection(committed).displayReady || page.isTextlessTerminal -> TranslationProgressStage.DONE
             page.isStageFailed -> TranslationProgressStage.FAILED
-            //  zero-legacy: both surviving lanes commit translations
+            //  : both surviving lanes commit translations
             // WITHOUT an in-pass render — a page whose translation reached a
             // committed terminal state is this run's DONE even though its
             // display stays ORIGINAL_ONLY until the reader re-derives it.

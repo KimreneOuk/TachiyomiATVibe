@@ -8,7 +8,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 5 (spec §1.2, §3.1, §6.2 commit 9) — RED tests for the
+ * Tests for the
  * chapter-level visibility budget and stale-state precedence.
  *
  * Named defects pinned here:
@@ -18,8 +18,7 @@ import org.junit.jupiter.api.Test
  *     ad hoc, so self-healing scheduler transitions spam failures while
  *     cancellations of paid work can pass in silence.
  *  2. A repeated identical durable failure is re-announced on every
- *     emission instead of being coalesced (spec §3.1 "ordinary UI
- *     coalescing" is explicitly silent).
+ *     emission instead of being coalesced when the visible state is unchanged.
  *  3. A committed readable display with a failed candidate refresh is
  *     surfaced as a red ERROR over the readable image instead of the
  *     spec's "ready with warnings" truth.
@@ -107,7 +106,7 @@ class P5VisibilityPrecedenceTest {
     )
 
     // ------------------------------------------------------------------
-    // Silence: self-healing and coalescing (spec §3.1)
+    // Silence self-healing and coalesced outcomes.
     // ------------------------------------------------------------------
 
     @Test
@@ -253,7 +252,7 @@ class P5VisibilityPrecedenceTest {
     }
 
     // ------------------------------------------------------------------
-    // Stale-state precedence: newer durable state wins (spec §1.2 rule 6)
+    // Stale-state precedence: newer durable state wins.
     // ------------------------------------------------------------------
 
     @Test

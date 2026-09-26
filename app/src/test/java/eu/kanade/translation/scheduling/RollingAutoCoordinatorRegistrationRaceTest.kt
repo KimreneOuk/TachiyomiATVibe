@@ -30,7 +30,7 @@ import java.io.InputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- *  Phase 4 regression for Phase 3 review finding F1: the page-run trace
+ * The page-run trace
  * joins the terminal-sweep registry and the generation liveness re-check
  * ATOMICALLY under the lifecycle lock. The test forces the exact race window
  * deterministically: the trace sink fires synchronously inside

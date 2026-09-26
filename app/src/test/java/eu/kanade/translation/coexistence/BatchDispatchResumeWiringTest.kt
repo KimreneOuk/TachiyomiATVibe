@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
 /**
- *  zero-legacy  — the DISPATCH-LEVEL resume wiring through the REAL
+ *    — the DISPATCH-LEVEL resume wiring through the REAL
  * production shell (`ChapterTranslator.translateChapterInternal` →
  * `BatchChapterTranslator.runBatchPass1` → the coordinator's
  * `resumeFinalizeOrComplete`), rewritten for the post-flag world.

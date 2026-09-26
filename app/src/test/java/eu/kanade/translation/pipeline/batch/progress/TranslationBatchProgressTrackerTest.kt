@@ -53,7 +53,7 @@ class TranslationBatchProgressTrackerTest {
         )
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg"), this)
 
-        //  slice 3: the total is nonzero immediately — it derives from the
+        // The total is nonzero immediately — it derives from the
         // ordered work keys at construction, never from an empty store read.
         tracker.snapshot.value.totalPages shouldBe 1
 

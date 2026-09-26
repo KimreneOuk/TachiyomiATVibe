@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test
 import kotlin.reflect.full.memberProperties
 
 /**
- * Ticket 02 — boundary data-contract coverage.
+ * Boundary data-contract coverage.
  *
  * These tests pin the shape of the production types ([PreparedPage],
  * [TranslationStageEvent], [TranslationStageListener]) via reflection and

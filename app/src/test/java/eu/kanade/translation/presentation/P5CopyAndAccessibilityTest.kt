@@ -13,8 +13,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 5 (spec §3.2  §5.1, §6.2 commit 7) — RED tests for exact
- * semantic copy and accessibility truth.
+ * Tests for semantic copy and accessibility truth.
  *
  * Named defects pinned here:
  *
@@ -30,7 +29,7 @@ import org.junit.jupiter.api.Test
  *     retry pause must NOT advertise a Retry button; cancellation stays
  *     visible as non-ongoing with an explicit retry action.
  *  3. The partial-download decision body must describe EVERY chapter in the
- *     group (phase-4 finding N2: today only the first chapter's counts show).
+ *     group, so a multi-chapter decision includes every chapter's counts.
  *  4. The chapter indicator must convey READY_WITH_WARNINGS by label, not by
  *     tint alone; the drawer's page mini chips need non-empty semantic labels.
  */
@@ -304,7 +303,7 @@ class P5CopyAndAccessibilityTest {
     }
 
     // ------------------------------------------------------------------
-    // Partial-download decision body (phase-4 finding N2)
+    // Partial-download decision body
     // ------------------------------------------------------------------
 
     private fun partialBody(decisions: List<Pair<Int, Int?>>): String = try {
@@ -344,8 +343,7 @@ class P5CopyAndAccessibilityTest {
 
     @Test
     fun `a multi chapter decision describes every chapter not only the first`() {
-        // Phase-4 finding N2: the dialog body used group.firstOrNull(), so a
-        // multi-chapter decision described ONLY the first chapter.
+        // A multi-chapter decision must describe every chapter, not only the first.
         val body = partialBody(listOf(2 to 12, 5 to 20))
         withClue("both chapters' counts must be visible in the decision body") {
             body shouldContain "2 of 12"

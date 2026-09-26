@@ -10,7 +10,7 @@ class VerticalLineOcrPlanContractTest {
     fun `det missing non tall whole region keeps legacy low confidence text`() {
         val fixtureText = "fallback fixture"
 
-        // Ticket 04/05 fallback fixtures use the old inline path: det-missing,
+        // Fallback fixtures exercise the inline path for missing detection,
         // non-tall whole-region OCR applies isUsable() but not Paddle's 0.5
         // confidence threshold.
         assertEquals(

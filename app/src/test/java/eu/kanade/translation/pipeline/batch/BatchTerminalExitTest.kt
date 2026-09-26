@@ -22,7 +22,7 @@ import tachiyomi.domain.translation.TranslationPreferences
 import java.io.InputStream
 
 /**
- *  slice 3 (contract item 2): every exceptional exit of the batch pipeline
+ * Every exceptional exit of the batch pipeline
  * terminates the tracker with a typed terminal snapshot — no live nonterminal
  * `0/0` tracker may survive. The zero-page failure stays DISTINCT (empty work
  * set + aborted reason), never a generic failure or a numeric 0/0.

@@ -47,7 +47,7 @@ import java.io.ByteArrayInputStream
  * real [BatchResumePlanner] built exactly as `BatchChapterTranslator` builds
  * it. The batch re-run's planner decisions are the paid-call contract: RUN is
  * exactly one provider call for that page in the next pass, REUSE is zero
- * (transport-level exactly-once for RUN/REUSE lanes is pinned by the Phase-1/2
+ * (transport-level exactly-once for RUN/REUSE lanes is pinned by the
  * coexistence oracles; this suite pins the decision that bills or skips).
  *
  * Without a glossary-aware gate, the batch re-run REUSEs pages whose persisted

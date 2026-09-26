@@ -11,12 +11,9 @@ import kotlin.math.abs
 /**
  * Regression guard for the "gray rectangle over the whole bounding box" symptom.
  *
- * Before Phase 3a, SmartBubbleTextCleaner filled every masked pixel with a
- * single flat ring-median color. On a grayscale manga panel or a tinted
- * bubble, that median was ~128 gray, so the cleaned text region became a
- * uniform gray patch regardless of the local artwork. [buildLocalBackground]
- * replaced that with a per-pixel local average of surrounding background
- * pixels, which matches the local artwork instead.
+ * A single ring-median fill can turn a grayscale panel or tinted bubble into
+ * a uniform gray patch. [buildLocalBackground] uses a per-pixel local average
+ * of surrounding background pixels to preserve the local artwork.
  *
  * These tests exercise the pure pixel→color logic directly (the public
  * cleanBubbleGroup/cleanRegions API operates on android.graphics.Bitmap, which

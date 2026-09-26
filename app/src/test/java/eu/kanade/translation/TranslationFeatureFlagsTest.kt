@@ -10,7 +10,7 @@ import tachiyomi.domain.translation.TranslationPreferences
  * the real TranslationPreferences mechanism, default OFF, settable through
  * the preference store.
  *
- *  zero-legacy:  (`translation_batch_profile_pipeline`)
+ *  :  (`translation_batch_profile_pipeline`)
  * completed its A/B lifecycle and was REMOVED — the profile pipeline is the
  * only pipeline and there is no flag to test. The leftover pref key in a
  * device DataStore is a harmless orphan.  keeps its lifecycle coverage

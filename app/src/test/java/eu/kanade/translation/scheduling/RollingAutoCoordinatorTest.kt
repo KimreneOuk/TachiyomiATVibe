@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Ticket 03 deterministic coordinator tests.
+ * Deterministic coordinator tests.
  *
  * Most tests inject a [Dispatchers.Unconfined] coordination scope so the
  * coordinator coroutines run inline on the test thread; the lifecycle race

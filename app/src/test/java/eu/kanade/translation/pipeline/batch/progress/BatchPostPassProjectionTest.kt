@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test
  * so the legacy done-predicate (`hasRenderedResult`) would project every
  * healthy COMPLETED chapter as fully stranded → chapter ERROR.
  *
- *  zero-legacy: the former pure selector
+ *  : the former pure selector
  * `BatchChapterTranslator.postPassReconciliation` was collapsed — dispatch is
  * always a flagged lane now, so the shell's single post-pass site calls
  * [BatchProgressReconciler.reconcileFlaggedCompleted] directly and the

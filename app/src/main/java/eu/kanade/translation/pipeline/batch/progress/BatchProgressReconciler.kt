@@ -76,7 +76,7 @@ object BatchProgressReconciler {
 
     /**
      *   the completion projection for a COMPLETED batch outcome
-     * (both engine lanes since the zero-legacy wave). [ChapterProfileBatchCoordinator]
+     * (both engine lanes). [ChapterProfileBatchCoordinator]
      * commits translations WITHOUT an in-pass render — a healthy page ends
      * translation-terminal (READY/PARTIAL, committed bundle in the artifact
      * manifest) with `renderStatus == PENDING` and no cleaned image, so the

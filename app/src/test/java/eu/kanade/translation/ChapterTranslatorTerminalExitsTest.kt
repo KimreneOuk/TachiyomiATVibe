@@ -38,7 +38,7 @@ import java.lang.reflect.Field
 import java.util.concurrent.TimeUnit
 
 /**
- *  slice 3 (contract items 1-2): exceptional exits of the chapter-level
+ * Exceptional exits of the chapter-level
  * batch runner produce a typed terminal tracker snapshot with the real reason
  * — never a live nonterminal `0/0` tracker, never a silent empty projection.
  *

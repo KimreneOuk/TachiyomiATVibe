@@ -4,7 +4,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- *  slice 5: the pure [TextLineBreaker] — cjkWrap-parity prewrap, token
+ * The pure [TextLineBreaker] — cjkWrap-parity prewrap, token
  * classes, ALL-CAPS trial eligibility, exact balanced split points with the
  * 3-letter minimum, acceptance only on overflow removal or >= 15% font gain,
  * the two-insertion-per-block cap, and persisted-text immutability.

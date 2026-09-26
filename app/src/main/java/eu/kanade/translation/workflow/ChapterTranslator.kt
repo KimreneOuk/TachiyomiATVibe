@@ -809,7 +809,7 @@ class ChapterTranslator(
                 }
                 else -> {
                     val pageStates = store.state.value
-                    //  zero-legacy: both surviving batch lanes end
+                    //  : both surviving batch lanes end
                     // runs translation-terminal WITHOUT an in-pass render, so
                     // the post-batch queue-status projection must use the
                     // flagged COMPLETED projection — the legacy done-predicate

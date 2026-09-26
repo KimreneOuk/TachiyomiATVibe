@@ -60,7 +60,7 @@ import java.util.concurrent.ConcurrentHashMap
  * inpaint drain through the overlap scheduler, stranded-page reconciliation,
  * flush, retention) and the run's FIRST/ONLY COMPLETE publication.
  *
- *  zero-legacy: the wave-2 F1 flag-off resume decision tests
+ *  : the wave-2 F1 flag-off resume decision tests
  * (decideResume/resumeCompletedOutcome, OFF+COMPLETE ⇒ TreatAsFinished) were
  * deleted with the  flag; the  COMPLETE resume is covered by
  * Stage7FinalizeResumeCoordinatorTest and the dispatch-level wiring test.

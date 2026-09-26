@@ -425,7 +425,7 @@ internal class SinglePageHttpRenderPhase(
                 }
                 // Correlated translate stage. `provider` is the
                 // remote/local execution fact from the shared compute
-                // classification; model stays none (plan §4.2).
+                // classification; the model records no local execution.
                 val translateSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.TRANSLATE,
                     provider = if (

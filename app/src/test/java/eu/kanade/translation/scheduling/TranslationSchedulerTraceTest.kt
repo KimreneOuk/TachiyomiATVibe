@@ -25,7 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Phase 3 (plan §6.3 case 1 + amendment §10.2): correlated trace wiring
+ * Correlated trace wiring
  * of the MANUAL scheduler path — exactly one schedule + one run per
  * [TranslationScheduler.translatePage] intent, the measured lease_wait
  * scheduler queue, and exactly-one-terminal ownership for success, mid-flight

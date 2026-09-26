@@ -102,7 +102,7 @@ class ChapterArtifactLayoutTest {
             "c_artifacts/context",
             "c_artifacts/generations",
             "c_artifacts/glossary",
-            //  Phase 3: the attempt-ledger sidecar directory.
+            // The attempt-ledger sidecar directory.
             "c_artifacts/attempts",
             //  Stage 1: versioned sidecar directories.
             "c_artifacts/runs",
