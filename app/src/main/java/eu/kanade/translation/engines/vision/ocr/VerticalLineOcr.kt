@@ -18,7 +18,7 @@ import tachiyomi.core.common.util.system.logcat
  */
 internal object VerticalLineOcr {
 
-    // TachiyomiAT: ink-gap column-split thresholds (tuned against the Python
+    // ink-gap column-split thresholds (tuned against the Python
     // repro: whole-box 1/6 vs per-column 6/6 on multi-column cases).
     // INK_LUMINANCE_THRESHOLD: pixels darker than this count as text ink.
     // COLUMN_GAP_INK_FRACTION: x-column below this ink fraction is a gap candidate.
@@ -30,18 +30,18 @@ internal object VerticalLineOcr {
     private const val MIN_COLUMN_GAP_PX = 10
     private const val MIN_COLUMN_WIDTH_PX = 12
 
-    // TachiyomiAT: min det-line dimension (see recognizeDetColumns). Distinct
+    // min det-line dimension (see recognizeDetColumns). Distinct
     // from MIN_COLUMN_WIDTH_PX: det already filtered noise, so 4px only rejects
     // fragments while 12px wrongly dropped legitimate small ROI text lines.
     private const val MIN_DET_LINE_PX = 4
 
-    // TachiyomiAT: det-line size guard for [recognizeDetColumns]. Rejects
+    // det-line size guard for [recognizeDetColumns]. Rejects
     // sub-glyph noise (det sometimes emits tiny fragments) and false merges
     // (huge regions spanning multiple bubbles). Sized in crop pixel coords.
     private const val MAX_COLUMN_WIDTH_PX = 400
     private const val MAX_COLUMN_HEIGHT_PX = 800
 
-    // TachiyomiAT: minimum confidence for PaddleOCR CTC output. PaddleOCR
+    // minimum confidence for PaddleOCR CTC output. PaddleOCR
     // reports meaningful confidence values; reads below this threshold are
     // likely garbage and discarded before translation. MangaOcr returns
     // default 1.0 (no real score) and is exempt via the conf < 1f guard.
@@ -57,7 +57,7 @@ internal object VerticalLineOcr {
     }
 
     /**
-     * TachiyomiAT: recognize a (possibly multi-line) bubble by first running the
+     * recognize a (possibly multi-line) bubble by first running the
      * PaddleOCR det model over the whole crop to recover individual text lines,
      * then OCR-ing each line with the correct orientation via [recognizeDetColumns].
      * Handles both stacked horizontal lines (English/Korean paragraphs) and
@@ -428,7 +428,7 @@ internal object VerticalLineOcr {
             if (b.size < 4 || b[2] <= b[0] || b[3] <= b[1]) return@mapNotNull null
             val w = b[2] - b[0]
             val h = b[3] - b[1]
-            // TachiyomiAT: det boxes are real text lines (not raw pixel runs),
+            // det boxes are real text lines (not raw pixel runs),
             // so the floor is far smaller than the ink-gap heuristic's 12px.
             // Back-projected det lines in small ROIs are legitimately 6-10px;
             // 12px dropped them all and fell through to a whole-crop read that
@@ -541,7 +541,7 @@ internal object VerticalLineOcr {
     }
 
     /**
-     * TachiyomiAT: split a single vertical text column into individual glyph
+     * split a single vertical text column into individual glyph
      * cells by row ink-gap analysis (the transpose of [detectVerticalColumns]),
      * then recognize each glyph on its own after a 90° CCW rotation. The rec
      * CTC head is trained on horizontal lines and misreads a rotated whole
@@ -587,7 +587,7 @@ internal object VerticalLineOcr {
     }
 
     /**
-     * TachiyomiAT: detect horizontal glyph bands within a single vertical column
+     * detect horizontal glyph bands within a single vertical column
      * by row ink-gap analysis. Returns glyph y-ranges [(y0,y1), ...] in
      * top-to-bottom order. Mirror of [detectVerticalColumns] transposed to the
      * row axis (ink fraction per row, ink-runs merged across narrow gaps). The
@@ -647,7 +647,7 @@ internal object VerticalLineOcr {
     }
 
     /**
-     * TachiyomiAT: detect vertical text columns in a TALL crop by ink-gap analysis.
+     * detect vertical text columns in a TALL crop by ink-gap analysis.
      * Returns column x-ranges [(x0,x1), ...] in left-to-right pixel order.
      *
      * Algorithm: a column is a horizontal x-band containing ink (dark text strokes);

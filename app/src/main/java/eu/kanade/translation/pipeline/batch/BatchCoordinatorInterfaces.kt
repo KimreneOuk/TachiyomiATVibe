@@ -4,7 +4,7 @@ import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.engines.translator.ProviderFailure
 
 /**
- * TachiyomiAT: testable batch coordinator interfaces.
+ * testable batch coordinator interfaces.
  */
 
 /** Natural-order page identity retained by the live sequential coordinator. */

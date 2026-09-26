@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.vision.detection
 
 /**
- * TachiyomiAT: panel-aware translation context.
+ * panel-aware translation context.
  *
  * Pure geometry: assigns a text/bubble box to the panel that contains the
  * largest fraction of its area (max-containment), then categorises the

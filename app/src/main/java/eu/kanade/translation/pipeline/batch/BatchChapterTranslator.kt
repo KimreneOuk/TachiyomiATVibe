@@ -165,7 +165,7 @@ internal class BatchChapterTranslator(
     ): ChapterTranslationStore.PatchResult = updatePageFromCurrentSnapshotFn(store, pageKey, description, update)
 
     /**
-     * TachiyomiAT: STAGED BATCH translation — the pre-translate path used by the
+     * STAGED BATCH translation — the pre-translate path used by the
      * manga-screen "translate chapter" action (and anything that wants to
      * prepare a whole chapter before the reader opens). Replaces the old
      * page-1-first sequential loop.
@@ -183,14 +183,13 @@ internal class BatchChapterTranslator(
      *      image, recompute render colors and persist page state. The reader
      *      draws translated text live over the cleaned image.
      *
-     * Memory model: one page bitmap is alive at a time (recycled after analyze,
-     * re-decoded for inpaint, recycled after inpaint). Stage 2 persists each
-     * cleaned image to disk (.cleaned.jpg) and releases the in-memory cleaned
-     * bitmap immediately — stage 3 reloads one at a time — so the batch holds at
-     * most one cleaned bitmap at any instant regardless of chapter length.
-     * (Previously stage 2 kept every cleaned bitmap live across the whole chapter
-     * until stage 3, which OOM'd on large chapters.) The reader is NOT open on
-     * this path, so there is no concurrent display decode to race.
+     * Memory model: one page bitmap is alive at a time (recycled after analysis,
+     * re-decoded for inpainting, recycled afterward). Inpainting persists each
+     * cleaned image to disk and releases its bitmap immediately; rendering
+     * reloads one page at a time. This bounds cleaned-image memory regardless
+     * of chapter length. Keeping every cleaned bitmap until rendering exhausted
+     * memory on large chapters. The reader is not open on this path, so there
+     * is no concurrent display decode to race.
      *
      * [orderedStreams] is already in natural page order (1..N). Resume is a
      * per-stage decision; reader viewport and last-read position never rotate
@@ -712,21 +711,18 @@ internal class BatchChapterTranslator(
                                             transport = AnalysisEngineTransport(engine),
                                         ).runner()
                                     }
-                                // Summary-glossary redesign (Director decision): the
-                                // same engine also builds the one-shot chapter
-                                // glossary over the durable chunk summaries.
+                                // The same engine builds the chapter glossary
+                                // from durable chunk summaries.
                                 val glossarySynthesizer = aiEngine
                                     ?.takeIf { it.analysisBackendId != null }
                                     ?.let { engine ->
                                         AnalysisEngineGlossarySynthesizer(engine)
                                     }
-                                //  Stage 7: the overlap scheduler runs
-                                // the EXISTING native inpaint lane inside each
-                                // remote envelope window  and the render
-                                // join publishes persisted layouts per page
-                                // . Both ride the shared identity map
-                                // + lease release idiom; the legacy OFF branch
-                                // below stays byte-identical.
+                                // The overlap scheduler runs the existing
+                                // native inpaint lane during provider requests,
+                                // and the render join publishes persisted layouts
+                                // per page. Both use the shared identity map and
+                                // lease-release path.
                                 val overlapScheduler = OverlapScheduler(
                                     store = store,
                                     nativeWorker = batchLaneWorkers.nativeWorker,

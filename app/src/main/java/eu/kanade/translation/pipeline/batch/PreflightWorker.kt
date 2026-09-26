@@ -317,7 +317,7 @@ internal class PreflightWorker(
         // identity STILL matches the current source ( resume: identities
         // are revalidated against current files). A changed/missing page
         // makes the frozen profile NOT reusable — the normal path re-OCRs it
-        // and the corpus drift gates downstream (wave-4 F-W4-1 discipline).
+        // and downstream corpus validation rejects the stale profile.
         val corpusPairs = mutableListOf<Pair<String, String>>()
         for ((pageKey, _) in orderedPages) {
             val reusable = checkpointReuse(artifact, pageKey)
@@ -493,10 +493,8 @@ internal class PreflightWorker(
                     profilePointer = reusableProfile.pointer,
                 ),
             )
-            // Stage-6 slice A: the reuse path CONTINUES into the envelope
-            // phase — the whole point of the frozen-profile skip is
-            // translating under the reused profile with zero re-OCR and
-            // zero provider analysis.
+            // A reusable frozen profile lets this run continue directly to
+            // envelope planning without repeating OCR or provider analysis.
             return runEnvelopePlanAndTranslate(
                 artifact = artifact,
                 runId = runId,
@@ -765,10 +763,8 @@ internal class PreflightWorker(
             )
         }
 
-        // ----  Phase 4 Wave A: the standard lane branches to its ----
-        // ---- per-page translate tail; the AI lane continues into the   ----
-        // ---- analysis phases (Stage 5 slices A+B). Both share the     ----
-        // ---- engine-agnostic Stage-7 FINALIZE/COMPLETE.               ----
+        // The standard lane translates pages directly; the AI lane continues
+        // through analysis. Both use the shared FINALIZE/COMPLETE path.
         if (standardLane) {
             return runStandardTranslateAndFinalize(
                 artifact = artifact,
@@ -779,9 +775,8 @@ internal class PreflightWorker(
             )
         }
 
-        // Milestone M5 (S6 / P8): Series-scoped profile carry-over (drift-gated).
-        // If a series profile is registered and passes drift gating, adopt it
-        // and skip the expensive analysis phase (ANALYSIS_PLAN -> ANALYSIS_CHUNKS -> PROFILE_RECONCILE).
+        // Reuse a registered series profile when it passes drift checks; this
+        // skips chapter analysis and profile reconciliation.
         if (seriesKey != null) {
             val carried = SeriesProfileRegistry.get(seriesKey)
             if (carried != null && SeriesProfileRegistry.isDriftSafe(carried, frozenConfig)) {
@@ -833,10 +828,8 @@ internal class PreflightWorker(
             }
         }
 
-        // ----  Stage 5 slices A+B: ANALYSIS_PLAN -> ANALYSIS_CHUNKS ----
-        // ---- -> PROFILE_RECONCILE -> PROFILE_FROZEN. The chapter stays   ----
-        // ---- PAUSED (envelope/translation are Stage 6; completion        ----
-        // ---- semantics are still NOT redefined).                         ----
+        // Build the analysis corpus, reconcile the profile, and freeze it
+        // before continuing into envelope planning and translation.
         return runAnalysisPhase(
             artifact = artifact,
             runId = runId,

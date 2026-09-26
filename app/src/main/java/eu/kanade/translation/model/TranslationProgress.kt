@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
 /**
- * TachiyomiAT: derive per-chapter batch translation progress (done/total) from a
+ * derive per-chapter batch translation progress (done/total) from a
  * store's page map, for the manga-screen chapter-list indicator.
  *
  * - total = number of page entries the batch has registered (the staged batch
@@ -32,7 +32,7 @@ object TranslationProgress {
      * a terminal state. Mirrors the reader's counting at
      * ReaderViewModel.kt:2011-2012 (rendered/textless + permanently-failed).
      *
-     * TachiyomiAT: uses [hasExhaustedRetries] (keys on [PageTranslation.attemptCount],
+     * uses [hasExhaustedRetries] (keys on [PageTranslation.attemptCount],
      * i.e. DISTINCT failed attempts) rather than [PageTranslation.retryCount], so a
      * single transient inpaint failure that double-counted retryCount within one
      * attempt no longer falsely marks the page as terminal-for-progress. This

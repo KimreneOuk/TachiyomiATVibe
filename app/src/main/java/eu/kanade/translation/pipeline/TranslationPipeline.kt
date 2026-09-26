@@ -198,7 +198,7 @@ class TranslationPipeline(
     var onPageStuck: ((chapterId: Long?, pageKey: String) -> Unit)? = null
 
     /**
-     * TachiyomiAT: factory that creates a [TranslationBatchProgressTracker] for a
+     * factory that creates a [TranslationBatchProgressTracker] for a
      * batch and registers it in the manager's tracker map so the UI can observe
      * it. Mirrors the [activeStoreResolver] pattern. Set by [TranslationManager].
      */

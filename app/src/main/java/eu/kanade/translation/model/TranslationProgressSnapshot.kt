@@ -39,8 +39,7 @@ data class AiBatchProgress(
 }
 
 /**
- *  U.1: the existing batch phase projection, extended with the two
- * resume-rebuild states. [REBUILDING] and [RESTORING] are derived from the
+ * Batch phase projection. [REBUILDING] and [RESTORING] are derived from the
  * durable run record (state + phase counters) by the batch progress
  * projector — never a competing state machine: every other producer keeps
  * emitting the original four values, and a snapshot without run-record
@@ -49,7 +48,7 @@ data class AiBatchProgress(
 enum class TranslationBatchPhase { IDLE, FIRST_PASS, FINALIZING, FINISHED, REBUILDING, RESTORING }
 
 /**
- *  U.1: rebuild/restore payload carried alongside
+ * Rebuild/restore payload carried alongside
  * [TranslationBatchPhase.REBUILDING]/[TranslationBatchPhase.RESTORING].
  * Counts come from the active run record's phase counters
  * (`ocrPagesTotal` / `ocrPagesDone`), so "restored" means durable work the
@@ -94,7 +93,7 @@ data class TranslationProgressSnapshot(
     /** Immediate pre-tracker acknowledgement, when a request is still preparing or downloading. */
     val requestState: TranslationRequestState? = null,
     /**
-     *  slice 2: this chapter's 1-based position among the outstanding
+     * This chapter's 1-based position among the outstanding
      * translation-queue entries (QUEUE/TRANSLATING) while it waits behind
      * other work. Null when not queued.
      */
@@ -102,7 +101,7 @@ data class TranslationProgressSnapshot(
     /** Total outstanding queue entries when [queuePosition] is set. */
     val queueTotal: Int? = null,
     /**
-     *  Phase 5 (spec §4.1): a guarded artifact publication was rejected
+     * A guarded artifact publication was rejected
      * (`BatchPass1Status.PERSISTENCE_REJECTED` / `ReconciliationResult
      * .nonDurableFailure`). The affected page produced in-memory work but NO
      * durable result: it must never count as terminal success and every
@@ -113,12 +112,12 @@ data class TranslationProgressSnapshot(
     /** Safe rejection reason carried alongside [nonDurableFailure]. */
     val nonDurableFailureReason: String? = null,
     /**
-     *  Phase 5 (spec §2.1 CANCELLED): pages the batch contract settled as
+     * Pages the batch contract settled as
      * cancelled (aborted) terminal work. Never fake failures, never success.
      */
     val cancelledPages: Int = 0,
     /**
-     * Phase 5 (spec §2.1): whether [totalPages] is the trusted source
+     * Whether [totalPages] is the trusted source
      * total. A partially downloaded chapter's available page set is NOT its
      * trusted total — unknown totals must never render a percentage or a
      * fabricated complete chapter. Only a registered batch work set or a
@@ -126,7 +125,7 @@ data class TranslationProgressSnapshot(
      */
     val expectedPageCountTrusted: Boolean = false,
     /**
-     *  U.1: rebuild/restore counts for
+     * Rebuild/restore counts for
      * [TranslationBatchPhase.REBUILDING]/[TranslationBatchPhase.RESTORING],
      * stamped by the batch progress projector from the durable run record.
      * Null whenever the phase is not a rebuild/restore phase.
@@ -155,7 +154,7 @@ data class TranslationProgressSnapshot(
     }
 
     /**
-     *  Phase 5 (spec §2.1): pages in exactly one current-pass terminal
+     * Pages in exactly one current-pass terminal
      * category — translated/reused-valid, textless, failed, partial, or
      * cancelled. Queued, running, buffered, uncommitted, and missing-source
      * pages are never terminal.
@@ -163,7 +162,7 @@ data class TranslationProgressSnapshot(
     val terminalPages: Int get() = processedPages + cancelledPages
 
     /**
-     *  Phase 5 (spec §2.1): the readable-success subset of terminal work —
+     * The readable-success subset of terminal work —
      * committed display-ready pages excluding partial results, plus textless
      * terminals. Failures, partials, and cancellations stay OUT of this count
      * so no surface can render them as done.
@@ -189,7 +188,7 @@ data class TranslationProgressSnapshot(
         val processed: Boolean = false,
         val aiState: AiPageProgressState = AiPageProgressState.PENDING,
         /**
-         *  Phase 5: the current pass produced a PARTIAL translation for
+         * The current pass produced a PARTIAL translation for
          * this page. Partial work is terminal-retryable, never clean success.
          */
         val partial: Boolean = false,

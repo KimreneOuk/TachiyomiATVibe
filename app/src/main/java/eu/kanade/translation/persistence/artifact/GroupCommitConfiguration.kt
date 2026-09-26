@@ -1,8 +1,7 @@
 package eu.kanade.translation.persistence.artifact
 
 /**
- *  Slice B: Group commit configuration and feature flag.
- * Default is FALSE (OFF) during Phase 2.1 - 2.3; flipped to TRUE in 2.4 after soak.
+ * Controls whether page artifact commits are grouped. The default is off.
  */
 object GroupCommitConfiguration {
     @Volatile

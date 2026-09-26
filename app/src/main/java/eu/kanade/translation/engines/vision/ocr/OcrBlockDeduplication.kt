@@ -14,7 +14,7 @@ internal data class RecognizedBlock(
 )
 
 /**
- * TachiyomiAT: carrier for analyze()'s native critical-section output. The
+ * carrier for analyze()'s native critical-section output. The
  * detect + OCR loop runs under [nativeGuard] and returns this so the
  * post-lock dedupe/assembly (removePostOcrDuplicateBlocks, blocks.addAll)
  * runs outside the native lock — it is pure Kotlin and need not block close().

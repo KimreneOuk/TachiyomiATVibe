@@ -9,7 +9,7 @@ import kotlin.math.min
 import kotlin.math.pow
 
 /**
- * TachiyomiAT: shared text-color estimator.
+ * shared text-color estimator.
  *
  * Background
  * ----------
@@ -38,8 +38,8 @@ import kotlin.math.pow
 object RenderColorEstimator {
 
     /**
-     *  WP8: algorithm version of this estimator (seeded
-     * 2-means sampling + binary contrast fill policy). Consumed by color-style
+     * Algorithm version of this estimator (seeded 2-means sampling + binary
+     * contrast fill policy). Consumed by color-style
      * fingerprinting (`StageFingerprints.colorStyleFingerprint`) and the
      * persisted `ColorStylePreparation.colorEstimatorVersion`. Bump on any
      * behavior change that can alter produced colors. Additive constant only —
@@ -47,14 +47,13 @@ object RenderColorEstimator {
      */
     const val COLOR_ESTIMATOR_VERSION: Int = 1
 
-    // The one tuning knob — see Phase 2 measurement.
     // Rec.601 background-luma threshold (0..255); below it the background is
     // "dark" → white text when the ink is forced.
     private const val DARK_BG_LUMA = 85f
 
     /**
-     * Pure, Bitmap-free text-color decision, extracted from [estimate] so the
-     * policy is unit-testable without an `android.graphics.Bitmap`.
+     * Pure, Bitmap-free text-color decision so the policy can be tested
+     * without an `android.graphics.Bitmap`.
      *
      * Takes the dominant background and foreground (ink) cluster colors (RGB in
      * 0..255). The foreground is used for diagnostics; the rendered fill is
@@ -154,11 +153,9 @@ object RenderColorEstimator {
     }
 
     /**
-     * The pure post-sampling decision: 2-means bg/fg split of [pixels] (optionally
-     * masked to the eroded parent-bubble interior) → [colorPolicy] adaptive fill.
-     * Extracted from [estimate] so the full buggy code path (the part that
-     * actually decides the text color, including the contrast override) is
-     * unit-testable without an `android.graphics.Bitmap`. [pixels] is the
+     * Pure post-sampling decision: 2-means background/foreground split of
+     * [pixels] (optionally masked to the eroded parent-bubble interior) feeds
+     * [colorPolicy] adaptive fill. [pixels] is the
      * crop's ARGB data; [cropLeft]/[cropTop] are its offset in page coordinates
      * so the eroded bubble interior mask can be built.
      */

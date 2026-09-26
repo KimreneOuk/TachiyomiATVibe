@@ -130,7 +130,7 @@ internal object AnalysisChunkPublication {
     data class AnalysisChunkPublicationInput(
         val provenance: AnalyzerProvenance,
         val ocrArtifactRefs: List<SidecarPointer>,
-        /** DR-A coverage classification (wave-4 F-W4-3). */
+        /** Coverage classification for the persisted chunk. */
         val coverage: AnalysisChunkCoverage = AnalysisChunkCoverage.COMPLETE,
         val terms: List<ExtractedTerm> = emptyList(),
         val entities: List<ExtractedEntity> = emptyList(),

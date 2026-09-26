@@ -7,8 +7,8 @@ import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import java.security.MessageDigest
 
 /**
- * Lease-layer provenance of a page write (  three-origin model, lifecycle
- * contract §12). Priority on one page: MANUAL > AUTO > BATCH.
+ * Lease-layer provenance of a page write. Priority on one page is
+ * MANUAL > AUTO > BATCH.
  *
  * - [MANUAL]: a reader tap / foreground single-page intent. Evicts an
  *   in-flight [AUTO] lease at acquisition (fenced fail-closed for the evicted
@@ -17,8 +17,8 @@ import java.security.MessageDigest
  *   auto window, stranded-page sweep). Never preempts anything.
  * - [BATCH]: an ordered chapter batch run.
  *
- * Two-vocabulary rule: this enum is the LEASE vocabulary only. Durable
- * provenance keeps the stable two-value [ArtifactOrigin] vocabulary and the
+ * This enum is for lease ownership only. Durable provenance keeps the
+ * separate [ArtifactOrigin] vocabulary and the
  * `pageTranslationOrigin` string stamp — map through [toArtifactOrigin] and
  * never stamp `"MANUAL"`/`"AUTO"` strings (`PageWorkPlanner.stageEvidence`
  * parses the stamp with `ArtifactOrigin.valueOf`; unmapped names would
@@ -31,9 +31,9 @@ enum class PageWriteOrigin {
 }
 
 /**
- * Durable-provenance mapping for a lease origin (two-vocabulary rule above):
+ * Maps a lease origin to durable provenance:
  * MANUAL and AUTO both keep the stable reader-adhoc provenance so planner
- * parsing and -adjacent reuse evidence stay unchanged.
+ * parsing and reuse evidence stay unchanged.
  */
 fun PageWriteOrigin?.toArtifactOrigin(): ArtifactOrigin = when (this) {
     PageWriteOrigin.MANUAL, PageWriteOrigin.AUTO, null -> ArtifactOrigin.READER_ADHOC
@@ -41,9 +41,8 @@ fun PageWriteOrigin?.toArtifactOrigin(): ArtifactOrigin = when (this) {
 }
 
 /**
- * Detection/OCR-owned fields and the preconditions captured before the native
- * recognition pass (Phase 3). The live pipeline fuses detection and OCR into
- * one recognition pass; this patch carries both. A stale worker — wrong
+ * Detection/OCR-owned fields and preconditions captured before recognition.
+ * The live pipeline performs both in one pass. A stale worker — wrong
  * generation, wrong page version, or a changed prior OCR identity — is
  * rejected and cannot clobber newer work.
  */
@@ -91,19 +90,16 @@ data class TranslationStagePatch(
     val expectedDependencyFingerprint: String? = null,
     val expectedArtifactPageVersion: Long? = null,
     /**
-     * 20 (Stage-6 slice A): the frozen profile content fingerprint
-     *  the translation request was built from. `null` keeps the
-     * pre- merge behavior byte-identical (legacy callers); non-null makes
-     * the merge REJECT when the manifest's currently frozen profile carries a
-     * different content fingerprint (stale-profile protection).
+     * Frozen profile content fingerprint used to build the translation request.
+     * When present, the merge rejects if the manifest's current frozen profile
+     * has a different fingerprint.
      */
     val profileContentFingerprint: String? = null,
     /**
-     * 20: the envelope-plan fingerprint  the dispatch was
-     * planned under. `null` keeps the pre- merge behavior byte-identical;
-     * non-null makes the merge REJECT when the manifest's `envelopePlan`
-     * pointer carries a different content fingerprint (stale-plan commit
-     * protection; rejected commits never advance any frontier).
+     * Envelope-plan fingerprint used to plan the dispatch.
+     * When present, the merge rejects if the manifest's `envelopePlan`
+     * pointer has a different fingerprint. A rejected commit never advances
+     * the context frontier.
      */
     val envelopePlanFingerprint: String? = null,
 )

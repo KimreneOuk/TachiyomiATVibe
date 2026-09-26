@@ -3,7 +3,7 @@ package eu.kanade.translation.engines.translator.providers
 /**
  * DeepL v2 `translate` endpoint contract.
  *
- * TachiyomiAT: implemented with OkHttp rather than Retrofit to match the other
+ * implemented with OkHttp rather than Retrofit to match the other
  * translators in this package ([GoogleTranslator], [DeepSeekTranslator], etc.),
  * which the project builds without a Retrofit dependency.
  *

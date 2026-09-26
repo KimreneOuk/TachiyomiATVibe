@@ -63,7 +63,7 @@ class RoiPageRecognitionEngine(
     private var detector: OnnxPageTextDetector? = null
 
     /**
-     * TachiyomiAT: optional YOLO26-nano manga panel detector. Best-effort
+     * optional YOLO26-nano manga panel detector. Best-effort
      * init (mirrors paddleDet): when the asset is missing or fails to load,
      * this stays null and panel assignment is skipped — translation proceeds
      * panel-less exactly as before. Never blocks OCR/inpaint.
@@ -71,7 +71,7 @@ class RoiPageRecognitionEngine(
     private var panelDetector: OnnxPanelDetector? = null
 
     /**
-     * TachiyomiAT: optional YOLO11-seg manga bubble segmenter.
+     * optional YOLO11-seg manga bubble segmenter.
      * Drives the precise Interior Median Solid Fill and Symmetrical Growth.
      */
     private var bubbleSegmenter: OnnxBubbleSegmenter? = null
@@ -82,7 +82,7 @@ class RoiPageRecognitionEngine(
     private val paddlePageGenerationCounter = AtomicLong(0L)
 
     /**
-     * TachiyomiAT: PP-OCRv6 small **det** engine, used to split a vertical-text
+     * PP-OCRv6 small **det** engine, used to split a vertical-text
      * ROI into individual text lines for the PaddleOCR rec path. Only built when
      * the selected OCR model is [OcrModel.PADDLEOCR_V6_SMALL] (the only
      * horizontal-line rec engine). Stays null otherwise; the rec path checks for
@@ -99,7 +99,7 @@ class RoiPageRecognitionEngine(
     private val initMutex = Mutex()
 
     /**
-     * TachiyomiAT: serializes native ONNX inference (analyze/inpaint) against
+     * serializes native ONNX inference (analyze/inpaint) against
      * close(). The batch path can call close() before acquiring the translator
      * permit, so this is the primary defense. analyze()/inpaint() hold it across
      * each native OrtSession.run(); close() tryLocks it before freeing sessions.
@@ -109,14 +109,14 @@ class RoiPageRecognitionEngine(
      */
     private val nativeGuard = Mutex()
 
-    // TachiyomiAT: cooperative close flag. close() can race an in-flight
+    // cooperative close flag. close() can race an in-flight
     // analyze()/inpaint() and free native ONNX sessions mid-call past a
     // suspension point (SIGSEGV, not catchable). analyze()/inpaint() poll this
     // before each ONNX call and bail cleanly; [nativeGuard] closes the window.
     @Volatile
     private var closed = false
 
-    // TachiyomiAT: cached translation_diagnostics pref. Resolved lazily (not at
+    // cached translation_diagnostics pref. Resolved lazily (not at
     // construction) to avoid an Injekt cycle during init; cached after first read.
     @Volatile
     private var translationDiagnosticsEnabled: Boolean = false
@@ -135,7 +135,7 @@ class RoiPageRecognitionEngine(
         return translationDiagnosticsEnabled
     }
 
-    // TachiyomiAT: cached reading-order pref (AUTO derives RTL from source
+    // cached reading-order pref (AUTO derives RTL from source
     // language). Resolved lazily to avoid an Injekt cycle during init.
     @Volatile
     private var readingOrderRtl: Boolean = true
@@ -165,7 +165,7 @@ class RoiPageRecognitionEngine(
         get() = !initFailed && (initialized || modelStore.modelsAvailable() || modelStore.assetsAvailable())
 
     /**
-     * S3 (Milestone M2): Warmed-up engine sessions outside the timed region.
+     * Warms up engine sessions outside the timed recognition region.
      */
     suspend fun warmUp() {
         if (isAvailable && !initialized) {
@@ -197,7 +197,7 @@ class RoiPageRecognitionEngine(
                 logcat(LogPriority.INFO) { "ONNX init: starting detector initialization" }
                 detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel) }
                 logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language, model=$ocrModel)" }
-                // TachiyomiAT: panel detector is optional context; best-effort
+                // panel detector is optional context; best-effort
                 // init mirrors paddleDet (missing asset -> null, never blocks OCR).
                 paths.panelDetectorModel?.let { panelModelFile ->
                     try {
@@ -245,7 +245,7 @@ class RoiPageRecognitionEngine(
                             providerResolution = paddleProvider,
                             providerConfiguration = providerConfiguration,
                         )
-                        // TachiyomiAT: PaddleOCR rec reads horizontal lines; vertical
+                        // PaddleOCR rec reads horizontal lines; vertical
                         // columns must be split first. The det model replaces the
                         // ink-gap heuristic for that split (best-effort; falls back
                         // to the heuristic if the det asset is missing).
@@ -278,7 +278,7 @@ class RoiPageRecognitionEngine(
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
                 }
-                // TachiyomiAT: load PaddleOCR-v6 det for the INPAINTER (free-text
+                // load PaddleOCR-v6 det for the INPAINTER (free-text
                 // erase mask) whenever the asset is available, independent of OCR
                 // model. Previously gated behind a removed experimental flag, so
                 // the default MANGAOCR path never got Paddle-driven masking. The
@@ -370,7 +370,7 @@ class RoiPageRecognitionEngine(
 
     override suspend fun analyze(bitmap: Bitmap): PageTranslation {
         if (!initialized) initialize()
-        // TachiyomiAT: bail before any ONNX call if the engine was closed
+        // bail before any ONNX call if the engine was closed
         // cooperatively (stop()/language-change raced this call). See [closed].
         if (closed) throw IllegalStateException("ONNX recognition engine closed before analyze")
         // Capture engine refs into locals: close() can run concurrently (it does
@@ -384,14 +384,14 @@ class RoiPageRecognitionEngine(
         var localPaddlePageCoordinator = paddlePageOcrCoordinator
         val startTime = System.nanoTime()
         TranslationMemoryBudget.logSnapshot("analyze_start", bitmap.width, bitmap.height)
-        // TachiyomiAT: hold nativeGuard across detect + the per-ROI OCR loop so
+        // hold nativeGuard across detect + the per-ROI OCR loop so
         // close() cannot free a native session out from under an in-flight
         // OrtSession.run(). Each native pass (detect + every recognize()) must
         // be inside this critical section.
         var detectMs = 0L
         var segmentMs = 0L
         var ocrMs = 0L
-        //  Phase 3: correlated engine stages. The run arrives through the
+        // Correlated engine stages. The run arrives through the
         // installed TranslationTrace element; outside a traced coroutine every
         // span is a fail-open NO_OP. openRecognitionSpan tracks whichever
         // engine stage is currently open so the outer catch below can settle
@@ -463,7 +463,7 @@ class RoiPageRecognitionEngine(
                 )
                 val geometricallyDeduped = dedupeTextDetections(textDetections, bubbles)
                 val filteredDetections = suppressCrossLabelDuplicates(geometricallyDeduped, bubbles)
-                // TachiyomiAT: stash on the per-page translation so concurrent pages
+                // stash on the per-page translation so concurrent pages
                 // can't overwrite each other's data before inpaint() reads it back.
                 lockedPageTranslation.allTextDetections =
                     filteredDetections + (textDetections.filter { it !in filteredDetections && it !in geometricallyDeduped })
@@ -637,10 +637,10 @@ class RoiPageRecognitionEngine(
                             continue
                         }
 
-                        // TachiyomiAT: cooperative close — bail out of the per-ROI OCR
+                        // cooperative close — bail out of the per-ROI OCR
                         // loop if close() ran between iterations, before the native call.
                         if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
-                        // TachiyomiAT: horizontal-line engines (PaddleOCR) need context
+                        // horizontal-line engines (PaddleOCR) need context
                         // padding to avoid edge-effect failures; native-vertical engines
                         // get tight unbounded crops.
                         val pad = 12
@@ -685,7 +685,7 @@ class RoiPageRecognitionEngine(
                             }
                             unpaddedCrop.recycle()
                         }
-                        // TachiyomiAT: per-block OCR diagnostics, gated by the opt-in
+                        // per-block OCR diagnostics, gated by the opt-in
                         // translation_diagnostics pref so recognition quality is inspectable.
                         if (resolveDiagnostics()) {
                             logcat(LogPriority.INFO) {
@@ -734,7 +734,7 @@ class RoiPageRecognitionEngine(
         val pageTranslation = analyzed.pageTranslation
         val recognizedBlocks = analyzed.recognizedBlocks
         val finalRecognizedBlocks = removePostOcrDuplicateBlocks(recognizedBlocks)
-        // TachiyomiAT: second dedupe pass. removePostOcrDuplicateBlocks only
+        // second dedupe pass. removePostOcrDuplicateBlocks only
         // collapses identical-text overlaps; this collapses remaining geometric
         // overlaps (cross-label, differing-text) so two overlapping boxes never
         // reach the renderer.
@@ -751,10 +751,10 @@ class RoiPageRecognitionEngine(
         pageTranslation.ocrBlockCount = pageTranslation.blocks.size
         pageTranslation.ocrStatus = StageStatus.READY
         pageTranslation.updatedAt = System.currentTimeMillis()
-        // TachiyomiAT: assign OCR blocks to panels now that the block list is
+        // assign OCR blocks to panels now that the block list is
         // frozen. See assignPanels() for the conservative no-fallback policy.
         assignPanels(bitmap, pageTranslation)
-        // TachiyomiAT: capture the durable inpaint mask at OCR time, before
+        // capture the durable inpaint mask at OCR time, before
         // translation/watermark filtering removes blocks and before the page is
         // persisted (allTextDetections is @Transient). Persisting it means a
         // resumed batch still erases detector-only + watermark regions, not just
@@ -769,9 +769,8 @@ class RoiPageRecognitionEngine(
             "not_paddle"
         }
         logcat(LogPriority.INFO) {
-            //  Phase 3: the ambiguous global route= token (device
-            // preference) was removed — per-engine execution providers below
-            // and the correlated trace stages are the execution truth.
+            // Per-engine provider labels report the providers actually used;
+            // a device-wide route can differ from an individual engine's route.
             "[translation_perf] " +
                 "providers(detector=${detector?.executionProviderLabel ?: "n/a"}, " +
                 "segmenter=${bubbleSegmenter?.executionProviderLabel ?: "n/a"}, " +
@@ -795,15 +794,13 @@ class RoiPageRecognitionEngine(
             pageTranslation.updatedAt = System.currentTimeMillis()
             return null
         }
-        // TachiyomiAT: hold nativeGuard across the inpaint pass so close() cannot
-        // free the AOT inpainter's native session mid-run. Mirrors analyze().
-        // Re-check [closed] inside the lock. Box/mask computation is delegated to
-        // PageInpaintingEngine (do not duplicate here — an earlier copy was
-        // unreachable and masked the real planner path).
-        //  Phase 3: correlated inpaint stage. AOT provenance: the
-        // inpainter exposes only its execution-proven route (lastAcceptedRoute)
-        // after inference, so that is the `provenProvider` level; no
-        // registered-provider label exists yet (Phase 5).
+        // Hold nativeGuard across inpaint so close() cannot free the AOT
+        // inpainter's native session mid-run. Re-check [closed] inside the
+        // lock. PageInpaintingEngine owns box and mask computation.
+        // The correlated inpaint stage reports AOT provenance from the
+        // inpainter's execution-proven route (lastAcceptedRoute) after
+        // inference as `provenProvider`; this adapter has no registration
+        // result to report.
         val inpaintSpan = TranslationTrace.beginStage(
             TranslationTraceStage.INPAINT,
             model = if (inpainting != null) TranslationTraceModel.AOT_GAN else TranslationTraceModel.NONE,
@@ -841,9 +838,7 @@ class RoiPageRecognitionEngine(
             provenProvider = TranslationPipelineDiagnostics.providerFromLabel(inpainting?.lastAcceptedRoute),
         )
         logcat(LogPriority.INFO) {
-            //  Phase 3: the ambiguous global route= token (device
-            // preference) was removed; inpaintRoute= is the execution-proven
-            // route and stays.
+            // inpaintRoute reports the provider that actually handled inference.
             "[translation_perf] " +
                 "stage=inpainting total=${inpaintMs}ms mode=$inpaintingMode maskBoxes=${pageTranslation.inpaintMaskBoxes.size} " +
                 "inpaintRoute=${inpainting?.lastAcceptedRoute ?: "n/a"}"
@@ -910,7 +905,7 @@ class RoiPageRecognitionEngine(
     }
 
     /**
-     * TachiyomiAT: run panel detection on the page bitmap and assign each final
+     * run panel detection on the page bitmap and assign each final
      * OCR block to a panel via [PanelAssignment]. Mutates the block list in
      * place: sets [TranslationBlock.panelIndex], [TranslationBlock.panelAssignment],
      * [TranslationBlock.panelContainment]. No-op when the panel detector is not
@@ -931,7 +926,7 @@ class RoiPageRecognitionEngine(
     private fun assignPanels(bitmap: Bitmap, pageTranslation: PageTranslation) {
         val pd = panelDetector ?: return
         if (pageTranslation.blocks.isEmpty()) return
-        // TachiyomiAT: derive stable bubble indices from parent geometry BEFORE
+        // derive stable bubble indices from parent geometry BEFORE
         // panel assignment (see assignBubbleIndices). Must run first so the
         // bubbleIndex is present on each block before panel fields are set.
         assignBubbleIndices(pageTranslation)
@@ -992,7 +987,7 @@ class RoiPageRecognitionEngine(
     }
 
     /**
-     * TachiyomiAT: assign a stable per-page bubble index to each block based on
+     * assign a stable per-page bubble index to each block based on
      * its parent-bubble geometry. Blocks inside the same speech bubble share the
      * same parentX/Y/Width/Height (set by the recognition path); they get the
      * same index so the translator can treat them as one utterance. Free-text
@@ -1116,11 +1111,11 @@ class RoiPageRecognitionEngine(
     }
 
     override fun close() {
-        // TachiyomiAT: set the cooperative close flag FIRST so an in-flight
+        // set the cooperative close flag FIRST so an in-flight
         // analyze()/inpaint() polling [closed] between ONNX calls bails cleanly
         // before touching a session freed below (avoids a native crash).
         closed = true
-        // TachiyomiAT: tryLock (non-suspend, never blocks the main thread). Every
+        // tryLock (non-suspend, never blocks the main thread). Every
         // close() call site is guarded by the translator permit, so the lock
         // should be free; tryLock is defense-in-depth. If it fails, defer the
         // session free to the lock holder (leak-instead-of-SIGSEGV).
@@ -1141,7 +1136,7 @@ class RoiPageRecognitionEngine(
     }
 
     override fun reclaimPooledMemory() {
-        // TachiyomiAT: free off-heap pooled state held by sub-engines WITHOUT
+        // free off-heap pooled state held by sub-engines WITHOUT
         // tearing them down. Called by OOM recovery so native pressure from one
         // page doesn't carry into the next. Guarded so partial init is a no-op.
         try {

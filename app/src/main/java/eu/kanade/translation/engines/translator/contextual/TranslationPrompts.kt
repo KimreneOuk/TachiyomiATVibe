@@ -107,10 +107,9 @@ object TranslationPrompts {
     }
 
     // ------------------------------------------------------------------
-    //  Stage-6 slice B (design §7): profile-aware ENRICHED prompt
-    // assembly. Used ONLY by the  ProfileEnvelopeExecutor when a frozen
-    // chapter profile is present; the legacy Batch/Manual/Auto paths never
-    // call these, and every function above stays byte-identical. Without a
+    // Profile-aware prompt assembly used by ProfileEnvelopeExecutor when a
+    // frozen chapter profile is present. Manual and automatic translation do
+    // not call these methods; the shared prompts above remain unchanged. Without a
     // profile the executor keeps the legacy shape unchanged
     // (degraded-but-correct).
     //

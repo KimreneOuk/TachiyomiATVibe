@@ -88,7 +88,7 @@ object BoxGeometry {
     )
 
     /**
-     * TachiyomiAT: single source of truth for text-box dedup thresholds, shared
+     * single source of truth for text-box dedup thresholds, shared
      * by every stage that collapses overlapping text regions (notably
      * OcrBlockDeduper.dedupeGeometricOverlaps). Hoisting it here means a
      * threshold fix reaches all callers.

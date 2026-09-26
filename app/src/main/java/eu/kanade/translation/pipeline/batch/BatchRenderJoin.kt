@@ -203,7 +203,7 @@ internal class BatchRenderJoin(
                     )
                 }
                 val renderInput = store.snapshot(pageKey)
-                //  Phase 4: layout stage outcome for the page run. The
+                // The layout stage outcome for the page run. The
                 // span settles even when the estimator throws (layout failure
                 // path below keeps its existing handling).
                 val layoutSpan = TranslationTrace.beginStage(
@@ -253,8 +253,8 @@ internal class BatchRenderJoin(
                     )
                     throw t
                 }
-                //  Phase 4: store commit outcome for the render stage patch.
-                // Phase 4 review N3: the span settles in try/catch so a throw
+                // The store commit outcome for the render patch. The span
+                // settles in try/catch so a throw
                 // from mergeRender (cancellation while suspended, store error)
                 // cannot leave stage_start(store_commit) dangling.
                 val commitSpan = TranslationTrace.beginStage(
@@ -291,8 +291,8 @@ internal class BatchRenderJoin(
                     // A newer committed display bundle may have just
                     // promoted; the file it superseded is now deletable.
                     deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
-                    //  WP9: with  ON the color-only
-                    // render body becomes LAYOUT_PREPARE orchestration — the
+                    // When persisted layouts are enabled, the color-only
+                    // render body also prepares the page geometry draw plan — the
                     // color preparation above is joined by the page geometry
                     // draw plan, both published as separately invalidatable
                     // sub-results ( CAS set). Every failure here is
@@ -340,14 +340,14 @@ internal class BatchRenderJoin(
     }
 
     // ------------------------------------------------------------------
-    //  WP9: LAYOUT_PREPARE publication.  OFF keeps
-    // the legacy color-only render body byte-for-byte; ON adds the per-page
+    // Persisted layout publication. When disabled, rendering keeps the
+    // color-only path; when enabled, it adds the per-page
     // persisted draw plan + color preparation publication after the render
     // commit, through ChapterArtifactEngine.publishSidecarPointers with the
-    // full  CAS precondition set. Plans are late, per-page, and
+    // full CAS precondition set. Plans are late, per-page, and
     // additive: any precondition or publication failure keeps the committed
     // render authoritative and simply leaves "no plan" for the page
-    // ( — readers fall back to the async planner).
+    // so readers fall back to the async planner).
     // ------------------------------------------------------------------
 
     /** Lazily resolved Android context for the font asset read; null on JVM. */
@@ -583,8 +583,7 @@ internal class BatchRenderJoin(
      * One-time process install of the production font digest loader
      * (res/font/animeace.ttf read via the application context). The overlay
      * installs the same loader at its Android entry point; installation is
-     * idempotent and the digest itself is computed once and cached
-     * (wave-2 review gap 6).
+     * idempotent and the digest itself is computed once and cached.
      */
     private fun installFontDigestLoader(context: Context) {
         if (PersistedLayoutRuntime.fontSourceInstalled) return
@@ -598,15 +597,14 @@ internal class BatchRenderJoin(
     }
 
     // ------------------------------------------------------------------
-    //  Stage 7: per-page persisted-layout publication entry for the
-    // flagged coordinator's NATIVE/RENDER path. Called after a page reached
+    // Per-page persisted-layout publication for the coordinator's native and
+    // render path. Called after a page reaches
     // committed-translation + committed-inpaint state (via the OverlapScheduler's
     // commit hook and the FINALIZE sweep). Reuses the EXISTING
     // publication transaction above — same CAS fences, same sidecars, same
-    // fail-safe: any precondition/failure keeps the committed display and the
-    // async planner fallback authoritative ( reader display never
-    // breaks, no rasterized output ever — R041, the published artifacts are
-    // geometry/color DTOs only).
+    // fail-safe: any precondition or failure keeps the committed display and
+    // async planner fallback authoritative. Reader display never breaks; the
+    // published artifacts contain geometry and color data, not raster output.
     // ------------------------------------------------------------------
 
     /**

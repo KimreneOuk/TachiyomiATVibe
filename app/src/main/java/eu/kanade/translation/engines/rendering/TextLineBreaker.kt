@@ -1,8 +1,7 @@
 package eu.kanade.translation.engines.rendering
 
 /**
- * TachiyomiAT  slice 5: pure, deterministic line breaker for adaptive
- * positioned lines (architecture revision 2, "Line breaking contract").
+ * Pure, deterministic line breaker for adaptive positioned lines.
  *
  * Contract:
  *  1. A forced newline stays forced; whitespace separates; CJK graphemes stay

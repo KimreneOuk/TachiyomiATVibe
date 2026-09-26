@@ -3,11 +3,9 @@ package eu.kanade.translation.engines.rendering
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  gate 7.5 instrumentation: process-wide counter of ASYNC planner
- * invocations. A hydrated bind (valid persisted plan) must keep this counter
- * untouched — restart/LRU rehydration with zero planner calls is the gate-7.5
- * pass condition (Pager AND Webtoon device rows). Purely observational: the
- * planner's own logic, determinism, and call shape are untouched; JVM tests
+ * Process-wide counter of asynchronous planner invocations. A hydrated bind
+ * with a valid persisted plan must not increment it. The counter is
+ * observational; it does not affect planner logic or ordering. JVM tests
  * reset it via [resetForTest] to stay order-independent.
  */
 object TextLayoutPlannerProbe {

@@ -4,8 +4,7 @@ import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 
 /**
- *  WP3 (pure planner, S4): deterministic hierarchical analysis chunking
- * over the OCR corpus (design §6.1, schemas contract §1.3).
+ * Deterministic hierarchical analysis chunking over the OCR corpus.
  *
  * Whole-page windows only — a page is never split across chunks (page
  * atomicity invariant). Every chunk carries `core` pages (primary extraction
@@ -14,39 +13,36 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
  *
  * This planner is the pure windowing skeleton ONLY: chunk ids, contributing
  * sets, contributing corpus fingerprints and the evidence-universe predicate.
- * Response parsing, excerpt-hash validation (V8) and chunk persistence belong
- * to the analysis stage (WP5); the planner merely defines the universe every
- * evidence reference must resolve into (pure subset of V1/V9).
+ * Response parsing, excerpt-hash validation, and persistence belong to the
+ * analysis stage; the planner defines the universe every evidence reference
+ * must resolve into.
  */
 
-/** Measured/planning constants for analysis chunking ( split: policy, not schema). */
+/** Bounds used when planning analysis chunks. */
 data class AnalysisChunkPolicy(
     /**
-     * Maximum core pages per chunk. Hard schema bound:
-     * [AnalysisChunkResult.MAX_CORE_PAGES] (16, tunable T).
+     * Maximum core pages per chunk, bounded by
+     * [AnalysisChunkResult.MAX_CORE_PAGES].
      */
     val maxCorePages: Int = AnalysisChunkResult.MAX_CORE_PAGES,
     /**
-     * Context-overlap pages attached after the first chunk (design §6.1:
-     * "initially up to one adjacent contributing page"). Hard schema bound:
-     * [AnalysisChunkResult.MAX_OVERLAP_PAGES] (2, tunable T). `0` disables
+     * Context-overlap pages attached after the first chunk, bounded by
+     * [AnalysisChunkResult.MAX_OVERLAP_PAGES]. `0` disables
      * overlap entirely.
      */
     val overlapPages: Int = 1,
     /**
-     * Maximum blocks across the contributing set of one chunk (design §6.1:
-     * "Cap input OCR tokens, contributing pages, blocks"). PROPOSED-GATE
-     * experiment constant, not a product constant.
+     * Maximum blocks across the contributing set of one chunk.
      */
     val maxBlocksPerChunk: Int = 512,
     /**
      * Maximum estimated input tokens across the contributing set of one
-     * chunk (design §6.1 input cap). The per-page estimates cover the wire
+     * chunk. Per-page estimates cover the wire
      * envelope (text + per-block/per-page overhead) but NOT the chunk-level
      * fixed framing (system+user prompts, envelope scaffolding — ~400
      * tokens), so this cap must leave that framing room alongside the
      * output budget and the 512 dispatch margin under the 8k window:
-     * 4_096 + framing + 3_072 output + 512 ≤ 8_192. PROPOSED-GATE.
+     * 4_096 + framing + 3_072 output + 512 ≤ 8_192.
      */
     val maxEstimatedInputTokens: Int = 4_096,
 ) {
@@ -68,8 +64,8 @@ data class ChunkPlannerPage(
     val naturalPageIndex: Int?,
     /**
      * The page's semantic content fingerprint
-     * ([StageFingerprints.pageOcrContentFingerprint], ); feeds the
-     * per-chunk contributing corpus fingerprint (schemas contract §1.3).
+     * ([StageFingerprints.pageOcrContentFingerprint]) feeds the
+     * per-chunk contributing corpus fingerprint.
      */
     val contentFingerprint: String,
     /** Ordered stable block ids (`p<N>_b<M>`) of this page's OCR snapshot. */
@@ -80,13 +76,13 @@ data class ChunkPlannerPage(
 
 /**
  * One planned analysis chunk — the planning-owned subset of
- * [AnalysisChunkResult] (schemas contract §1.3). Extraction records, status
- * and evidence hashes are filled by the analysis stage (WP5).
+ * [AnalysisChunkResult]. Extraction records, status, and evidence hashes are
+ * filled by the analysis stage.
  */
 data class PlannedAnalysisChunk(
     /** 0-based position within the plan. */
     val chunkOrdinal: Int,
-    /** Deterministic `chunk-<ordinal>-<corpus8>` (schemas contract §1.3). */
+    /** Deterministic `chunk-<ordinal>-<corpus8>`. */
     val chunkId: String,
     /** CORE pages, ordered, natural order. */
     val corePageKeys: List<String>,
@@ -108,12 +104,11 @@ data class PlannedAnalysisChunk(
         get() = corePageKeys + contextOverlapPageKeys
 
     /**
-     * Pure subset of evidence validation V1/V9: the reference
+     * The reference
      * must name a contributing page, the block id must belong to that page's
      * contributing block list, and it must start with its page key (guards
-     * the common `p12_b4` cited under `p13`). Excerpt-hash recomputation
-     * (V8) and the core-page duty check (V9 record-level rule) stay with the
-     * WP5 validator.
+     * the common `p12_b4` cited under `p13`). Excerpt-hash recomputation and
+     * the core-page duty check stay with the analysis response validator.
      */
     fun evidenceResolves(pageKey: String, blockId: String): Boolean {
         if (!blockId.startsWith(pageKey)) return false
@@ -215,7 +210,7 @@ object AnalysisChunkPlanner {
         return AnalysisChunkPlanResult.Success(chunks = chunks, skippedTextlessPageKeys = skipped)
     }
 
-    /** Deterministic chunk id per schemas contract §1.3: `chunk-<ordinal>-<corpus8>`. */
+    /** Deterministic chunk id: `chunk-<ordinal>-<corpus8>`. */
     fun chunkId(chunkOrdinal: Int, contributingCorpusFingerprint: String): String =
         "chunk-$chunkOrdinal-${contributingCorpusFingerprint.take(CORPUS_ID_LENGTH)}"
 

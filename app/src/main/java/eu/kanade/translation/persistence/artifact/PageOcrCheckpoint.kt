@@ -4,19 +4,16 @@ import eu.kanade.translation.model.PageTranslation
 import kotlinx.serialization.Serializable
 
 /**
- *  Stage 1 (schemas contract §1.2, DTO only): origin-neutral durable
- * evidence that one page's OCR stage completed, publishable by any lane. The
- * `checkpointOcr` transaction semantics (CAS ordering, close-vs-rebase, lease
- * release order) belong to the state/transactions contract  and are
- * deliberately NOT implemented here.
- *
- * Serialized only through the shared [ArtifactDocumentJson] instance
- *
+ * Origin-neutral durable evidence that one page's OCR completed, publishable
+ * by any execution mode. Transaction ordering, close-versus-rebase behavior,
+ * and lease release semantics are implemented by
+ * [ChapterArtifactEngine.checkpointOcr]. Documents use the shared
+ * [ArtifactDocumentJson] instance.
  */
 
 /**
- * The committed display that must stay visible through the checkpoint
- * (preserve rule; semantics ). Pure identity reference.
+ * The committed display that must stay visible through the checkpoint. This
+ * is a pure identity reference.
  */
 @Serializable
 data class CommittedDisplayRef(
@@ -26,7 +23,7 @@ data class CommittedDisplayRef(
 )
 
 /**
- * The per-page OCR checkpoint sidecar document (schemas contract §1.2). Field
+ * The per-page OCR checkpoint sidecar document. Field
  * declaration order is the canonical byte order.
  */
 @Serializable
@@ -62,7 +59,7 @@ data class PageOcrCheckpoint(
     /** Operational only. */
     val checkpointedAtEpochMs: Long,
 ) {
-    /** 01/SC-02 semantic validation; null when the document is usable. */
+    /** Returns null when this document is semantically usable. */
     fun validationError(): String? = when {
         schemaVersion != SCHEMA_VERSION -> "unsupported schemaVersion: $schemaVersion"
         kind != KIND -> "wrong kind: $kind"

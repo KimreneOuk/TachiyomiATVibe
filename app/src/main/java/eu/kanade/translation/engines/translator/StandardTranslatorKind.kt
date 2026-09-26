@@ -36,7 +36,7 @@ enum class StandardTranslatorKind(val label: String) {
 
     companion object {
         /**
-         * TachiyomiAT: STRICT no-fallback. The old code silently returned MLKIT for an unknown stored
+         * STRICT no-fallback. The old code silently returned MLKIT for an unknown stored
          * engine — a corrupted/migrated pref quietly ran on-device ML Kit instead of the configured engine.
          * Now an invalid value throws and the pipeline surfaces it as a FAILED page so the user fixes the setting.
          */

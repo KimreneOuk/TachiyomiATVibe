@@ -3,7 +3,7 @@ package eu.kanade.translation.engines.rendering
 import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
 
 /**
- * TachiyomiAT: compact, JVM-pure clip-object cache keyed by the per-page
+ * compact, JVM-pure clip-object cache keyed by the per-page
  * `(planGeometryId, componentId)` pair. No coordinate strings are built and
  * there is no `android.graphics` dependency in this class, so JVM tests can
  * drive it with a fake clip type.

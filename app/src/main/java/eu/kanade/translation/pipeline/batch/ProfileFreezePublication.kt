@@ -8,13 +8,12 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 
 /**
- *  Stage 5 slice B — profile freeze publication.
+ * Publishes an immutable chapter profile and advances the manifest pointer.
  *
  * ONE atomic publication: the immutable [ChapterTranslationProfile] sidecar
  * is published into the content-addressed `profiles/` directory FIRST, then
  * the manifest `profile` pointer ([ProfilePointer]) moves in ONE
- * `publishSidecarPointers` transaction. The  rules hold by
- * construction:
+ * `publishSidecarPointers` transaction. These guarantees hold by construction:
  *
  *  - the sidecar bytes are immutable; a SUPERSEDING profile is a NEW
  *    content-addressed file + a NEW pointer (the prior file stays untouched
@@ -24,11 +23,11 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
  *  - any rejection (validation, fingerprint mismatch, version non-monotonic,
  *    stale manifest, sidecar write fault, manifest publication fault) leaves
  *    the PRIOR manifest authoritative — never a partially frozen state;
- *  - resume treats a pointer without a valid sidecar as UNFROZEN
- *    ([readReusableFrozenProfile] — wave-4 pattern: an unreadable/invalid
- *    target is treated as absent, never partially trusted, ).
+ *  - resume treats a pointer without a valid sidecar as unfrozen
+ *    ([readReusableFrozenProfile]); unreadable or invalid data is treated as
+ *    absent rather than partially trusted.
  *
- * Before any byte is written the FP-05 content fingerprint is RECOMPUTED from
+ * Before any byte is written the profile content fingerprint is recomputed from
  * the DTO ([StageFingerprints.profileContentFingerprint]) and verified equal
  * to the DTO's own `contentFingerprint` field — a mismatched profile is
  * rejected, never published.
@@ -38,8 +37,8 @@ internal object ProfileFreezePublication {
     /**
      * Publishes the frozen profile + pointer in ONE transaction.
      *
-     * Version monotonicity (schemas contract §1.4: `version` is monotonic per
-     * chapter, operational ordering only) is enforced against the manifest's
+     * Version monotonicity (`version` increases per chapter and is used only
+     * for operational ordering) is enforced against the manifest's
      * current pointer: the profile must carry exactly
      * `(manifest.profile?.version ?: 0) + 1`.
      */

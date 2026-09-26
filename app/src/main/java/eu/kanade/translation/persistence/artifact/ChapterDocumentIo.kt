@@ -22,7 +22,7 @@ enum class RenameResult {
 }
 
 /**
- * TachiyomiAT: chapter document access rooted at the chapter's manga directory.
+ * chapter document access rooted at the chapter's manga directory.
  * Names are `/`-separated paths relative to that root (e.g.
  * `Group_Chapter 1_artifacts/images/0001/gen-fp.jpg`). The abstraction keeps
  * the crash-safety and migration logic unit-testable; production uses the
@@ -309,7 +309,7 @@ val ArtifactDocumentJson: Json = Json {
 }
 
 /**
- * TachiyomiAT: crash-safe document publication (lifecycle contract §§14–15).
+ * crash-safe document publication (lifecycle contract §§14–15).
  *
  * Publish sequence: write `name.tmp`, re-read and validate it, rotate the
  * current primary to `name.bak`, then rename the temp over the primary. Every

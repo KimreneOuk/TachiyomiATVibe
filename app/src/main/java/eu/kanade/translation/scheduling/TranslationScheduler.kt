@@ -48,10 +48,9 @@ import java.util.concurrent.atomic.AtomicReference
  * Owns single-page jobs and reader rolling-auto coordination so they can be
  * cancelled on chapter change, reader exit, or translation disable.
  *
- * Job-scheduling + dedup + cancel surface extracted from
- * [eu.kanade.translation.workflow.TranslationManager]. Per-page work is delegated to
- * [TranslationExecutor]; the store is resolved through
- * [TranslationStoreResolver] (still owned by TranslationManager).
+ * Owns reader page-job scheduling, deduplication, and cancellation. Per-page
+ * work is delegated to [TranslationExecutor], and stores are resolved through
+ * [TranslationStoreResolver].
  */
 class TranslationScheduler(
     private val executor: TranslationExecutor,
@@ -79,7 +78,7 @@ class TranslationScheduler(
         private const val MANUAL_OUTCOME_MAP_CAP = 32
     }
 
-    // TachiyomiAT: the prior implementation launched jobs on GlobalScope and
+    // the prior implementation launched jobs on GlobalScope and
     // discarded the Job, so orphaned jobs from a previous chapter kept holding
     // the translator's single permit, starving all later work. Keeping the scope
     // lets auto off / chapter switch / reader close cancel actually-running work.
@@ -279,7 +278,7 @@ class TranslationScheduler(
 
         try {
             cancellation?.let(::performAutoCancellation)
-            // TachiyomiAT: fast non-blocking in-memory flip on the store first so the
+            // fast non-blocking in-memory flip on the store first so the
             // reader overlay/dim clears immediately on the current frame. Durable persistence
             // is dispatched asynchronously to IO without blocking the caller.
             if (chapterId != null) {
@@ -328,7 +327,7 @@ class TranslationScheduler(
             return
         }
         val jobKey = "${chapter.id}:$pageKey"
-        // TachiyomiAT: do NOT cancel an in-flight job for this page on a
+        // do NOT cancel an in-flight job for this page on a
         // duplicate request. The prior activePageJobs[jobKey]?.cancel() made
         // every repeated page-selection event (scroll, re-bind, double-tap) tear
         // down and restart the same translation, blinking the overlay and
@@ -600,7 +599,7 @@ class TranslationScheduler(
     }
 
     /**
-     * TachiyomiAT: evicts a single-page job its worker abandoned (stuck in
+     * evicts a single-page job its worker abandoned (stuck in
      * uncancellable native code past its deadline). The coroutine can't be
      * interrupted, but its [activePageJobs] entry reads "active" and so blocks
      * retries via dedup. Remove it (best-effort cancel first) so the page becomes
@@ -618,7 +617,7 @@ class TranslationScheduler(
     }
 
     /**
-     * TachiyomiAT: cancels the in-flight single-page job for one [pageKey] in
+     * cancels the in-flight single-page job for one [pageKey] in
      * [chapterId], if any. This is the per-page granularity [cancelPageTranslations]
      * (chapter-scoped) is too coarse for; it backs the per-page cancel button.
      *
@@ -649,7 +648,7 @@ class TranslationScheduler(
      * reader page streams for that chapter. Call on reader navigating away so the
      * previous chapter can't keep holding the executor's single permit.
      *
-     * TachiyomiAT: suspend + bounded join. After cancelling, waits (up to
+     * suspend + bounded join. After cancelling, waits (up to
      * [JOIN_TIMEOUT_MS]) for the jobs' finally blocks. translatePage's finally
      * resets a stranded RUNNING status on a NonCancellable child, which needs the
      * coroutine to unwind. Without waiting, the previous chapter's reset could

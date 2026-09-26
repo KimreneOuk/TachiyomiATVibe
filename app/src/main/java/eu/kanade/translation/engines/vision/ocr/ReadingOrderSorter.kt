@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.vision.ocr
 
 /**
- * XY-cut panel reading-order sort, extracted from [RoiPageRecognitionEngine].
+ * Sorts detected panels into reading order using XY-cut.
  *
  * Each panel is a `FloatArray` of `[x1, y1, x2, y2]`. The sort recursively
  * splits the panel set along the widest empty gutter (horizontal cut first,

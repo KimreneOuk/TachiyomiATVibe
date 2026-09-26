@@ -399,10 +399,8 @@ internal fun markOriginalImageFallback(page: PageTranslation): PageTranslation =
 }
 
 /**
- * Resume copy hygiene moved with the cleaned-publication region ( Phase 7;
- * original position: between the pipeline's HTTP/render body and
- * [CleanedPublication.loadPersistedCleanedBitmap]). Top-level so the pipeline's
- * remaining resume-path call sites resolve the same declaration.
+ * Copies page data for resume without retaining transient bitmaps or text
+ * detections.
  */
 internal fun PageTranslation.copyForResume(): PageTranslation {
     return copy(blocks = blocks.map { it.copy() }.toMutableList()).also {

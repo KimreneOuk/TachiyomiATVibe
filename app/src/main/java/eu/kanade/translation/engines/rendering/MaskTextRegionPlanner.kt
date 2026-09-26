@@ -8,14 +8,14 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * TachiyomiAT  slice 3: pure partitioner for ONE shared segmentation
- * component. Partitions the `(planGeometryId, componentId)` group's members
+ * Pure partitioner for one shared segmentation component. Partitions the
+ * `(planGeometryId, componentId)` group's members
  * into disjoint half-open cells so every shared-component pixel is owned by at
  * most one block and a deterministic dead zone separates neighbouring cells.
  *
  * Pure JVM: integer slab math + span intersection only — no `android`
  * imports, no dense page arrays, no measurement. The axis, cuts, dead zone,
- * and fit regions follow architecture revision 2 ("Slice 3"):
+ * and fit regions follow these rules:
  *
  *  1. Scan centers are rounded with `floor(value + 0.5)` and clamped to the
  *     integer component bounds.
@@ -142,7 +142,7 @@ internal object MaskTextRegionPlanner {
     )
 
     /**
-     * COLLISION_GAP per architecture revision 2:
+     * Collision gap:
      * `ceil(clamp(0.001 * pageShortSide, 2*scale, 4*scale))` — a small,
      * resolution-aware separation kept between neighbouring shared cells.
      */

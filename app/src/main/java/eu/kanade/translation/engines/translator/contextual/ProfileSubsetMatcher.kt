@@ -9,10 +9,10 @@ import eu.kanade.translation.persistence.artifact.SceneRegister
 import eu.kanade.translation.persistence.artifact.ToneFlag
 
 /**
- *  Stage-6 slice B (design §7.1/§7.2): the PURE frozen-profile subset
- * matcher behind the profile-aware Batch translation prompt.
+ * Selects a bounded subset of the frozen chapter profile for a Batch
+ * translation prompt.
  *
- * Design contract (chapter-profile-batch-design §7 items 1-2):
+ * Matching behavior:
  *  - "A local matcher scans current source text for canonical forms, aliases,
  *    titles and terms, then adds scene participants and directly related
  *    facts. Include entity IDs so the model can link aliases. Cap this
@@ -262,7 +262,7 @@ object ProfileSubsetMatcher {
      */
     private fun usableAt(fact: ProfileFact, firstPage: Int, lastPage: Int): Boolean = when (fact.scope) {
         FactScope.CANONICAL_CHAPTER_WIDE -> true
-        // Wave-7a F-W7-2: a scoped fact with a MISSING scope payload
+        // a scoped fact with a MISSING scope payload
         // default-DENIES — a malformed sidecar fact must never ride the
         // prompt ahead of its range (§7.2 fence).
         FactScope.RANGE_SCOPED -> fact.applicableRange?.let {

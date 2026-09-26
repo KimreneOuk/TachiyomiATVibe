@@ -19,7 +19,7 @@ enum class TextRecognizerLanguage(var code: String, val label: String) {
     ;
 
     /**
-     * TachiyomiAT: inter-line join used when a multi-line bubble is OCR'd line by
+     * inter-line join used when a multi-line bubble is OCR'd line by
      * line (PaddleOCR rec reads one strip at a time). CJK ideograph lines
      * concatenate with no separator; word-based scripts (Latin, Korean, etc.)
      * need a space, otherwise stacked lines fuse into an untranslatable run.
@@ -31,7 +31,7 @@ enum class TextRecognizerLanguage(var code: String, val label: String) {
 
     companion object {
         /**
-         * TachiyomiAT: STRICT no-fallback. The old code silently rewrote an
+         * STRICT no-fallback. The old code silently rewrote an
          * unknown stored value to CHINESE and returned it — a corrupted or
          * migrated pref quietly picked Chinese as the OCR source language,
          * running the wrong recognizer with no signal. Under the strict

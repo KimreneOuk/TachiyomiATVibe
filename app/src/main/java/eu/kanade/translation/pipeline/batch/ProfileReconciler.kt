@@ -184,12 +184,9 @@ internal class ProfileReconciler(
             ),
         )
 
-        // Director decision (summary-glossary redesign): the profile's
-        // content is ONE small identity sheet synthesized from the durable
-        // chunk summaries — characters and places only, capped hard, because
-        // anything beyond identity anchors is noise for the translation
-        // envelopes. The deterministic cross-chunk reconcile of structured
-        // extraction records is retired with the strict response contract.
+        // Build a bounded identity profile from durable chunk summaries.
+        // Characters and places provide useful envelope context; broader
+        // material is dropped before it can expand translation prompts.
         val synthesis = when (val source = synthesizeProfileContent(chunks)) {
             is ProfileContentSource.Content -> source
             is ProfileContentSource.Pause -> {
@@ -307,10 +304,8 @@ internal class ProfileReconciler(
                     "TachiyomiAT t924 profile frozen version=$nextVersion " +
                         "synthesized=${synthesis.summarizedChunks} entries=${synthesis.entities.size + synthesis.terms.size}"
                 }
-                // Stage-6 slice A: PROFILE_FROZEN no longer terminates the
-                // run — the coordinator CONTINUES into ENVELOPE_PLAN
-                // and TRANSLATE. The terminal stays PAUSED (native /
-                // render are Stage 7; NEVER COMPLETE in this slice).
+                // Continue to envelope planning and translation. Finalize
+                // owns native/render completion and the terminal COMPLETE state.
                 return runEnvelopePlanAndTranslate(
                     artifact = artifact,
                     runId = runId,

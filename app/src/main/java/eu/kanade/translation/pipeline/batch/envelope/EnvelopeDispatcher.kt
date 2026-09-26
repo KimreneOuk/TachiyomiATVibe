@@ -212,8 +212,8 @@ internal class EnvelopeDispatcher(
             reason = "T924 envelope plan deferred: frozen profile pointer absent",
         )
 
-        // Stage-6 slice B (design §7): load the frozen profile DTO for prompt
-        // enrichment. The SAME / reuse discipline applies — a
+        // Load the frozen profile for prompt enrichment. The same reuse
+        // discipline applies: a
         // sidecar that does not read back fully valid and identity-matched is
         // treated as ABSENT and the executor keeps the LEGACY prompt shape
         // (degraded-but-correct, never partially trusted).
@@ -383,8 +383,8 @@ internal class EnvelopeDispatcher(
                 )
 
                 val work = build.work
-                //  Stage 7: when the overlap scheduler is present,
-                // every provider envelope dispatch opens a remote window that
+                // When the overlap scheduler is present, every provider
+                // envelope dispatch opens a remote window that
                 // drives serial inpaint of committed pages. Admission
                 // semantics are unchanged — the wrapper delegates to the SAME
                 // process-wide sub-limit gate.
@@ -442,8 +442,7 @@ internal class EnvelopeDispatcher(
                                     ),
                                 ),
                             )
-                            //  Stage 7: TRANSLATE drained — the
-                            //  FINALIZE phase completes the run and
+                            // Translation has drained; finalization completes the run and
                             // publishes its single COMPLETE.
                             runFinalizeAndComplete(
                                 artifact = artifact,

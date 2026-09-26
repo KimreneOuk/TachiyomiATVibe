@@ -3,7 +3,7 @@ package eu.kanade.translation.persistence.artifact
 import kotlinx.serialization.Serializable
 
 /**
- * TachiyomiAT: explicit per-stage artifact status vocabulary for the chapter
+ * explicit per-stage artifact status vocabulary for the chapter
  * artifact manifest (artifact lifecycle contract §2). Distinct from the legacy
  * [eu.kanade.translation.model.StageStatus] strings, which remain the working
  * vocabulary of the live pipeline until the store transaction phase.
@@ -76,7 +76,7 @@ enum class FailureCategory {
     PROTOCOL,
 
     /**
-     *  Phase 3: the provider call never completed because the process
+     * The provider call never completed because the process
      * died mid-call — repeatedly, per the attempt-ledger cap. NOT a provider
      * fault and never auto-retryable: the user must explicitly force a retry.
      */
@@ -174,8 +174,8 @@ data class StageArtifactRecord(
     /** Legacy payload reference (e.g. the flat record's cleaned image name), if any. */
     val legacyPayloadReference: String? = null,
     /**
-     * Candidate generation that wrote this record, when it came from a Phase 3
-     * transaction. Cancel uses this to remove only candidate-owned records.
+     * Candidate generation that wrote this record. Cancel uses it to remove
+     * only candidate-owned records.
      */
     val generationId: String? = null,
     val updatedAtEpochMs: Long = 0L,

@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.core.content.edit
 
 /**
- * TachiyomiAT: persists the batch translation queue across application restarts
+ * persists the batch translation queue across application restarts
  * so a crash mid-batch no longer loses the entire queue.
  *
  * Mirrors the established [eu.kanade.tachiyomi.data.download.DownloadStore]

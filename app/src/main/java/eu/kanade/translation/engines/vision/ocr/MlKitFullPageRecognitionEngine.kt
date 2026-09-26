@@ -43,7 +43,7 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
             val symBounds = block.lines.first().elements.first().symbols.first().boundingBox!!
             val angle = block.lines.first().angle
             val isVertical = angle > 85f
-            // TachiyomiAT: route through the shared estimator so ML Kit pages get
+            // route through the shared estimator so ML Kit pages get
             // the same fixed inverted/gray-snap logic as the ONNX path (the legacy
             // local copy diverged and caused a gray-text bug).
             val contrastColors = RenderColorEstimator.estimate(
@@ -70,7 +70,7 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
                 ),
             )
         }
-        // TachiyomiAT: ML Kit emits one block per TextBlock with no dedupe, so
+        // ML Kit emits one block per TextBlock with no dedupe, so
         // overlapping TextBlocks on dense pages render on top of each other.
         // Run before ocrBlockCount is set so the count reflects post-dedupe.
         if (translation.blocks.size > 1) {

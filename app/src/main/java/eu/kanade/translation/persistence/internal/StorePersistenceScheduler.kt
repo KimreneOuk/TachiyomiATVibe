@@ -127,7 +127,7 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
     }
 
     suspend fun closeAndFlush() {
-        //  hotfix: no retention sweep here either. closeAndFlush runs on
+        // Skip retention sweeps here as well. closeAndFlush runs on
         // the caller's coroutine — for probe stores that is the reader-entry
         // path itself (DurableChapterStatusResolver.withProbeStore's finally),
         // so the multi-second recursive SAF crawl stalled every first open of

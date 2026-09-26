@@ -7,7 +7,7 @@ import eu.kanade.translation.model.TranslationBlock
 import kotlin.math.max
 
 /**
- * TachiyomiAT: builds the regions the inpainter must erase for one page.
+ * builds the regions the inpainter must erase for one page.
  *
  * Two entry points, one source of truth:
  *  - [computeMask] is called ONCE at OCR time (before translation/watermark

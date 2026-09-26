@@ -1,10 +1,9 @@
 package eu.kanade.translation.util
 
 /**
- * TachiyomiAT: pure, Android-free concurrency-safety primitives extracted from
- * `TranslationPipeline` and `RoiPageRecognitionEngine` so the three load-bearing
- * race-condition invariants (Wave 1 P0-1 / P0-3 / P0-4) are unit-testable
- * without constructing the singleton pipeline or an ONNX recognition engine.
+ * Pure, Android-free concurrency-safety primitives used by the pipeline and
+ * OCR engine. Their race-sensitive behavior can be tested without constructing
+ * the singleton pipeline or an ONNX recognition engine.
  *
  * Each helper encodes ONE invariant. The production call sites forward to these
  * so a future edit that reintroduces the bug fails the test here, not just on a
@@ -16,9 +15,9 @@ package eu.kanade.translation.util
 object TranslationSafetyPrimitives {
 
     /**
-     * P0-1 (SIGSEGV guard). Drains every [ForceReleasable] child engine's
-     * native buffers exactly once, but ONLY when the caller has already
-     * established that the native inference lock is free. When the lock is
+     * Drains every [ForceReleasable] child engine's native buffers exactly
+     * once as a SIGSEGV guard. It runs only when the caller has established
+     * that the native inference lock is free. When the lock is
      * held ([lockHeld] = true), the drain is skipped wholesale — draining
      * child pools while an in-flight ONNX call owns them is a native
      * use-after-free (SIGSEGV, uncatchable). The skip is leak-instead-of-crash;

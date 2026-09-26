@@ -133,7 +133,7 @@ internal class PageStoreWriter(
                 existing == null || existing.cleanedImageName == null -> {
                     createFailedPagePlaceholder(
                         pageKey,
-                        //  Phase 5  (spec §3.2): the placeholder names the
+                        // The placeholder names the
                         // ACTUAL result timer that fired — the native lane and the
                         // HTTP+render lane run DIFFERENT timers — and omits
                         // unmeasured durations entirely (supersedes the old
@@ -148,7 +148,7 @@ internal class PageStoreWriter(
                         attemptCount = (existing?.attemptCount ?: 0) + 1,
                     )
                 }
-                //  Phase 5  the page holds INTERMEDIATE durable
+                // The page holds intermediate durable
                 // artifacts (a cleaned image from the FAST-inpaint lane) but no
                 // rendered result — it is mid-pipeline. Keeping it silently
                 // RUNNING strands the reader in TRANSLATING forever; preserve
@@ -280,9 +280,8 @@ internal class PageStoreWriter(
 }
 
 /**
- * Writer-identity snapshot → fenced-write precondition. Top-level ( Phase 6)
- * so the [PageStoreWriter] bodies and the pipeline's own call sites resolve the
- * same declaration.
+ * Converts a writer-identity snapshot into a fenced-write precondition. The
+ * top-level extension is shared by [PageStoreWriter] and pipeline call sites.
  */
 internal fun ChapterTranslationStore.PageSnapshot.toPrecondition() =
     ChapterTranslationStore.PatchPrecondition(

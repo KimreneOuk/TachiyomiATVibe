@@ -34,7 +34,7 @@ private data class CachedModelIdentity(
 )
 
 /**
- * TachiyomiAT: caches installed detector/OCR/inpaint model hashes so a no-op
+ * caches installed detector/OCR/inpaint model hashes so a no-op
  * planner scan reads cached identities and artifact metadata instead of
  * rehashing model assets (lifecycle contract §1).
  *

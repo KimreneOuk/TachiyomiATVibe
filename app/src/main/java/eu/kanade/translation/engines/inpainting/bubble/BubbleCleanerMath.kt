@@ -4,7 +4,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Pure pixel/math helpers extracted from [SmartBubbleTextCleaner].
+ * Pure pixel and math helpers for [SmartBubbleTextCleaner].
  *
  * Operates only on [IntArray]/[ByteArray]/primitives, mirroring the project's
  * established pattern (BoxGeometry, BubbleMaskBuilder, AotOutputGuard). The

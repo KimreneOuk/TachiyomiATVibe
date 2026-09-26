@@ -213,7 +213,7 @@ internal class AnalysisWorker(
             }
         }
 
-        // Wave-4 F-W4-1: the persisted pointer prefix is resume-authoritative
+        // the persisted pointer prefix is resume-authoritative
         // ONLY when it came from THIS plan. A cross-run corpus change
         // (re-download → new checkpoints → re-planned windows) must never be
         // silently skipped into a mixed-plan chunk list — mismatch is a typed
@@ -458,8 +458,8 @@ internal class AnalysisWorker(
             }
         }
 
-        // ---- Stage-5 slice B: the validated chunk set is durable; run the ----
-        // ----  reconcile over the DURABLE chunk list, then  freeze.
+        // The validated chunks are durable; reconcile the stored chunk list
+        // before freezing the profile.
         return runProfileReconcileAndFreeze(
             artifact = artifact,
             runId = runId,

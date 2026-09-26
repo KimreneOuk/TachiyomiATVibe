@@ -6,7 +6,7 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.recordAttemptFailure
 
 /**
- * TachiyomiAT: post-translate validation for a single page's blocks.
+ * post-translate validation for a single page's blocks.
  *
  * Catches pages that mixed real translations with untouched source text: an adapter returning
  * blank/null/fewer translations left `block.translation` empty, which the old renderer papered over

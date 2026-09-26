@@ -12,7 +12,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * TachiyomiAT: pure text-measurement abstraction.
+ * Pure text-measurement abstraction.
  *
  * Layout math needs font metrics that only a real [android.graphics.Paint] can
  * provide, which is Android-bound and not unit-testable (the project avoids
@@ -33,7 +33,7 @@ interface TextMeasurer {
 }
 
 /**
- * TachiyomiAT: pure axis-aligned float rectangle.
+ * Pure axis-aligned float rectangle.
  *
  * Deliberately NOT `android.graphics.RectF` — keeps the planner JVM-testable with
  * no `android.graphics` dependency. The renderer converts to `RectF` for clipping.
@@ -60,7 +60,7 @@ data class FloatRect(
 }
 
 /**
- * TachiyomiAT: horizontal text anchoring for a [BlockLayout].
+ * Horizontal text anchoring for a [BlockLayout].
  *  - [CENTER]: centred on [BlockLayout.originX] — default for non-grown boxes.
  *  - [LEFT]: left-aligned at [BlockLayout.originX] — used when a box grew RIGHT
  *    into free space (original left edge stays the anchor) and by the clip net.
@@ -70,7 +70,7 @@ data class FloatRect(
 enum class TextAlign { CENTER, LEFT, RIGHT }
 
 /**
- * TachiyomiAT  slice 5: one pre-positioned, prewrapped horizontal line.
+ * One pre-positioned, prewrapped horizontal line.
  * `leftPx`/`topPx` are integer `floor()` placement results;
  * `layoutWidthPx = max(1, ceil(advance + 2*SHAPING_GUARD))` is the EXACT width
  * the renderer must shape the line at (one `StaticLayout` line, left-aligned
@@ -88,7 +88,7 @@ data class PositionedLine(
 )
 
 /**
- * TachiyomiAT  slice 5: the structural render boundary of a layout —
+ * Structural render boundary of a layout —
  * component path (via the `(planGeometryId, componentId)` pair) then the
  * cell/safety rectangle. Only these clips justify pixel-containment claims;
  * planning occupancies stay conservative and un-clipped.
@@ -100,7 +100,7 @@ data class HardClip(
 )
 
 /**
- * TachiyomiAT: the resolved placement for a single translated block, produced by
+ * Resolved placement for a single translated block, produced by
  * [TextLayoutPlanner.plan]. The renderer only DRAWS these — it does no further layout.
  *
  * @property originX horizontal draw anchor whose meaning depends on [drawAlign]:
@@ -126,32 +126,32 @@ data class BlockLayout(
     val lines: List<String>,
     val maskGeometry: MaskGeometry? = null,
     /**
-     * TachiyomiAT: compact per-page group id of this block's segmentation mask
+     * Compact per-page group id of this block's segmentation mask
      * (see [SharedMaskSession]). Null when the block has no mask or its mask is
      * groupless. Valid ONLY within the page plan it was produced for.
      */
     val planGeometryId: Int? = null,
     val maskComponentId: Int? = null,
     /**
-     * TachiyomiAT: this block's mask region rect (the same region used for
+     * This block's mask region rect (the same region used for
      * placement). The renderer intersects it with the component path so shared
      * components clip structurally instead of only by planning.
      */
     val cellRect: FloatRect? = null,
     /**
-     * TachiyomiAT slice 5: pre-positioned adaptive lines. Null selects the
+     * Pre-positioned adaptive lines. Null selects the
      * EXACT legacy renderer (stacked lines / vertical columns); non-null
      * selects the positioned-line shaping path (one StaticLayout line per
      * entry at its integer placement).
      */
     val positionedLines: List<PositionedLine>? = null,
     /**
-     * TachiyomiAT slice 5: per-line conservative planning envelopes (un-clipped,
+     * Per-line conservative planning envelopes (un-clipped,
      * stroke/AA/half-gap inflated). Empty unless [positionedLines] != null.
      */
     val conservativeOccupancy: List<FloatRect> = emptyList(),
     /**
-     * TachiyomiAT slice 5: structural render boundary mirrored from
+     * Structural render boundary mirrored from
      * [maskGeometry]/[planGeometryId]/[maskComponentId]/[cellRect]; the
      * renderer composes component path then cell rectangle from it.
      */
@@ -166,17 +166,14 @@ data class BlockLayout(
 )
 
 /**
- * TachiyomiAT: audit identity of one planner input — the original list index
+ * Identity of one planner input — the original list index
  * plus the block id. `blockId` alone is insufficient (nullable and possibly
  * duplicated), so the identity is the pair.
  */
 data class InputIdentity(val inputIndex: Int, val blockId: String?)
 
 /**
- * TachiyomiAT: explicit reason a nonblank input produced no drawable layout.
- * Slice 3 emits only [INVALID_OR_SUBPIXEL_SOURCE_RECT] and
- * [EMPTY_SHARED_CELL]; the remaining reasons are declared now so the contract
- * is complete for the later slices that own them.
+ * Reason a nonblank input produced no drawable layout.
  */
 enum class NonDrawReason {
     INVALID_OR_SUBPIXEL_SOURCE_RECT,
@@ -188,14 +185,14 @@ enum class NonDrawReason {
     INVALID_RENDER_METADATA,
 }
 
-/** TachiyomiAT: explicit per-input planner outcome — exactly one per nonblank input. */
+/** Per-input planner outcome — exactly one per nonblank input. */
 sealed interface LayoutOutcome {
     data class Draw(val layout: BlockLayout) : LayoutOutcome
     data class NonDraw(val reason: NonDrawReason) : LayoutOutcome
 }
 
 /**
- * TachiyomiAT: one explicit planner result per nonblank input identity.
+ * One explicit planner result per nonblank input identity.
  * [chosenText] derives ONLY from [block] (never merged, concatenated, or
  * substituted). [planningOrdinal] is the 0-based rank among nonblank inputs in
  * placement (score-descending, then input index) order; [renderOrdinal] is
@@ -212,7 +209,7 @@ data class LayoutResult(
 )
 
 /**
- * TachiyomiAT: full page plan. [resultsInInputOrder] holds exactly one result
+ * Full page plan. [resultsInInputOrder] holds exactly one result
  * per nonblank input (blank inputs are the only intentional absence);
  * [drawableInRenderOrder] holds the Draw layouts in placement order and is the
  * only list the renderer consumes.
@@ -223,7 +220,7 @@ data class PageLayoutPlan(
 )
 
 /**
- * TachiyomiAT  slice 7: [PageLayoutPlan] plus the deterministic count of
+ * [PageLayoutPlan] plus the deterministic count of
  * evaluated final post-anchor placement candidates, summed over every colliding
  * block. Internal test seam — [TextLayoutPlanner.planPage] wraps this and
  * returns only the plan.
@@ -231,7 +228,7 @@ data class PageLayoutPlan(
 internal data class PagePlanWithAttempts(val plan: PageLayoutPlan, val finalPlacementAttempts: Int)
 
 /**
- * TachiyomiAT  slice 7: collision footprint of one accepted Draw layout —
+ * Collision footprint of one accepted Draw layout —
  * the single conservative (stroke/AA/half-gap inflated, un-clipped) occupancy
  * rectangle plus the layout's hard cell rectangle ([BlockLayout.cellRect];
  * null for unmasked/legacy layouts). A pair whose hard cells are BOTH present
@@ -241,8 +238,8 @@ internal data class PagePlanWithAttempts(val plan: PageLayoutPlan, val finalPlac
 internal data class PlacedFootprint(val cellRect: FloatRect?, val occupancy: FloatRect)
 
 /**
- * TachiyomiAT  slice 5: the isolated adaptive-layout tuning envelope (task
- * contract: thresholds are isolated constants backed by focused tests).
+ * Adaptive-layout tuning values. Thresholds are named constants and covered
+ * by focused tests.
  * Collision gap itself stays in [MaskTextRegionPlanner.collisionGapPx].
  */
 internal object TextLayoutTuning {
@@ -289,7 +286,7 @@ internal object TextLayoutTuning {
     /** Band-interval explosion guard: more intervals ⇒ treat as no valid band. */
     const val MAX_BAND_INTERVALS = 64
 
-    // ----  slice 6: bounded long `text_free` widening envelope ---------
+    // ---- Bounded long `text_free` widening -----------------------------
 
     /** Min non-whitespace graphemes before a `text_free` widening trial may run. */
     const val FREE_TEXT_MIN_GRAPHEMES = 24
@@ -310,7 +307,7 @@ internal object TextLayoutTuning {
     /** Width-equality epsilon (px) for candidate dedup after clamping. */
     const val FREE_TEXT_WIDTH_EPSILON = 0.01f
 
-    // ----  slice 7: finite final post-anchor safety ---------------------
+    // ---- Final post-anchor safety --------------------------------------
 
     /** Hard guard: evaluated post-anchor candidates per colliding block. */
     const val MAX_FINAL_PLACEMENT_ATTEMPTS = 8
@@ -388,7 +385,7 @@ internal object TextLayoutTuning {
 }
 
 /**
- * TachiyomiAT: pure, neighbour-aware text-layout solver for the render stage.
+ * Pure, neighbour-aware text-layout solver for the render stage.
  *
  * **Why this exists.** The previous per-block renderer laid each block out independently
  * with no global view, causing three defects: (1) collision — close boxes' extents
@@ -479,8 +476,8 @@ object TextLayoutPlanner {
         renderSourceText: Boolean,
         measurer: TextMeasurer,
     ): PageLayoutPlan {
-        //  gate 7.5: observation only — every async planner entry counts;
-        // hydrated binds never reach this (TextLayoutCoordinator consults the
+        // Count every asynchronous planner entry. Hydrated binds never reach
+        // this method because TextLayoutCoordinator consults the
         // persisted-plan hydrate hook first).
         TextLayoutPlannerProbe.recordInvocation()
         return planPageInternal(
@@ -494,7 +491,7 @@ object TextLayoutPlanner {
     }
 
     /**
-     *  slice 7 test seam: [planPage] plus the deterministic count of
+     * [planPage] plus the deterministic count of
      * EVALUATED final post-anchor candidates, summed over every colliding
      * block. A plan with a single colliding block reports that block's exact
      * evaluated candidate count (e.g. 8 when every finite candidate failed,
@@ -817,7 +814,7 @@ object TextLayoutPlanner {
     }
 
     /**
-     * Slice 5: build the positioned-line [BlockLayout] for a successful
+     * Builds the positioned-line [BlockLayout] for a successful
      * adaptive band fit. The alignment anchor is the origin; `safeW/safeH` are
      * the hard slab bounds; `lines` stays populated with the wrapped
      * (trial-resolved) texts so extentOf/tests keep a uniform handle;
@@ -1049,13 +1046,13 @@ object TextLayoutPlanner {
         )
     }
 
-    // ----  slice 7: finite final post-anchor safety ---------------------
+    // ---- Final post-anchor safety --------------------------------------
 
     /** Outcome of the bounded final post-anchor resolution for one colliding block. */
     internal class FinalResolution(
         /**
-         * The accepted layout — never null since the  repair (R2): a
-         * ladder that exhausts every candidate accepts a clipped draw instead.
+         * The accepted layout. If every candidate fails, the safety path
+         * returns a clipped fallback draw.
          */
         val layout: BlockLayout,
         /** Deterministic count of EVALUATED candidates (duplicates are skipped uncounted). */
@@ -1533,12 +1530,12 @@ object TextLayoutPlanner {
     /**
      * Place one block, treating already-finalised higher-score [obstacles] as fixed.
      * Steps: (1) re-anchor a reshaped tall box away from the nearest obstacle /
-     * toward the larger free side (Defect 2); (2) fit font, then if undersized or
-     * overflowing (Defects 1 & 3) grow the box into the larger free side (never
+     * toward the larger free side; (2) fit font, then if undersized or
+     * overflowing grow the box into the larger free side (never
      * toward an obstacle) and re-fit; (3) if a residual overlap remains, clip this
      * block to its own side of the obstacle boundary (the no-overlap guarantee).
      *
-     *  slice 7: [allowGrowth] = false suppresses ONLY step 2's growth (the
+     * [allowGrowth] = false suppresses only step 2's growth (the
      * baseline candidate re-places the pre-growth base rect through the exact
      * same fit/anchor/clip path). Every existing call defaults to true.
      */
@@ -1817,7 +1814,7 @@ object TextLayoutPlanner {
      * a shift would go off-page or into another obstacle, the move is clamped and
      * the residual overlap is left for the clip safety-net (placeBlock step 3).
      *
-     * This is the Defect 2 fix: an isolated box keeps its preferred (centred)
+     * An isolated box keeps its preferred (centred)
      * position — no regression — and only moves when a real collision forces it.
      */
     private fun resolveMinimalDisplacementX(
@@ -1886,20 +1883,19 @@ object TextLayoutPlanner {
     )
 
     /**
-     *  slice 6: the bounded long-`text_free` placement decision for one
+     * The bounded long-`text_free` placement decision for one
      * eligible block — the [rect] to place and the [regionOverride] to place
      * it with (null keeps the block's own legacy containment/anchor behavior).
      */
     internal class FreeTextWideningPlan(val rect: RectResult, val regionOverride: FloatRect?)
 
     /**
-     *  slice 6: the bounded long-`text_free` widening trial, or null when
+     * The bounded long-`text_free` widening trial, or null when
      * the block must take the exact legacy path.
      *
-     * Eligibility (architecture "Slice 6", evaluated in order):
+     * Eligibility, evaluated in order:
      *  0. path precondition — the trial is defined only on the plain unmasked
-     *     legacy path (today's `regionOverride == null`); masked blocks are
-     *     governed by the slice 2/3/5 mask/cell contracts and keep their
+     *     legacy path (today's `regionOverride == null`); masked blocks keep
      *     current behavior (where the reshape can never fire anyway);
      *  1. `label == 2`;
      *  2. no valid parent;
@@ -1918,10 +1914,10 @@ object TextLayoutPlanner {
      * the two [TextLayoutTuning] factors, deduplicated after clamping. The
      * smallest wider candidate whose fitted font improves by
      * [TextLayoutTuning.FREE_TEXT_MIN_FONT_GAIN] OR that removes overflow wins;
-     * otherwise the OCR baseline is kept with NO region override so the block
-     * takes today's exact label-2 legacy behavior (containment clip preserved
-     * through the OCR-center anchor branch). The legacy reshape is unreachable
-     * on this path. Final collision validation stays slice 7's job.
+     * otherwise the OCR baseline is kept with no region override so the block
+     * takes the existing label-2 behavior (containment clip preserved through
+     * the OCR-center anchor branch). The legacy reshape is unreachable on this
+     * path. Final collision validation runs after placement.
      */
     private fun boundedFreeTextWideningPlan(
         block: TranslationBlock,
@@ -2047,7 +2043,7 @@ object TextLayoutPlanner {
      * (or within its clip rect when clipped). Used as the obstacle footprint for
      * subsequently-placed blocks and for the final overlap check.
      *
-     * Slice 5: adaptive layouts use the union bounding box of the per-line
+     * Adaptive layouts use the union bounding box of the per-line
      * conservative occupancy rects, so every block kind is measured with the
      * same conservative convention.
      */
@@ -2218,7 +2214,7 @@ object TextLayoutPlanner {
         return MaskGrouping(regions, groupByIndex, session, groups)
     }
 
-    /** Per-input slice-3 shared-cell decision; null means the legacy region path. */
+    /** Per-input shared-cell decision; null means the legacy region path. */
     internal class SharedCellPlan(
         /**
          * Hard disjoint slab; null only when the member has no usable cell at
@@ -2236,14 +2232,14 @@ object TextLayoutPlanner {
          */
         val empty: Boolean,
         /**
-         * Slice 5: the cell's slab-intersected row-major spans (empty in
+         * The cell's slab-intersected row-major spans (empty in
          * bounds-rect mode). Input to the adaptive band planner.
          */
         val spans: List<MaskGeometry.RowSpan> = emptyList(),
     )
 
     /**
-     * Slice 3: build disjoint shared-cell plans per (group, componentId) group
+     * Builds disjoint shared-cell plans per (group, componentId) group
      * of assigned nonblank members.
      *
      *  - Converted geometry with page-matching dimensions: partition per
@@ -2468,15 +2464,14 @@ object TextLayoutPlanner {
     }
 
     /**
-     * Slice-2-carried page cap: a NEW distinct `(planGeometryId, componentId)`
+     * Page cap for distinct `(planGeometryId, componentId)` pairs: a new pair
      * pair is accepted only while fewer than
      * [MAX_COMPONENT_ASSIGNMENTS_PER_PAGE] distinct pairs exist; an already
      * assigned pair always passes. A capped member keeps its Draw result with
      * the structural slab `cellRect` but NO geometry ids. Extracted as an
-     * internal pure predicate so tests can drive the 65th-distinct-pair
-     * semantics directly (see the implementation report: through `planPage`
-     * the page-wide 64-component conversion budget makes a 65th distinct pair
-     * unreachable, so an integration-level fixture cannot exist).
+     * internal pure predicate so tests can pin the cap boundary directly. The
+     * page-wide conversion budget normally prevents reaching it through
+     * [planPage].
      */
     internal fun componentAssignmentAllowed(assignment: Long, assigned: Set<Long>): Boolean =
         assignment in assigned || assigned.size < MAX_COMPONENT_ASSIGNMENTS_PER_PAGE
@@ -2497,9 +2492,8 @@ object TextLayoutPlanner {
     }
 
     /**
-     *  repair (R3): DETERMINISTIC component assignment for a block's OCR
-     * rectangle (same clamped-rectangle resolution as slice 2, now over
-     * [MaskGeometry.componentForRectangleDeterministic]). A tie across
+     * Deterministic component assignment for a block's OCR rectangle using
+     * [MaskGeometry.componentForRectangleDeterministic]. A tie across
      * components or a zero-overlap rectangle no longer leaves the block
      * cell-less: it resolves to the max-overlap component, else the tied (or,
      * when all overlaps are zero, any) component with the bounds center

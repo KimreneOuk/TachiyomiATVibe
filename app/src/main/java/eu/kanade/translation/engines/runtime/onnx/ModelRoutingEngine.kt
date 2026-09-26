@@ -70,7 +70,7 @@ object ModelRoutingEngine {
     }
 
     /**
-     *  Phase 5 (plan §3.3): the coherent accelerator ATTEMPT gate used by
+     * Accelerator attempt gate used by
      * session-creation routing. Returns true for [Status.UNKNOWN] and
      * [Status.SUPPORTED], and for [Status.TEMPORARY_FAILURE] exactly while the
      * documented single recreation attempt is still available —
@@ -125,7 +125,7 @@ object ModelRoutingEngine {
      * marks TEMPORARY_FAILURE and permits one retry. If it is an operator mismatch or repeated failure,
      * marks UNSUPPORTED.
      *
-     *  Phase 5 (plan §3.3): a QNN graph execute failure with error code
+     * A QNN graph execute failure with error code
      * 1100 is a hard model-route EXECUTION failure — demoted to UNSUPPORTED,
      * never an SSR retry — even when the message text lacks "ENGINE_ERROR".
      * This is checked BEFORE the SSR heuristic because an OrtException built

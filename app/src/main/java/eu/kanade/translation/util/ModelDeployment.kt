@@ -5,13 +5,12 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * TachiyomiAT: pure, Android-free model-deployment helpers extracted from
- * `OnnxModelStore.copyIfNeeded` so the deployment-integrity invariants are
- * unit-testable without an Android `Context`.
+ * Pure, Android-free helpers for model deployment integrity. Keeping them free
+ * of Android types lets the deployment checks run in JVM tests.
  *
  * The integrity stamp is `<versionMarker>:<assetPath>:<sha256-of-bytes>`. This
- * catches two classes of the original Wave 4 deployment bug that a hand-typed
- * version string alone misses:
+ * catches two classes of corruption that a hand-typed version string alone
+ * misses:
  *
  * 1. Cached-file corruption (partial install, disk error, a truncated write):
  *    the cached file's bytes no longer hash to the value stored in the stamp,

@@ -1,7 +1,7 @@
 package eu.kanade.translation.scheduling
 
 /**
- * TachiyomiAT: pure, transient contract for the rolling auto-translation window.
+ * pure, transient contract for the rolling auto-translation window.
  *
  * These models define ONLY what the rolling coordinator intends to keep ready
  * and how that intent is observed. They carry no execution behavior, hold no

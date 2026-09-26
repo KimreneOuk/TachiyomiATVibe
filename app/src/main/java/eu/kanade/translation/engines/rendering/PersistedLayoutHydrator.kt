@@ -9,8 +9,8 @@ import eu.kanade.translation.persistence.artifact.SidecarRead
 /**
  * Resolves a page's persisted
  * [PageLayoutDrawPlan] and rehydrates it to the planner's draw shape
- * ([LayoutDrawPlanProjection.rehydrate]), with an EXPLICIT, typed loss
- * contract (wave-2 review F5 / gap 7): the caller can always distinguish a
+ * ([LayoutDrawPlanProjection.rehydrate]), with an explicit typed loss
+ * contract: the caller can always distinguish a
  * fully-resolved hydration from a lossy one — a lossy `rehydrate` is detected
  * by COUNT comparison and reported as [HydratedLayout.Lossy], never silently
  * returned as a partial draw list. Every failure mode maps to exactly one
@@ -19,13 +19,13 @@ import eu.kanade.translation.persistence.artifact.SidecarRead
  * Manual/Auto, legacy data, missing/corrupt/unsupported plans, or a disabled
  * feature flag.
  *
- * Compatibility boundary (gates 7.2/7.5, invalidation rows 9/10/11): a plan
- * whose font digest, font/paint identity, planner version, stroke policy
+ * Compatibility checks cover the font digest, font/paint identity, planner
+ * version, stroke policy
  * version, stroke color policy version, platform shaping key, source page
- * dimensions, decode sample size, or stored compatibility fingerprint does not
- * match the reader's current inputs is [HydratedLayout.Incompatible] — the plan
- * is re-planned, never mis-drawn. SSIV pan/zoom/holder size/orientation are
- * structurally absent from every check (final-target §3).
+ * dimensions, decode sample size, or stored compatibility fingerprint does
+ * not match the reader's current inputs is [HydratedLayout.Incompatible]; the
+ * plan is replanned rather than drawn with stale geometry. Pan, zoom, holder
+ * size, and orientation are intentionally absent from these checks.
  */
 class PersistedLayoutHydrator(
     /**
@@ -45,8 +45,8 @@ class PersistedLayoutHydrator(
     private val fontSha256: () -> String?,
     /**
      * Rebuilds a block's [MaskGeometry] from the page's OCR snapshot for a
-     * durable mask reference (pixel component paths rebuild at hydration,
-     * final-target §3). Null disables component-clip reconstruction (hydrated
+     * durable mask reference. Pixel component paths rebuild at hydration.
+     * Null disables component-clip reconstruction (hydrated
      * layouts keep cell/legacy clips only — safe degradation, never re-planning).
      */
     private val maskGeometryResolver: ((dtoRef: eu.kanade.translation.persistence.artifact.DrawPlanMaskComponentRef) -> MaskGeometry?)? = null,
@@ -65,7 +65,8 @@ class PersistedLayoutHydrator(
      * reader's stored page dims) which must agree with them. [decodeSampleSize]
      * is the page's OCR decode sample size the planner consumed.
      * [expectedCompatibilityFingerprint] is the reader-side recomputation of
-     * the FP-07 fingerprint ([LayoutPlanPublication.compatibilityFingerprint]);
+     * the layout compatibility fingerprint
+     * ([LayoutPlanPublication.compatibilityFingerprint]);
      * null skips the stored-fingerprint comparison (weaker but still safe: the
      * per-field checks above still run).
      */
@@ -88,8 +89,8 @@ class PersistedLayoutHydrator(
         // Defensive double validation (the store reader already validated).
         plan.validationError()?.let { return HydratedLayout.Absent }
 
-        // Compatibility matrix (gate 7.2 / rows 9/10/11) — every check names
-        // its reason; any mismatch re-plans, none ever draws from a stale plan.
+        // Each compatibility check names its reason; any mismatch triggers a
+        // re-plan so a stale plan is never drawn.
         val pinnedDigest = fontSha256()
             ?: return HydratedLayout.Incompatible("production font digest not pinned")
         if (plan.fontIdentity.assetSha256 != pinnedDigest) {
@@ -135,7 +136,7 @@ class PersistedLayoutHydrator(
             return HydratedLayout.Incompatible("compatibility fingerprint changed")
         }
 
-        // Gate 7.3 user-edit authority: the plan rendered the translation text
+        // The plan rendered the translation text
         // chosen AT PUBLICATION time. If any block's current translation has
         // moved, the persisted plan is stale — replan, never draw old text.
         plan.blocks.forEach { planBlock ->
@@ -241,7 +242,7 @@ object PersistedLayoutReaderBridge {
     }
 
     /**
-     *  Stage 7: the chapter-keyed production source. Receives the
+     * The chapter-keyed production source. Receives the
      * page key alongside the bind inputs so the install site can resolve the
      * page's manifest `layoutPlans` pointer directly (the page key is
      * propagated from the reader holder binding — the overlay's legacy
@@ -259,7 +260,7 @@ object PersistedLayoutReaderBridge {
     @Volatile
     internal var source: Source? = null
 
-    /**  Stage 7: the per-chapter production source. */
+    /** The per-chapter production source. */
     @Volatile
     internal var chapterSource: PageKeyedSource? = null
 
@@ -269,9 +270,9 @@ object PersistedLayoutReaderBridge {
     }
 
     /**
-     *  Stage 7: installs (or uninstalls with null) the chapter
-     * hydration source. Called by the reader chapter wiring when the chapter's
-     * artifact store opens/closes;  OFF installs null.
+     * Installs (or uninstalls with null) the chapter
+     * hydration source. Reader chapter wiring calls this when the chapter's
+     * artifact store opens or closes; closing installs null.
      */
     fun installChapterSource(source: PageKeyedSource?) {
         this.chapterSource = source
@@ -285,7 +286,7 @@ object PersistedLayoutReaderBridge {
         runCatching { source?.hydrate(blocks, pageWidth, pageHeight) }.getOrNull()
 
     /**
-     *  Stage 7: page-keyed consult. The chapter source is preferred;
+     * Resolves persisted layout by page key. The chapter source is preferred;
      * a null pageKey, a null/throwing chapter source, or any non-Resolved
      * outcome returns null — the async planner fallback.
      */

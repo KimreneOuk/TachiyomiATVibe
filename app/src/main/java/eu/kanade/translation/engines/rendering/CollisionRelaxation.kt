@@ -15,9 +15,9 @@ private typealias FreeTextWideningPlan = TextLayoutPlanner.FreeTextWideningPlan
 private typealias SharedCellPlan = TextLayoutPlanner.SharedCellPlan
 
 /**
- * Pure collision-relaxation and free-space planning algorithms extracted from
- * [TextLayoutPlanner]. The planner remains the owner of orchestration and
- * delegates these side-effect-free spans through the same private seams.
+ * Pure collision-relaxation and free-space planning used by
+ * [TextLayoutPlanner]. The planner owns orchestration and delegates these
+ * side-effect-free operations through private seams.
  */
 internal object CollisionRelaxation {
 
@@ -1083,7 +1083,7 @@ internal object CollisionRelaxation {
     }
 
     /**
-     *  slice 6: widest symmetric box centered at [centerX] that stays on
+     * Widest symmetric box centered at [centerX] that stays on
      * the page and does not overlap any already-placed obstacle extent whose
      * vertical extent overlaps the candidate's band `[bandTop, bandBottom)`.
      * Extends the [freeSpaceLeft]/[freeSpaceRight] bound scan with that band

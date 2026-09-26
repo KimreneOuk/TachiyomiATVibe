@@ -13,7 +13,7 @@ class MaskGeometry private constructor(
     data class RowSpan(val y: Int, val start: Int, val endExclusive: Int)
 
     /**
-     * TachiyomiAT: one connected component. [stableKey] is LAZY so the  layout
+     * one connected component. [stableKey] is LAZY so the  layout
      * path never materializes a coordinate string — renderer identity uses the
      * compact `(planGeometryId, componentId)` pair instead. Legacy callers/tests
      * that read [stableKey] observe exactly the same value as before.
@@ -246,7 +246,7 @@ class MaskGeometry private constructor(
         }
 
         /**
-         * TachiyomiAT: budgeted ordered RLE → geometry conversion for the
+         * budgeted ordered RLE → geometry conversion for the
          * layout path. Two-pass, no sorting, never [BubbleMaskRle.decode], never a
          * `width*height` allocation, and no coordinate-string key before caps.
          * Internal (not public) because [MaskConversionBudgets] is a module type;
@@ -593,7 +593,7 @@ class MaskGeometry private constructor(
 }
 
 /**
- * TachiyomiAT: why budgeted ordered RLE conversion did not produce a geometry.
+ * why budgeted ordered RLE conversion did not produce a geometry.
  * Returned instead of thrown so layout always receives an explicit result and
  * every input keeps exactly one layout on every fallback path.
  */
@@ -611,7 +611,7 @@ sealed interface OrderedMaskResult {
 }
 
 /**
- * TachiyomiAT: page-scoped budgets and counters for ordered RLE → geometry
+ * page-scoped budgets and counters for ordered RLE → geometry
  * conversion. ONE instance is shared by every mask on a page so
  * per-page work stays bounded:
  *  - [rleIntsScanned]: RLE integers fingerprinted or conversion-scanned;

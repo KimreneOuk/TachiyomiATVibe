@@ -7,7 +7,7 @@ import java.security.MessageDigest
 import java.text.Normalizer
 
 /**
- * TachiyomiAT: deterministic provenance fingerprints for the chapter artifact
+ * deterministic provenance fingerprints for the chapter artifact
  * manifest (artifact lifecycle contract §§4–8). Each builder canonicalizes its
  * direct inputs and configuration with length-prefixed fields, so no delimiter
  * ambiguity can make two different input sets collide.
@@ -139,7 +139,7 @@ object StageFingerprints {
         layoutFingerprint ?: "",
     )
 
-    /** Fingerprint of the complete live-store page snapshot used by Phase 3. */
+    /** Fingerprint of the complete live-store page snapshot. */
     fun pageSnapshot(page: PageTranslation): String = fingerprintIndexed(
         "page-snapshot",
         page.sourceFileName,
@@ -470,16 +470,9 @@ object StageFingerprints {
     }
 
     // -------------------------------------------------------------------------
-    //  wave-2 review F2 consolidation: the envelope planners' composite
-    // fingerprint builders (formerly the planner-local `PlannerFingerprints`
-    // core in `translator/contextual/GlobalEnvelopePlanner.kt`) moved here so
-    // there is exactly ONE canonical encoding for every persisted fingerprint.
-    // The retired local core was byte-identical in discipline
-    // (`len:value|` fields, `[$index]` list elements, `<null>` literal,
-    // SHA-256 lowercase hex over UTF-8), so every value below is byte-for-byte
-    // identical to the pre-consolidation values — pinned by the UNCHANGED
-    // `t924/golden/envelope-plan-small.json` fixture and its
-    // `5643a00c…9df8` plan-fingerprint literal.
+    // Envelope composite fingerprints use the same canonical encoding as
+    // other persisted fingerprints. The encoding is length-prefixed UTF-8
+    // fields hashed with lowercase SHA-256; golden fixtures pin the values.
     // -------------------------------------------------------------------------
 
     /**
@@ -508,11 +501,11 @@ object StageFingerprints {
     )
 
     /**
-     * Per-envelope contributing corpus composite (schemas contract §1.5):
+     * Per-envelope contributing corpus fingerprint:
      * the contributing pages of ONE envelope, in planned order, each as
      * `pageKey to pageOcrContentFingerprint`. Payload order is hashed
-     * verbatim — callers must pass the canonical planned order (same
-     * core-then-context convention as  wave-2 F4).
+     * verbatim — callers must pass the canonical planned order, with core
+     * pages before context-overlap pages.
      */
     fun envelopeContributingCorpusFingerprint(
         contributingPages: List<Pair<String, String>>,
@@ -598,8 +591,8 @@ object StageFingerprints {
         sha256Hex(normalizeText(excerpt).toByteArray(Charsets.UTF_8))
 
     /**
-     * Public canonical field hasher — the single  encoding core
-     * behind every builder in this object (wave-2 F2 consolidation). Named
+     * Public canonical field hasher — the single canonical encoding core
+     * behind every builder in this object. Named
      * builders are preferred; this is the sanctioned core for planner-domain
      * composites whose inputs do not belong in the `artifact` package (e.g.
      * the golden fixtures' page-content markers).
@@ -689,7 +682,7 @@ data class TranslationProvenancePage(
 
 /**
  * One pending page's planning-facing input for
- * [StageFingerprints.envelopePlanInputFingerprint] ( wave-2 F2).
+ * [StageFingerprints.envelopePlanInputFingerprint].
  * Only the block ids matter to the composite — text, geometry and content
  * fingerprints enter through [StageFingerprints.ocrCorpusFingerprint]
  * (`corpusFingerprint`) instead, so this carrier keeps the plan input a

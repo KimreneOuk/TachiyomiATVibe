@@ -90,7 +90,7 @@ import java.security.MessageDigest
  * authoritative.
  */
 /**
- * Typed identity of ONE unresolved preflight page failure (wave-2 review R2):
+ * Typed identity of one unresolved preflight page failure:
  * the durable-failure-ledger input for a page whose OCR_PREFLIGHT attempt
  * could not be resolved — a REJECTED `checkpointOcr` CLOSE transaction or a
  * thrown OCR-lane worker exception.
@@ -170,7 +170,7 @@ internal class ChapterProfileBatchCoordinator(
     private val listener: BatchScheduleListener = BatchScheduleListener.NOOP,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     /**
-     * Wave-2 review R2: the durable failure-ledger writer for an unresolved
+     * Durable failure-ledger writer for an unresolved
      * preflight page. The DEFAULT writer mirrors the legacy
      * `persistUnexpectedBatchStageFailure` idiom: the
      * page patch (OCR FAILED + one `recordAttemptFailure()` charge per
@@ -183,35 +183,28 @@ internal class ChapterProfileBatchCoordinator(
     private val failureRecorder: suspend (PreflightStageFailure) -> Unit =
         { failure -> persistDurablePreflightFailure(store, failure, nowEpochMs) },
     /**
-     * Stage-5 slice A: the typed analysis runner (executor + transport, or a
-     * test fake). `null` keeps the slice-A shell behavior: the run pauses at
-     * ANALYSIS_CHUNKS with a typed CONFIGURATION-class skip counter instead of
-     * producing provider calls without a typed transport.
+     * Optional typed analysis runner (executor + transport, or a test fake).
+     * When absent, the run pauses at ANALYSIS_CHUNKS with a typed
+     * CONFIGURATION-class skip counter rather than making provider calls without
+     * a typed transport.
      */
     private val analysisChunkRunner: AnalysisChunkRunner? = null,
     /**
-     * Director decision (summary-glossary redesign): the one-shot chapter
-     * glossary builder over the durable chunk summaries. `null` is a typed
-     * CONFIGURATION-class gate exactly like [analysisChunkRunner] — the run
-     * pauses at PROFILE_RECONCILE instead of synthesizing without a transport.
+     * One-shot chapter glossary builder over durable chunk summaries. If
+     * absent, the run pauses at PROFILE_RECONCILE with a typed CONFIGURATION
+     * outcome rather than synthesizing without a transport.
      */
     private val glossarySynthesizer: GlossarySynthesizer? = null,
     /**
-     * Typed AI text translator for the envelope phase. `null` is a typed
-     * CONFIGURATION-class gate: the run
-     * plans nothing provider-bound and pauses at TRANSLATE — exactly like
-     * the analysis runner seam above. Production wiring of BOTH seams is
-     * the provider package's acceptance condition; tests drive the seam
-     * with fakes. Wave A: widened to [TextTranslator] so the standard lane
-     * can carry its plain per-page translator; the envelope path still
-     * requires the contextual type through a local cast (a non-contextual
-     * translator on the AI lane takes the same CONFIGURATION pause).
+     * Optional translator for the AI envelope path. If absent, or if the AI
+     * path receives a plain translator without contextual support, the run
+     * pauses at TRANSLATE with a CONFIGURATION outcome. The standard lane may
+     * provide its plain page translator. Tests drive this seam with fakes.
      */
     private val textTranslator: TextTranslator? = null,
     /**
-     * Stage-6 slice A: the Batch sub-limit gate every translation envelope
-     * must ride (wave-4 F-W4-2: ONE allowance per credential for ALL Batch
-     * traffic). Defaults to the process-wide shared gate.
+     * Shared sub-limit gate checked before each translation envelope. One
+     * credential allowance covers all batch traffic.
      */
     private val translationSublimitGate: BatchRequestSublimitGate =
         SharedBatchRequestSublimitGate.instance,
@@ -778,9 +771,9 @@ internal class ChapterProfileBatchCoordinator(
                 "T924 envelope plan deferred: corpus checkpoints changed under the run",
             )
         val sceneStarts = frozenProfileSceneStartIndexes(artifact)
-        // Director decision (2026-09-16): ~5-page batch translation to cut API
-        // calls. The scene-break PREFERENCE would otherwise close an envelope
-        // at nearly every manhwa page (pages mark scene starts), collapsing
+        // Envelopes target about five pages to reduce API calls. The scene-break
+        // preference would otherwise close an envelope at nearly every manhwa
+        // page (pages mark scene starts), collapsing
         // batching to 1 page per call; scene crossing inside an envelope is
         // already flagged (crossesScene) and the glossary subset rides the
         // call, so packing through scene starts is safe. Only the structural
@@ -1331,13 +1324,10 @@ internal class ChapterProfileBatchCoordinator(
      * the shell from the record), while the advisory preflight callers may
      * ignore the return value.
      *
-     * The phase pointer itself MUST never be lost to the
-     * phaseCounters bound (32 keys): 's executor counters re-blew the
-     * wave-7b budget, silently dropping the  FINALIZE record and with
-     * it the durable state a crash resume needs. Counters are best-effort
-     * progress carriers, so an over-bound record publishes with the OLDEST
-     * counter keys trimmed (insertion order) — the phase transition always
-     * lands.
+     * Never drop the phase pointer when phaseCounters exceeds its 32-key
+     * bound. Counters are best-effort progress data, so trim the oldest keys
+     * in insertion order as needed to preserve the state transition for crash
+     * recovery.
      */
     private suspend fun publishRecord(
         artifact: ChapterArtifactEngine,
@@ -1420,13 +1410,13 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     enum class BatchCoordinatorKind {
-        /**  chapter-profile coordinator — the AI-model lane. */
+        /** Chapter-profile coordinator for the AI-model lane. */
         PROFILE_PIPELINE,
 
         /**
-         *  Phase 4 Wave A: the STANDARD-engine lane — the same
-         * coordinator with [standardLane] set: pure FULL OCR
-         * preflight, then per-page legacy-machinery batch translation
+         * The STANDARD-engine lane uses the same
+         * coordinator with [standardLane] set: full OCR
+         * preflight, then per-page standard-engine translation
          * (no glossary, no analysis/profile/envelope work) and the shared
          * engine-agnostic FINALIZE.
          */
@@ -1523,7 +1513,7 @@ internal class ChapterProfileBatchCoordinator(
             "T924 recorded run already COMPLETE; treated as finished (ST-14 idempotent resume)"
 
         /**
-         * Stage-7 review F-3: the run-closure COMPLETE publication was
+         * The run-closure COMPLETE publication was
          * rejected by the artifact store (whole-manifest CAS conflict), so
          * the run is still durably at FINALIZE. Reporting finished here
          * would let the shell mark the chapter done while the durable
@@ -1536,19 +1526,14 @@ internal class ChapterProfileBatchCoordinator(
             "T924 run-closure COMPLETE publication rejected; run stays at FINALIZE (ST-14 resume re-attempts closure)"
 
         /**
-         * Gate 7.8 ENCODED GATE (never activated on device-gated
-         * authority): redefining Batch completion as DISPLAY_READY (all reader
-         * paths hydrate durable plans instead of translating committed) is
-         * allowed ONLY after gate 7.5 — restart/LRU rehydrate with ZERO
-         * [TextLayoutPlanner][eu.kanade.translation.engines.rendering.TextLayoutPlanner]
-         * invocations — has passed ON DEVICE for Pager AND Webtoon (evidence
-         * rows owed per `evidence/stage2/wp9-report.md` §6 + Stage-7 device
-         * evidence). It MUST remain `false` in this slice: runs complete under
-         * the legacy semantics regardless of hydration coverage.
+         * Enables DISPLAY_READY run completion only after durable-layout
+         * hydration has been validated after restart and cache eviction for
+         * both Pager and Webtoon. Until then, batch completion keeps its
+         * existing semantics regardless of hydration coverage.
          */
         const val GATE_7_8_DISPLAY_READY_COMPLETION_ENABLED = false
 
-        /** Stage-7 typed counters (operational only, never fingerprinted). */
+        /** Operational counters; these are not part of a fingerprint. */
         const val COUNTER_FINALIZE = "finalizeEntered"
         const val COUNTER_RUN_COMPLETE = "runComplete"
         const val COUNTER_LAYOUTS_PUBLISHED = "layoutPlansPublished"
@@ -1614,7 +1599,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_SKIPPED_NO_WORK = "analysisSkippedNoWork"
         const val COUNTER_SKIPPED_NO_TRANSPORT = "analysisSkippedNoTransport"
 
-        /** Stage-5 slice B typed counters (operational only, never fingerprinted). */
+        /** Analysis counters; these are operational and not fingerprinted. */
         const val COUNTER_PROFILE_CHUNKS_TOTAL = "profileChunksTotal"
         const val COUNTER_PROFILE_CHUNKS_RECONCILED = "profileChunksReconciled"
         const val COUNTER_PROFILE_CHUNKS_PENDING = "profileChunksPending"
@@ -1624,7 +1609,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_PROFILE_RECONCILE_REJECTED = "profileReconcileRejected"
         const val COUNTER_PROFILE_FREEZE_REJECTED = "profileFreezeRejected"
 
-        /** Stage-6 slice A typed counters (operational only, never fingerprinted). */
+        /** Envelope counters; these are operational and not fingerprinted. */
         const val COUNTER_ENVELOPES_TOTAL = "envelopesTotal"
         const val COUNTER_ENVELOPES_DONE = "envelopesDone"
         const val COUNTER_ENVELOPES_PENDING = "envelopesPending"
@@ -1705,19 +1690,15 @@ internal class ChapterProfileBatchCoordinator(
             ).take(8)}"
 
         /**
-         * Wave-2 review R2 (slice B): the DEFAULT durable failure-ledger
-         * writer, mirroring the legacy `persistUnexpectedBatchStageFailure`
-         * idiom through the store's ATOMIC
-         * [ChapterTranslationStore.persistDurableStageFailure] publication:
-         * the page patch and the `manifest.durableFailures` record are ONE
-         * manifest write, so a restart can never observe one without the other.
+         * Default durable failure-ledger writer. The page patch and its
+         * `manifest.durableFailures` record are one atomic
+         * [ChapterTranslationStore.persistDurableStageFailure] publication;
+         * a restart cannot observe one without the other.
          *
-         * Cap semantics (mirrored from the legacy attempt ledger,
-         * `ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED`): the
-         * record's `retryCount` counts CONSECUTIVE unresolved preflight
-         * attempts and stops at the bound — at the cap the record is
-         * re-stamped as an INTERRUPTED-class, manual-retry-only failure (the
-         * `applyAttemptCapPause` vocabulary) instead of charging forever.
+         * Retry counts measure consecutive unresolved preflight attempts and
+         * stop at [ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED].
+         * At the cap, the record is re-stamped as an INTERRUPTED failure that
+         * requires manual retry rather than charging attempts forever.
          */
         suspend fun persistDurablePreflightFailure(
             store: ChapterTranslationStore,

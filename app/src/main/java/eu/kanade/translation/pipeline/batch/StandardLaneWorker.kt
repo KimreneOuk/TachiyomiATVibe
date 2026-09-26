@@ -164,8 +164,8 @@ internal class StandardLaneWorker(
             renderJoin?.publishPersistedLayoutForCompletedPage(pageKey)
             Unit
         }
-        //  Stage 7  idiom: the overlap loop runs BESIDE the serial
-        // translate loop and is stopped between pages once the tail ends.
+        // The overlap loop runs beside the serial translate loop and stops
+        // between pages when the translation tail ends.
         val overlapLoop: suspend (suspend () -> BatchPass1Outcome) -> BatchPass1Outcome =
             { runTail ->
                 if (overlapScheduler == null) {
@@ -318,7 +318,7 @@ internal class StandardLaneWorker(
 
             // Drained: every ordered page reached its terminal. The drained
             // TRANSLATE record mirrors the AI lane's (counters + stop), then
-            // the SHARED engine-agnostic Stage-7 finalize publishes the run's
+            // the shared engine-agnostic finalizer publishes the run's
             // single COMPLETE.
             publishRecord(
                 artifact,

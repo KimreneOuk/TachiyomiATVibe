@@ -121,7 +121,7 @@ class OnnxBubbleSegmenter(
     var executionProviderLabel: String = "uninitialized"
         private set
 
-    // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor; ORT
+    // pooled DIRECT buffer for the fixed 1x3x640x640 tensor; ORT
     // consumes it in place so it MUST outlive the tensor. maxPoolSize=2 bounds
     // resident native memory. Same contract as OnnxPageTextDetector.
     private val inputBufferPool = DirectBufferPool(
@@ -179,7 +179,7 @@ class OnnxBubbleSegmenter(
                     Paint(Paint.FILTER_BITMAP_FLAG),
                 )
             }
-            // TachiyomiAT: ORT consumes the direct buffer in place (no native copy),
+            // ORT consumes the direct buffer in place (no native copy),
             // so it MUST outlive the tensor — keep referenced until the finally.
             inputBuffer = inputBufferPool.acquire()
             val buffer = inputBuffer
@@ -243,7 +243,7 @@ class OnnxBubbleSegmenter(
         input: FloatBuffer,
     ): Pair<FloatArray, FloatArray> = try {
         current.run(input).also {
-            //  Phase 5 (plan §3.3, amendment §10.8): a completed
+            // A completed
             // accelerated run is the execution proof — SUPPORTED now means
             // created AND executed. CPU/primary runs never touch the
             // accelerator route (CPU is the terminal route, never marked).
@@ -262,7 +262,7 @@ class OnnxBubbleSegmenter(
     }
 
     /**
-     *  Phase 5 (plan §3.3): provenance hook. Only an accelerated label
+     * Only an accelerated label
      * maps to a routing-engine route; a successful run on that route records
      * the execution proof via [ModelRoutingEngine.recordSuccessfulInference].
      */
@@ -279,9 +279,9 @@ class OnnxBubbleSegmenter(
         failed: SegmenterSessionHandle,
         acceleratorError: OrtException,
     ): SegmenterSessionHandle {
-        // §3.2 step 4: record the runtime failure against the model and its
+        // Record the runtime failure against the model and its
         // actual route. Read-only use of the routing engine's existing public
-        // API; no routing-engine state machine is modified here (Phase 5).
+        // API; this does not modify the routing-engine state machine.
         hardwareRouteForLabel(executionProviderLabel)?.let { route ->
             ModelRoutingEngine.recordFailure(
                 ModelRoutingEngine.resolveModelId(modelPath.orEmpty()),
@@ -339,7 +339,7 @@ class OnnxBubbleSegmenter(
         inputBufferPool.clear()
     }
 
-    // TachiyomiAT: frees the pooled direct buffer without tearing down the ONNX
+    // frees the pooled direct buffer without tearing down the ONNX
     // session; wired into per-page OOM relief. Registered in
     // RoiPageRecognitionEngine's reclaim fan-outs like the sibling engines.
     fun reclaimPooledMemory() {

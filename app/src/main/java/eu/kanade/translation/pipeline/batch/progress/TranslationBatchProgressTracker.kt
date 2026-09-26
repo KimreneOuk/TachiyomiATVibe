@@ -51,7 +51,7 @@ class TranslationBatchProgressTracker(
     private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
     private var projection = Projection()
 
-    //  slice 3: the ordered work keys define the batch's real total, so the
+    // The ordered work keys define the batch's real total, so the
     // first snapshot is derived from them at construction — never from an empty
     // store (a delayed/rejected pre-registration must not project 0/0).
     private val _snapshot = MutableStateFlow(snapshotFor(Projection()))
@@ -146,7 +146,7 @@ class TranslationBatchProgressTracker(
                 result.failedCount,
                 result.partialCount,
                 orderedPageKeys.size,
-                //  Phase 5 (spec §4.1): the reconciler's non-durable
+                // The reconciler's non-durable
                 // rejection fact must survive into the terminal snapshot.
                 nonDurableFailure = result.nonDurableFailure,
                 nonDurableFailureReason = result.nonDurableFailure.takeIf { it }?.let {
@@ -167,7 +167,7 @@ class TranslationBatchProgressTracker(
                 reason = outcome.reason ?: "Translation paused; retryable provider work remains",
                 nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
                 retryablePageKeys = outcome.retryablePageKeys,
-                //  Phase 5 (spec §4.1): PERSISTENCE_REJECTED is not a
+                // PERSISTENCE_REJECTED is not a
                 // durable pause — the snapshot must carry the not-saved warning.
                 nonDurableFailure = outcome.isPersistenceRejected,
                 nonDurableFailureReason = outcome.reason.takeIf { outcome.isPersistenceRejected },
@@ -191,7 +191,7 @@ class TranslationBatchProgressTracker(
     private fun snapshotFor(state: Projection): TranslationProgressSnapshot {
         val storePages = store.state.value
         return computeSnapshot(
-            //  slice 3: the batch's ordered keys define its work set AND its
+            // The batch's ordered keys define its work set and its
             // total. A known key whose store placeholder was rejected/delayed is
             // projected as a fresh pending placeholder so the total is never
             // silently zero; completed counts still come only from the store
@@ -223,7 +223,7 @@ class TranslationBatchProgressTracker(
             batchPhase = state.batchPhase,
             chapterId = chapterId,
             aiPageStates = state.aiPageStates,
-            //  Phase 5 (spec §2.1): the batch's registered work set IS its
+            // The batch's registered work set is its
             // trusted total; its aborted remainder is cancelled terminal work.
             cancelledPageKeys = state.cancelledPageKeys,
             expectedPageCountTrusted = true,
@@ -233,7 +233,7 @@ class TranslationBatchProgressTracker(
             pauseAnchorPageKey = state.pauseAnchorPageKey,
             pauseReason = state.pauseReason,
             nextEligibleRetryAtEpochMs = state.nextEligibleRetryAtEpochMs,
-            //  Phase 5 (spec §4.1): bounded non-durable publication warning.
+            // Bounded non-durable publication warning.
             nonDurableFailure = state.nonDurableFailure,
             nonDurableFailureReason = state.nonDurableFailureReason,
             //   the tracker-driven rebuild window carries its own
@@ -257,7 +257,7 @@ class TranslationBatchProgressTracker(
         //   live envelope-plan rebuild counter while batchPhase is
         // REBUILDING; cleared when the plan commits.
         val rebuildProgress: BatchRebuildProgress? = null,
-        /**  Phase 5: keys settled as cancelled by a batch abort. */
+        /** Keys settled as cancelled by a batch abort. */
         val cancelledPageKeys: Set<String> = emptySet(),
     )
 
@@ -296,7 +296,7 @@ class TranslationBatchProgressTracker(
                 batchPhase = TranslationBatchPhase.FINISHED,
                 aborted = true,
                 abortReason = event.reason,
-                //  Phase 5 (spec §2.1 CANCELLED): the unfinished keys are
+                // The unfinished keys are
                 // settled as cancelled terminal work, never fake failures.
                 // Historical event field name: the keys the batch could NOT settle are
                 // exactly the aborted remainder this projection settles as cancelled.
@@ -357,13 +357,13 @@ class TranslationBatchProgressTracker(
             /** Reader-facing committed pages; defaults to the live map for pure callers. */
             displayPageMap: Map<String, PageTranslation>? = null,
             /**
-             *  Phase 5 (spec §2.1 CANCELLED): keys the batch settled as
+             * Keys the batch settled as
              * cancelled — counted as cancelled terminal work unless the page
              * already reached a real terminal stage.
              */
             cancelledPageKeys: Set<String> = emptySet(),
             /**
-             * Phase 5 (spec §2.1): whether [TranslationProgressSnapshot.totalPages]
+             * Whether [TranslationProgressSnapshot.totalPages]
              * is the trusted source total. Defaults to false — trust must be
              * earned from a registered batch work set or a trusted manifest.
              */
@@ -429,7 +429,7 @@ class TranslationBatchProgressTracker(
                 failed = rows.count { it.aiState == AiPageProgressState.FAILED },
                 paused = rows.count { it.aiState == AiPageProgressState.PAUSED },
             )
-            //  Phase 5 (spec §2.1 CANCELLED): only unfinished pages count as
+            // Only unfinished pages count as
             // cancelled — a page that already reached DONE/FAILED keeps its own
             // terminal category and is never double-counted.
             val cancelled = rows.count {
@@ -443,7 +443,7 @@ class TranslationBatchProgressTracker(
                     it.stage ==
                         TranslationProgressStage.QUEUED
                 },
-                // TachiyomiAT: totalStages must track the live BatchPhase count.
+                // totalStages must track the live BatchPhase count.
                 // Was hardcoded `* 4`, which under-counted after BatchPhase.DISPLAY
                 // was added and inflated the fraction past 1.0 (one failed page
                 // across 5 phases = 5 processed / 4 total = 1.25).

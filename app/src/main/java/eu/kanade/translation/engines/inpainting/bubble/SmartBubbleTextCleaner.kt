@@ -58,7 +58,7 @@ class SmartBubbleTextCleaner(
     }
 
     /**
-     * TachiyomiAT: FAST free-text erase driven by SOLID boxes (the prototype
+     * FAST free-text erase driven by SOLID boxes (the prototype
      * `mask_mode = paddle_boxes` behavior for the non-neural path).
      *
      * Boxes are PaddleOCR-v6 line boxes back-projected to page coords by
@@ -91,7 +91,7 @@ class SmartBubbleTextCleaner(
     }
 
     /**
-     * TachiyomiAT: body of [fillSolidBoxes] for one padded SOLID box. The erase
+     * body of [fillSolidBoxes] for one padded SOLID box. The erase
      * mask is the solid padded box; the fill is the **Telea Fast Marching Method**
      * ([OpenCvInpaintEngine.inpaintTelea]) — powered by OpenCV native `Photo.inpaint`.
      *
@@ -194,7 +194,7 @@ class SmartBubbleTextCleaner(
         val localX2 = x2 - cx1
         val localY2 = y2 - cy1
 
-        // TachiyomiAT: scale text-mask pad by region size (see cleanBubbleGroup).
+        // scale text-mask pad by region size (see cleanBubbleGroup).
         val minRegionDim = min(localX2 - localX1, localY2 - localY1).coerceAtLeast(1)
         val mp = BubbleCleanerMath.scaledTextMaskPad(minRegionDim, textMaskPad)
         val ex1 = max(0, localX1 - mp)
@@ -289,7 +289,7 @@ class SmartBubbleTextCleaner(
         )
 
         var finalMask = combinedMask
-        // TachiyomiAT: scale morphology by region size for proportional feather/dilation.
+        // scale morphology by region size for proportional feather/dilation.
         val (scaledFeather, scaledDilation) = BubbleCleanerMath.scaledMorphology(
             minRegionDim,
             featherRadius,
@@ -313,14 +313,14 @@ class SmartBubbleTextCleaner(
         }
         val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, scaledFeather)
 
-        // TachiyomiAT: fill region = mask core + feather ring (alpha > 0), so
+        // fill region = mask core + feather ring (alpha > 0), so
         // buildLocalBackground interpolates the ring and the blend is a soft ramp.
         val fillMask = ByteArray(contextW * contextH)
         for (i in alpha.indices) {
             if (alpha[i] > 0f) fillMask[i] = 1
         }
 
-        // TachiyomiAT: local per-pixel background — gray-rectangle fix (cf. cleanBubbleGroup).
+        // local per-pixel background — gray-rectangle fix (cf. cleanBubbleGroup).
         val localBg = buildLocalBackground(
             contextPixels,
             fillMask,
@@ -341,7 +341,7 @@ class SmartBubbleTextCleaner(
     }
 
     /**
-     * TachiyomiAT: recovery pass when [generateTextMask] finds nothing. Re-scans
+     * recovery pass when [generateTextMask] finds nothing. Re-scans
      * each box with a much lower threshold keyed off the ring-sampled background
      * median (reliable: sampled from the border ring, not the text-filled box),
      * so faint strokes the main pass missed still register.
@@ -404,7 +404,7 @@ class SmartBubbleTextCleaner(
     }
 
     /**
-     * TachiyomiAT: last-resort fallback when even [recoverFaintTextMask] finds
+     * last-resort fallback when even [recoverFaintTextMask] finds
      * nothing. Marks ONLY pixels differing from the ring median by > epsilon,
      * rather than the whole box (avoids the "gray rectangle" / "too much space"
      * artifact). Preserves inter-stroke background; no pixels set on uniform
@@ -545,7 +545,7 @@ class SmartBubbleTextCleaner(
         val mask = ByteArray(zoneW * zoneH)
         val bgCluster = findBackgroundCluster(pixels, x1, y1, zoneW, zoneH, contextW)
 
-        // TachiyomiAT: the in-box bg centroid (bgCluster) drifts toward the text
+        // the in-box bg centroid (bgCluster) drifts toward the text
         // color when the box is mostly text, so faint strokes fall under threshold.
         // The ring-sampled median (border ring = real background) is more reliable.
         // Mark as text if a pixel differs from EITHER reference beyond threshold;
@@ -665,7 +665,7 @@ class SmartBubbleTextCleaner(
     private fun Float.format1(): String = "%.1f".format(this)
 
     /**
-     * TachiyomiAT: per-pixel LOCAL background color, replacing the single flat
+     * per-pixel LOCAL background color, replacing the single flat
      * ring-median fill that produced a "gray rectangle over the whole bounding
      * box" on grayscale/tinted backgrounds.
      *
@@ -687,7 +687,7 @@ class SmartBubbleTextCleaner(
         medianColor: Int,
         preferFlatFill: Boolean = false,
         /**
-         * TachiyomiAT: optional constraint on eligible background source pixels.
+         * optional constraint on eligible background source pixels.
          * When non-null, only pixels NOT in [mask] AND in [bgSourceMask] are used.
          *
          * Fixes the color-bleed artifact where, on a tinted page, the background
@@ -720,7 +720,7 @@ class SmartBubbleTextCleaner(
         }
         val directionalBg = buildDirectionalBackground(pixels, mask, width, height, bgSourceMask)
 
-        // TachiyomiAT: neighbor is a background reference only when outside [mask]
+        // neighbor is a background reference only when outside [mask]
         // AND (if supplied) inside the allowed source region.
         fun isBgSource(ni: Int): Boolean {
             if (mask[ni] != 0.toByte()) return false
@@ -985,7 +985,7 @@ class SmartBubbleTextCleaner(
         val bottomColor = IntArray(n)
         val bottomDist = IntArray(n) { Int.MAX_VALUE }
 
-        // TachiyomiAT: anchor only when outside [mask] AND (if supplied) inside
+        // anchor only when outside [mask] AND (if supplied) inside
         // [bgSourceMask]; this stops the scan reaching past the bubble boundary
         // into surrounding artwork (the color-bleed source).
         fun isAnchor(idx: Int): Boolean {
@@ -1098,7 +1098,7 @@ class SmartBubbleTextCleaner(
     )
 
     /**
-     * TachiyomiAT: pure feathered-fill, the shared body of cleanBubbleGroup /
+     * pure feathered-fill, the shared body of cleanBubbleGroup /
      * cleanSingleRegion, extracted so the feathering fix is unit-testable
      * without an Android Bitmap.
      *

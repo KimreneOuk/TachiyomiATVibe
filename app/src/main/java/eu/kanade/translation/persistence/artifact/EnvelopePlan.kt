@@ -3,10 +3,9 @@ package eu.kanade.translation.persistence.artifact
 import kotlinx.serialization.Serializable
 
 /**
- *  Stage 1 (schemas contract §1.5): the durable whole-chapter envelope
- * plan. Pure data only — planning itself belongs to the pure-planner work
- * package (WP3). Serialized only through the shared [ArtifactDocumentJson]
- * instance.
+ * Durable whole-chapter envelope plan. This is data only; planning belongs
+ * to the contextual translator. Serialized through the shared
+ * [ArtifactDocumentJson] instance.
  */
 
 /**
@@ -46,7 +45,7 @@ data class PlannedEnvelope(
 }
 
 /**
- * The envelope-plan sidecar document (schemas contract §1.5). Field
+ * The envelope-plan sidecar document. Field
  * declaration order is the canonical byte order.
  */
 @Serializable
@@ -63,7 +62,7 @@ data class EnvelopePlan(
     /** Operational only. */
     val createdAtEpochMs: Long,
 ) {
-    /** 01/SC-02 semantic validation; null when the document is usable. */
+    /** Returns null when this document is semantically usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"

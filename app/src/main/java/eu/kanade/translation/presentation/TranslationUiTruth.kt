@@ -19,7 +19,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- *  Phase 5 (spec §1.2, §2): bounded UI vocabulary projected FROM existing
+ * Bounded UI vocabulary projected from existing
  * typed outcomes, durable projections, and auto slot states. This is not a
  * new state machine and adds no scheduler state enum: every value here is a
  * presentation truth derived from store/scheduler facts, and every surface
@@ -171,7 +171,7 @@ object TranslationUiTruth {
     // ------------------------------------------------------------------
 
     /**
-     *  Phase 5  (spec §3.2): timeout copy names the ACTUAL result timer
+     * Timeout copy names the actual result timer
      * that fired and omits unmeasured durations. The native lane and the
      * HTTP+render lane run DIFFERENT timers; a generic "Translation timed out"
      * tells the user nothing about which half of the pipeline stalled.
@@ -187,9 +187,8 @@ object TranslationUiTruth {
     data class PartialDecision(val downloaded: Int, val expectedSourceTotal: Int?)
 
     /**
-     *  Phase 5 N2 (spec §2, §3.3): the finish-first/translate-subset
-     * decision body must describe EVERY chapter in the group — the phase-4
-     * dialog showed only the first chapter's counts.
+     * The finish-first/translate-subset decision body describes every chapter
+     * in the group.
      */
     fun partialDownloadBody(decisions: Array<PartialDecision>): String {
         val choice = "Translate the pages that exist now, or finish the download first?"
@@ -332,7 +331,7 @@ object TranslationUiTruth {
     }
 
     /**
-     *  Phase 5 (spec §1.2 rule 6, §3.1): the single chapter-level
+     * The single chapter-level
      * visibility gate. [previous] is the last surfaced snapshot for the same
      * chapter (may be null); [current] is the fresher durable state. The
      * CURRENT state is always the truth source — [previous] is used only to
@@ -884,7 +883,7 @@ object TranslationUiTruth {
         }
     }
 
-    /**  slice 1 (post-review) subtitle copy for unknown-total phases. */
+    /** Subtitle copy for unknown-total phases. */
     private fun heroPhaseSubtitle(hero: BatchHeroProjection.Phase): String {
         val percent = hero.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
         return when (hero.phase) {
@@ -986,7 +985,7 @@ object TranslationUiTruth {
         return "$value$suffix"
     }
 
-    /**  slice 2: truthful queue position, e.g. "Queued (2nd of 3) — ...". */
+    /** Queue position, e.g. "Queued (2nd of 3) — ...". */
     fun queuedPositionLabel(position: Int, total: Int): String =
         "Queued (${ordinalSuffixOf(position)} of $total) — waiting for earlier batches"
 }

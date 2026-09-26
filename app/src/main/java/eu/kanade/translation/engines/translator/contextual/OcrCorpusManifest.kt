@@ -3,10 +3,10 @@ package eu.kanade.translation.engines.translator.contextual
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 
 /**
- *  WP3 (pure planner, S4): global OCR corpus manifest assembly.
+ * Assembles the chapter-wide OCR corpus manifest.
  *
  * Deterministic, native-free and provider-free assembly of the chapter-wide
- * OCR corpus summary  from per-page OCR fingerprints, plus a pure
+ * OCR corpus summary from per-page OCR fingerprints, plus a pure
  * gap/missing-page detector over the expected page set. No IO, no coroutines;
  * the same input collection in any iteration order produces the identical
  * manifest (sorted canonical order, never input order).
@@ -28,7 +28,7 @@ data class OcrCorpusPageEntry(
     val naturalPageIndex: Int?,
     /**
      * The page's semantic content fingerprint
-     * ([StageFingerprints.pageOcrContentFingerprint], ).
+     * ([StageFingerprints.pageOcrContentFingerprint]).
      */
     val contentFingerprint: String,
     /**

@@ -3,13 +3,13 @@ package eu.kanade.translation.engines.translator.analysis
 import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 
 /**
- *  WP5 slice A: builds the versioned analysis chunk request
+ * Builds the versioned analysis chunk request
  * document. Provider-independent — one JSON document in the model's text
  * channel, identical for every backend.
  *
- * WAVE-2 REVIEW F4 / GAP-3 (BINDING): the `pages` array is emitted in
+ * The `pages` array preserves
  * CORE-THEN-CONTEXT order — the contributing set order of
- * [PlannedAnalysisChunk.contributingPageKeys], which the S4 planner defines
+ * [PlannedAnalysisChunk.contributingPageKeys], which the chunk planner defines
  * and the persisted [eu.kanade.translation.persistence.artifact.AnalysisChunkResult]
  * fingerprints hash (`naturalOrderProven=true`). The request payload order
  * MUST reproduce that order exactly; it is pinned end-to-end by
@@ -30,10 +30,9 @@ object AnalysisRequestBuilder {
      * (`{"blockId":"p12_b3","text":..}` — id + JSON syntax ≈ 12 tokens). The
      * corpus estimator adds this per block so chunk windowing budgets the
      * ENVELOPE, not the raw OCR text (raw-text/4 heuristics undercount CJK
-     * ~2-4x and starve the dispatch window's fixed framing). The former
-     * `excerptHash` echo field was removed with the strict-extraction
-     * contract (summary-glossary redesign) — it carried ~12 more tokens per
-     * block that no consumer reads anymore.
+     * ~2-4x and starve the dispatch window's fixed framing). The request
+     * omits excerpt-hash echoes; evidence hashes are checked from the
+     * transmitted source text.
      */
     const val PER_BLOCK_ENVELOPE_TOKENS = 12
 

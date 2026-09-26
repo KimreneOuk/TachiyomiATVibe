@@ -3,19 +3,17 @@ package eu.kanade.translation.persistence.artifact
 import kotlinx.serialization.Serializable
 
 /**
- *  Stage 1 (schemas contract §1.4): the frozen canonical chapter
- * translation profile and its structured facts. Immutable after publication;
- * monotonic [ChapterTranslationProfile.version]; corrections never mutate the
- * frozen content (design §4.4) — they are recorded as separate candidates.
+ * Frozen chapter translation profile and its structured facts. It is immutable
+ * after publication; corrections are recorded as separate candidates and do
+ * not mutate the frozen content.
  *
  * Shared sub-types ([EvidenceRef], [ProfileFact], [ProfileScene],
- * [AnalyzerProvenance]) are reused by `AnalysisChunkResult` (schemas contract
- * §1.3). Serialized only through the shared [ArtifactDocumentJson] instance
- *
+ * [AnalyzerProvenance]) are also used by `AnalysisChunkResult`. Documents are
+ * serialized through the shared [ArtifactDocumentJson] instance.
  */
 
 /**
- * Evidence anchor (schemas contract §1.4). [stableBlockId] is the OCR
+ * Evidence anchor. [stableBlockId] is the OCR
  * canonical block id (e.g. `p3_b12`); [sourceExcerptHash] is the SHA-256 of
  * the NFC/LF-normalized source excerpt.
  */
@@ -90,33 +88,33 @@ data class AnalyzerProvenance(
     }
 }
 
-/** What kind of statement the fact makes (schemas contract §1.4). */
+/** What kind of statement the fact makes. */
 enum class FactType { ENTITY_IDENTITY, TERM, GENDER, PRONOUN, RELATIONSHIP, TONE, NARRATIVE_STATE }
 
-/** How directly the evidence supports the fact (design §4.3). */
+/** How directly the evidence supports the fact. */
 enum class EvidenceStrength { EXPLICIT, STRONG_CONTEXTUAL, WEAK }
 
 /** Chapter-wide, range-bound, or evidence-point-onward applicability. */
 enum class FactScope { CANONICAL_CHAPTER_WIDE, RANGE_SCOPED, AVAILABLE_FROM }
 
-/** Gender value of a GENDER fact; pronouns are separate PRONOUN facts (design §4.3). */
+/** Gender value of a GENDER fact; pronouns are separate PRONOUN facts. */
 enum class ProfileGender { MALE, FEMALE, UNKNOWN, CONFLICTING }
 
-/** Authority hierarchy of the fact source (design §6.4). */
+/** Authority hierarchy of the fact source. */
 enum class FactProvenance { USER, SERIES_CANON, CHAPTER_ANALYSIS, ROLLING_CONTEXT, LOCAL_INFERENCE }
 
 /** Reconciliation state; weak rejected cues persist as REJECTED notes. */
 enum class FactConflictState { RESOLVED, UNRESOLVED, CONFLICTING, REJECTED }
 
-/** Scene tone/content flags (schemas contract §1.4). */
+/** Scene tone and content flags. */
 enum class ToneFlag { EXPLICIT, INTIMATE, VIOLENT, COMEDIC, SERIOUS, ACTION, OTHER }
 
-/** Speech register of a scene (schemas contract §1.4). */
+/** Speech register of a scene. */
 enum class SceneRegister { CASUAL, FORMAL, ARCHAIC, ROUGH, POLITE, OTHER }
 
 /**
- * The fact representation (schemas contract §1.4); entities/terms/gender
- * facts are typed instances of this shape. Strings that carry names are
+ * Representation for a profile fact. Entity, term, and gender facts use this
+ * shape. Strings that carry names are
  * NFC-normalized before storage.
  */
 @Serializable
@@ -189,7 +187,7 @@ data class ProfileFact(
 }
 
 /**
- * A narrative scene over a bounded page range (schemas contract §1.4).
+ * A narrative scene over a bounded page range.
  * [participants] entries are factIds that must resolve to entity facts.
  */
 @Serializable
@@ -226,13 +224,13 @@ data class ProfileScene(
 
 /**
  * Typed fact instances stored in the profile's [ChapterTranslationProfile.entities]
- * and [ChapterTranslationProfile.term] lists (schemas contract §1.4).
+ * and [ChapterTranslationProfile.term] lists.
  */
 typealias ProfileEntity = ProfileFact
 typealias ProfileTerm = ProfileFact
 
 /**
- * The frozen canonical chapter translation profile (schemas contract §1.4).
+ * The frozen canonical chapter translation profile.
  * Immutable after publication; [version] is operational ordering ONLY and
  * never the sole validity key. Field declaration order is the
  * canonical byte order.
@@ -252,16 +250,16 @@ data class ChapterTranslationProfile(
     val entities: List<ProfileEntity> = emptyList(),
     val terms: List<ProfileTerm> = emptyList(),
     val scenes: List<ProfileScene> = emptyList(),
-    /** Ambiguity retained, never averaged away (design §6.3). */
+/** Ambiguity is retained rather than averaged away. */
     val unresolvedFacts: List<ProfileFact> = emptyList(),
-    /** Never auto-promoted (design §6.4). */
+/** Never auto-promoted. */
     val seriesUpdateCandidates: List<ProfileFact> = emptyList(),
     /** Separate candidates for a future run; never mutate frozen content. */
     val correctionCandidates: List<ProfileFact> = emptyList(),
     /** Operational only. */
     val frozenAtEpochMs: Long,
 ) {
-    /** 01/SC-02 semantic validation; null when the document is usable. */
+/** Returns null when this document is semantically usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"

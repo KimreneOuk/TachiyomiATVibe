@@ -18,13 +18,11 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- *  WP5 slice A (/08): the typed structured-analysis client.
+ * Typed structured-analysis client.
  *
- * `promptText` is EXPLICITLY FORBIDDEN as the analysis transport (
- * — it swallows every failure into an empty string). Analysis goes through
- * this typed interface whose single operation returns the provider's raw text
- * and whose failures stay typed ([ProviderFailureException] subclasses flow
- * through the shared taxonomy unchanged).
+ * The `promptText` path swallows failures into an empty string, so analysis
+ * uses this typed interface. It returns raw provider text and preserves typed
+ * failures through the shared taxonomy.
  */
 interface AnalysisTextTransport {
     /** Provider identity, e.g. `gemini` (AnalyzerProvenance.providerId). */
@@ -92,8 +90,7 @@ sealed interface AnalysisChunkAttempt {
  * already admit every HTTP attempt through the shared bucket. Passing
  * request metadata to the retry driver as well made a SECOND nested
  * admission on the same key, which `maxInFlight = 1` could never grant —
- * every analysis chunk stalled to its foreground-wait deadline and paused
- * (wave-7c review F-1).
+ * every analysis chunk stalled to its foreground-wait deadline and paused.
  */
 class AnalysisChunkExecutor(
     private val transport: AnalysisTextTransport,
@@ -168,8 +165,8 @@ class AnalysisChunkExecutor(
                 sublimitGate.executeBatch(metadata) {
                     // No requestMetadata here: the transport self-admits
                     // through the shared provider bucket exactly once
-                    // (wave-7c review F-1 — a driver-level admission would
-                    // nest a second one the maxInFlight=1 bucket never
+                    // A driver-level admission would nest a second one the
+                    // maxInFlight=1 bucket never
                     // grants).
                     withTranslationRetry(
                         maxAttempts = 3,
@@ -249,7 +246,7 @@ class AnalysisChunkExecutor(
     }
 
     /**
-     * Summary-mode classification (Director decision): free-form text in,
+     * Summary-mode classification: free-form text in,
      * bounded summary out. The strict  validator (shape, id
      * patterns, verbatim hash echo) failed against real providers twice and
      * paused every run — a free-form answer cannot be structurally
@@ -313,7 +310,7 @@ sealed interface AnalysisChunkRunOutcome {
 /** Builds the persisted [eu.kanade.translation.persistence.artifact.AnalyzerProvenance]. */
 object AnalyzerProvenanceFactory {
 
-    /** v2: free-form chunk summaries (Director decision, summary-glossary redesign). */
+    /** Free-form chunk summaries; the persisted analysis schema is versioned separately. */
     const val PROMPT_VERSION = 2
     const val ANALYSIS_SCHEMA_VERSION = AnalysisRequestBuilder.SCHEMA_VERSION
 

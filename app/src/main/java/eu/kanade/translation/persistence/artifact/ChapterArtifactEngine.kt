@@ -17,17 +17,15 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * TachiyomiAT: owns the chapter artifact manifest and the immutable artifact
- * tree for one chapter (lifecycle contract §15).
- *
- * The store owns the chapter artifact manifest and immutable sidecar tree.
- * Candidate generation lifecycle, preconditioned stage commits, atomic
- * committed-pointer promotion, cancel/failure semantics, crash recovery, and
- * bounded retention all operate on artifact documents only. Flat translation
- * files from pre-artifact builds are intentionally not read or migrated.
+ * Owns one chapter's artifact manifest and immutable sidecar tree. Candidate
+ * generation transitions, preconditioned stage commits, committed-pointer
+ * promotion, cancellation and failure state, crash recovery, and bounded
+ * retention all operate on artifact documents. Flat translation files from
+ * pre-artifact builds are not read or migrated.
  */
 /**
- * 03 close-vs-rebase decision for [ChapterArtifactEngine.checkpointOcr].
+ * Controls whether [ChapterArtifactEngine.checkpointOcr] closes the active
+ * candidate or opens a successor.
  *
  * - [CLOSE] (default): close the active BATCH candidate (CANCELLED generation
  *   record, candidate pointer cleared, checkpoint pointer installed in ONE
@@ -46,9 +44,9 @@ import tachiyomi.core.common.util.system.logcat
 enum class OcrCheckpointMode { CLOSE, REBASE }
 
 /**
- *  WP9 (additive): outcome of reading a generic sidecar document through
+ * Outcome of reading a generic sidecar document through
  * its manifest pointer — same semantics as [RunRecordRead]/[OcrCheckpointRead],
- * generalized over the document type for the persisted-layout track
+ * generalized over the document type for persisted layouts
  * (`layoutPlans` / `colorPreparations`).
  */
 sealed interface SidecarRead<out T : Any> {
@@ -56,7 +54,7 @@ sealed interface SidecarRead<out T : Any> {
     data class Usable<T : Any>(val document: T) : SidecarRead<T>
 
     /**
-     * 13: a newer schema owns the semantics — unusable here, bytes
+     * A newer schema owns the semantics — unusable here, bytes
      * preserved untouched, never deleted, quarantined, or overwritten.
      */
     data class UnsupportedVersion(val schemaVersion: Int) : SidecarRead<Nothing>
@@ -73,7 +71,7 @@ class ChapterArtifactEngine(
 ) {
     private val io: ChapterDocumentIo get() = documents.rawIo()
 
-    /** Bounded retention sweep ( Phase 2b). */
+    /** Bounded retention sweep. */
     private val retentionSweep = ArtifactRetention(io, layout)
 
     data class LoadResult(
@@ -191,7 +189,7 @@ class ChapterArtifactEngine(
         }
 
     /**
-     *  Phase 3: reads the chapter's durable attempt-ledger document.
+     * Reads the chapter's durable attempt-ledger document.
      * A future-schema document is returned read-only and never overwritten —
      * the same preservation rule as the manifest.
      */
@@ -206,12 +204,12 @@ class ChapterArtifactEngine(
         documents.publishJson(layout.attemptLedgerFileName, document)
 
     // ------------------------------------------------------------------
-    //  Stage 1 (/22): versioned sidecar publication.
+    // Versioned sidecar publication.
     //
     // The ONLY publication mechanism for the new sidecar kinds is the
     // existing AtomicChapterDocuments publish path, and the ONLY
     // manifest-update mechanism is publishManifestInternal. Sidecars are
-    // published FIRST (content-addressed names, ), and one atomic
+    // published first with content-addressed names, then one atomic
     // manifest publication installs their pointers SECOND — a crash between
     // the two leaves at most an orphan sidecar, never a dangling pointer.
     // On any precondition or publication failure the prior manifest stays
@@ -611,8 +609,7 @@ class ChapterArtifactEngine(
             }
             val committed = page.committed
             if (committed == null) {
-                //  Phase 4 Wave B (blank-page CLOSE gap): a genuinely
-                // blank page (OCR READY, ZERO blocks) never opens an artifact
+                // A blank page (OCR READY, zero blocks) never opens an artifact
                 // candidate — `shouldPersistUpdate` treats the empty-block
                 // write as transient — so the preflight CLOSE side arrives
                 // with NEITHER a candidate NOR a committed bundle. The OCR
@@ -671,7 +668,7 @@ class ChapterArtifactEngine(
             // failure entry is stale — clear it on success (mirror of the
             // TRANSLATION clear in promoteLiveCandidate). Without this a
             // recovered page keeps StoreStatusProjector projecting the
-            // chapter PAUSED forever (wave-3 review F-W3-1).
+            // chapter paused even though the page has recovered.
             durableFailures = manifest.durableFailures - "$pageKey:${ArtifactStage.OCR.name}",
             updatedAtEpochMs = nowEpochMs,
         )
@@ -685,8 +682,8 @@ class ChapterArtifactEngine(
         return when (outcome) {
             is TransactionOutcome.Committed ->
                 if (sweepAfterCommit) {
-                    //  Slice A4 (Amendment D): the checkpoint runs once per
-                    // OCR'd page on the serialized batch lane; a full SAF tree
+                    // The checkpoint runs once for each OCR'd page on the
+                    // serialized batch lane; a full SAF tree
                     // crawl here costs seconds-to-a-minute per page once the
                     // chapter accumulates sidecars (the same measured cost that
                     // removed the open-path sweep for >8-page chapters). Only
@@ -778,7 +775,7 @@ class ChapterArtifactEngine(
     }
 
     // ------------------------------------------------------------------
-    // Phase 3 store transactions (lifecycle contract §§9, 12–13, 15).
+    // Crash-safe store transactions.
     //
     // Every operation is crash-safe: immutable sidecars are published first
     // (temp/validate/rename), the manifest pointer moves second, and a crash
@@ -856,7 +853,7 @@ class ChapterArtifactEngine(
     }
 
     /**
-     *  LI-x: [publishSidecarPointers] with the store's standard ONE-shot
+     *  [publishSidecarPointers] with the store's standard ONE-shot
      * stale-manifest rebase-retry ([retryOnStaleManifest], seam-tagged), for
      * the resume-hydration seams whose caller can hold a snapshot that predates
      * durable publications performed outside the façade (the background health
@@ -944,11 +941,11 @@ class ChapterArtifactEngine(
         layout.ocrCheckpointFile(pageKey, contentFingerprint)
 
     // ------------------------------------------------------------------
-    //  WP9 (additive): generic sidecar reading/publication support for
-    // the persisted-layout track (`layoutPlans` / `colorPreparations`
+    // Generic sidecar reading and publication support for persisted layouts
+    // (`layoutPlans` / `colorPreparations`
     // pointers). Mirrors the readOcrCheckpoint/readRunRecord idioms exactly
     // (quarantine on corrupt, unknown-version preservation) and the
-    // publishActiveRun sidecar-then-pointer pattern; nothing existing changed.
+    // publishActiveRun sidecar-then-pointer pattern.
     // ------------------------------------------------------------------
 
     /** Content-addressed `PageLayoutDrawPlan` sidecar name under `layout/`. */
@@ -964,8 +961,7 @@ class ChapterArtifactEngine(
         layout.profileFile(contentFingerprint)
 
     /**
-     *  Stage-6 slice A (additive, WP9 idiom): content-addressed
-     * `EnvelopePlan` sidecar name under `envelopes/`.
+     * Content-addressed `EnvelopePlan` sidecar name under `envelopes/`.
      */
     internal fun envelopePlanSidecarName(contentFingerprint: String): String =
         layout.envelopePlanFile(contentFingerprint)
@@ -974,7 +970,7 @@ class ChapterArtifactEngine(
     internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.colorPreparationFile(pageKey, contentFingerprint)
 
-    /**  Increment 2: content-addressed `ChapterContextSnapshot` sidecar name under `context/`. */
+    /** Content-addressed `ChapterContextSnapshot` sidecar name under `context/`. */
     internal fun contextSidecarName(contentFingerprint: String): String =
         layout.contextFile(contentFingerprint)
 
@@ -1049,10 +1045,10 @@ class ChapterArtifactEngine(
     }
 
     /**
-     * Generic pointer read with the `readOcrCheckpoint` idiom: well-formedness
+     * Reads a generic pointer: well-formedness
      * gate, parse with quarantine on corruption, unknown-version preservation
      * (NEVER quarantined), kind check + semantic validation with quarantine on
-     * invalid payloads (/17).
+     * invalid payloads.
      */
     fun <T : Any> readSidecarDocument(
         pointer: SidecarPointer,
@@ -1799,7 +1795,7 @@ class ChapterArtifactEngine(
             ?.takeIf { it.startsWith(staleManifestRejectionReason) }
 
     /**
-     *  LI-x: stale-manifest CAS detection exposed to the one seam whose
+     *  stale-manifest CAS detection exposed to the one seam whose
      * publication lives OUTSIDE this store ([EnvelopePlanPublication.publish]):
      * the CAS there keys on the same [staleManifestRejectionReason] prefix
      * so every other rejection reason keeps failing exactly as before
@@ -1882,8 +1878,8 @@ class ChapterArtifactEngine(
         retentionSweep.reconcileRetention(manifest, stagedReachable)
 
     /**
-     * Retention phase 1 (candidate crawl) WITHOUT the facade Mutex — and
-     * deliberately lock-free. It is pure over its inputs (the passed
+     * Collects retention candidates outside the facade mutex. It is pure over
+     * its inputs (the passed
      * manifest + the immutable layout/IO) and takes minutes of SAF round-trips
      * on real storage; taking either the facade Mutex or the scheduler mutex
      * during it froze every page lease in the pipeline (jdb thread dump,
@@ -1896,7 +1892,7 @@ class ChapterArtifactEngine(
         stagedReachable: Set<String> = emptySet(),
     ): Set<String> = retentionSweep.collectOrphanCandidates(manifest, stagedReachable)
 
-    /** Retention phase 2: re-verify and delete under the facade Mutex. */
+    /** Re-verifies candidates and deletes them under the facade mutex. */
     fun deleteVerifiedRetentionCandidates(
         candidateOrphans: Collection<String>,
         manifest: ChapterArtifactManifest,
@@ -1905,7 +1901,8 @@ class ChapterArtifactEngine(
         retentionSweep.deleteVerifiedOrphans(candidateOrphans, manifest, stagedReachable)
 
     /**
-     * Retention phase 2 for the split (off-lock crawl) sweep: resolves the
+     * Resolves the verification manifest under the facade mutex after the
+     * off-lock candidate crawl. It reads the
      * verification manifest ITSELF, under the facade Mutex, from the durable
      * artifact tree. A caller-supplied manifest captured outside this monitor
      * (e.g. the facade's cached snapshot) can lag an in-flight publication by
@@ -1926,10 +1923,9 @@ class ChapterArtifactEngine(
     }
 
     /**
-     *  Slice A4 (Amendment D): event-driven known-orphan deletion.
      * Reclaims explicitly unlinked artifact files without a full tree crawl.
-     * Race register #6: files referenced in stagedReachable are spared; when
-     * [durableManifest] is supplied, files still reachable from it are spared too.
+     * Files referenced by [stagedReachable] or [durableManifest] are preserved
+     * so a concurrent publication cannot delete a still-reachable document.
      */
     fun deleteKnownOrphans(
         candidateOrphans: Collection<String>,
@@ -1948,10 +1944,9 @@ class ChapterArtifactEngine(
     }.getOrNull()?.normalizeSupportedSchema()
 
     /**
-     *  Slice A3 (Amendment A): cache for schema normalization decisions.
-     * Maps schemaVersion -> boolean indicating whether schema normalization is required.
-     * Future-schema guard reads at :130 and :230 (and CAS at :1642) are NEVER cached:
-     * always fresh from disk.
+     * Caches whether a supported schema version needs normalization. Future
+     * schema checks remain fresh so a newer document is never hidden by a
+     * stale normalization decision.
      */
     private val schemaNormalizationDecisionCache = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
 
@@ -1965,12 +1960,10 @@ class ChapterArtifactEngine(
     }
 
     /**
-     * 04: new code reads manifest schema versions 2 and 3 and writes
-     * v3. Older supported manifests load with the additive pointer fields
-     * defaulted and are normalized in memory to the current schema version so
-     * the next publication rewrites them as v3 — new pointers can never ride
-     * inside an old-schema document a rolled-back build would strip. Future
-     * schemas stay untouched (the `>` guard must still see and refuse them).
+     * Normalizes supported older manifests in memory so their next
+     * publication uses the current schema version. This prevents new pointer
+     * fields from being written into a schema that an older build might strip.
+     * Future schemas remain untouched and are rejected by the schema guard.
      */
     private fun ChapterArtifactManifest.normalizeSupportedSchema(): ChapterArtifactManifest =
         if (isNormalizationRequired(schemaVersion)) {
@@ -1990,7 +1983,7 @@ class ChapterArtifactEngine(
             ?: false
 
     // ------------------------------------------------------------------
-    //  LI-x: adoption-write manifest coalescing for the batch-resume
+    //  adoption-write manifest coalescing for the batch-resume
     // rebuild. The resume hydration loop (`buildEnvelopeDispatchWork` →
     // `adoptCheckpointSnapshot` → the façade's open/persist/promote candidate
     // transactions) republished the FULL manifest JSON once or more PER PAGE
@@ -2037,7 +2030,7 @@ class ChapterArtifactEngine(
 
     /**
      * Closes one coalescing window and flushes the stashed manifest when the
-     * OUTERMOST window ends ( LI-x: the rebuild always ends coherent —
+     * OUTERMOST window ends ( the rebuild always ends coherent —
      * `store.artifactManifest` tracks each Committed manifest, so after the
      * final flush the façade equals the durable file). A failed final flush is
      * logged and dropped: the transactions already reported Committed, and the
@@ -2060,14 +2053,14 @@ class ChapterArtifactEngine(
     }
 
     /**
-     *  LI-x: the manifest CAS baseline — the coalesced (intended) manifest
+     *  the manifest CAS baseline — the coalesced (intended) manifest
      * while a window is open, else the durable file. Must only be called while
      * the facade Mutex is held by the owning ChapterTranslationStore.
      */
     private fun casBaselineManifest(): ChapterArtifactManifest? =
         coalescedManifest ?: readManifest()
 
-    //  LI-x: callers hold the owning ChapterTranslationStore facade Mutex.
+    //  callers hold the owning ChapterTranslationStore facade Mutex.
     // The coalescing stash therefore shares the one mutable-state lock with
     // every transaction. Lock order is facade Mutex → per-name document lock;
     // document/open locks never acquire the facade Mutex.
@@ -2093,7 +2086,7 @@ class ChapterArtifactEngine(
             if (syncToDisk) coalescedSyncToDisk = true
             coalescedPublications += 1
             if (coalescedPublications % manifestCoalescingFlushEvery == 0) {
-                //  LI-x: bounded unflushed state — flush through the normal
+                //  bounded unflushed state — flush through the normal
                 // path WITHOUT closing the window (depth stays > 0).
                 val pending = coalescedManifest
                 coalescedManifest = null

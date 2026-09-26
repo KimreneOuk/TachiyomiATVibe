@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
 /**
- * TachiyomiAT: canonical reader/drawer display state derived from the committed
+ * canonical reader/drawer display state derived from the committed
  * display bundle plus candidate/failure metadata. The drawer, chapter-list badge,
  * progress tracker, and reader must all consume this state instead of inferring
  * readiness from OCR or translation flags (batch plan §6).

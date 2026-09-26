@@ -23,11 +23,10 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * Director decision (summary-glossary redesign): the frozen profile's
- * operative content is a SMALL identity sheet — recurring characters and
- * places ONLY. One synthesis call over the durable chunk summaries produces
- * it; anything beyond identity anchors is noise and is dropped here, never
- * by the model's good behavior alone.
+ * The frozen profile contains a small identity sheet of recurring characters
+ * and places. One synthesis call over durable chunk summaries produces it;
+ * this class drops content beyond identity anchors rather than relying on the
+ * model to do so.
  */
 sealed interface GlossarySynthesisOutcome {
 

@@ -10,7 +10,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * TachiyomiAT: Hardware Discovery Engine and Session-Scoped Latching Circuit Breaker.
+ * Hardware Discovery Engine and Session-Scoped Latching Circuit Breaker.
  *
  * Resolves the inference execution provider (QNN HTP NPU, NNAPI, or CPU) during cold
  * boot initialization and latches the decision in a volatile field. Live page

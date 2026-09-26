@@ -3,7 +3,7 @@ package eu.kanade.translation.persistence.artifact
 import java.security.MessageDigest
 
 /**
- * TachiyomiAT: chapter-scoped artifact storage layout (lifecycle contract §15).
+ * chapter-scoped artifact storage layout (lifecycle contract §15).
  *
  * Given a chapter translation file base name `X` (e.g. `Group_Chapter 1`), the
  * manifest is the sibling document `X.manifest.json` — matching the existing
@@ -51,11 +51,11 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     private val generationDirectoryName = "$artifactRootDirectoryName/generations"
     private val glossaryDirectoryName = "$artifactRootDirectoryName/glossary"
 
-    //  Phase 3: durable attempt-ledger sidecar directory. One bounded
+    // Durable attempt-ledger sidecar directory. One bounded
     // document per chapter — not versioned sidecars — so a single fixed name.
     private val attemptsDirectoryName = "$artifactRootDirectoryName/attempts"
 
-    //  Stage 1: versioned sidecar directories. File names are
+    // Versioned sidecar directories. File names are
     // content-addressed `f-<sha256(contentFingerprint)>.json`; page-scoped
     // kinds (OCR checkpoints, layout plans, color preparations) nest under the
     // injective pageSegment(pageKey). All are managed so retention bounds them.
@@ -101,14 +101,13 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     fun glossaryFile(version: Int): String = "$glossaryDirectoryName/chapter.glossary.$version.json"
 
-    /**  Phase 3: the chapter's single durable attempt-ledger document. */
+    /** The chapter's single durable attempt-ledger document. */
     val attemptLedgerFileName: String get() = "$attemptsDirectoryName/ledger.json"
 
-    //  Stage 1: content-addressed sidecar names per kind.
+    // Content-addressed sidecar names per kind.
     // Equal content maps to an equal name, so re-publication is idempotent and
     // first admission can use renameNoReplace. The caller supplies the
-    // semantic content fingerprint; the name hashes it (fingerprint functions
-    // are Phase 2).
+    // semantic content fingerprint; the name hashes it.
 
     val runRecordsRootDirectory: String get() = runRecordsDirectoryName
     val ocrCheckpointsRootDirectory: String get() = ocrCheckpointDirectoryName

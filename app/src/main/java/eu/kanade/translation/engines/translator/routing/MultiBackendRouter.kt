@@ -4,7 +4,7 @@ import eu.kanade.translation.engines.translator.ProviderRequestKey
 import java.util.Locale
 
 /**
- * Milestone M5 (Provider 5 / 6): Multi-backend router and per-backend execution policy.
+ * Routes translation operations to provider backends and their request policies.
  *
  * Directs different pipeline operations (e.g. analysis chunks vs envelope translation)
  * to dedicated provider backends, allowing concurrent execution across distinct quota buckets.

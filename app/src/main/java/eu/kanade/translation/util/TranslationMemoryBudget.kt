@@ -376,7 +376,7 @@ object TranslationMemoryBudget {
     }
 
     /**
-     * TachiyomiAT: gate used before auto-translate enqueues prefetch pages. The
+     * gate used before auto-translate enqueues prefetch pages. The
      * translator's per-page decode runs concurrently with the reader's own decode
      * of the currently-viewed page (especially for downloaded chapters, where
      * both read the same local file with no network latency to space them out).
@@ -436,7 +436,7 @@ object TranslationMemoryBudget {
     }
 
     /**
-     * TachiyomiAT: cached value of the translation_diagnostics preference. Read
+     * cached value of the translation_diagnostics preference. Read
      * lazily once and cached for the process lifetime; the pref rarely changes
      * mid-session and re-reading SharedPreferences on every hot-path log call
      * would defeat the purpose of gating. Falls back to false if Injekt isn't

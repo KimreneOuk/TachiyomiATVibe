@@ -168,7 +168,7 @@ internal class SinglePageOnnxPhase(
         PageDecode.decodePageBitmapAtSize(fileName, sampleSize, streams)
 
     /**
-     *  Phase 3: correlated `source_decode` stage boundary. The run arrives
+     * Correlated `source_decode` stage boundary. The run arrives
      * through the installed [TranslationTrace] element; outside a traced
      * coroutine this is a fail-open NO_OP span. Both call sites (fresh decode
      * and inpaint-resume re-decode) are measured; repeated intervals accumulate
@@ -270,7 +270,7 @@ internal class SinglePageOnnxPhase(
 
             val workPlan = eu.kanade.translation.pipeline.planning.PageWorkPlanner.plan(adjustedResume, force)
 
-            //  Phase 3: resolve the resume plan onto the run trace (run_end
+            // Resolve the resume plan onto the run trace (run_end
             // carries the resolved plan; run_start held the initial default).
             val traceRun = TranslationTrace.currentRun()
             if (traceRun != null) {
@@ -342,7 +342,7 @@ internal class SinglePageOnnxPhase(
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT single-page resume: render from cleaned image pageKey=$pageKey cleaned=${adjustedResume.cleanedImageName}"
                         }
-                        //   (§4.4): the render tail persists the page —
+                        // The render tail persists the page —
                         // defer it OUTSIDE the native permit when the boundary
                         // supplied a deferral queue (the cleaned bitmap already
                         // crosses the permit boundary by design).
@@ -575,7 +575,7 @@ internal class SinglePageOnnxPhase(
             )
         } finally {
             if (!needsHttpRender) {
-                //   (§4.4): the store flush + stream-registry clear are
+                // The store flush and stream-registry clear are
                 // storage publication — defer them OUTSIDE the native permit
                 // (enqueued AFTER the resume tails, so publication order is
                 // identical to the inline sequence). The engine-pool reclaim
@@ -702,7 +702,7 @@ internal class SinglePageOnnxPhase(
             chapter.name,
             chapter.scanlator,
         )
-        //   (§4.4): cleaned-image persistence and the render tail are
+        // Cleaned-image persistence and the render tail are
         // storage publication — defer them OUTSIDE the native permit when the
         // boundary supplied a deferral queue. The tail stays fail-closed: a
         // persist failure still recycles the bitmap, marks render FAILED and
@@ -747,7 +747,7 @@ internal class SinglePageOnnxPhase(
     }
 
     /**
-     * TachiyomiAT: retry-then-block for inpainting. When the first recognize()
+     * retry-then-block for inpainting. When the first recognize()
      * produced no cleaned bitmap (inpaint failed/unavailable), re-run the full
      * recognize() pipeline on a half-sampled decode before giving up.
      *
@@ -834,19 +834,19 @@ internal class SinglePageOnnxPhase(
     }
 
     /**
-     * TachiyomiAT: STAGE 1 of the staged batch pipeline — detect + OCR only.
+     * Batch preflight: detect and OCR only.
      *
      * Splits the fused [processSinglePage] (which calls recognize = analyze then
      * inpaint back-to-back) so the batch path can run DETECT+OCR across a batch
      * of pages first (persisting blocks + ocrStatus=READY), then inpaint them in
-     * a later stage. analyze() is detect+OCR; it populates [PageTranslation.blocks]
+     * a later pass. analyze() is detect+OCR; it populates [PageTranslation.blocks]
      * and stashes [PageTranslation.allTextDetections] for inpaint to read back,
-     * and leaves cleanedBitmap null (inpaint's job). See ResumeOrdering /
-     * translateBatchInternal for the orchestration.
+     * and leaves cleanedBitmap null for inpainting. The batch coordinator
+     * controls this ordering.
      *
      * The bitmap is recycled by the CALLER (the batch loop) after this returns —
      * one page's bitmap is alive at a time, matching the existing memory model.
-     * For the inpaint stage the page is re-decoded (decodePageBitmapForTranslation
+     * For inpainting the page is re-decoded (decodePageBitmapForTranslation
      * already buffers source bytes into a private ByteArray, so no shared-stream
      * race with a reader display decode).
      *
@@ -863,7 +863,7 @@ internal class SinglePageOnnxPhase(
         val pageStart = System.nanoTime()
         var pageTranslation: PageTranslation
         val finalSampleSize = decoded.sampleSize
-        // Phase 3 OCR-write precondition: the page version and prior OCR
+        // The OCR-write precondition captures the page version and prior OCR
         // identity observed before the native pass. Anything that touched the
         // page during recognition makes this writer stale and the merge is
         // rejected instead of clobbering the newer work.
@@ -941,7 +941,7 @@ internal class SinglePageOnnxPhase(
         // Persist blocks + the durable inpaint mask so this stage is resumable: a later
         // run skips pages whose ocrStatus is READY with non-empty blocks AND a mask matching
         // the current inpaint revision. The mask lets detector-only + watermark regions
-        // still get erased after a resume/reopen. Phase 3: preconditioned merge — a stale
+        // still get erased after a resume/reopen. The preconditioned merge ensures a stale
         // worker cannot overwrite a page a newer writer owns, and a failed recognition
         // keeps the existing reusable blocks while recording the failure diagnostics.
         val ocrPatch = store.mergeOcr(
@@ -972,7 +972,7 @@ internal class SinglePageOnnxPhase(
     }
 
     /**
-     * TachiyomiAT: STAGE 2 of the staged batch pipeline — inpaint only.
+     * Batch inpainting: run inpaint only on an analyzed page.
      *
      * Re-decoded [bitmap] + the analyzed [pageTranslation] (blocks +
      * allTextDetections) → cleaned bitmap, returned for downstream JPEG
@@ -985,7 +985,7 @@ internal class SinglePageOnnxPhase(
      * cleanedImageName — those are written by the caller in
      * [persistCleanedBitmap] after the JPEG encode moves off the translation
      * permit. The cleanedBitmap on the returned translation stays alive for
-     * the downstream render stage (caller draws translated text onto it).
+     * the downstream render pass (the caller draws translated text onto it).
      */
     suspend fun inpaintPage(
         fileName: String,
@@ -1165,7 +1165,7 @@ internal class SinglePageOnnxPhase(
         pageTranslation.originalImgHeight = decoded.originalHeight.toFloat()
         pageTranslation.sourceFileName = fileName
         pageTranslation.updatedAt = System.currentTimeMillis()
-        //  Phase 3: when the page runs inside a correlated trace, the
+        // When the page runs inside a correlated trace, the
         // ambiguous local pageStart total is replaced by the correlated run
         // total (parity: both are wall-clock ms for the page work). Outside a
         // trace the legacy local total is kept.
@@ -1189,7 +1189,7 @@ internal class SinglePageOnnxPhase(
     }
 
     /**
-     *  Phase 3 ( design §3.2): an explicit user force clears the
+     * An explicit user force clears the
      * crash-loop cap bookkeeping (consecutive counter + INTERRUPTED durable
      * failure) so the user's retry is admitted — the cap binds auto-retry
      * loops, never the user. Fail-open: a failed clear never blocks the retry.

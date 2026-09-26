@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.translator.contextual
 
 /**
- * TachiyomiAT: immutable, structured result of a single contextual translator request.
+ * immutable, structured result of a single contextual translator request.
  * Replaces in-place [TranslationBlock] mutation so caller can log/account every rejected,
  * missing, or duplicate id.
  */
@@ -12,7 +12,7 @@ data class ContextualTranslationBatch(
      */
     val idToBlockIndex: Map<String, TargetLocation>,
     val results: List<ContextualTranslationResult>,
-    /** True for the Phase 1 batch envelope; legacy reader responses remain permissive. */
+    /** True for the strict batch envelope; legacy reader responses remain permissive. */
     val strictValidation: Boolean = false,
     /** Protocol version carried by a strict response, or null for the legacy path. */
     val protocolVersion: Int? = null,

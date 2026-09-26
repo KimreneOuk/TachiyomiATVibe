@@ -292,14 +292,10 @@ internal class BatchLaneWorkers(
         expectedPrecondition,
     )
 
-    // ---- TachiyomiAT Phase 5: consolidated sequential coordinator ----
-    // The batch schedule is driven by the coordinator pass (one serialized
-    // native lane and one ordered translation lane;  zero-legacy
-    // removed the SBC AI-chunk machinery). The pipeline supplies the adapter
-    // implementations of [NativeLaneWorker] / [TranslatorLaneWorker] that
-    // reuse the existing OCR/inpaint/persist/translate/render helpers above,
-    // so the heavy Android/ONNX/HTTP logic is unchanged — only the schedule
-    // is centralized.
+    // The coordinator pass owns the batch schedule: one serialized native
+    // lane and one ordered translation lane. The pipeline supplies
+    // [NativeLaneWorker] and [TranslatorLaneWorker] implementations that use
+    // the existing OCR, inpaint, persistence, translation, and render helpers.
     //
     // TranslatorComputeClass drives lane routing: ML Kit (LOCAL_COMPUTE) is kept
     // inline on the native lane so its on-device inference never overlaps native
@@ -448,7 +444,7 @@ internal class BatchLaneWorkers(
             }
             producedDecoded = decoded
 
-            //  Phase 4: page queueing on the pipeline native lane. The
+            // Page queueing on the pipeline native lane. The
             // span settles when admission grants (first statement inside the
             // lane) and is re-settled (idempotently) on timeout/failure.
             val nativeQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
@@ -592,7 +588,7 @@ internal class BatchLaneWorkers(
                 return
             }
 
-            //  Phase 4: page queueing on the pipeline native lane for the
+            // Page queueing on the pipeline native lane for the
             // inpaint pass. The span settles on admission (first statement in
             // the lane) and is re-settled (idempotently) on timeout/failure.
             val inpaintQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
@@ -674,7 +670,7 @@ internal class BatchLaneWorkers(
             val cleaned = target.cleanedBitmap
             if (cleaned != null) {
                 val companionDir = ensureCompanionDir()
-                //  Phase 4: cleaned-image publication substage with typed
+                // Cleaned-image publication substage with typed
                 // outcome; settles even when the persist call throws.
                 val persistSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.CLEANED_PERSIST,
@@ -883,7 +879,7 @@ internal class BatchLaneWorkers(
             }
             val dependencyReadyAfterNative = p.ocrStatus == StageStatus.READY ||
                 p.ocrStatus == StageStatus.TEXTLESS
-            //  Phase 6: the plan's PRIOR_PAGE_INCOMPLETE marker is a
+            // The plan's PRIOR_PAGE_INCOMPLETE marker is a
             // batch-start snapshot; whether the predecessor is STILL incomplete
             // is a live question. On the ordered standard lane a predecessor
             // that has already reached a terminal translation outcome must not
@@ -900,7 +896,7 @@ internal class BatchLaneWorkers(
                     expectedBatchFingerprints.translation == null ||
                         p.translationFingerprint == expectedBatchFingerprints.translation
                     )
-            //  Phase 6: standard-lane twin of the AI gap check. The plan
+            // The standard-lane counterpart to the AI gap check. The plan
             // snapshot cannot see commits that happen while the pass runs —
             // the batch's own unblocked pages, or a manual tap that finished
             // mid-pass ( manual output is authoritative and must never be
@@ -1021,7 +1017,7 @@ internal class BatchLaneWorkers(
                 // Standard (per-page) path: translate, validate, persist, render.
                 var succeeded = false
                 var failedOutcome: ChunkCompletionOutcome? = null
-                //  Phase 3 ( design §3.2): durable attempt entry BEFORE
+                // Persist the durable attempt entry before
                 // the paid call; resolved on any completed call (success or
                 // typed provider failure). Write failure is fail-open.
                 runCatching {

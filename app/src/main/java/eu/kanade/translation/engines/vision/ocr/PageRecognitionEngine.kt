@@ -10,7 +10,7 @@ interface PageRecognitionEngine : Closeable {
     suspend fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? = null
 
     /**
-     * TachiyomiAT: release engine-owned off-heap/pooled memory that persists
+     * release engine-owned off-heap/pooled memory that persists
      * across pages but that [close] would also free. Leaves the engine usable.
      *
      * Called by OOM recovery: ONNX engines (notably MangaOcr's KV-cache buffers)
@@ -21,7 +21,7 @@ interface PageRecognitionEngine : Closeable {
     fun reclaimPooledMemory() {}
 
     /**
-     * TachiyomiAT: force release native buffers and pools when memory pressure is high.
+     * force release native buffers and pools when memory pressure is high.
      */
     fun forceReleaseNativeBuffers() {}
 

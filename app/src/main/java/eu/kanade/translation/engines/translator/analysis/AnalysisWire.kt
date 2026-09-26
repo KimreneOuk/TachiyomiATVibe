@@ -1,24 +1,22 @@
 package eu.kanade.translation.engines.translator.analysis
 
 /**
- *  WP5 slice A: the typed structured-analysis wire
- * contract. This file defines the RUN IDENTITY inputs and the response-side
+ * Typed structured-analysis wire contract. This file defines the run identity
+ * inputs and response-side
  * parsed values that survive validation; the request document itself is built
  * by [AnalysisRequestBuilder] and the response is walked by
  * [AnalysisResponseValidator].
  *
- * Wire JSON is EPHEMERAL (never persisted), so it does not go through the
- * durable `ArtifactDocumentJson` rules ( scopes durable documents
- * only). The persisted subset is the `AnalysisChunkResult` DTO.
+ * Request and response JSON are wire payloads, not persisted documents. The
+ * durable validated subset is the `AnalysisChunkResult` DTO.
  */
 
 /**
- * Run-scoped identity for one analysis request tree ( envelope
+ * Run-scoped identity for one analysis request tree (`run` and `policy`
  * `run` + `policy` blocks). Hashes are privacy-safe scope hashes — never raw
  * titles or keys. A scope the coordinator cannot prove (e.g. the manga-level
  * scope, absent from the chapter-local machine) is carried as an explicit
- * `ABSENT`-style value, never an empty string (absent-authority precedent,
- * provider-analysis contract §4.1).
+ * `ABSENT`-style value, never an empty string.
  */
 data class AnalysisRunIdentity(
     val runId: String,
@@ -28,9 +26,9 @@ data class AnalysisRunIdentity(
     val chapterKeyHash: String,
     val sourceLanguage: String,
     val targetLanguage: String,
-    /** Prompt + schema + limits identity ( `analysisPolicyFingerprint`). */
+    /** Prompt, schema, and limits identity (`analysisPolicyFingerprint`). */
     val analysisPolicyFingerprint: String,
-    /** Whole-corpus identity ( `ocrCorpusFingerprint`). */
+    /** Whole-corpus identity (`ocrCorpusFingerprint`). */
     val ocrCorpusFingerprint: String,
     val maxOutputTokens: Int,
 ) {
