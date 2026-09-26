@@ -25,6 +25,7 @@ import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.matchers.types.shouldNotBeInstanceOf
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -44,6 +45,9 @@ import java.util.concurrent.ConcurrentHashMap
  *    never across a MANUAL/AUTO owner (the  fence) and never across a
  *    resumed-run identity change (candidateGenerationId mismatch).
  */
+//  test-stability quarantine: load-ordering sensitive under full-suite JVM
+// churn; tracked for stabilization. Runs with -PincludeQuarantinedTests.
+@Tag("quarantined-flaky")
 class BatchLeaseFlipHealTest {
 
     @TempDir

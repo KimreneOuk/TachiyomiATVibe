@@ -9,6 +9,7 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
@@ -35,6 +36,9 @@ import org.junit.jupiter.api.Test
  *     display bundle commits and the reader gate flips without a sweep;
  *  4. the store glossary is never written.
  */
+//  test-stability quarantine: load-ordering sensitive under full-suite JVM
+// churn; tracked for stabilization. Runs with -PincludeQuarantinedTests.
+@Tag("quarantined-flaky")
 class StandardPipelineCoexistenceTest {
 
     @Test

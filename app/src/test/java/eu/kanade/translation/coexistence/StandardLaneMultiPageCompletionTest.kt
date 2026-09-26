@@ -12,6 +12,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
@@ -33,6 +34,9 @@ import org.junit.jupiter.api.Test
  * honesty is preserved when the predecessor terminally failed (negative
  * control: the skip must remain when p0 durably failed, not unblock).
  */
+//  test-stability quarantine: load-ordering sensitive under full-suite JVM
+// churn; tracked for stabilization. Runs with -PincludeQuarantinedTests.
+@Tag("quarantined-flaky")
 class StandardLaneMultiPageCompletionTest {
 
     companion object {

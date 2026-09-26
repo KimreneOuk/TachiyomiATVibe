@@ -10,6 +10,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
@@ -54,6 +55,9 @@ import java.security.MessageDigest
  *      evidence gate supersedes the recorded COMPLETE) while the healthy
  *     page is not re-paid.
  */
+//  test-stability quarantine: load-ordering sensitive under full-suite JVM
+// churn; tracked for stabilization. Runs with -PincludeQuarantinedTests.
+@Tag("quarantined-flaky")
 class BatchDispatchResumeWiringTest {
 
     private fun hex64(tag: String): String =

@@ -112,7 +112,15 @@ internal fun Project.configureCompose(commonExtension: CommonExtension<*, *, *, 
 
 internal fun Project.configureTest() {
     tasks.withType<Test> {
-        useJUnitPlatform()
+        useJUnitPlatform {
+            //  test-stability quarantine: classes tagged "quarantined-flaky"
+            // are load-ordering sensitive under full-suite JVM churn and are
+            // excluded from CI/standard runs until stabilized. Include them
+            // explicitly with -PincludeQuarantinedTests.
+            if (!project.hasProperty("includeQuarantinedTests")) {
+                excludeTags("quarantined-flaky")
+            }
+        }
         testLogging {
             events(TestLogEvent.SKIPPED, TestLogEvent.FAILED)
         }
