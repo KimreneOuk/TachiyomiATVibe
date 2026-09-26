@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
@@ -33,13 +33,12 @@ import java.util.zip.CRC32
 import java.util.zip.DeflaterOutputStream
 
 /**
- * Pins the two no-wipe gates of `DurableChapterStatusResolver.withProbeStore`
- * (entry-path slice, review F5.1): the whole-cache wipe fires only when a
+ * Pins the two no-wipe gates of `DurableChapterStatusResolver.withProbeStore`:
+ * the whole-cache wipe fires only when a
  * probe pass actually CREATES the store — the one moment an open can advance
  * durable truth via the one-way rescue. A held (reused) probe performed no
  * open, and an already-active store short-circuits before the probe path;
- * neither may thrash the cache (the slice existed because per-pass wipes
- * reduced it to a single surviving entry).
+ * neither may thrash the cache.
  *
  * The sentinel key is one the resolver can never produce for this chapter,
  * because a created probe pass may legitimately re-cache the resolved status

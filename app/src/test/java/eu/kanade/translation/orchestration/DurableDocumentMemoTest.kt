@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source

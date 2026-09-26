@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactEngine
@@ -27,7 +27,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- *  U.1/U.7: the live batch projection stamps the durable run record's
+ * The live batch projection stamps the durable run record's
  * rebuild/restore truth onto the FIRST_PASS snapshot — an adopted-page
  * OCR_PLAN record projects RESTORING with the restored/remaining payload, a
  * post-preflight record projects the plain live phase, and a chapter without

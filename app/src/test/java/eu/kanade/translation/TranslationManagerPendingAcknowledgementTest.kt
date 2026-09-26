@@ -1,7 +1,6 @@
 package eu.kanade.translation
 
 import android.content.Context
-import eu.kanade.translation.manager.acknowledgePendingTranslationState
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.orchestration.TranslationManager
@@ -32,15 +31,26 @@ class TranslationManagerPendingAcknowledgementTest {
     }
 
     @Test
-    fun `starting acknowledgement publishes immediately without dropping other requests`() {
-        val current = mapOf(
-            7L to TranslationRequestState(7L, TranslationRequestPhase.WAITING_FOR_DOWNLOAD),
+    fun `starting acknowledgement publishes immediately without dropping other requests`() = runBlocking<Unit> {
+        val committed = mutableListOf<Triple<Long, TranslationRequestPhase, String?>>()
+        val laneJob = SupervisorJob()
+        val existingRequest = TranslationRequestState(7L, TranslationRequestPhase.WAITING_FOR_DOWNLOAD)
+        val manager = uninitializedManager(
+            pendingRequestStore = recordingStore(committed),
+            laneJob = laneJob,
+            initialRequests = mapOf(7L to existingRequest),
         )
 
-        val acknowledged = acknowledgePendingTranslationState(current, listOf(7L, 8L))
+        try {
+            manager.acknowledgeTranslationRequests(listOf(chapter))
 
-        acknowledged[7L]?.phase shouldBe TranslationRequestPhase.STARTING
-        acknowledged[8L]?.phase shouldBe TranslationRequestPhase.STARTING
+            manager.pendingTranslationRequests.value[7L]?.phase shouldBe TranslationRequestPhase.WAITING_FOR_DOWNLOAD
+            manager.pendingTranslationRequests.value[10L]?.phase shouldBe TranslationRequestPhase.STARTING
+            manager.pendingTranslationRequests.value.keys shouldBe setOf(7L, 10L)
+            drainPersistenceLane(laneJob)
+        } finally {
+            laneJob.cancel()
+        }
     }
 
     @Test
@@ -155,6 +165,7 @@ class TranslationManagerPendingAcknowledgementTest {
     private fun uninitializedManager(
         pendingRequestStore: TranslationPendingRequestStore,
         laneJob: CompletableJob = SupervisorJob(),
+        initialRequests: Map<Long, TranslationRequestState> = emptyMap(),
     ): TranslationManager {
         val unsafeClass = Class.forName("sun.misc.Unsafe")
         val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
@@ -163,13 +174,13 @@ class TranslationManagerPendingAcknowledgementTest {
         val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
         setField(manager, "context", mockk<Context>(relaxed = true))
         setField(manager, "pendingRequestStore", pendingRequestStore)
-        val pendingState = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap())
+        val pendingState = MutableStateFlow(initialRequests)
         setField(manager, "pendingTranslationRequestsState", pendingState)
         setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
         setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "pendingRequestMutationLock", Any())
         setField(manager, "storeScope", CoroutineScope(laneJob + Dispatchers.IO))
-        //  slice 2: generation/attach/group state the coordinator resolves.
+        // Generation, download-attachment, and group state used by the request coordinator.
         setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
         setField(manager, "pendingGroupIdSequence", AtomicLong(0))

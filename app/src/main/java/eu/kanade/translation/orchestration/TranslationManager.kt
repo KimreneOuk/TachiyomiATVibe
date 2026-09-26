@@ -6,22 +6,9 @@ import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ArtifactManifestProbe
-import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
-import eu.kanade.translation.artifact.toUiPauseReason
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
-import eu.kanade.translation.manager.ChapterDataResetController
-import eu.kanade.translation.manager.CleanedImageLifecycleController
-import eu.kanade.translation.manager.DurableChapterKey
-import eu.kanade.translation.manager.DurableChapterStatusResolver
-import eu.kanade.translation.manager.DurableDocumentKey
-import eu.kanade.translation.manager.DurableStatus
-import eu.kanade.translation.manager.ReaderTeardownCoordinator
-import eu.kanade.translation.manager.TranslationDocument
-import eu.kanade.translation.manager.TranslationProgressProjection
-import eu.kanade.translation.manager.TranslationRequestCoordinator
-import eu.kanade.translation.manager.isReconstructibleDurableState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
@@ -31,11 +18,6 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
-import eu.kanade.translation.orchestration.BatchSessionIntent
-import eu.kanade.translation.orchestration.ReaderSessionIntent
-import eu.kanade.translation.orchestration.SessionAdmission
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
-import eu.kanade.translation.orchestration.TranslationSessionState
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
@@ -83,9 +65,8 @@ class TranslationManager(
     private val provider: TranslationProvider = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
-    //  slice 2: file truth for the startup reconciler (pending + valid
-    // files -> admit once). DownloadProvider only resolves directories, so it
-    // cannot cycle back into the manager the way DownloadManager would.
+    // File truth for startup reconciliation (pending + valid files -> admit once).
+    // DownloadProvider only resolves directories, avoiding a callback into this manager.
     private val downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider = Injekt.get(),
 ) {
     private val pipeline = TranslationPipeline(context, provider)
@@ -129,15 +110,13 @@ class TranslationManager(
     /** Serializes request versioning, state publication, and durable writes. */
     private val pendingRequestMutationLock = Any()
 
-    //  slice 2: per-chapter request generations (bumped on every new
-    // request and on cancel) and the generation captured when a request was
-    // attached to a download. The pair fences late downloader callbacks and
-    // in-flight probe mutations (R7).
+    // Per-chapter generations fence late downloader callbacks and in-flight
+    // probe mutations after a request is replaced or cancelled.
     private val pendingRequestGenerationCounters = ConcurrentHashMap<Long, AtomicLong>()
     private val downloadAttachGenerations = ConcurrentHashMap<Long, Long>()
     private val pendingGroupIdSequence = AtomicLong(0)
 
-    //  hotfix: one-shot marks for pending requests the startup reconciler
+    // One-shot marks for pending requests startup reconciliation
     // admitted (process-local is sufficient — the reconciler and the later
     // download handoff run in the same process; a crash mid-download re-runs
     // the reconciler next process). A restore-admitted request must not
@@ -153,9 +132,8 @@ class TranslationManager(
         restoreAdmittedChapterIds ?: ConcurrentHashMap.newKeySet<Long>()
             .also { restoreAdmittedChapterIds = it }
 
-    //  slice 2 (R9): startup reconciliation readiness barrier. The pass
-    // runs once, after BOTH the downloader queue restore and the translation
-    // queue restore have completed.
+    // Startup reconciliation waits for both the downloader and translation
+    // queue restores to complete.
     @Volatile
     private var downloadQueueRestoredChapterIds: Set<Long>? = null
 
@@ -164,10 +142,8 @@ class TranslationManager(
 
     private val startupReconciliationOnce = AtomicBoolean(false)
 
-    //  Phase 9: pending-request subsystem bodies moved to
-    // manager/TranslationRequestCoordinator.kt. The state objects stay here —
-    // the pending tests reflection-write these exact fields — so the
-    // coordinator is built per access from the current field values.
+    // Request state stays manager-owned. The coordinator receives current state
+    // through providers so each operation uses the same generation and lock owners.
     private val requestCoordinator: TranslationRequestCoordinator
         get() = TranslationRequestCoordinator(
             pendingRequestStoreProvider = { pendingRequestStore },
@@ -186,10 +162,8 @@ class TranslationManager(
             groupIdSequenceProvider = { pendingGroupIdSequence },
         )
 
-    //  Phase 13: DurableChapterKey/DurableStatus/TranslationDocument and the
-    // durable-status resolution region moved to manager/DurableChapterStatusResolver.kt.
-    // The cache field below stays — the durable tests reflection-write this exact
-    // field — and the resolver is built per access from the current field values.
+    // Durable status and document caches stay manager-owned so reads and resets
+    // share one invalidation boundary; the resolver uses these current values.
 
     private val durableStatusCache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
 
@@ -294,9 +268,8 @@ class TranslationManager(
             }
         }
         applicationScope.launch {
-            //  slice 2 (R9): once this restore completes AND the downloader
-            // reports its own restore, run the one-shot pending-request
-            // reconciler (idempotent, generation-fenced).
+            // After the downloader reports its restore too, run the one-shot
+            // pending-request reconciliation pass.
             translator.restoreQueue()
             runStartupReconciliationIfReady()
         }.also { translationQueueRestoreJob = it }
@@ -361,16 +334,13 @@ class TranslationManager(
         )
     }
 
-    //  Phase 9: bodies moved to manager/TranslationRequestCoordinator.kt;
-    // same-signature stubs keep the manager's public (and reflection-tested) seams.
-
     fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {
-        //  hotfix: a live request supersedes any restore-admitted mark.
+        // A live request supersedes any restore-admitted mark.
         chapter.id?.let { chapterId -> restoreAdmittedMarks().remove(chapterId) }
         requestCoordinator.queueTranslationAfterDownload(manga, chapter)
     }
 
-    /**  slice 2 (R7): fenced WAITING write — dropped when the request was cancelled/re-requested. */
+    /** Drops the WAITING write when the request was cancelled or replaced. */
     fun queueTranslationAfterDownloadIfCurrent(
         manga: Manga,
         chapter: Chapter,
@@ -378,7 +348,7 @@ class TranslationManager(
     ): Boolean = requestCoordinator.queueTranslationAfterDownloadIfCurrent(manga, chapter, expectedGeneration)
 
     fun acknowledgeTranslationRequests(chapters: List<Chapter>) {
-        //  hotfix: live acknowledgements supersede restore-admitted marks.
+        // Live acknowledgements supersede restore-admitted marks.
         chapters.forEach { chapter ->
             chapter.id?.let { chapterId -> restoreAdmittedMarks().remove(chapterId) }
         }
@@ -389,7 +359,7 @@ class TranslationManager(
         requestCoordinator.markTranslationRequestPreparing(chapterId)
     }
 
-    /**  slice 2 (R7): fenced PREPARING write — dropped when the request was cancelled/re-requested. */
+    /** Drops the PREPARING write when the request was cancelled or replaced. */
     fun markTranslationRequestPreparingIfCurrent(chapterId: Long, expectedGeneration: Long): Boolean =
         requestCoordinator.markTranslationRequestPreparingIfCurrent(chapterId, expectedGeneration)
 
@@ -397,7 +367,7 @@ class TranslationManager(
     fun pendingRequestGeneration(chapterId: Long): Long? =
         pendingTranslationRequestsState.value[chapterId]?.generation
 
-    /**  slice 2 (R7): true when the live request still carries [generation]. */
+    /** Whether the live request still carries [generation]. */
     fun isTranslationRequestCurrent(chapterId: Long, generation: Long): Boolean =
         requestCoordinator.isTranslationRequestCurrent(chapterId, generation)
 
@@ -410,7 +380,7 @@ class TranslationManager(
     }
 
     /**
-     *  slice 3 (R8): the chapter's files finalized, but the translation
+     * The chapter's files finalized, but translation startup
      * start after the download failed (rekey/handoff/admission). The download
      * keeps its `DOWNLOADED` status; the request gets the R10 admission-failure
      * typing instead of a false download failure. No-op without a pending
@@ -423,7 +393,7 @@ class TranslationManager(
         requestCoordinator.markTranslationHandoffFailed(chapterId, reason)
     }
 
-    //  slice 2 (R5): download-side lifecycle notifications. Every one is a
+    // Download lifecycle notifications. Each method is a
     // no-op without a pending request, so ordinary downloads are unaffected.
 
     /** The chapter's download was cancelled or removed from the download queue. */
@@ -448,7 +418,7 @@ class TranslationManager(
         requestCoordinator.clearStaleDownloadFailedRequest(chapterId)
     }
 
-    /** Milestone M6 (S2): Recovers from download-failure starvation. */
+    /** Requeues a request after a download failure. */
     fun rearmDownloadFailedRequest(chapterId: Long): Boolean =
         requestCoordinator.rearmDownloadFailedRequest(chapterId)
 
@@ -490,7 +460,7 @@ class TranslationManager(
         }
 
     suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) {
-        //  hotfix: one-shot gate. A pending request the startup reconciler
+        // One-shot gate. A pending request startup reconciliation
         // admitted is enqueued PAUSED when its download completes in this
         // process; live requests carry no mark and auto-start unchanged.
         val chapterId = chapter.id
@@ -498,7 +468,7 @@ class TranslationManager(
         requestCoordinator.startTranslationAfterDownloadIfRequested(manga, chapter, !restoreAdmitted)
     }
 
-    //  slice 2 (R9): startup reconciliation ------------------------------
+    // Startup reconciliation ------------------------------------------------
 
     /**
      * Called by the downloader once its asynchronous queue restore has
@@ -520,8 +490,8 @@ class TranslationManager(
         applicationScope.launch {
             translationQueueRestoreJob?.join()
             reconcilePendingRequestsForStartup(downloadQueueChapterIds = downloadSnapshot)
-            //  Phase 3: consume interrupted-attempt ledger entries for
-            // exactly the bounded chapter set (never a library scan).
+            // Consume interrupted-attempt ledger entries for this bounded
+            // chapter set; never scan the whole library.
             reconcileAttemptLedgersForStartup(
                 chapterIds = translator.persistedQueueChapterIds() +
                     pendingTranslationRequestsState.value.keys +
@@ -592,7 +562,7 @@ class TranslationManager(
                     clearPendingTranslationRequest(chapterId)
                 }
                 chapterId in downloadQueueChapterIds -> {
-                    //  hotfix: restore-admitted WAITING request — mark it
+                    // A restore-admitted WAITING request is marked
                     // one-shot so the download handoff in this process enqueues
                     // PAUSED instead of auto-starting translation.
                     restoreAdmittedMarks().add(chapterId)
@@ -682,10 +652,8 @@ class TranslationManager(
         val chapterId = chapter.id ?: return
         if (!admitBatchSession(setOf(chapterId))) return
         synchronized(pendingRequestMutationLock) {
-            // The fence accepts the generation from either the live state or
-            // the durable record: after a restart the request may exist only
-            // durably. A moved generation (cancel/re-request during the pass)
-            // drops the admission.
+            // After a restart, the request may exist only in the durable record.
+            // Cancellation or replacement changes the generation and drops admission.
             val current = pendingTranslationRequestsState.value[chapterId]
             val currentGeneration = current?.generation
                 ?: pendingRequestStore.record(chapterId)?.generation
@@ -694,7 +662,7 @@ class TranslationManager(
             markTranslationRequestPreparing(chapterId)
             translator.queueChapter(manga, chapter)
             if (queueState.value.any { it.chapter.id == chapterId }) {
-                //  hotfix: mark the admission one-shot so any later
+                // Mark the admission one-shot so any later
                 // handoff for this chapter cannot auto-start it either.
                 restoreAdmittedMarks().add(chapterId)
                 clearPendingTranslationRequest(chapterId)
@@ -706,12 +674,7 @@ class TranslationManager(
         // OCR/LLM; the admitted QUEUE entry is resumed by the user.
     }
 
-    //  Phase 18: reader/page teardown bodies moved to
-    // manager/ReaderTeardownCoordinator.kt. The readerTeardownMutex field
-    // above stays — TranslationManagerReaderTeardownTest reflection-writes it —
-    // so the coordinator is built per access from the current field values and
-    // resolves the mutex through a provider (a swapped mutex still serializes
-    // both stop paths). Same-signature stubs keep the public seams.
+    // The mutex stays on the manager so both public stop paths serialize through the same owner.
     private val readerTeardown: ReaderTeardownCoordinator
         get() = ReaderTeardownCoordinator(
             applicationScopeProvider = { applicationScope },
@@ -792,17 +755,12 @@ class TranslationManager(
         return queueState.value.find { it.chapter.id == chapterId }
     }
 
-    /**
-     * S7 / B1 (Milestone M2): Steers the specified chapter to the head of
-     * the pending queue.
-     */
+    /** Moves the specified chapter to the head of the pending queue. */
     fun prioritizeChapter(chapterId: Long) {
         translator.prioritizeChapter(chapterId)
     }
 
-    /**
-     * S3 (Milestone M2): Warmed-up engine sessions outside critical path.
-     */
+    /** Warms engine sessions before translation work enters the critical path. */
     suspend fun warmUp() {
         pipeline.warmUp()
     }
@@ -829,7 +787,7 @@ class TranslationManager(
     }
 
     /**
-     *  slice 2 (R7): when [expectedRequestGeneration] is supplied, the
+     * When [expectedRequestGeneration] is supplied, the
      * whole admit sequence runs under the request mutation lock and is
      * aborted when the live request's generation moved (user cancel between
      * check and use). Existing callers keep the unfenced behavior.
@@ -838,10 +796,10 @@ class TranslationManager(
         manga: Manga,
         chapters: Chapter,
         expectedRequestGeneration: Long? = null,
-        //  Phase 4: the trigger's admission-probe cross-check; null
-        // keeps the legacy no-cross-check path byte-identical.
+        // The trigger's admission-probe cross-check; null
+        // keeps the existing no-cross-check path.
         admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext? = null,
-        //  hotfix: false for a restore-admitted request handed over by the
+        // False for a restore-admitted request handed over by the
         // download completion — enqueue without starting.
         autoStart: Boolean = true,
     ) {
@@ -874,7 +832,7 @@ class TranslationManager(
             }
         }
         if (autoStart) {
-            //  hotfix: an explicit per-chapter request is the only gate
+            // An explicit per-chapter request is the only gate
             // that re-arms a PAUSED/ERROR queue entry (queueChapter is a no-op
             // for an existing entry); a generic queue start must not resurrect
             // that work.
@@ -887,7 +845,7 @@ class TranslationManager(
             }?.status = Translation.State.QUEUE
             startTranslation()
         } else {
-            //  hotfix: restore-admitted work is enqueued but stays paused —
+            // Restore-admitted work is enqueued but stays paused —
             // the UI shows paused, not a fake-active spinner, and no OCR/LLM
             // runs without an explicit user action.
             queueState.value.firstOrNull {
@@ -901,12 +859,12 @@ class TranslationManager(
     }
 
     /**
-     *  slice 2 (R7): list admission fenced per chapter by the request
+     * List admission is fenced per chapter by the request
      * generation captured by the confirmation probe. Chapters whose request
      * was cancelled or re-requested after the acknowledgement are dropped;
      * the surviving set is admitted atomically against cancel.
      *
-     *  Phase 4: [admissionContexts] carries the per-chapter
+     * [admissionContexts] carries the per-chapter
      * download-probe cross-check for subset admissions; chapters without an
      * entry keep the legacy no-cross-check behavior.
      */
@@ -954,7 +912,7 @@ class TranslationManager(
                 )
                 if (queueState.value.any { it.chapter.id == chapterId }) {
                     clearPendingTranslationRequest(chapterId)
-                    //  hotfix: an explicit selection re-arms a PAUSED/ERROR
+                    // An explicit selection re-arms a PAUSED/ERROR
                     // queue entry (queueChapter is a no-op for an existing
                     // entry); a generic queue start must not resurrect that work.
                     queueState.value.firstOrNull {
@@ -977,7 +935,7 @@ class TranslationManager(
     }
 
     /**
-     *  slice 2 (R10): a translation-queue admission rejection is never a
+     * A translation-queue admission rejection is never a
      * download failure. The phase is [TranslationRequestPhase.ADMISSION_FAILED]
      * with a typed kind (source unsupported / config invalid / admission).
      */
@@ -1140,12 +1098,7 @@ class TranslationManager(
     ): Boolean = persistedChapterStatus(null, chapterName, chapterScanlator, mangaTitle, sourceId)
         .let { it == Translation.State.TRANSLATED || it == Translation.State.READY_WITH_WARNINGS }
 
-    //  Phase 13: durable-status resolution region moved to
-    // manager/DurableChapterStatusResolver.kt (cache read/write, probe,
-    // document lookup, probe-store adoption). The durableStatusCache field
-    // above stays — the durable tests reflection-write this exact field — so
-    // the resolver is built per access from the current field values, and all
-    // cache invalidations route through it.
+    // Durable status and document lookup share these manager-lifetime caches and invalidation rules.
     private val durableStatusResolver: DurableChapterStatusResolver
         get() = DurableChapterStatusResolver(
             providerProvider = { provider },
@@ -1170,7 +1123,7 @@ class TranslationManager(
         durableStatusResolver.persistedChapterStatus(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
 
     /**
-     *  slice 3 (contract item 4): read-through terminal reconstruction.
+     * Read-through terminal reconstruction.
      * When the bounded tracker registry misses (process death, 20-entry
      * eviction) and no queue owner exists, the projection rebuilds a
      * completed/failed chapter's terminal snapshot from the durable store and
@@ -1208,7 +1161,7 @@ class TranslationManager(
                 chapterState = state,
                 pageMap = store.state.value,
                 displayPageMap = store.display.value,
-                //  Phase 5: trusted totals come from the manifest;
+                // Trusted totals come from the manifest;
                 // a partial download's available pages are never "all pages".
                 expectedPageCountTrusted =
                 store.artifactManifest?.expectedPageCountTrusted == true,
@@ -1324,8 +1277,7 @@ class TranslationManager(
         return store
     }
 
-    //  Phase 13: body moved to manager/DurableChapterStatusResolver.kt.
-    // Same-signature stub keeps the call sites.
+    // Document lookup uses the same cache invalidation protocol as durable status resolution.
     private fun findTranslationDocument(
         chapterName: String,
         scanlator: String?,
@@ -1510,10 +1462,7 @@ class TranslationManager(
         return registered
     }
 
-    //  Phase 16: cleaned-image lifecycle region moved to
-    // manager/CleanedImageLifecycleController.kt (retired-image drains, orphan
-    // sweeps, companion-image retirement). Same-signature stubs keep the call
-    // sites; the controller is built per access from the current field values.
+    // Cleaned-image lookup and retirement are owned by the lifecycle collaborator.
     private val cleanedImageLifecycle: CleanedImageLifecycleController
         get() = CleanedImageLifecycleController(
             applicationScopeProvider = { applicationScope },
@@ -1615,14 +1564,14 @@ class TranslationManager(
         scheduler.cancelAutoTranslations(chapterId)
 
     /**
-     * Ticket 03: live auto-translation snapshot from the rolling coordinator.
+     * Live auto-translation snapshot from the rolling coordinator.
      * Null when no coordinator is active. The reader observes this to render
      * the compact ready-ahead status without polling the durable store.
      */
     val autoSnapshot: kotlinx.coroutines.flow.StateFlow<eu.kanade.translation.scheduling.AutoTranslationSnapshot?> =
         scheduler.autoSnapshot
 
-    /** Ticket 03: rolling coordinator window update. The scheduler owns the coordinator. */
+    /** Updates the rolling coordinator window owned by the scheduler. */
     fun updateAutoWindow(
         identity: eu.kanade.translation.scheduling.AutoChapterIdentity,
         visiblePageIndex: Int,
@@ -1718,62 +1667,7 @@ class TranslationManager(
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? =
         progressProjection.observePageView(chapterId, pageKey)
 
-    // Compatibility seams retained for the paused-affordance characterization
-    // tests. Store-backed progress now applies durable pause metadata directly;
-    // these pure helpers remain stable for the manager's historical reflective
-    // contract and for the durable-terminal reconstruction path below.
-    private fun TranslationProgressSnapshot.withDurablePause(
-        store: ChapterTranslationStore,
-    ): TranslationProgressSnapshot {
-        if (state != Translation.State.PAUSED) return this
-        val failure = store.durableFailuresSnapshot().values
-            .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
-            .minWithOrNull(
-                compareBy<eu.kanade.translation.artifact.DurableFailureMetadata>(
-                    { if (it.category == eu.kanade.translation.artifact.FailureCategory.PROTOCOL) 0 else 1 },
-                    { it.stage.ordinal },
-                    { it.pageKey },
-                ),
-            )
-            ?: return this
-        return copy(
-            pauseAnchorPageKey = pauseAnchorPageKey ?: failure.pageKey,
-            pauseReason = pauseReason ?: failure.toUiPauseReason(),
-            nextEligibleRetryAtEpochMs = nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
-        )
-    }
-
-    private fun TranslationProgressSnapshot.projectQueueStatus(
-        queueStatus: Translation.State?,
-    ): TranslationProgressSnapshot = when (queueStatus) {
-        null -> this
-        Translation.State.QUEUE -> copy(
-            state = queueStatus,
-            batchPhase = eu.kanade.translation.model.TranslationBatchPhase.IDLE,
-            pauseAnchorPageKey = null,
-            pauseReason = null,
-            nextEligibleRetryAtEpochMs = null,
-        )
-        Translation.State.TRANSLATING -> copy(
-            state = queueStatus,
-            batchPhase = if (batchPhase == eu.kanade.translation.model.TranslationBatchPhase.IDLE) {
-                eu.kanade.translation.model.TranslationBatchPhase.FIRST_PASS
-            } else {
-                batchPhase
-            },
-        )
-        Translation.State.PAUSED -> copy(
-            state = queueStatus,
-            batchPhase = eu.kanade.translation.model.TranslationBatchPhase.FINISHED,
-        )
-        else -> copy(state = queueStatus)
-    }
-
-    //  Phase 19: the delete/reset region moved to
-    // manager/ChapterDataResetController.kt as a pure move (the copy-paste
-    // dedupe between the active-store and open-store branches stays out of
-    // scope). Same-signature stubs keep the manager's public seams; the
-    // controller is built per access from the current field values.
+    // Chapter and page deletion/reset ordering is owned by this collaborator.
     private val chapterDataReset: ChapterDataResetController
         get() = ChapterDataResetController(
             findTranslationDocumentFn = { chapterName, scanlator, mangaTitle, source ->
@@ -1870,8 +1764,7 @@ class TranslationManager(
         }
     }
 
-    //  Phase 16: body moved to manager/CleanedImageLifecycleController.kt.
-    // Same-signature stub keeps the call sites.
+    // The manager exposes the cleaned-image stream through the lifecycle collaborator.
     fun getCleanedImageStream(
         mangaTitle: String,
         source: Source,
@@ -1893,10 +1786,7 @@ class TranslationManager(
             chapterId,
         )
 
-    //  Phase 18: page-job control bodies moved to
-    // manager/ReaderTeardownCoordinator.kt (runBlocking bridge and
-    // dispatcher-constraint comments moved with them). Same-signature stubs
-    // keep the public seams.
+    // Reader-page cancellation and teardown are owned by the lifecycle collaborator.
 
     fun translatePage(
         manga: Manga,

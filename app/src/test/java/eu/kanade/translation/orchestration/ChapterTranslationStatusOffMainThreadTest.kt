@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.data.TranslationProvider

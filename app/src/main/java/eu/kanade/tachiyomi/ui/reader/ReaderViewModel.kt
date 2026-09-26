@@ -44,6 +44,7 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -53,7 +54,6 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.orchestration.TranslationSessionState
 import eu.kanade.translation.rendering.PersistedLayoutReaderBridge

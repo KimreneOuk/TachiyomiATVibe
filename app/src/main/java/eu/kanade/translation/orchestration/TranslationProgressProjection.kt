@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.artifact.ArtifactStageStatus
@@ -36,7 +36,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withContext
 
-/**  U.1: minimum interval between durable run-record probes per chapter flow. */
+/** Minimum interval between durable run-record probes for a live chapter flow. */
 private const val REBUILD_PROBE_MIN_INTERVAL_MS = 500L
 
 /** Builds reader and manga progress from the live page and committed display state. */
@@ -59,11 +59,18 @@ internal fun ChapterTranslationStore.progressSnapshot(
         permitHolderPageKey = permitHolderPageKey,
         expectedPageCountTrusted = artifactManifest?.expectedPageCountTrusted == true,
     )
-    if (projectedState != Translation.State.PAUSED) return snapshot
+    return snapshot.withDurablePause(this)
+}
+
+/** Adds the durable retry details that explain a paused chapter. */
+internal fun TranslationProgressSnapshot.withDurablePause(
+    store: ChapterTranslationStore,
+): TranslationProgressSnapshot {
+    if (state != Translation.State.PAUSED) return this
     // A protocol rejection can happen before translation, such as an OCR
     // checkpoint arriving before page registration. Preserve its retry details
     // so the UI does not misreport a store failure as provider unavailability.
-    val failure = durableFailuresSnapshot().values
+    val failure = store.durableFailuresSnapshot().values
         .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
         .minWithOrNull(
             compareBy<DurableFailureMetadata>(
@@ -72,16 +79,43 @@ internal fun ChapterTranslationStore.progressSnapshot(
                 { it.pageKey },
             ),
         )
-        ?: return snapshot
-    return snapshot.copy(
-        pauseAnchorPageKey = snapshot.pauseAnchorPageKey ?: failure.pageKey,
-        pauseReason = snapshot.pauseReason ?: failure.toUiPauseReason(),
-        nextEligibleRetryAtEpochMs = snapshot.nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
+        ?: return this
+    return copy(
+        pauseAnchorPageKey = pauseAnchorPageKey ?: failure.pageKey,
+        pauseReason = pauseReason ?: failure.toUiPauseReason(),
+        nextEligibleRetryAtEpochMs = nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
     )
 }
 
+/** Projects a queue state onto a progress snapshot without changing its page truth. */
+internal fun TranslationProgressSnapshot.projectQueueStatus(
+    queueStatus: Translation.State?,
+): TranslationProgressSnapshot = when (queueStatus) {
+    null -> this
+    Translation.State.QUEUE -> copy(
+        state = queueStatus,
+        batchPhase = TranslationBatchPhase.IDLE,
+        pauseAnchorPageKey = null,
+        pauseReason = null,
+        nextEligibleRetryAtEpochMs = null,
+    )
+    Translation.State.TRANSLATING -> copy(
+        state = queueStatus,
+        batchPhase = if (batchPhase == TranslationBatchPhase.IDLE) {
+            TranslationBatchPhase.FIRST_PASS
+        } else {
+            batchPhase
+        },
+    )
+    Translation.State.PAUSED -> copy(
+        state = queueStatus,
+        batchPhase = TranslationBatchPhase.FINISHED,
+    )
+    else -> copy(state = queueStatus)
+}
+
 /**
- *  U.1: pure rebuild/restore truth derived from the durable run record.
+ * Pure rebuild/restore truth derived from the durable run record.
  *
  * The resume-rebuild window is the run record's preflight preamble:
  *
@@ -135,7 +169,7 @@ internal fun rebuildTruthFromRunRecord(
 }
 
 /**
- *  U.1: stamps the run-record rebuild truth onto a snapshot, but ONLY
+ * Stamps run-record rebuild truth onto a snapshot, but only
  * inside the live FIRST_PASS window (a TRANSLATING chapter whose phase is
  * FIRST_PASS or already a rebuild phase). Terminal snapshots, queued
  * chapters, and pauses are never restamped, so the rebuild phase can never
@@ -159,10 +193,8 @@ internal fun TranslationProgressSnapshot.withRunRecordTruth(
 }
 
 /**
- *  slice 2: the chapter's 1-based position among the outstanding
- * translation-queue entries (QUEUE/TRANSLATING), and the total. Null when the
- * chapter is not part of the outstanding work. Pure so the projection and its
- * test agree on what "2nd of 3" means.
+ * Returns the chapter's 1-based position among outstanding QUEUE/TRANSLATING entries and the
+ * total. Returns null when the chapter is not part of outstanding work.
  */
 internal fun translationQueuePosition(
     queue: List<Translation>,
@@ -178,11 +210,8 @@ internal fun translationQueuePosition(
 }
 
 /**
- *  slice 3: whether a durable artifact status is a reconstructible
- * terminal outcome (completed / warnings / failed, or a durable pause with
- * explicit resume detail). Live-looking states (queue/translating) are never
- * reconstructed — a crash mid-run must not look like running work.
- * Pure so the projection and its tests agree on the gate.
+ * Whether a durable artifact status is a reconstructible terminal outcome. Live queue and
+ * translation states are never reconstructed; a crash mid-run must not look like active work.
  */
 internal fun isReconstructibleDurableState(state: Translation.State?): Boolean = when (state) {
     Translation.State.TRANSLATED,
@@ -194,12 +223,12 @@ internal fun isReconstructibleDurableState(state: Translation.State?): Boolean =
 }
 
 /**
- * Manager-facing flow graph for progress projection.
+ * Reader-facing flow graph for progress projection.
  *
  * The store owns page/display/status truth; this class only combines queue,
  * tracker, and request orchestration around that unified store projection.
- * Manager state arrives as providers and is re-read on every access, matching
- * the manager's per-access construction.
+ * Orchestration state arrives through providers so the projection can combine existing owners
+ * without taking ownership of their stores or scopes.
  */
 internal class TranslationProgressProjection(
     private val activeStoresProvider: () -> ActiveChapterStoreRegistry,
@@ -208,8 +237,7 @@ internal class TranslationProgressProjection(
     private val pendingTranslationRequestsProvider: () -> StateFlow<Map<Long, TranslationRequestState>>,
     private val pipelineProvider: () -> TranslationPipeline,
     private val getQueuedTranslationOrNull: (Long) -> Translation?,
-    //  ANR fix: suspend — durable resolution performs SAF/FUSE I/O and
-    // must never be synchronously reachable from the main thread.
+    // Durable resolution performs SAF/FUSE I/O, so keep the call suspendable for reader/UI users.
     private val persistedChapterStatus: suspend (
         chapterId: Long?,
         chapterName: String,
@@ -226,12 +254,7 @@ internal class TranslationProgressProjection(
         mangaId: Long?,
     ) -> ChapterTranslationStore?,
     private val observeActiveDisplayStore: (Long) -> StateFlow<Map<String, PageTranslation>>?,
-    /**
-     *  slice 3: read-through terminal reconstruction from the durable
-     * store/artifacts, used when the bounded registry misses (process death /
-     * eviction) and no queue owner exists. Null when nothing durable is
-     * reconstructible. Read-only: never creates a store, never caches.
-     */
+    /** Read-only terminal reconstruction after registry eviction/process death; it never opens or caches a store. */
     private val reconstructDurableTerminalSnapshot: suspend (chapterId: Long) -> TranslationProgressSnapshot? = { null },
 ) {
 
@@ -251,10 +274,7 @@ internal class TranslationProgressProjection(
     ): ChapterTranslationStore? =
         openOrCreateStoreSuspend(chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
 
-    //  ANR fix: suspend. Priority order and returned states are unchanged
-    // (queued translation → active-store display → durable store →
-    // NOT_TRANSLATED); only the threading changed. In-memory steps (queue
-    // check, active-store shortcut) stay synchronous inside the suspend body.
+    // Keep queue and active-store checks synchronous; only the durable SAF lookup suspends on IO.
     suspend fun getChapterTranslationStatus(
         chapterId: Long,
         chapterName: String,
@@ -402,8 +422,7 @@ internal class TranslationProgressProjection(
                         }
                     } else if (store == null) {
                         flow {
-                            //  slice 3: registry miss and no queue owner —
-                            // reconstruct a completed/failed chapter's terminal
+                            // Registry miss with no queue owner — reconstruct a completed/failed chapter's terminal
                             // detail from the durable store/artifacts so
                             // re-entry and eviction keep truthful totals and
                             // reasons. Read-through only: no store is created
@@ -430,16 +449,12 @@ internal class TranslationProgressProjection(
                 .projectQueueStatus(queueStatus)
                 .withQueuePosition(chapterId)
         }
-        //  U.1: live snapshots are stamped with the durable run record's
+        // Live snapshots are stamped with the durable run record's
         // rebuild/restore truth (bounded probe; see withRunRecordRebuildTruth).
         .withRunRecordRebuildTruth(chapterId)
         .distinctUntilChanged()
 
-    /**
-     *  slice 2: attach the chapter's truthful position among the
-     * outstanding translation-queue entries so a later chapter's drawer can
-     * say "Queued (2nd of 3)" instead of implying it can resume now.
-     */
+    /** Adds the chapter's position among outstanding queue entries for reader progress. */
     private fun TranslationProgressSnapshot.withQueuePosition(
         chapterId: Long,
     ): TranslationProgressSnapshot {
@@ -449,14 +464,14 @@ internal class TranslationProgressProjection(
     }
 
     /**
-     *  U.1: augments live snapshots with the active run record's
+     * Augments live snapshots with the active run record's
      * rebuild/restore truth. Probes are bounded: they run only while the
      * snapshot shows a live FIRST_PASS/rebuild window, re-arm immediately
      * when such a window (re)starts so a new run never renders a previous
      * run's truth, and otherwise run at most once per
      * [REBUILD_PROBE_MIN_INTERVAL_MS]. The record read is small sidecar
      * I/O and is confined to [Dispatchers.IO] — the projection itself stays
-     * pure for the collector's context ( ANR discipline).
+     * pure for the collector's context.
      */
     private fun Flow<TranslationProgressSnapshot>.withRunRecordRebuildTruth(
         chapterId: Long,
@@ -504,40 +519,6 @@ internal class TranslationProgressProjection(
         orchestrationState = state,
         permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
     )
-
-    /** Bridge for the manager's reflection-pinned same-name stub (paused-affordance test). */
-    internal fun projectQueueStatusOf(
-        snapshot: TranslationProgressSnapshot,
-        queueStatus: Translation.State?,
-    ): TranslationProgressSnapshot = snapshot.projectQueueStatus(queueStatus)
-
-    private fun TranslationProgressSnapshot.projectQueueStatus(
-        queueStatus: Translation.State?,
-    ): TranslationProgressSnapshot {
-        return when (queueStatus) {
-            null -> this
-            Translation.State.QUEUE -> copy(
-                state = queueStatus,
-                batchPhase = TranslationBatchPhase.IDLE,
-                pauseAnchorPageKey = null,
-                pauseReason = null,
-                nextEligibleRetryAtEpochMs = null,
-            )
-            Translation.State.TRANSLATING -> copy(
-                state = queueStatus,
-                batchPhase = if (batchPhase == TranslationBatchPhase.IDLE) {
-                    TranslationBatchPhase.FIRST_PASS
-                } else {
-                    batchPhase
-                },
-            )
-            Translation.State.PAUSED -> copy(
-                state = queueStatus,
-                batchPhase = TranslationBatchPhase.FINISHED,
-            )
-            else -> copy(state = queueStatus)
-        }
-    }
 
     /**
      * Per-chapter batch progress (done/total) for the manga-screen chapter-list indicator, so

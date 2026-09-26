@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics
 import eu.kanade.translation.model.Translation
@@ -6,7 +6,6 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.TranslationUiProjection
-import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.storage.TranslationPendingRequestRecord
 import eu.kanade.translation.storage.TranslationPendingRequestStore
 import kotlinx.coroutines.CoroutineScope
@@ -22,27 +21,10 @@ import tachiyomi.domain.manga.model.Manga
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-internal fun acknowledgePendingTranslationState(
-    current: Map<Long, TranslationRequestState>,
-    chapterIds: Iterable<Long>,
-): Map<Long, TranslationRequestState> =
-    current + chapterIds.distinct().associateWith { chapterId ->
-        TranslationRequestState(chapterId, TranslationRequestPhase.STARTING)
-    }
-
 /**
- * Pending-request subsystem moved from `TranslationManager` ( Phase 9).
- * Owns the store + live state + write-versions + mutation-lock protocol
- * (version fence moves intact). Manager state arrives as providers and is
- * re-read on every access — the uninitialized-manager test fixtures
- * reflection-write these fields after construction and leave the rest null,
- * so reads must stay as lazy as they were before the move.
- *
- *  slice 2: records carry a monotonic per-chapter request generation,
- * an optional group id, timestamps, and a typed last failure. Download-side
- * lifecycle events cancel/fail the attached request explicitly, and the
- * downloader completion callback is fenced by the generation captured when
- * the request was attached to the download (R7/R5).
+ * Coordinates pending translation requests from acknowledgement through download handoff.
+ * Every asynchronous durable write is fenced by per-chapter version and request generation,
+ * so a later phase change, cancel, or retry cannot be overwritten by a stale write.
  */
 internal class TranslationRequestCoordinator(
     private val pendingRequestStoreProvider: () -> TranslationPendingRequestStore,
@@ -83,11 +65,7 @@ internal class TranslationRequestCoordinator(
         }
     }
 
-    /**
-     *  slice 2 (R7): fenced WAITING write. The request must still exist
-     * with [expectedGeneration] when the write happens — a cancel that lands
-     * before the write (under the same lock) wins and the write is dropped.
-     */
+    /** Writes WAITING only while the request still has [expectedGeneration]; cancellation wins the lock race. */
     fun queueTranslationAfterDownloadIfCurrent(
         manga: Manga,
         chapter: Chapter,
@@ -101,7 +79,7 @@ internal class TranslationRequestCoordinator(
         }
     }
 
-    /**  slice 2 (R7): fenced PREPARING write, same protocol as above. */
+    /** Writes PREPARING only while the request still has [expectedGeneration]. */
     fun markTranslationRequestPreparingIfCurrent(chapterId: Long, expectedGeneration: Long): Boolean {
         synchronized(pendingRequestMutationLock) {
             if (!isRequestCurrent(chapterId, expectedGeneration)) return false
@@ -208,12 +186,7 @@ internal class TranslationRequestCoordinator(
         }
     }
 
-    /**
-     *  slice 3 (R8): the chapter's files finalized successfully, but the
-     * translation start after the download failed (artifact rekey, handoff or
-     * admission threw). The download stays `DOWNLOADED`; the request is failed
-     * with the R10 admission-failure typing — never a download failure.
-     */
+    /** Records a translation start failure after download; the download remains `DOWNLOADED`. */
     fun markTranslationHandoffFailed(
         chapterId: Long,
         reason: String? = null,
@@ -230,9 +203,7 @@ internal class TranslationRequestCoordinator(
         }
     }
 
-    //  slice 2 (R5): download-side lifecycle notifications. Each is a
-    // no-op when no pending request exists for the chapter, so ordinary
-    // downloads are unaffected.
+    // Download lifecycle notifications are no-ops when a chapter has no pending request.
 
     /** The chapter's download was cancelled or removed from the queue. */
     fun onDownloadCancelled(chapterId: Long) {
@@ -299,11 +270,7 @@ internal class TranslationRequestCoordinator(
         }
     }
 
-    /**
-     * Milestone M6 (S2): Recovers from download-failure starvation.
-     * Transitions a DOWNLOAD_FAILED request back to WAITING_FOR_DOWNLOAD so that
-     * download restart or retry does not leave the chapter starved.
-     */
+    /** Rearms a failed download request so an explicit download retry can complete it. */
     fun rearmDownloadFailedRequest(chapterId: Long): Boolean {
         val currentPhase = pendingTranslationRequestsState.value[chapterId]?.phase
             ?: pendingRequestStore.phase(chapterId)
@@ -453,10 +420,7 @@ internal class TranslationRequestCoordinator(
     private fun nextPendingRequestVersion(chapterId: Long): Long =
         pendingRequestWriteVersions.computeIfAbsent(chapterId) { AtomicLong() }.incrementAndGet()
 
-    /**
-     *  slice 2: monotonically increasing per-chapter generation, seeded
-     * from the durable counter so values never repeat across re-requests.
-     */
+    /** Continues per-chapter generations from durable state so retries cannot reuse an old generation. */
     private fun allocateGeneration(chapterId: Long): Long =
         generationCounters.computeIfAbsent(chapterId) {
             AtomicLong(
@@ -511,17 +475,11 @@ internal class TranslationRequestCoordinator(
         }
     }
 
-    /**
-     *  slice 2: the downloader completion callback, fenced by the request
-     * generation captured when the request was attached to the download. A
-     * stale callback (request cancelled, re-requested, or cleared) is dropped
-     * with a log line — it never admits, and never recreates a request.
-     */
+    /** Fences download completion with the attached request generation; stale callbacks cannot admit or recreate it. */
     suspend fun startTranslationAfterDownloadIfRequested(
         manga: Manga,
         chapter: Chapter,
-        //  hotfix: false for a pending request the startup reconciler
-        // admitted — the handoff enqueues PAUSED instead of auto-starting.
+        // Requests admitted during startup recovery remain queued until explicitly resumed.
         autoStart: Boolean = true,
     ) {
         val chapterId = chapter.id ?: return

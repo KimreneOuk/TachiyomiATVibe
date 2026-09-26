@@ -1,9 +1,6 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
-import eu.kanade.translation.orchestration.TranslationSessionState
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import kotlinx.coroutines.CoroutineScope
@@ -18,16 +15,7 @@ import kotlinx.coroutines.withContext
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
-//  Phase 18: the reader/page teardown region moved from
-// `TranslationManager` (reader stop trio + the page-job cancellation cluster).
-// The coordinator serializes the reader-stop paths through the manager's
-// `readerTeardownMutex` — the mutex FIELD stays on the manager
-// (TranslationManagerReaderTeardownTest reflection-writes it) and is resolved
-// per call through the provider, so swapping it still serializes both paths.
-// The runBlocking bridge in [cancelAllPageTranslations] and every
-// dispatcher-constraint comment moved with their bodies verbatim; the manager
-// keeps same-signature delegating stubs at the old qualified names and builds
-// this coordinator per access from its current field values.
+/** Coordinates reader-page cancellation and teardown against the active session and batch. */
 internal class ReaderTeardownCoordinator(
     private val applicationScopeProvider: () -> CoroutineScope,
     private val readerTeardownMutexProvider: () -> Mutex,
@@ -42,8 +30,7 @@ internal class ReaderTeardownCoordinator(
     private val clearAllPendingTranslationRequestsFn: () -> Unit,
 ) {
 
-    // Same-name dependency reads the moved bodies use; resolved through the
-    // manager's provider lambdas at each call.
+    // Resolve lifecycle owners on demand; teardown must operate on the current session.
     private val applicationScope get() = applicationScopeProvider()
 
     private val readerTeardownMutex get() = readerTeardownMutexProvider()

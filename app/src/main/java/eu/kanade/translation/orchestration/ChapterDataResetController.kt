@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.artifact.ChapterArtifactDeletionPlan
@@ -6,8 +6,6 @@ import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.orchestration.ChapterResetPreflight
-import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.storage.ActiveChapterStoreRegistry
@@ -19,17 +17,11 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
-//  Phase 19: the delete + reset flow region moved from
-// `TranslationManager` as a PURE move (the copy-paste dedupe between the
-// active-store and open-store branches stays explicitly out of scope). The
-// ordering inside [deleteTranslation] is load-bearing and strictly sequenced
-// (see its ordering comment; pinned by
-// `TranslationManagerDeleteResetOrderingTest`). The manager keeps
-// same-signature delegating stubs at the old qualified names and builds this
-// controller per access from its current field values; every collaborator the
-// moved bodies name (scheduler, teardown, image lifecycle, durable-status
-// resolver, registry, provider) resolves through the same-name accessors
-// below.
+/**
+ * Owns chapter and page deletion/reset operations. Deletion first cancels and joins page and
+ * batch work, then defuncts the store, clears reader streams, and removes artifacts and
+ * companion images. The ordering is covered by [TranslationManagerDeleteResetOrderingTest].
+ */
 internal class ChapterDataResetController(
     private val findTranslationDocumentFn: (
         chapterName: String,
@@ -59,8 +51,7 @@ internal class ChapterDataResetController(
     ) -> ChapterTranslationStore?,
 ) {
 
-    // Same-name dependency reads the moved bodies use; resolved through the
-    // manager's provider lambdas at each call.
+    // Resolve manager-owned dependencies at call time without retaining second owners.
     private val scheduler get() = schedulerProvider()
 
     private val translator get() = translatorProvider()
@@ -155,8 +146,7 @@ internal class ChapterDataResetController(
                     "retainedLegacy=${result.retainedLegacyNames.size} " +
                     "failures=${result.failures.size}"
             }
-            // Legacy flat files are deliberately retained on disk. Phase 2
-            // removes their read path; it does not delete user data.
+            // Legacy flat files are deliberately retained; deletion only owns manifest artifacts.
         }
         if (authorityRemoved) retireChapterCompanionImages(manga, chapter, source)
         durableStatusResolver.clearDurableStatusCache()
@@ -250,7 +240,7 @@ internal class ChapterDataResetController(
         if (activeStore != null) {
             activeStore.state.value.keys.forEach { pageKey ->
                 activeStore.updatePageFromCurrentSnapshot(pageKey, "chapter data reset") { page -> page?.let(transform) ?: PageTranslation.EMPTY }
-                // Phase 3: an explicit user reset drops the committed display
+                // An explicit user reset drops the committed display
                 // pointer too, so the reader stops showing the cleared bundle.
                 activeStore.demoteCommittedDisplay(pageKey, "chapter data reset")
             }

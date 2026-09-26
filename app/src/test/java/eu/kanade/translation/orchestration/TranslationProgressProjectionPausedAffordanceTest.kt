@@ -1,4 +1,4 @@
-package eu.kanade.translation
+package eu.kanade.translation.orchestration
 
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
@@ -7,7 +7,6 @@ import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.orchestration.TranslationManager
 import eu.kanade.translation.storage.ChapterTranslationStore
 import eu.kanade.translation.ui.TranslationUiTruth
 import io.kotest.matchers.shouldBe
@@ -15,16 +14,8 @@ import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
 
-/**
- * Characterization tests for the manager's paused-affordance glue (
- * area-3 finding F5). `projectQueueStatus` and `withDurablePause` are the
- * private pure projections behind observeBatchProgress — the sheet and
- * notification "paused affordance" the UI renders. They are invoked
- * reflectively on an Unsafe-allocated [TranslationManager] because
- * constructing the manager normally boots Android/DI translation engines;
- * the functions themselves touch no manager state.
- */
-class TranslationManagerPausedAffordanceTest {
+/** Reader-facing progress rules for queue state and durable retry details. */
+class TranslationProgressProjectionPausedAffordanceTest {
 
     @Test
     fun `queue status projection clears the paused affordance while queued`() {
@@ -139,44 +130,5 @@ class TranslationManagerPausedAffordanceTest {
         every { durableFailuresSnapshot() } returns failures.associateBy { failure ->
             "${failure.pageKey}:${failure.stage.name}"
         }
-    }
-
-    private fun TranslationProgressSnapshot.projectQueueStatus(
-        queueStatus: Translation.State?,
-    ): TranslationProgressSnapshot = invokeProjection(
-        "projectQueueStatus",
-        Translation.State::class.java,
-        queueStatus,
-    )
-
-    private fun TranslationProgressSnapshot.withDurablePause(
-        store: ChapterTranslationStore,
-    ): TranslationProgressSnapshot = invokeProjection(
-        "withDurablePause",
-        ChapterTranslationStore::class.java,
-        store,
-    )
-
-    /** Invokes the private member extension [methodName] on a bare manager instance. */
-    private fun TranslationProgressSnapshot.invokeProjection(
-        methodName: String,
-        parameterType: Class<*>,
-        argument: Any?,
-    ): TranslationProgressSnapshot {
-        val method = TranslationManager::class.java.getDeclaredMethod(
-            methodName,
-            TranslationProgressSnapshot::class.java,
-            parameterType,
-        )
-        method.isAccessible = true
-        return method.invoke(uninitializedManager(), this, argument) as TranslationProgressSnapshot
-    }
-
-    private fun uninitializedManager(): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        return allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
     }
 }

@@ -3,11 +3,11 @@ package eu.kanade.translation.ui
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.RunConfigSnapshot
-import eu.kanade.translation.manager.rebuildTruthFromRunRecord
-import eu.kanade.translation.manager.withRunRecordTruth
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.orchestration.rebuildTruthFromRunRecord
+import eu.kanade.translation.orchestration.withRunRecordTruth
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

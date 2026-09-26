@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.data.TranslationProvider
@@ -17,22 +17,14 @@ private const val ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS = 30_000L
 internal fun isFreshOrphanedCleanedImage(lastModified: Long, nowEpochMs: Long): Boolean =
     lastModified <= 0L || nowEpochMs - lastModified < ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS
 
-//  Phase 16: cleaned-image lifecycle moved from `TranslationManager`
-// (retired-image drains, orphan sweeps, companion-image retirement, and the
-// reader-facing cleaned-image stream). The SAF/threading constraints that
-// gated the pre-move region moved with it (see the KDoc on
-// [CleanedImageLifecycleController.scheduleRetiredCleanedImageCleanup]). The
-// manager keeps same-signature delegating stubs at the old qualified names;
-// the controller is built per access from the manager's current field values.
+/** Owns cleaned-image lookup, retirement, and cleanup for translation artifacts. */
 internal class CleanedImageLifecycleController(
     private val applicationScopeProvider: () -> CoroutineScope,
     private val streamRegistryProvider: () -> TranslationStreamRegistry,
     private val providerProvider: () -> TranslationProvider,
 ) {
 
-    // Same-name dependency reads the moved bodies use; resolved through the
-    // manager's provider lambdas at each call so the manager builds this
-    // controller per access from its current field values.
+    // Resolve lifecycle dependencies on demand so unused cleanup paths do not create scopes.
     private val applicationScope get() = applicationScopeProvider()
 
     private val streamRegistry get() = streamRegistryProvider()

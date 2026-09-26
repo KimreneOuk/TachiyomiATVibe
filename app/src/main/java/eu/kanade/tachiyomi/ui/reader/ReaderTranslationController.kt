@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.artifact.GroupCommitConfiguration
 import eu.kanade.translation.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -27,7 +28,6 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.orchestration.ReaderSessionIntent
 import eu.kanade.translation.orchestration.SessionAdmission
 import eu.kanade.translation.orchestration.SessionRejection

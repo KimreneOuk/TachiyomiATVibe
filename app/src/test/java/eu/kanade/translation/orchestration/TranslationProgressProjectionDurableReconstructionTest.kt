@@ -1,4 +1,4 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
@@ -26,7 +26,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- *  slice 3 (contract item 4): when the bounded tracker registry misses
+ * When the bounded tracker registry misses
  * (process death / 20-entry eviction) and no queue owner exists, the
  * projection reconstructs a completed/failed chapter's terminal detail from
  * the durable store/artifacts — read-through only: no store is created and no

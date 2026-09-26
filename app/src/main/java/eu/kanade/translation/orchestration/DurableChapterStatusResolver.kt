@@ -1,10 +1,10 @@
-package eu.kanade.translation.manager
+package eu.kanade.translation.orchestration
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.model.Translation
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
+import eu.kanade.translation.model.Translation
 import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.storage.ChapterTranslationStore
 import kotlinx.coroutines.Dispatchers
@@ -12,12 +12,7 @@ import kotlinx.coroutines.withContext
 import tachiyomi.domain.source.service.SourceManager
 import java.util.concurrent.ConcurrentHashMap
 
-//  Phase 13: durable-status resolution moved from `TranslationManager`
-// (cache read/write + probe + document lookup + probe-store adoption). The
-// cache map itself stays a `TranslationManager` field — the durable tests
-// reflection-write that exact field — so the resolver reads it through a
-// provider and the manager builds this resolver per access from its current
-// field values.
+/** Resolves chapter status and artifact document locations from durable translation records. */
 
 internal data class DurableChapterKey(
     val chapterId: Long?,
@@ -59,12 +54,7 @@ internal class DurableChapterStatusResolver(
     private val durableDocumentCacheProvider: () -> ConcurrentHashMap<DurableDocumentKey, TranslationDocument> = { ConcurrentHashMap() },
 ) {
 
-    // Same-name dependency reads the moved bodies use; resolved through the
-    // manager's provider lambdas at each call so the manager builds this
-    // resolver per access from its current field values. The dependencies are
-    // deliberately NOT resolved at construction: invalidation-only callers
-    // (cache clears) must never depend on fields a reflection-built test
-    // manager may have left unset.
+    // Resolve collaborators lazily so cache-only invalidation does not open providers or stores.
     private val provider get() = providerProvider()
 
     private val sourceManager get() = sourceManagerProvider()
@@ -78,24 +68,16 @@ internal class DurableChapterStatusResolver(
     /**
      * Invalidates every cached durable status and memoized document. This is
      * protocol, not detail: opens, rescues, and deletes change durable truth,
-     * and a missed clear resurrects stale TRANSLATED states. All manager-side
-     * invalidations route through this method (see the durableStatusCache
-     * audit in the  Phase 13 delivery report).
+     * and a missed clear can resurrect stale TRANSLATED states. All status and document
+     * invalidations route through this method.
      */
     fun clearDurableStatusCache() {
         durableStatusCache.clear()
         durableDocumentCache.clear()
     }
 
-    //  ANR fix: suspend. This resolution reopens the durable artifact
-    // store over SAF/UniFile and reads page snapshots — O(pages) FUSE/binder
-    // round-trips (60-130 ms per page observed on a 68-page chapter). The
-    // previous `runBlocking(Dispatchers.IO)` here parked the calling thread
-    // for the full duration and produced 5s+ main-thread ANRs when reached
-    // from ReaderViewModel.loadChapter and MangaScreenModel's chapter list.
-    // The cache read stays first and synchronous; only the durable miss hops
-    // to IO. Semantics are unchanged: same cache writes (non-null only), same
-    // returned states.
+    // Durable misses may perform O(pages) SAF/UniFile reads. Keep the cache check synchronous,
+    // but suspend and hop to IO for a miss so reader/UI callers never park their thread.
     suspend fun persistedChapterStatus(
         chapterId: Long?,
         chapterName: String,
@@ -165,8 +147,8 @@ internal class DurableChapterStatusResolver(
     }
 
     /**
-     *  slice 3: read-through durable store access for terminal snapshot
-     * reconstruction (registry miss after process death / eviction). Prefers
+     * Read-through durable store access for terminal snapshot reconstruction (registry miss
+     * after process death or eviction). Prefers
      * the active store; otherwise opens the durable document through the
      * bounded probe registry and releases it afterwards. No result is cached
      * here — the caller projects and discards, keeping memory bounded.
