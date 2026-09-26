@@ -4,10 +4,7 @@ import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.engines.translator.analysis.AnalysisRequestBuilder
 import eu.kanade.translation.engines.translator.analysis.AnalyzerProvenanceFactory
 import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
@@ -26,7 +23,6 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.persistence.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.ArtifactStage
@@ -39,20 +35,11 @@ import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.EnvelopePlan
-import eu.kanade.translation.persistence.artifact.ExtractedEntity
-import eu.kanade.translation.persistence.artifact.ExtractedRelationship
-import eu.kanade.translation.persistence.artifact.ExtractedTerm
-import eu.kanade.translation.persistence.artifact.ExtractedTermKind
 import eu.kanade.translation.persistence.artifact.FailureCategory
-import eu.kanade.translation.persistence.artifact.PageRange
 import eu.kanade.translation.persistence.artifact.ProfilePointer
-import eu.kanade.translation.persistence.artifact.ProfileScene
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
-import eu.kanade.translation.persistence.artifact.SceneRegister
-import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.persistence.artifact.StageFingerprints
-import eu.kanade.translation.persistence.artifact.ToneFlag
 import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
@@ -61,7 +48,8 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
-import eu.kanade.translation.pipeline.batch.analysis.AnalysisChunkPublication
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisCorpus
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisCorpusEntry
 import eu.kanade.translation.pipeline.batch.analysis.AnalysisWorker
 import eu.kanade.translation.pipeline.batch.analysis.AnalysisWorkerContext
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatchWork
@@ -1310,134 +1298,6 @@ internal class ChapterProfileBatchCoordinator(
         if (id.matches(Regex("p\\d+_b\\d+"))) return id
         val local = Regex("^(?:p\\d+_)?b(\\d+)$").find(id)?.groupValues?.getOrNull(1)
         return "${wirePageKey}_b${local ?: index.toString()}"
-    }
-
-    /** One rebuilt-corpus OCR page entry (durable checkpoint + wire identity). */
-    internal class AnalysisCorpusEntry(
-        val storagePageKey: String,
-        val naturalPageIndex: Int,
-        val contentFingerprint: String,
-        val snapshotPointer: SidecarPointer,
-        val wirePageKey: String,
-        val wireBlockIds: List<String>,
-        val blockTexts: List<String>,
-        val estimatedInputTokens: Int,
-    )
-
-    internal class AnalysisCorpus(
-        val entries: List<AnalysisCorpusEntry>,
-        val corpusFingerprint: String,
-    ) {
-        /** Chunks are planned over STORAGE page keys; look them up here. */
-        private val byStorageKey = entries.associateBy { it.storagePageKey }
-
-        /** Wire evidence universe + source texts for one planned chunk. */
-        fun evidenceTextsFor(chunk: PlannedAnalysisChunk): AnalysisEvidenceTexts {
-            val blockIdsByPage = mutableMapOf<String, List<String>>()
-            val textByBlockId = mutableMapOf<String, String>()
-            val wirePageKeyByStorageKey = mutableMapOf<String, String>()
-            for (pageKey in chunk.contributingPageKeys) {
-                val entry = byStorageKey[pageKey] ?: continue
-                wirePageKeyByStorageKey[pageKey] = entry.wirePageKey
-                blockIdsByPage[entry.wirePageKey] = entry.wireBlockIds
-                entry.wireBlockIds.forEachIndexed { index, blockId ->
-                    textByBlockId[blockId] = entry.blockTexts[index]
-                }
-            }
-            return AnalysisEvidenceTexts(
-                blockIdsByPage = blockIdsByPage,
-                textByBlockId = textByBlockId,
-                wirePageKeyByStorageKey = wirePageKeyByStorageKey,
-            )
-        }
-
-        /**
-         * Maps a validated response onto the durable publication input:
-         * persistable subset only, evidence page keys translated from wire
-         * `p<N>` to the persisted page keys, and OCR artifact pointers in
-         * contributing (core-then-context) order.
-         */
-        fun publicationInput(
-            chunk: PlannedAnalysisChunk,
-            outcome: AnalysisChunkRunOutcome.Completed,
-        ): AnalysisChunkPublication.AnalysisChunkPublicationInput? {
-            val refs = mutableListOf<SidecarPointer>()
-            for (pageKey in chunk.contributingPageKeys) {
-                val entry = byStorageKey[pageKey] ?: return null
-                refs += entry.snapshotPointer
-            }
-
-            fun storageKey(wireKey: String): String =
-                entries.firstOrNull { it.wirePageKey == wireKey }?.storagePageKey ?: wireKey
-
-            val scenes = outcome.response.scenes.map { scene ->
-                ProfileScene(
-                    sceneId = scene.sceneId,
-                    pageRange = PageRange(
-                        firstNaturalPageIndex = naturalIndexOrZero(scene.fromPageWireKey),
-                        lastNaturalPageIndex = naturalIndexOrZero(scene.toPageWireKey),
-                    ),
-                    participants = scene.participants,
-                    toneFlags = (scene.tone + scene.contentTags).mapNotNull { name ->
-                        when (name) {
-                            "EXPLICIT", "INTIMATE", "VIOLENT", "COMEDIC", "SERIOUS", "ACTION" ->
-                                ToneFlag.valueOf(name)
-                            else -> ToneFlag.OTHER
-                        }
-                    }.toSet(),
-                    register = SceneRegister.entries.firstOrNull { it.name == scene.register }
-                        ?: SceneRegister.OTHER,
-                    narrativeContext = scene.narrative,
-                )
-            }
-            return AnalysisChunkPublication.AnalysisChunkPublicationInput(
-                provenance = outcome.provenance,
-                ocrArtifactRefs = refs,
-                // Wave-4 F-W4-3: the DR-A coverage classification is durable
-                // so slice-B reconcile can treat MISSING_ONLY as pending.
-                coverage = when (outcome.coverage.kind) {
-                    AnalysisCoverageKind.COMPLETE -> AnalysisChunkCoverage.COMPLETE
-                    AnalysisCoverageKind.MISSING_ONLY -> AnalysisChunkCoverage.MISSING_ONLY
-                },
-                terms = outcome.response.terms.map { term ->
-                    ExtractedTerm(
-                        termId = term.termId,
-                        sourceForm = term.sourceForm,
-                        canonicalTarget = term.canonicalTarget,
-                        aliases = term.aliases,
-                        kind = ExtractedTermKind.entries.firstOrNull { it.name == term.kind }
-                            ?: ExtractedTermKind.TERM,
-                    )
-                },
-                entities = outcome.response.entities.map { entity ->
-                    ExtractedEntity(
-                        entityId = entity.entityId,
-                        canonicalSourceName = entity.canonicalSourceName,
-                        proposedTargetName = entity.proposedTargetName,
-                        sourceNames = entity.sourceNames,
-                        titles = entity.titles,
-                    )
-                },
-                relationships = outcome.response.entities.flatMap { entity ->
-                    entity.relationships.map { relationship ->
-                        ExtractedRelationship(
-                            type = relationship.type,
-                            sourceEntityId = relationship.sourceEntityId,
-                            targetEntityId = relationship.targetEntityId,
-                        )
-                    }
-                },
-                scenes = scenes,
-                narrativeSummary = outcome.response.narrativeSummary,
-                conflictNotes = outcome.response.conflictNotes,
-                evidenceRefs = outcome.response.evidenceRefs.map { ref ->
-                    ref.copy(pageKey = storageKey(ref.pageKey))
-                },
-            )
-        }
-
-        private fun naturalIndexOrZero(wirePageKey: String): Int =
-            wirePageKey.removePrefix("p").toIntOrNull()?.coerceAtLeast(0) ?: 0
     }
 
     /**

@@ -49,7 +49,7 @@ internal class AnalysisWorkerContext(
         ChapterArtifactEngine,
         List<PageKey>,
         Int,
-    ) -> ChapterProfileBatchCoordinator.AnalysisCorpus?,
+    ) -> AnalysisCorpus?,
     val validatePersistedPrefix: suspend (
         ChapterArtifactEngine,
         List<PlannedAnalysisChunk>,
@@ -105,7 +105,7 @@ internal class AnalysisWorker(
         artifact: ChapterArtifactEngine,
         orderedPages: List<PageKey>,
         expectedPageCount: Int,
-    ): ChapterProfileBatchCoordinator.AnalysisCorpus? =
+    ): AnalysisCorpus? =
         context.corpusEntriesFromCheckpoints(artifact, orderedPages, expectedPageCount)
 
     private suspend fun validatePersistedPrefix(
