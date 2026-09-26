@@ -10,6 +10,7 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.scheduling.AutoSlotState
@@ -176,11 +177,7 @@ object TranslationUiTruth {
      * tells the user nothing about which half of the pipeline stalled.
      */
     fun timeoutCopy(nativeTimer: Boolean): String =
-        if (nativeTimer) {
-            "ONNX/native result timer expired; translation failed."
-        } else {
-            "HTTP+render result timer expired; translation failed."
-        }
+        PageStoreWriter.timeoutFailureMessage(nativeTimer)
 
     /**
      * One chapter's partial-download admission facts ( /N2).

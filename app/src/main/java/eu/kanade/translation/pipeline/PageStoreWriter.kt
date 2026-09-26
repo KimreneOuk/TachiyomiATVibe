@@ -8,7 +8,6 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
-import eu.kanade.translation.presentation.TranslationUiTruth
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.util.TranslationMemoryBudget
 import tachiyomi.domain.chapter.model.Chapter
@@ -26,6 +25,15 @@ internal class PageStoreWriter(
     private val streamRegistry: TranslationStreamRegistry,
     private val handleCriticalTranslationOom: (stage: String, oom: OutOfMemoryError) -> Unit,
 ) {
+
+    companion object {
+        fun timeoutFailureMessage(nativeTimer: Boolean): String =
+            if (nativeTimer) {
+                "ONNX/native result timer expired; translation failed."
+            } else {
+                "HTTP+render result timer expired; translation failed."
+            }
+    }
 
     fun peekReaderPageStream(
         manga: Manga,
@@ -120,7 +128,7 @@ internal class PageStoreWriter(
         store.invalidateGeneration("timeout chapter=${chapter.name} pageKey=$pageKey")
         val snapshot = store.snapshot(pageKey)
         store.patchPage(pageKey, snapshot.toPrecondition(), "mark page timed out") { existing ->
-            val timeoutMessage = TranslationUiTruth.timeoutCopy(nativeTimer)
+            val timeoutMessage = timeoutFailureMessage(nativeTimer)
             when {
                 // Don't overwrite a page with no intermediate progress.
                 existing == null || existing.cleanedImageName == null -> {
