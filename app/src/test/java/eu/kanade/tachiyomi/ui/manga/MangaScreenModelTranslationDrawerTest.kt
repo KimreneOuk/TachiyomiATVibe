@@ -432,7 +432,8 @@ class MangaScreenModelTranslationDrawerTest {
             // (String vs typed key objects); match on the string form so a
             // stale cancelled scope is evicted regardless of key type.
             dependencies.keys.removeAll { key ->
-                key is String && "ScreenModelCoroutineScope" in key ||
+                key is String &&
+                    "ScreenModelCoroutineScope" in key ||
                     "ScreenModelCoroutineScope" in key.toString()
             }
         } catch (_: Exception) {
