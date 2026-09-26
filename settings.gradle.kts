@@ -29,6 +29,8 @@ dependencyResolutionManagement {
     }
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        // Local maven mirror of JitPack artifacts whose builds are flaky; see repo/README.md
+        maven(url = uri("repo"))
         mavenCentral()
         google()
         maven(url = "https://www.jitpack.io")
