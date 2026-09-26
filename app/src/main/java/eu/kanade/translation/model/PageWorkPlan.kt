@@ -63,7 +63,7 @@ enum class StageReasonCode {
     /**
      * TachiyomiAT   the chapter glossary matured past the version
      * recorded on the page's persisted translation, so its REUSE was
-     * downgraded to RUN for a one-time terminology repair (phase3-design §1.2).
+     * downgraded to RUN for a one-time terminology repair.
      */
     GLOSSARY_MATURED,
 }
@@ -106,7 +106,7 @@ data class BatchPlannerInput(
      * TachiyomiAT   gate input: the chapter's current glossary version
      * (manifest pointer), or `null` when the gate is OFF — the standard
      * engine lane, a legacy-authority manifest, or a chapter with no glossary
-     * ever published (phase3-design §1.2: absence keeps REUSE unchanged, so
+     * ever published. Absence keeps REUSE unchanged, so
      * glossary-less and standard-lane chapters stay cost-flat).
      */
     val currentGlossaryVersion: Int? = null,

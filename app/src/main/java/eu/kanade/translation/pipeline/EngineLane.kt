@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong
  * The native run scope/quarantine, the in-flight page-key set, and the
  * [onPageStuck] callback stay pipeline-owned and are injected here.
  *
- *  Phase 4 ( phase4-design §1.2): the lane also owns the engine EPOCH
+ *  The lane also owns the engine EPOCH
  * (bumped only by [closeEngines]) and the translator BORROW registry
  * ([beginTranslatorUse]/[endTranslatorUse]) that make in-flight reader work
  * observable to the stop path, plus the bounded NON-BLOCKING borrow drain:

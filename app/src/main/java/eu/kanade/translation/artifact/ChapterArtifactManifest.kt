@@ -23,7 +23,7 @@ data class ChapterArtifactManifest(
     /** True only when the baseline is the complete ordered batch page set. */
     val expectedPageCountTrusted: Boolean = false,
     /**
-     *  Phase 4 ( phase4-design §3.3): the documented delta of a subset
+     *  The documented delta of a subset
      * admission over a partially-downloaded chapter. Missing pages are NEVER
      * registered as page records — the durable record carries the absence
      * here instead of faking stages, failures, or attempt entries. Null when
@@ -94,7 +94,7 @@ data class ChapterArtifactManifest(
 }
 
 /**
- *  Phase 4 ( phase4-design §3.3): how a subset admission's missing-page
+ *  How a subset admission's missing-page
  * delta was determined. `DOWNLOAD_CROSSCHECK` — the downloader's fetched page
  * list proved a known source total; `UNKNOWN` — no trustworthy source total
  * existed, so the recorded count is only what was found.
@@ -334,7 +334,7 @@ data class ChapterGlossary(
 }
 
 /**
- *  Phase 3 ( phase3-design §3): which lane started a paid provider
+ *  Which lane started a paid provider
  * attempt. The crash-loop cap binds auto-retry loops only — never the user.
  */
 enum class AttemptOrigin { MANUAL, AUTO, BATCH }

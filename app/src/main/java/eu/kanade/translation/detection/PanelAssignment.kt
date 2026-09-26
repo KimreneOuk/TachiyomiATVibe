@@ -23,10 +23,10 @@ package eu.kanade.translation.detection
  */
 object PanelAssignment {
 
-    /** containment >= this -> confident ownership (matches tools/ eval: 0.80). */
+    /** containment >= this -> confident ownership (threshold: 0.80). */
     const val OWNED_THRESHOLD = 0.80f
 
-    /** [SPAN_LO, OWNED_THRESHOLD) -> crosses a panel gutter (matches tools/ eval: 0.10). */
+    /** [SPAN_LO, OWNED_THRESHOLD) -> crosses a panel gutter (threshold: 0.10). */
     const val SPAN_LO = 0.10f
 
     fun interface Category {

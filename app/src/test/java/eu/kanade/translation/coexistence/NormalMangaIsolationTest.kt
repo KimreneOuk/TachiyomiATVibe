@@ -34,8 +34,8 @@ import org.junit.jupiter.api.Test
  *
  * Note: the preference-level translation-enabled gate lives in
  * ReaderViewModel, outside this graph; at manager level the arbitration /
- * observation entry points asserted here ARE the gates (see
- * review/phase1-verification.md).
+ * observation entry points asserted here ARE the gates.
+ *
  */
 class NormalMangaIsolationTest {
 

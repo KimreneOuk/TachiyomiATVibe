@@ -8,10 +8,9 @@ import org.junit.jupiter.api.Test
 
 /**
  * Guards the pure-JVM port of the legacy free-text path ([PushPullGradient]).
- * These are the same behaviours pinned in the Python prototype
- * (`tools/inpaint-debug-viewer/tests/test_free_text_local_color.py`): the free-
- * text fill must use the LOCAL surrounding color (not the global page white), the
- * push-pull gradient must reconstruct the hole with that local color, and only
+ * These are the same behaviours pinned in the Python prototype: the free-text
+ * fill must use the LOCAL surrounding color (not the global page white), and
+ * the push-pull gradient must reconstruct the hole with that local color. Only
  * masked pixels may change.
  */
 class PushPullGradientTest {

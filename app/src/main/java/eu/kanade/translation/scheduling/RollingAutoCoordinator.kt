@@ -1349,7 +1349,7 @@ class RollingAutoCoordinator(
          *  Phase 4 ( §1.6): aligned to the drained call's legitimate
          * budget (ONNX <= 90 s + HTTP/render <= 120 s, sequential): a shorter
          * grace would cut a healthy long call cancellation-class mid-chain and
-         * strand its  attempt entry unresolved (phase3-verification finding 4).
+         * strand its attempt entry unresolved.
          */
         const val PROVIDER_DRAIN_GRACE_MS = 210_000L
 

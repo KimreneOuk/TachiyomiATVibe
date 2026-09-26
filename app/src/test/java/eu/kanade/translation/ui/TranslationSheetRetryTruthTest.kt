@@ -8,7 +8,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * batch retry affordance (field defect, Plan/active/2026-09-03_).
+ * Batch retry affordance for terminal-aborted or terminal-failed batches.
  *
  * RED defects named here:
  *
@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test
  *     aborted banner — no Retry control exists, so a cancelled batch dead-ends
  *     in the drawer (the indicator routes every tap there and its long-press
  *     CANCEL is a no-op with an empty queue).
- *  2. The Retry truth must follow the P5 rules: offered ONLY for a
+ *  2. The Retry truth must follow the batch retry rules: offered ONLY for a
  *     terminal-aborted (or terminal-failed) snapshot AND only when the screen
  *     model actually wired a restart callback; a successfully FINISHED
  *     snapshot must never offer Retry; the label/content description are

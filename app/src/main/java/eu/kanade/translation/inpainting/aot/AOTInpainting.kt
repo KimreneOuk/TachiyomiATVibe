@@ -39,7 +39,7 @@ class AOTInpainting(
         private const val MAX_TOTAL_PIXELS = MAX_INFERENCE_DIM * MAX_INFERENCE_DIM
 
         // TachiyomiAT: PaddleOCR-v6 solid-box erase-mask tunables. Defaults match
-        // the validated prototype (tools/inpaint-debug-viewer/server.py); kept
+        // the validated prototype; kept
         // internal (no settings surface).
         private const val PADDLE_CROP_PAD = 12
         private const val PADDLE_THRESH = 0.18f

@@ -71,7 +71,7 @@ internal class BatchResumePlanner(
             BatchStage.TRANSLATION -> {
                 translationFingerprint = expectedBatchFingerprints.translation
                 translationOrigin = PageWriteOrigin.BATCH.name
-                //   (phase3-design §1.3): stamp the live store glossary
+                // Stamp the live store glossary
                 // version at commit-provenance time, alongside the translation
                 // fingerprint. The planner's reuse gate compares this recorded
                 // value against the chapter's current version (`absence = 0`)
@@ -96,7 +96,7 @@ internal class BatchResumePlanner(
                 expectedFingerprints = expectedBatchFingerprints,
                 sourceFingerprint = if (store.state.value[pageKey] != null) sourceFingerprints[pageKey] else null,
                 durableFailure = store.durableFailure(pageKey),
-                //   (phase3-design §1.2): AI lane only — the standard
+                // AI lane only — the standard
                 // engine lane passes null so its decisions are byte-identical
                 // to pre-. The accessor itself returns null (gate off) for a
                 // legacy authority or a chapter with no glossary pointer, which

@@ -32,7 +32,7 @@ data class Translation(
         }
 
     /**
-     *  Phase 4 ( phase4-design §3.2): the trigger's admission-probe
+     *  The trigger's admission-probe
      * cross-check, carried with the queued chapter so the batch's
      * pre-registration can stamp honest totals. [probedSourcePageCount] is the
      * SOURCE total when the downloader's fetched page list proved it, and null

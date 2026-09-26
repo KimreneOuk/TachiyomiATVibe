@@ -13,8 +13,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 2 —  lease-priority contract (phase2-design note §1.2), GREEN
- * with the  origin change.
+ *  Lease-priority behavior with the origin change.
  *
  * Pins the one new acquisition rule and its fencing consequences on the REAL
  * store the coexistence harness wires:

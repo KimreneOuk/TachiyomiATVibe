@@ -43,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Phase 3 —  §2.3 drain-not-cancel (phase3-design §2.3).
+ *  Drain-not-cancel behavior for auto provider calls.
  *
  * When the reader leaves (auto window shutdown/cancel), an auto provider call
  * already in flight must DRAIN to completion inside a bounded grace window —
@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * ledger entry). Grace expiry must cancel the call cleanly and leave the
  * entry unresolved.
  *
- * RED (committed first, phase3-design §6 step 6): `drainGraceMs` is not
+ * Before this behavior was implemented, `drainGraceMs` was not
  * configurable and the consumer cancels in-flight work, so the drain variant's
  * commit never lands and the grace variant cannot even be constructed. Every
  * failure names its defect — never a timeout: bounded waits convert to
@@ -188,7 +188,7 @@ class AutoProviderCallDrainsNotCancelsTest {
      * [eu.kanade.translation.pipeline.TranslationPipeline.ONNX_PHASE_TIMEOUT_MS] +
      * [eu.kanade.translation.pipeline.TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS] (ONNX 90 s +
      * HTTP/render 120 s, sequential = 210 s) — so a healthy long call is never
-     * cut cancellation-class mid-chain (phase3-verification finding 4).
+     * cut cancellation-class mid-chain.
      */
     @Test
     fun `drain grace companion bound matches the attach chain budget`() {

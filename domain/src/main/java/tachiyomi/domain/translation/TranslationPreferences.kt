@@ -275,14 +275,14 @@ class TranslationPreferences(
     fun translationRateLimitSafe() = preferenceStore.getBoolean("translation_rate_limit_safe", false)
 
     /**
-     * T924-FF-02: persisted LAYOUT_PREPARE — durable draw-plan publication and
+     * Persisted LAYOUT_PREPARE — durable draw-plan publication and
      * reader hydration with mandatory fallback to the runtime async planner.
      * Default OFF.
      */
     fun translationBatchPersistedLayout() = preferenceStore.getBoolean("translation_batch_persisted_layout", false)
 
     /**
-     * T934 U.2: the batch progress sheet's Advanced view (pipeline stage
+     * The batch progress sheet's Advanced view (pipeline stage
      * cards, page grid, failure groups, queue detail) behind the simplified
      * default. Persisted so the chosen depth survives sheet reopenings.
      */

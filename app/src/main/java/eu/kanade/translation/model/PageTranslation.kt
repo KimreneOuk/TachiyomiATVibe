@@ -60,10 +60,10 @@ data class PageTranslation(
     /**
      * TachiyomiAT   the chapter glossary version ([eu.kanade.translation.artifact.GlossaryPointer])
      * live in the store when this page's translation was durably committed
-     * (stamped at commit-provenance time, phase3-design §1.3). Comparable, NOT
+     * (stamped at commit-provenance time). Comparable, NOT
      * hashed into [translationFingerprint]: hash-embedding would blanket-stale
      * every existing AI-lane page — including glossary-less chapters — for no
-     * repair benefit (phase3-design §0.2). The batch planner downgrades a
+     * repair benefit. The batch planner downgrades a
      * translation-stage REUSE to RUN iff the chapter's current version is
      * GREATER than this recorded value (`null` absence compares as 0), so a
      * page translated before the glossary matured is repaired exactly once and

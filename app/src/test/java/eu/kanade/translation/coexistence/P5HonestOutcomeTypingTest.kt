@@ -32,11 +32,11 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- *  Phase 5 — typed-outcome truth at the single-page boundary and the batch
- * progress snapshot (product spec §4, conditions A/B/C).
+ *  Typed-outcome truth at the single-page boundary and the batch
+ * progress snapshot, covering conditions A/B/C.
  *
  * Defects under test (each RED failure names its condition):
- *  - **Condition A (Deviation #7, review/phase4-verification.md §5):** the resume
+ *  - **Condition A (resume outcome):** the resume
  *    paths of `translateSinglePageOnnx` return `null` on SUCCESS. This is a NEW
  *    wrong-outcome case introduced by 's honest-timeout flip — pre- the
  *    accident produced the right `Completed` for resumes; 's fix mapped the
@@ -46,10 +46,10 @@ import java.util.concurrent.atomic.AtomicReference
  *  - **Condition B (-1):** an HTTP+render timeout (`withTimeoutOrNull` → null
  *    outcome) falls through to `SinglePageOutcome.Completed`. It must be typed
  *    honestly (Failed family, naming the HTTP+render timer).
- *  - **Condition C (P3 finding 5):** `ChunkCompletionOutcome.PersistenceRejected`
+ *  - **Condition C:** `ChunkCompletionOutcome.PersistenceRejected`
  *    and `ChunkCompletionOutcome.Failed` returned as VALUES by the HTTP phase are
  *    mapped only for `Paused`; everything else falls through to `Completed`.
- *  - **Batch (spec §4.1):** the `nonDurableFailure` fact must reach the progress
+ *  - **Batch:** the `nonDurableFailure` fact must reach the progress
  *    snapshot as a bounded value field (boolean + nullable reason, no enum).
  *
  * Store truth is never in question here — every test also pins the fail-closed

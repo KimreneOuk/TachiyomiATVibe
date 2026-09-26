@@ -27,8 +27,7 @@ import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 
 /**
- *  Phase 4 —  partial-download admission + honest missing-page
- * accounting (phase4-design §3).
+ *  Partial-download admission and honest missing-page accounting.
  *
  * Drives the REAL production graph over an ARTIFACT-authority store
  * (FakeChapterDocumentIo + the production fresh-chapter recipe,  harness
@@ -49,8 +48,8 @@ import java.io.ByteArrayInputStream
  * page up over a two-page directory (its first page reopens fully terminal, so
  * the planner has no static dependency block).
  *
- * RED (phase4-design §3.4): the trigger stamps `expectedPageCount` from its
- * own directory enumeration as TRUSTED (audit M-08) — a half-downloaded
+ * The original defect: the trigger stamped `expectedPageCount` from its
+ * own directory enumeration as TRUSTED — a half-downloaded
  * chapter silently "succeeds" at 100%. The probe, the manifest
  * `partialBatchInfo`, and the unknown-total honesty do not exist yet. Where an
  * assertion targets a GREEN seam that cannot exist yet (the probe, the

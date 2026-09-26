@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test
 import kotlin.coroutines.EmptyCoroutineContext
 
 /**
- *  Phase 3 —  durable attempt ledger + crash-loop cap (phase3-design §3, §5.3).
+ *  Durable attempt ledger and crash-loop cap.
  *
  * Drives the REAL production graph over an ARTIFACT-authority store
  * (FakeChapterDocumentIo + the production fresh-chapter recipe,  harness
@@ -41,8 +41,8 @@ import kotlin.coroutines.EmptyCoroutineContext
  * layout + record schema from the design note independently of the store
  * collaborator.
  *
- * RED (committed first, phase3-design §6 step 4): no attempt ledger exists, so
- * a death mid-call leaves no durable trace, the startup reconcile has nothing
+ * Before the attempt ledger existed, a death mid-call left no durable trace;
+ * startup reconciliation had nothing
  * to consume, and the crash-loop cap never binds. Where a test must call a
  * commit-2 production seam that cannot exist yet (the startup reconcile pass,
  * the store-level attempt recording/clearing), it goes through the reflection
