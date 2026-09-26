@@ -1,18 +1,19 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.engines.vision.ocr
 
+import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * Guards [PageTranslationHelper.dedupeGeometricOverlaps] — the single
+ * Guards [OcrBlockDeduper.dedupeGeometricOverlaps] — the single
  * geometric dedupe that closes the gaps the recognition engine's own dedupe
  * stages leave open (cross-label overlaps, no-parent overlaps, differing-text
  * overlaps). Each case mirrors a real way two blocks end up overlapping and
  * rendering on top of each other.
  */
-class PageTranslationHelperDedupeTest {
+class OcrBlockDeduperTest {
 
     private fun block(
         x: Float,
@@ -38,14 +39,14 @@ class PageTranslationHelperDedupeTest {
 
     @Test
     fun `empty input returns empty`() {
-        PageTranslationHelper.dedupeGeometricOverlaps(emptyList()) shouldHaveSize 0
+        OcrBlockDeduper.dedupeGeometricOverlaps(emptyList()) shouldHaveSize 0
     }
 
     @Test
     fun `single block is returned unchanged`() {
         val blocks = listOf(block(x = 0f, y = 0f, w = 50f, h = 20f, text = "only", score = 0.9f))
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(blocks)
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(blocks)
 
         out shouldContainExactly blocks
     }
@@ -56,7 +57,7 @@ class PageTranslationHelperDedupeTest {
         val a = block(x = 0f, y = 0f, w = 40f, h = 20f, text = "A", score = 0.9f)
         val b = block(x = 100f, y = 100f, w = 40f, h = 20f, text = "B", score = 0.5f)
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(listOf(a, b))
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(listOf(a, b))
 
         out shouldContainExactly listOf(a, b)
     }
@@ -68,7 +69,7 @@ class PageTranslationHelperDedupeTest {
         val a = block(x = 0f, y = 0f, w = 50f, h = 50f, text = "A", score = 0.9f)
         val b = block(x = 48f, y = 0f, w = 50f, h = 50f, text = "B", score = 0.5f)
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(listOf(a, b))
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(listOf(a, b))
 
         out shouldHaveSize 2
     }
@@ -81,7 +82,7 @@ class PageTranslationHelperDedupeTest {
         val high = block(x = 10f, y = 10f, w = 80f, h = 40f, text = "correct", score = 0.9f)
         val low = block(x = 12f, y = 11f, w = 80f, h = 40f, text = "wrong", score = 0.5f)
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(listOf(high, low))
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(listOf(high, low))
 
         out shouldHaveSize 1
         out.first().text shouldBe "correct"
@@ -93,7 +94,7 @@ class PageTranslationHelperDedupeTest {
         val a = block(x = 10f, y = 10f, w = 80f, h = 40f, text = "same", score = 0.5f)
         val b = block(x = 11f, y = 10f, w = 80f, h = 40f, text = "same", score = 0.9f)
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(listOf(a, b))
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(listOf(a, b))
 
         out shouldHaveSize 1
         out.first().score shouldBe 0.9f
@@ -107,7 +108,7 @@ class PageTranslationHelperDedupeTest {
         val a = block(x = 10f, y = 10f, w = 80f, h = 40f, text = "A", score = 0.9f, label = 1)
         val b = block(x = 10f, y = 10f, w = 82f, h = 40f, text = "B", score = 0.5f, label = 2)
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(listOf(a, b))
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(listOf(a, b))
 
         out shouldHaveSize 1
         out.first().label shouldBe 1
@@ -119,7 +120,7 @@ class PageTranslationHelperDedupeTest {
         val big = block(x = 0f, y = 0f, w = 200f, h = 100f, text = "big", score = 0.5f)
         val small = block(x = 80f, y = 40f, w = 40f, h = 20f, text = "small", score = 0.9f)
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(listOf(big, small))
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(listOf(big, small))
 
         // Containment of small inside big = 1.0 > 0.86 → duplicate. Higher score
         // (small, 0.9) wins over big (0.5).
@@ -136,7 +137,7 @@ class PageTranslationHelperDedupeTest {
         val b = block(x = 10f, y = 100f, w = 80f, h = 40f, text = "B", score = 0.5f)
         val c = block(x = 11f, y = 11f, w = 80f, h = 40f, text = "C", score = 0.3f)
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(listOf(a, b, c))
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(listOf(a, b, c))
 
         out shouldHaveSize 2
         out[0].text shouldBe "A"
@@ -150,7 +151,7 @@ class PageTranslationHelperDedupeTest {
             block(x = 11f, y = 11f, w = 80f, h = 40f, text = "B", score = 0.5f),
         )
 
-        PageTranslationHelper.dedupeGeometricOverlaps(original)
+        OcrBlockDeduper.dedupeGeometricOverlaps(original)
 
         original shouldHaveSize 2
         original[0].text shouldBe "A"
@@ -164,7 +165,7 @@ class PageTranslationHelperDedupeTest {
         val good = block(x = 10f, y = 10f, w = 80f, h = 40f, text = "good", score = 0.9f)
         val degenerate = block(x = 10f, y = 10f, w = 0f, h = 40f, text = "degenerate", score = 0.1f)
 
-        val out = PageTranslationHelper.dedupeGeometricOverlaps(listOf(good, degenerate))
+        val out = OcrBlockDeduper.dedupeGeometricOverlaps(listOf(good, degenerate))
 
         out shouldHaveSize 2
     }

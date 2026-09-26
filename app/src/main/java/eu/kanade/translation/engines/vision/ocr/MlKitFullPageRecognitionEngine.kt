@@ -10,7 +10,6 @@ import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.vision.ocr.TextRecognizer
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 
@@ -75,7 +74,7 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
         // overlapping TextBlocks on dense pages render on top of each other.
         // Run before ocrBlockCount is set so the count reflects post-dedupe.
         if (translation.blocks.size > 1) {
-            val deduped = PageTranslationHelper.dedupeGeometricOverlaps(translation.blocks.toList())
+            val deduped = OcrBlockDeduper.dedupeGeometricOverlaps(translation.blocks.toList())
             if (deduped.size < translation.blocks.size) {
                 translation.blocks.clear()
                 translation.blocks.addAll(deduped)

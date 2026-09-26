@@ -37,7 +37,6 @@ import eu.kanade.translation.engines.vision.segmentation.OnnxBubbleSegmenter
 import eu.kanade.translation.engines.vision.webtoon.WebtoonSlidingDetector
 import eu.kanade.translation.model.Detection
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.util.TranslationMemoryBudget
@@ -739,7 +738,7 @@ class RoiPageRecognitionEngine(
         // collapses identical-text overlaps; this collapses remaining geometric
         // overlaps (cross-label, differing-text) so two overlapping boxes never
         // reach the renderer.
-        val dedupedBlocks = PageTranslationHelper.dedupeGeometricOverlaps(
+        val dedupedBlocks = OcrBlockDeduper.dedupeGeometricOverlaps(
             finalRecognizedBlocks.map { it.block },
         )
         val droppedByGeoDedupe = finalRecognizedBlocks.size - dedupedBlocks.size
