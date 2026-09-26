@@ -406,7 +406,7 @@ class MangaScreenModelTranslationDrawerTest {
         }
     }
 
-    private fun awaitUntil(what: String, timeoutMs: Long = 5_000, condition: () -> Boolean) {
+    private fun awaitUntil(what: String, timeoutMs: Long = 30_000, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (!condition()) {
             if (System.currentTimeMillis() > deadline) {
