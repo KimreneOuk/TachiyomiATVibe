@@ -2,6 +2,7 @@ package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.model.AiBatchProgress
 import eu.kanade.translation.model.AiPageProgressState
+import eu.kanade.translation.model.BatchPhase
 import eu.kanade.translation.model.BatchRebuildProgress
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslation

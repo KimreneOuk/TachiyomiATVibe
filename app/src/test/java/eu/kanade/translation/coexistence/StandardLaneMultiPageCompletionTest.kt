@@ -1,9 +1,9 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.model.BatchPhase
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.pipeline.batch.BatchPhase
 import io.kotest.matchers.maps.shouldBeEmpty
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

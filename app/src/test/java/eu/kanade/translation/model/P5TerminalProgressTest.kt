@@ -110,9 +110,9 @@ class P5TerminalProgressTest {
 
     @Test
     fun `terminal totals keep readable success distinct from failed partial and textless work`() {
-        val snapshot = TranslationProgressSnapshot.compute(
+        val snapshot = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.TRANSLATING,
+            chapterState = Translation.State.TRANSLATING,
             pageMap = mapOf(
                 "p0" to translatedPage("p0"),
                 "p1" to failedPage("p1"),
@@ -160,9 +160,9 @@ class P5TerminalProgressTest {
             cleanedImageName = "p0.cleaned.jpg"
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         }
-        val snapshot = TranslationProgressSnapshot.compute(
+        val snapshot = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.TRANSLATING,
+            chapterState = Translation.State.TRANSLATING,
             pageMap = mapOf("p0" to uncommitted),
         )
 
@@ -227,9 +227,9 @@ class P5TerminalProgressTest {
         // Three committed pages of a partially downloaded chapter: the store
         // page set is NOT the trusted source total, so "3/3 · 100%" would be a
         // fabricated complete chapter ( fact).
-        val snapshot = TranslationProgressSnapshot.compute(
+        val snapshot = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.TRANSLATING,
+            chapterState = Translation.State.TRANSLATING,
             pageMap = mapOf(
                 "p0" to translatedPage("p0"),
                 "p1" to translatedPage("p1"),

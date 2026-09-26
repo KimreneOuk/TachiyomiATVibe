@@ -1,8 +1,12 @@
 package eu.kanade.translation.manager
 
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
+import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.FailureCategory
+import eu.kanade.translation.artifact.toUiPauseReason
 import eu.kanade.translation.model.BatchRebuildProgress
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -14,6 +18,7 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
+import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.storage.ChapterTranslationStore
@@ -33,6 +38,47 @@ import kotlinx.coroutines.withContext
 
 /**  U.1: minimum interval between durable run-record probes per chapter flow. */
 private const val REBUILD_PROBE_MIN_INTERVAL_MS = 500L
+
+/** Builds reader and manga progress from the live page and committed display state. */
+internal fun ChapterTranslationStore.progressSnapshot(
+    chapterId: Long,
+    orchestrationState: Translation.State,
+    permitHolderPageKey: String?,
+): TranslationProgressSnapshot {
+    val projectedState = when (orchestrationState) {
+        Translation.State.QUEUE,
+        Translation.State.TRANSLATING,
+        -> orchestrationState
+        else -> artifactStatus() ?: orchestrationState
+    }
+    val snapshot = TranslationBatchProgressTracker.computeSnapshot(
+        chapterId = chapterId,
+        chapterState = projectedState,
+        pageMap = state.value,
+        displayPageMap = display.value,
+        permitHolderPageKey = permitHolderPageKey,
+        expectedPageCountTrusted = artifactManifest?.expectedPageCountTrusted == true,
+    )
+    if (projectedState != Translation.State.PAUSED) return snapshot
+    // A protocol rejection can happen before translation, such as an OCR
+    // checkpoint arriving before page registration. Preserve its retry details
+    // so the UI does not misreport a store failure as provider unavailability.
+    val failure = durableFailuresSnapshot().values
+        .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
+        .minWithOrNull(
+            compareBy<DurableFailureMetadata>(
+                { if (it.category == FailureCategory.PROTOCOL) 0 else 1 },
+                { it.stage.ordinal },
+                { it.pageKey },
+            ),
+        )
+        ?: return snapshot
+    return snapshot.copy(
+        pauseAnchorPageKey = snapshot.pauseAnchorPageKey ?: failure.pageKey,
+        pauseReason = snapshot.pauseReason ?: failure.toUiPauseReason(),
+        nextEligibleRetryAtEpochMs = snapshot.nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
+    )
+}
 
 /**
  *  U.1: pure rebuild/restore truth derived from the durable run record.

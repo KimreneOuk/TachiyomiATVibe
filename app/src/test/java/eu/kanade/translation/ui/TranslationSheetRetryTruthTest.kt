@@ -3,6 +3,7 @@ package eu.kanade.translation.ui
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -148,9 +149,9 @@ class TranslationSheetRetryTruthTest {
             "T924 restart-retry defect: a durably reconstructed ERROR chapter " +
                 "must project ERROR + FINISHED so the sheet keeps offering Retry " +
                 "after an app restart"
-        val reconstructed = TranslationProgressSnapshot.compute(
+        val reconstructed = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.ERROR,
+            chapterState = Translation.State.ERROR,
             pageMap = emptyMap(),
         )
         withClue("compute must treat a durable ERROR chapter as a finished run") {
@@ -171,9 +172,9 @@ class TranslationSheetRetryTruthTest {
         val defect =
             "T924 field defect: a durable READY_WITH_WARNINGS chapter that ENDED " +
                 "must project FINISHED and keep offering Retry after an app restart"
-        val reconstructed = TranslationProgressSnapshot.compute(
+        val reconstructed = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.READY_WITH_WARNINGS,
+            chapterState = Translation.State.READY_WITH_WARNINGS,
             pageMap = emptyMap(),
         )
         withClue("compute must treat a durable READY_WITH_WARNINGS chapter as a finished run") {
@@ -188,9 +189,9 @@ class TranslationSheetRetryTruthTest {
 
     @Test
     fun `a fully finished translated chapter never offers retry`() {
-        val finished = TranslationProgressSnapshot.compute(
+        val finished = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.TRANSLATED,
+            chapterState = Translation.State.TRANSLATED,
             pageMap = emptyMap(),
         )
         finished.batchPhase shouldBe TranslationBatchPhase.IDLE

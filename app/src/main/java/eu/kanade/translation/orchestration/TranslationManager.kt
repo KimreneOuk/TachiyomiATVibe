@@ -1220,9 +1220,9 @@ class TranslationManager(
             mangaTitle = translation.manga.title,
             sourceId = sourceId,
         ) { store ->
-            TranslationProgressSnapshot.compute(
+            TranslationBatchProgressTracker.computeSnapshot(
                 chapterId = chapterId,
-                state = state,
+                chapterState = state,
                 pageMap = store.state.value,
                 displayPageMap = store.display.value,
                 //  Phase 5: trusted totals come from the manifest;

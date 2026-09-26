@@ -1,9 +1,9 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.model.AiPageProgressState
+import eu.kanade.translation.model.BatchPhase
 import eu.kanade.translation.model.Translation
 
-enum class BatchPhase { OCR, TRANSLATE, INPAINT, RENDER, DISPLAY }
 enum class PhaseStatus { RUNNING, DONE, FAILED, SKIPPED, PARTIAL, PAUSED }
 
 /**

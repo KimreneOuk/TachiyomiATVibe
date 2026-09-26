@@ -138,7 +138,7 @@ class PageDisplayProjectionTest {
             it.toPageDisplayProjection().displayReady
         }
         snapshot.displayReadyPages shouldBe committedReadyCount
-        snapshot.perStage.getValue(eu.kanade.translation.pipeline.batch.BatchPhase.DISPLAY).succeeded shouldBe 1
+        snapshot.perStage.getValue(BatchPhase.DISPLAY).succeeded shouldBe 1
         snapshot.canReadTranslated shouldBe true
         snapshot.pages.map { it.index } shouldBe listOf(7, 20)
         snapshot.pages.first { it.index == 7 }.displayReady shouldBe false

@@ -30,7 +30,6 @@ import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.SourceIdentity
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.artifact.toUiPauseReason
 import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
@@ -38,7 +37,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.detachedCopy
@@ -3051,56 +3049,6 @@ class ChapterTranslationStore(
     //  Phase 15: body moved to store/StoreStatusProjector.kt.
     // Same-signature stub keeps the call sites.
     fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
-
-    /**
-     * Unified reader/manga progress projection.
-     *
-     * Page counts and display readiness come from this store's live and
-     * committed projections, while terminal status comes from the same
-     * [StoreStatusProjector] authority used by durable status consumers.
-     * Callers supply only the orchestration state (queue/live fallback) and
-     * the current pipeline permit holder; they do not re-derive store truth.
-     */
-    internal fun progressSnapshot(
-        chapterId: Long,
-        orchestrationState: Translation.State,
-        permitHolderPageKey: String?,
-    ): TranslationProgressSnapshot {
-        val projectedState = when (orchestrationState) {
-            Translation.State.QUEUE,
-            Translation.State.TRANSLATING,
-            -> orchestrationState
-            else -> artifactStatus() ?: orchestrationState
-        }
-        val snapshot = TranslationProgressSnapshot.compute(
-            chapterId = chapterId,
-            state = projectedState,
-            pageMap = state.value,
-            displayPageMap = display.value,
-            permitHolderPageKey = permitHolderPageKey,
-            expectedPageCountTrusted = artifactManifest?.expectedPageCountTrusted == true,
-        )
-        if (projectedState != Translation.State.PAUSED) return snapshot
-        // A protocol rejection can occur before translation (for example, an
-        // OCR checkpoint whose manifest page was not registered yet). Project
-        // every retryable stage failure here so the UI cannot misclassify a
-        // store/manifest failure as generic provider unavailability.
-        val failure = durableFailuresSnapshot().values
-            .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
-            .minWithOrNull(
-                compareBy<DurableFailureMetadata>(
-                    { if (it.category == FailureCategory.PROTOCOL) 0 else 1 },
-                    { it.stage.ordinal },
-                    { it.pageKey },
-                ),
-            )
-            ?: return snapshot
-        return snapshot.copy(
-            pauseAnchorPageKey = snapshot.pauseAnchorPageKey ?: failure.pageKey,
-            pauseReason = snapshot.pauseReason ?: failure.toUiPauseReason(),
-            nextEligibleRetryAtEpochMs = snapshot.nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
-        )
-    }
 
     fun translatedPairs(): List<Pair<String, String>> = glossaryStore.translatedPairs()
 

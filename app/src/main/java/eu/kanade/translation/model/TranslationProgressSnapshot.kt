@@ -1,7 +1,6 @@
 package eu.kanade.translation.model
 
 import androidx.compose.runtime.Immutable
-import eu.kanade.translation.pipeline.batch.BatchPhase
 
 /** Terminal and successful work are both processed; skipped work is successful terminal work. */
 @Immutable
@@ -203,41 +202,6 @@ data class TranslationProgressSnapshot(
         ) = TranslationProgressSnapshot(
             chapterId = chapterId, state = state, donePages = 0, totalPages = 0,
             activePage = 0, activePageKey = null, queuedCount = 0, failedCount = 0, pages = emptyList(),
-        )
-
-        fun compute(
-            chapterId: Long,
-            state: Translation.State,
-            pageMap: Map<String, PageTranslation>?,
-            indexResolver: Map<String, Int>? = null,
-            permitHolderPageKey: String? = null,
-            aiPageStates: Map<String, AiPageProgressState> = emptyMap(),
-            displayPageMap: Map<String, PageTranslation>? = null,
-            //  restart-retry fix: a durable ERROR chapter is a run that
-            // ENDED (IDLE here is why the sheet's Retry affordance vanished
-            // after an app restart — the truth rule needs ERROR + FINISHED).
-            //  field fix: READY_WITH_WARNINGS that ENDED with unresolved
-            // pages is the same terminal shape — it must read FINISHED too,
-            // or its Retry affordance vanishes the same way.
-            batchPhase: TranslationBatchPhase = when (state) {
-                Translation.State.TRANSLATING -> TranslationBatchPhase.FIRST_PASS
-                Translation.State.ERROR,
-                Translation.State.READY_WITH_WARNINGS,
-                -> TranslationBatchPhase.FINISHED
-                else -> TranslationBatchPhase.IDLE
-            },
-            /**  Phase 5: trusted source-total fact from the manifest. */
-            expectedPageCountTrusted: Boolean = false,
-        ): TranslationProgressSnapshot = eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker.computeSnapshot(
-            pageMap.orEmpty(),
-            state,
-            indexResolver = indexResolver,
-            permitHolderPageKey = permitHolderPageKey,
-            aiPageStates = aiPageStates,
-            displayPageMap = displayPageMap,
-            batchPhase = batchPhase,
-            chapterId = chapterId,
-            expectedPageCountTrusted = expectedPageCountTrusted,
         )
     }
 }

@@ -1,6 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.model.AiPageProgressState
+import eu.kanade.translation.model.BatchPhase
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
