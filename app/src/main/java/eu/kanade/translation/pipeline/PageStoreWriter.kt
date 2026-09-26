@@ -15,10 +15,9 @@ import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream
 
 /**
- * Store-patch/failure-writer helpers moved from `TranslationPipeline`
- * ( Phase 6). Stateless over the pipeline's store resolver (injected
- * as a getter, it is re-wired by [eu.kanade.translation.workflow.TranslationManager]),
- * the stream registry, and the pipeline's critical-OOM handler.
+ * Writes page-state patches and failures through the active store. The store
+ * resolver follows manager-owned reader sessions, and out-of-memory handling
+ * is delegated to the pipeline caller.
  */
 internal class PageStoreWriter(
     private val activeStoreResolver: () -> ((Translation) -> ChapterTranslationStore?)?,

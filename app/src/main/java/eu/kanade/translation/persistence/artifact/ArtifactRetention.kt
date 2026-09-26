@@ -1,9 +1,8 @@
 package eu.kanade.translation.persistence.artifact
 
 /**
- * TachiyomiAT: bounded retention sweep moved verbatim from
- * `ChapterArtifactEngine` ( Phase 2b). Stateless over the chapter's
- * document IO and artifact layout; locking stays at the
+ * Performs bounded retention work over chapter documents and artifact paths.
+ * It is stateless; locking stays at the
  * [ChapterArtifactEngine.reconcileRetention] entry point.
  */
 internal class ArtifactRetention(

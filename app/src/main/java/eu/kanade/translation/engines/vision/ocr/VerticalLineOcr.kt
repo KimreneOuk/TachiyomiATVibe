@@ -12,10 +12,9 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * Vertical / multi-line OCR machinery moved verbatim from
- * `RoiPageRecognitionEngine` ( Phase 5a). Pure over
- * `(RoiOcrEngine, Bitmap, flags, language)` inputs; the engine's `closed`
- * cancellation checkpoint is injected as [isClosed] getters.
+ * Handles vertical and multi-line OCR from the supplied engine, bitmap,
+ * options, and language. The engine's closed-state cancellation checkpoint is
+ * supplied through [isClosed].
  */
 internal object VerticalLineOcr {
 

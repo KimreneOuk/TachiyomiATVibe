@@ -23,10 +23,9 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * Page bitmap decode + source-fingerprint helpers moved from
- * `TranslationPipeline` ( Phase 1). Cross-helper memory reclaim and
- * decode logging are delegated to [MemoryGovernance]; the pipeline's engine
- * read is injected as a getter.
+ * Decodes source pages and computes their fingerprints. Memory reclaim and
+ * decode logging use [MemoryGovernance]; the recognition engine is supplied
+ * by the pipeline when needed.
  */
 internal object PageDecode {
 

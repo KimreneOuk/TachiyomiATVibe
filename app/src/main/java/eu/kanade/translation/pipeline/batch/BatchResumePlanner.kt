@@ -27,12 +27,9 @@ import java.io.InputStream
 internal enum class BatchResumeGate { SKIP_ALL, INPAINT_ONLY, FULL }
 
 /**
- *  Phase 20.3: the batch resume planning region moved verbatim from
- * `TranslationPipeline.translateBatch` ( phase 20): chapter-wide page
- * planning, provenance stamping, the translation failure fence, the
- * context-frontier bookkeeping, and the per-page resume gate. The context
- * frontier is the SAME instance the batch shell and the lane workers hold
- * (shared state, injected); the planner owns the rolling-context mirror.
+ * Plans per-page batch resume work, stamps provenance, enforces the translation
+ * failure fence, and updates rolling context. The planner shares its context
+ * frontier with the shell and lane workers.
  */
 internal class BatchResumePlanner(
     private val store: ChapterTranslationStore,

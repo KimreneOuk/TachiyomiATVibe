@@ -27,20 +27,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Native lane + engine cache moved from `TranslationPipeline` ( Phase 10).
- * Owns the sole native-permit admission wrapper, the 8 cached engine fields,
- * the full config signature, the engine factories, and the defensive `init`
- * (invalid config at construction must not crash the eagerly built pipeline).
- * The native run scope/quarantine, the in-flight page-key set, and the
- * [onPageStuck] callback stay pipeline-owned and are injected here.
- *
- *  The lane also owns the engine EPOCH
- * (bumped only by [closeEngines]) and the translator BORROW registry
- * ([beginTranslatorUse]/[endTranslatorUse]) that make in-flight reader work
- * observable to the stop path, plus the bounded NON-BLOCKING borrow drain:
- * [closeEngines] snapshots the exact engine references and closes THOSE under
- * the permit — after a bounded grace, or immediately when the lane is idle.
- * A rebuild must never observe the drain close its NEW engines.
+ * Owns native-engine creation, cached instances, native-permit admission, and
+ * engine lifecycle. Translator borrow tracking lets the stop path observe
+ * in-flight reader work. [closeEngines] snapshots exact engine references and
+ * closes those under the permit after a bounded grace period; a rebuild must
+ * never observe the drain closing its new engines. The pipeline owns the
+ * native run scope, quarantine, in-flight page set, and [onPageStuck] callback.
  */
 internal class EngineLane(
     private val context: Context,
@@ -48,8 +40,7 @@ internal class EngineLane(
     private val nativeRunQuarantine: NativeRunQuarantine,
     private val inFlightPageKeys: MutableSet<String>,
     private val onPageStuck: () -> ((chapterId: Long?, pageKey: String) -> Unit)?,
-    //  Phase 4: the borrow drain bounds. Defaults keep every existing
-    // construction site compiling; production wires drainScope = nativeRunScope.
+    // Bounds the translator borrow drain; production uses the native run scope.
     private val drainGraceMs: Long = ENGINE_DRAIN_GRACE_MS,
     private val drainScope: CoroutineScope? = null,
     private val translatorFactory: (TextRecognizerLanguage, TextTranslatorLanguage) -> TextTranslator =

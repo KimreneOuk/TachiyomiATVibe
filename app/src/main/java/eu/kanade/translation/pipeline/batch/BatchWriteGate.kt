@@ -54,8 +54,7 @@ private fun leaseStageFor(stage: BatchStage?): PageStage = when (stage) {
     BatchStage.LAYOUT -> PageStage.Render
 }
 
-//  Phase 20.2: moved verbatim from TranslationPipeline.kt with the batch
-// write gate (its only caller, `persistAiFailure`).
+// Maps provider failure types to the persisted batch failure categories.
 private fun ProviderFailure.toFailureCategory(): FailureCategory = when (kind) {
     ProviderFailureKind.NETWORK,
     ProviderFailureKind.RATE_LIMIT,
@@ -70,8 +69,6 @@ private fun ProviderFailure.toFailureCategory(): FailureCategory = when (kind) {
     ProviderFailureKind.PROTOCOL -> FailureCategory.PROTOCOL
 }
 
-//  Phase 20.2: moved verbatim from TranslationPipeline (was a private nested
-// data class; `internal` top-level keeps the same module-scoped reachability).
 internal data class BatchWriteIdentity(
     val generation: Long,
     var pageVersion: Long,
@@ -82,12 +79,10 @@ internal data class BatchWriteIdentity(
 )
 
 /**
- *  Phase 20.2: the batch write gate moved verbatim from
- * `TranslationPipeline.translateBatch` ( phase 20). Owns the per-page
- * lease/identity bookkeeping (`batchWriteIdentities`) and every guarded durable
- * write the batch path performs. The identity map and the durable-failure page
- * set are the SAME instances the batch shell holds (shared state, injected);
- * pipeline-provided collaborators arrive as constructor lambdas.
+ * Owns per-page lease and identity bookkeeping and every guarded durable write
+ * performed by the batch path. The shell shares the identity map and durable
+ * failure set with this gate; page persistence and lease release are supplied
+ * by the pipeline.
  */
 internal class BatchWriteGate(
     private val store: ChapterTranslationStore,
@@ -104,8 +99,8 @@ internal class BatchWriteGate(
     ) -> ChapterTranslationStore.PatchResult,
 ) {
 
-    // Same-name wiring for the injected pipeline collaborator: the moved body
-    // calls it with a named argument, which a function-typed value cannot serve.
+    // Preserve named arguments at batch call sites; the injected callback is a
+    // function type and does not expose parameter names.
     private suspend fun persistPageWithOomRecovery(
         store: ChapterTranslationStore,
         fileName: String,

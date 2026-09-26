@@ -8,11 +8,9 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * Glossary collaborator moved from `ChapterTranslationStore` ( Phase 8).
- * Owns the chapter glossary state; all mutations are delegated by the store
- * under the store mutex (the collaborator receives the owning store and locks
- * through it). The LEGACY flat-file read fallback in [loadGlossary] is kept
- * deliberately; the flat-file accessors it uses remain store-side.
+ * Owns chapter glossary state. Mutations go through the store mutex. The flat
+ * file fallback in [loadGlossary] remains so chapters written by older app
+ * versions can still be opened.
  */
 internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) {
 

@@ -290,12 +290,7 @@ internal class ChapterProfileBatchCoordinator(
         }
     }
 
-    /**
-     * The batch pass-1 entry the shell's dispatch point calls (formerly
-     * call-shape-compatible with the deleted legacy coordinator's
-     * `runPass1`). [computeClass] is accepted for call-shape parity only —
-     * this stage never dispatches a provider lane.
-     */
+    /** Builds the preflight worker that checks existing OCR work and checkpoints. */
     private fun preflightWorker() = PreflightWorker(
         PreflightWorkerContext(
             store = store,
@@ -1475,7 +1470,7 @@ internal class ChapterProfileBatchCoordinator(
         const val STOP_REASON =
             "T924 OCR preflight complete; analysis/profile/translation arrive in later stages"
 
-        /** Stage-5 slice A terminals (still PAUSED — slice B owns the freeze). */
+        /** Outcomes retained while analysis or glossary synthesis is unavailable. */
         const val ANALYSIS_NO_WORK_REASON =
             "T924 analysis skipped: no chunkable OCR work in this chapter"
         const val ANALYSIS_NO_TRANSPORT_REASON =
@@ -1483,20 +1478,14 @@ internal class ChapterProfileBatchCoordinator(
         const val GLOSSARY_SYNTHESIS_NO_TRANSPORT_REASON =
             "T924 glossary synthesis paused: no synthesis transport wired (CONFIGURATION gate)"
 
-        /** Stage-5 slice B terminals (STILL PAUSED — envelope/translation are Stage 6). */
+        /** Historical pause outcomes retained for durable run-history compatibility. */
         const val PROFILE_FROZEN_STOP_REASON =
             "T924 profile frozen; envelope plan/translation arrive in Stage 6"
         const val PROFILE_FROZEN_REUSE_REASON =
             "T924 compatible frozen profile reused (ST-05 skip-to-phase); " +
                 "envelope plan/translation arrive in Stage 6"
 
-        /**
-         * Stage-6 slice A terminals. The PROFILE_FROZEN_* reasons above are
-         * retained only for record-history compatibility — slice A runs no
-         * longer return them: PROFILE_FROZEN now CONTINUES into the envelope
-         * phase and the run terminates at one of the terminals below (still
-         * PAUSED — native/render are Stage 7 and COMPLETE is never published).
-         */
+        /** Current preflight and translation outcomes written to batch history. */
         const val ENVELOPE_NO_WORK_REASON =
             "T924 envelope plan skipped: no translatable OCR work in this chapter"
         const val TRANSLATE_NO_TRANSPORT_REASON =

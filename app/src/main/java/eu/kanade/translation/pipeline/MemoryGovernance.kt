@@ -12,8 +12,8 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
 
 /**
- * Memory-budget governance helpers moved from `TranslationPipeline`
- * ( Phase 1). The pipeline's engine read is injected as a getter.
+ * Applies memory-budget decisions before bitmap decode and native analysis.
+ * The recognition engine is supplied by the pipeline when needed.
  */
 internal object MemoryGovernance {
 

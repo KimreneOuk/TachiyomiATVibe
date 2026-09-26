@@ -160,8 +160,8 @@ private fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
 class ChapterTranslationStore(
     // Retained as a source-compatible test seam; artifact-only persistence never
     // invokes this legacy flat-file creator.
-    //  Phase 17b: internal — the moved StorePersistenceScheduler reads the
-    // memory-only persistence probes (schedulePersist's early return) from them.
+    // The scheduler uses these fields to preserve the legacy lazy-file fallback
+    // in tests and stores that have not opened artifact storage yet.
     internal var translationFile: UniFile?,
     internal val fileCreator: (() -> UniFile)?,
     initialPages: Map<String, PageTranslation> = emptyMap(),
@@ -172,7 +172,7 @@ class ChapterTranslationStore(
     internal val artifactParent: UniFile? = null,
     private val artifactFileName: String? = null,
 ) {
-    /** Explicit memory/lazy/eager storage mode used by the P2-02 merge. */
+    /** Explicit memory, lazy-durable, or opened-durable storage mode. */
     internal var engineMode: eu.kanade.translation.persistence.internal.ChapterStoreEngineMode =
         artifactStore?.let { eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable(it) }
             ?: if (translationFile != null || fileCreator != null || artifactParent != null || artifactFileName != null) {
@@ -222,7 +222,7 @@ class ChapterTranslationStore(
     private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
     /**
-     * TachiyomiAT (Phase 3): the last-known-good committed display bundle per
+     * The last-known-good committed display bundle per
      * page. A candidate retry may mutate the live [pages] entry freely —
      * clearing statuses, wiping the cleaned name, stranding stages — but it
      * can never hide or mutate the committed bundle observed through
@@ -250,10 +250,8 @@ class ChapterTranslationStore(
 
     private val _display = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
-    //  Phase 17a: the lease-table state + lease bodies moved to
-    // store/PageStageLeaseTable.kt; the map is shared through the table
-    // (never copied) and the same-name accessor below keeps every store-side
-    // reader unchanged. The public lease members stay as delegating stubs.
+    // Lease ownership stays in one table so the store and lease APIs share the
+    // same map and synchronization boundary.
     private val pageStageLeaseTable = PageStageLeaseTable(this)
 
     /** Writer leases per page: one origin owns a page until it releases it. */
@@ -267,7 +265,7 @@ class ChapterTranslationStore(
     val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
 
     /**
-     * Committed-pointer display projection (Phase 3): each page resolves to
+     * Committed-pointer display projection: each page resolves to
      * its immutable committed display bundle when one exists, otherwise the
      * live candidate entry. Candidate emissions can replace live entries but
      * never null or mutate a committed bundle.
@@ -286,8 +284,6 @@ class ChapterTranslationStore(
         val displayFingerprint: String,
         val promotedAtEpochMs: Long,
     )
-
-    //  Phase 17a: PageLeaseRecord moved to store/PageStageLeaseTable.kt.
 
     fun resetPreflight(): ChapterResetPreflight = chapterResetPreflight(state.value.values)
 
@@ -344,23 +340,17 @@ class ChapterTranslationStore(
         companion object Key : CoroutineContext.Key<GenerationContext>
     }
 
-    //  Phase 8: glossary state + bodies moved to store/ChapterGlossaryStore.kt
-    // (delegates under the store mutex; legacy read fallback kept). The public
-    // glossary API stays at the old qualified names as delegating stubs.
-    //  Phase 17b: internal so the moved StorePersistenceScheduler's
-    // flushDirtyLocked can reach the glossary dirty flag through it.
+    // Glossary mutations use the store mutex; the scheduler persists the same
+    // collaborator state when a page mutation marks the store dirty.
     internal val glossaryStore = ChapterGlossaryStore(this)
 
-    //  Phase 3: durable attempt ledger collaborator (delegates under
-    // the store mutex; fail-open persistence; memory-only no-op writes).
+    // Attempt records are written under the store mutex; persistence failures
+    // fail open, and memory-only stores keep no durable ledger.
     private val attemptLedger = ChapterAttemptLedger(this)
 
-    //  Phase 17b: the flush/close/debounce/retention machinery moved to
-    // store/StorePersistenceScheduler.kt; the scheduler owns persistScope and
-    // is constructed eagerly (its ctor resolves no store state). `dirty` and
-    // `persistJob` stay here — non-moved bodies (replaceAll/rekeyPages/
-    // clearTransientQueuePages/markDefunct) read and write them directly; the
-    // scheduler reaches them through internal accessors.
+    // The scheduler owns its persistence scope. The store keeps mutation state
+    // here because page replacement, rekeying, transient cleanup, and teardown
+    // update it under the store mutex.
     internal var dirty = false
     internal var persistJob: Job? = null
     private val persistenceScheduler = StorePersistenceScheduler(this)
@@ -453,7 +443,7 @@ class ChapterTranslationStore(
         pendingLazyTasks.isNotEmpty() || pendingLazyMutations.isNotEmpty()
     }
 
-    //  Slice B1: Staged mutations buffer + debounce.
+    // Intermediate page mutations share a bounded buffer and debounce window.
     private val stagedPageKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var stagedDebounceJob: Job? = null
 
@@ -589,8 +579,7 @@ class ChapterTranslationStore(
     val isDefunct: Boolean
         get() = defunct
 
-    //  Phase 17b: persistCount is incremented by the moved
-    // StorePersistenceScheduler, so the setter is no longer private.
+    // Counts durable writes for persistence tests.
     internal var persistCount = 0
 
     init {
@@ -649,11 +638,8 @@ class ChapterTranslationStore(
         snapshotLocked(pageKey)
     }
 
-    //  Phase 15: durable status projection (artifactStatus + the
-    // durable-failure read API) moved to store/StoreStatusProjector.kt; these
-    // same-signature stubs keep the old qualified names (ChapterTranslator,
-    // DurableChapterStatusResolver, and the migration/artifact-read tests
-    // resolve them here).
+    // Durable status reads stay on the store API; the projector derives them
+    // from the store's consistent manifest/state/display snapshot.
     private val statusProjector get() = StoreStatusProjector(this)
 
     /**
@@ -831,12 +817,10 @@ class ChapterTranslationStore(
         generation
     }
 
-    //  Phase 17a: lease bodies (and the Phase 3 lifecycle-contract comment
-    // block) moved to store/PageStageLeaseTable.kt; these same-signature stubs
-    // keep the old qualified names (the pipeline, ReaderViewModel, and the
-    // lease tests resolve them here). The DUAL locking (store mutex in the
-    // table's withLock paths + synchronized(leases) lock-free readers) and the
-    // NonCancellable wrappers moved verbatim with the bodies.
+    // Lease entry points stay on the store so readers and pipeline writers use
+    // one ownership boundary. The table uses the store mutex for mutations,
+    // synchronized reads for lock-free inspection, and NonCancellable release
+    // paths so cancellation cannot strand an owned lease.
 
     suspend fun tryAcquirePageStageLease(
         pageKey: String,
@@ -1243,7 +1227,7 @@ class ChapterTranslationStore(
     }
 
     /**
-     * Detection/OCR stage merge (Phase 3). The patch must carry the page
+     * Detection/OCR stage merge. The patch must carry the page
      * version and prior OCR identity observed before the native recognition
      * pass; anything that touched the page since makes the writer stale and
      * the merge is rejected, so a late recognition result can never clobber
@@ -1374,18 +1358,6 @@ class ChapterTranslationStore(
         description: String = "render stage merge",
     ): StagePatchResult = applyStagePatch(StagePatch.Render(patch), description)
 
-    // ------------------------------------------------------------------
-    //  Stage 1 Phase 2a: checkpointOcr façade.
-    //
-    // Validates the store-level fencing identity ( inputs 1-3:
-    // generation, pageVersion, lease token — the lease MUST be held), then
-    // delegates the durable publication to
-    // [ChapterArtifactEngine.checkpointOcr] (inputs 4-6 against the durable
-    // manifest). Ordering rule  validate → publish → install
-    // checkpoint pointer + close/rebase candidate; the caller releases the
-    // page lease ONLY after a Committed outcome — never before.
-    // ------------------------------------------------------------------
-
     /**
      * Checkpoints the page's current (already merged) OCR state while the
      * caller still owns its writer lease. [expectedCandidateGenerationId]
@@ -1396,6 +1368,9 @@ class ChapterTranslationStore(
      * [sourceSha256] complete the checkpoint's [SourceIdentity] — the sha
      * falls back to the live page's recorded source fingerprint; a checkpoint
      * without a provably complete source identity is rejected (fail closed).
+     * Store generation, page version, and lease ownership are checked before
+     * durable publication. The checkpoint pointer is installed only after a
+     * committed artifact result; the caller releases its lease afterward.
      */
     suspend fun checkpointOcr(
         pageKey: String,
@@ -1586,9 +1561,9 @@ class ChapterTranslationStore(
             patch.expectedArtifactPageVersion,
         )
             ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, patch.expectedSourceTexts)
-            // 20 (Stage-6 slice A): provenance preconditions. BOTH new
-            // patch fields default to null — a legacy patch short-circuits
-            // with byte-identical behavior (no extra manifest reads, no new
+            // Provenance preconditions are opt-in. Both fields default to null,
+            // so older patches keep byte-identical behavior (no extra manifest
+            // reads or new
             // rejection class). Non-null fields are validated against the
             // manifest's CURRENTLY frozen profile / envelope-plan pointers;
             // a mismatch rejects the WHOLE page patch (stale-profile and
@@ -1641,7 +1616,7 @@ class ChapterTranslationStore(
     }
 
     /**
-     * 20 provenance preconditions (Stage-6 slice A). Active ONLY when
+     * Provenance preconditions are active only when
      * the patch carries at least one of the new nullable provenance fields;
      * a fully-null patch returns `null` before touching the manifest, so
      * every legacy caller keeps byte-identical merge behavior.
@@ -1653,8 +1628,7 @@ class ChapterTranslationStore(
      *    `envelopePlan` pointer content fingerprint  — a commit
      *    built from a superseded plan is rejected.
      *
-     * A rejected patch never mutates page state and never advances any
-     * frontier ( tail clause).
+     * A rejected patch never mutates page state or advances a frontier.
      */
     private fun translationProvenanceRejection(patch: TranslationStagePatch): String? {
         if (patch.profileContentFingerprint == null && patch.envelopePlanFingerprint == null) {
@@ -2047,7 +2021,7 @@ class ChapterTranslationStore(
     }
 
     /**
-     *  slice 3: outcome of [preRegisterPages]. A rejection is observable so
+     * Outcome of [preRegisterPages]. A rejection is observable so
      * the caller can fail the batch explicitly instead of running a tracker
      * whose totals silently stay zero.
      */
@@ -2065,9 +2039,9 @@ class ChapterTranslationStore(
      * the chapter total immediately, while the expected-page count is captured
      * in the artifact manifest when an artifact parent is already available.
      *
-     *  slice 3: returns [PagePreRegistration.Rejected] instead of silently
-     * returning Unit when the store refuses the registration (defunct store,
-     * artifact-authority failure), so the caller can surface a typed terminal
+     * Returns [PagePreRegistration.Rejected] when the store refuses
+     * registration (defunct store or artifact-authority failure), so the caller
+     * can surface a typed terminal
      * error rather than a live zero tracker.
      *
      *  The trigger may attach its
@@ -2346,7 +2320,7 @@ class ChapterTranslationStore(
     }
 
     /**
-     * Production writer bridge for the Phase 3 artifact authority. Every
+     * Production writer bridge for artifact authority. Every
      * mutable page emission is first written to a candidate snapshot. A
      * display-ready emission writes the immutable committed snapshot and moves
      * the manifest pointer in one final publication. The legacy flat file is
@@ -2588,7 +2562,7 @@ class ChapterTranslationStore(
             }
             artifactManifest = manifest
         } else if (GroupCommitConfiguration.enabled && (updated.hasRenderedResult || updated.isTextlessTerminal)) {
-            //  Slice B2: Candidate-promotion merge at PAGE_TERMINAL_PROMOTION commit point.
+            // Promote the candidate at the terminal-page commit point.
             flushStagedMutationsLocked(CommitPoint.PAGE_TERMINAL_PROMOTION)
             val current = artifactManifest ?: manifest
             val currentCand = current.pages[pageKey]?.candidate ?: currentCandidate
@@ -2639,7 +2613,7 @@ class ChapterTranslationStore(
             artifactManifest = manifest
             return true
         } else if (GroupCommitConfiguration.enabled) {
-            //  Slice B1: Staged mutations + debounce for intermediate non-terminal stage writes.
+            // Buffer intermediate, non-terminal stage writes for a grouped commit.
             stagePageMutationLocked(pageKey, updated)
             return true
         } else {
@@ -2712,10 +2686,6 @@ class ChapterTranslationStore(
         artifactManifest = manifest
         return true
     }
-
-    //   the lease-origin -> durable-provenance mapping moved to the
-    // shared top-level `PageWriteOrigin?.toArtifactOrigin()` in
-    // TranslationStageContracts.kt (same two-value ArtifactOrigin result).
 
     private fun PageTranslation.sourceIdentity(pageKey: String): SourceIdentity? =
         sourceFingerprint?.let { fingerprint ->
@@ -3032,8 +3002,7 @@ class ChapterTranslationStore(
 
     fun glossarySnapshot(): Map<String, String> = glossaryStore.glossarySnapshot()
 
-    //  Phase 15: body moved to store/StoreStatusProjector.kt.
-    // Same-signature stub keeps the call sites.
+    /** Durable translation status derived from the committed artifact state. */
     fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
 
     fun translatedPairs(): List<Pair<String, String>> = glossaryStore.translatedPairs()
@@ -3087,8 +3056,7 @@ class ChapterTranslationStore(
         glossaryStore.loadGlossary()
     }
 
-    //  Phase 17b: internal — the moved StorePersistenceScheduler reaches
-    // it from flushDirtyLocked.
+    // Called by the scheduler while it serializes a durable flush.
     internal fun persistGlossaryLocked(): Boolean = glossaryStore.persistGlossaryLocked()
 
     private fun PageTranslation.isQueueVisibleTransient(): Boolean {
@@ -3137,13 +3105,9 @@ class ChapterTranslationStore(
         return false
     }
 
-    //  Phase 17b: flush/close/debounce/retention bodies moved to
-    // store/StorePersistenceScheduler.kt; these same-signature stubs keep the
-    // old qualified names (the manager reset flows, the durable resolver's
-    // probe release, the glossary delegate, and the persistence/defunct tests
-    // resolve them here). markDefunct's bounded persist-join keeps its exact
-    // semantics and reads the join timeout through the same-name companion
-    // delegating val below.
+    // These lifecycle methods preserve a single persistence boundary for
+    // reset, resolver, and batch callers. The scheduler serializes file I/O;
+    // markDefunct retains its bounded persist-job join.
 
     private fun persistLocked(): Boolean = persistenceScheduler.persistLocked()
 
@@ -3169,9 +3133,7 @@ class ChapterTranslationStore(
         /** Artifact cleaned-image probe retained for artifact validation tests. */
         internal var artifactImageProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe
 
-        //  Phase 17b: the persistence constants moved to
-        // StorePersistenceScheduler; this delegating val keeps markDefunct's
-        // bounded persist-join read unchanged.
+        // markDefunct uses this bound when joining an active persistence job.
         private val PERSIST_JOIN_TIMEOUT_MS get() = StorePersistenceScheduler.PERSIST_JOIN_TIMEOUT_MS
 
         /** Fallback name for the rename target if [UniFile.getName] is null. */

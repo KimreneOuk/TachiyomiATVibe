@@ -48,13 +48,10 @@ import java.io.InputStream
 import kotlin.coroutines.coroutineContext
 
 /**
- * Permit-held ONNX phase of the reader single-page path moved from
- * `TranslationPipeline` ( Phase 14), with [OnnxPhaseResult], the resume
- * paths (`renderResumedPage`, `resumeInpaintAndRender`), the downscaled-inpaint
- * retry, and the batch native stages (`analyzePage`, `inpaintPage`,
- * `processSinglePage`). Bitmap recycle/ownership points moved verbatim:
- * recycle-in-finally discipline, CancellationException rethrow at every catch,
- * and the caller's held-bitmap registry balance are unchanged.
+ * Runs the reader's native ONNX work while holding the engine permit, including
+ * resumed-page rendering, inpaint retry, and the batch detection/OCR/inpaint
+ * stages. Bitmap recycling stays in `finally`, cancellation is rethrown at
+ * each catch boundary, and the caller balances its held-bitmap registry.
  */
 internal class SinglePageOnnxPhase(
     private val context: Context,
@@ -71,8 +68,7 @@ internal class SinglePageOnnxPhase(
     private val engineRebuildMutex: Mutex,
 ) {
 
-    // Same-name reads the moved bodies use; resolved through the shared lane
-    // and writer so engine rebuilds and store writes behave identically.
+    // Resolve engine and store state through the shared lane and writer.
     private val activeStoreResolver get() = activeStoreResolverProvider()
 
     private val recognitionEngine get() = engines.recognitionEngine

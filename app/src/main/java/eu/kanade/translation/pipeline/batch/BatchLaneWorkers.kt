@@ -56,8 +56,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.coroutineContext
 
 /**
- * Native-lane admission runner: the workers' nested `withNativeLane` calls are
- * served by the pipeline's own `withNativeLane` through this seam ( phase 20).
+ * Runs work through the pipeline's native-lane admission boundary.
  */
 interface NativeLaneRunner {
     suspend fun <T> run(
@@ -71,18 +70,10 @@ interface NativeLaneRunner {
 }
 
 /**
- *  Phase 20.5: the batch lane workers moved verbatim from
- * `TranslationPipeline.translateBatch` ( phase 20): `nativeWorker`,
- * `translatorWorker`. The closure web became class state — every captured
- * registry/identity/frontier instance is injected here as the SAME instance
- * the batch shell holds; pipeline-provided collaborators (native lane,
- * OCR/inpaint/decode/persist helpers, abort) arrive as constructor lambdas
- * behind same-name private members.
- *
- *  zero-legacy: the legacy AI-chunk engine (`translateChunkAi`,
- * `completeChunklessPage`, the chunk-completion bridge) had no surviving
- * caller after the SequentialBatchCoordinator deletion — the PROFILE lane
- * translates through [eu.kanade.translation.pipeline.batch.envelope.ProfileEnvelopeExecutor] — and was removed.
+ * Runs native and translation workers for chapter batches. It shares the
+ * shell's registry, identity, and context state; native-lane admission and
+ * OCR, inpaint, decode, persistence, and abort operations are supplied by the
+ * pipeline or batch collaborators.
  */
 internal class BatchLaneWorkers(
     private val store: ChapterTranslationStore,

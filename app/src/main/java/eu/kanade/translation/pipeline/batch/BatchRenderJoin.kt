@@ -49,19 +49,12 @@ import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- *  Phase 20.4: the batch render join moved verbatim from
- * `TranslationPipeline.translateBatch` ( phase 20).
- *
- * Render join: per-page join of the translation result with its inpaint/render
+ * Joins each page's translation result with its inpaint/render
  * prerequisites. tryRender is idempotent (READY short-circuit) so it is safe to
  * call both at chunk-completion (AI) and here; the per-page render mutex keeps
- * it serialized. Bitmap recycle sites stay with tryRender.
- *
- *  zero-legacy: the legacy SBC render-join contract
- * (RenderJoinWorker: signal/await machinery, awaitAndRender, awaitAndSettle)
- * died with the sequential coordinator — only [tryRender] (the lane workers'
- * commit-time render) and [publishPersistedLayoutForCompletedPage] (the
- * flagged coordinator's per-page layout publication) survive.
+ * it serialized. Bitmap recycle sites stay with tryRender. Lane workers call
+ * it at commit boundaries, and the coordinator uses
+ * [publishPersistedLayoutForCompletedPage] for completed pages.
  */
 internal class BatchRenderJoin(
     private val store: ChapterTranslationStore,
@@ -80,8 +73,7 @@ internal class BatchRenderJoin(
 ) {
     private val renderMutexes = ConcurrentHashMap<String, Mutex>()
 
-    // Same-name wiring for the injected collaborators: the moved bodies call
-    // these as plain named functions / property-style reads.
+    // Keep resume and write decisions with their owning collaborators.
     private fun plannedRenderNeedsWork(pageKey: String): Boolean =
         resumePlanner.plannedRenderNeedsWork(pageKey)
 

@@ -466,8 +466,8 @@ class RollingAutoCoordinator(
             )
         }.onFailure {
             logcat(LogPriority.WARN) {
-                //  Phase 3 migration: raw pageKey removed from the log
-                // (privacy contract); the correlated run's pageIndex is kept.
+                // Page keys may contain source identifiers; log only the
+                // correlated page index.
                 "TachiyomiAT D9: auto attempt-ledger record failed (fail-open): " +
                     "pageIndex=${work.pageIndex}"
             }

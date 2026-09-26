@@ -101,11 +101,8 @@ object ModelRoutingEngine {
     }
 
     /**
-     *  Phase 5 (plan §3.3, amendment §10.8): records one successful
-     * EXECUTED inference on [route]. SUPPORTED now means the model both
-     * created AND executed — session creation alone must not mark support
-     * (the creation-time [markSupported] call was removed from
-     * OnnxRuntimeProvider; AOT-GAN keeps its own proven-route telemetry).
+     * Records a successful inference on [route]. SUPPORTED means the model
+     * both created and executed; session creation alone must not mark support.
      * Clears the SSR retry counter like [markSupported].
      */
     fun recordSuccessfulInference(modelName: String, route: HardwareDiscoveryEngine.HardwareRoute) {

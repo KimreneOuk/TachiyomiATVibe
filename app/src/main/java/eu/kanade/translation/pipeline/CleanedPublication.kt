@@ -21,10 +21,9 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
 /**
- * Cleaned-image publication moved from `TranslationPipeline` ( Phase 7).
- * Wraps the already-extracted [CleanedImagePublisher]; the pipeline's
- * `currentInpaintingMode` is injected as a getter (it is re-wired by engine
- * rebuilds).
+ * Publishes cleaned images and retires files superseded by committed display
+ * bundles. The current inpainting mode is read through a getter so engine
+ * rebuilds are reflected.
  */
 internal class CleanedPublication(
     private val provider: TranslationProvider,

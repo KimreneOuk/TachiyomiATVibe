@@ -31,16 +31,11 @@ internal class StoreStatusInputs(
     val display: StateFlow<Map<String, PageTranslation>>,
 )
 
-//  Phase 15: durable status projection moved from `ChapterTranslationStore`
-// (artifactStatus + the durable-failure read API). The projector reads the
-// store's projection inputs through the same-name accessors below; the store
-// keeps same-signature delegating stubs at the old qualified names
-// (ChapterTranslator, DurableChapterStatusResolver, and the migration /
-// artifact-read tests resolve them there).
+// Durable status and failure views are projected from one store snapshot.
 internal class StoreStatusProjector(private val store: ChapterTranslationStore) {
 
-    // Same-name dependency reads the moved bodies use; resolved through the
-    // store's consistent-snapshot accessor at each call.
+    // Read the manifest/state/display inputs together through the store's
+    // consistent-snapshot accessor.
     private val artifactManifest get() = store.statusProjectionInputs().manifest
 
     private val state get() = store.statusProjectionInputs().state

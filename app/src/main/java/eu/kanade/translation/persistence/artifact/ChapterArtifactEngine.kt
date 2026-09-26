@@ -330,10 +330,7 @@ class ChapterArtifactEngine(
      * the manifest-pointed `activeRun` sidecar, so once the pointer is gone the
      * next reachability sweep reclaims the orphaned record file.
      *
-     * Reset semantics ( ): a user reset means the recorded run must
-     * never short-circuit a future dispatch — the COMPLETE fast path
-     * ([eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.resumeFinalizeOrComplete])
-     * keys on this pointer, so clearing it forces the next run to start fresh
+     * A user reset clears the active-run pointer so the next batch starts fresh
      * instead of returning a zero-work finished outcome over demoted displays.
      *
      *   /  a stale-manifest CAS rejection (the >8-page open
@@ -1684,12 +1681,9 @@ class ChapterArtifactEngine(
         if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; candidate remains recorded")
         }
-        // Event-driven reclamation ( Slice A4): relaunch teardown cancels
-        // every stale candidate left by a dead process — one full SAF tree
-        // sweep per page there cost tens of seconds per page on large
-        // chapters (the same measured crawl removed from the checkpoint and
-        // open paths). Only the files THIS cancel unlinked are candidates;
-        // cross-page orphans stay owned by the chapter-boundary sweep.
+        // Delete only the known files unlinked by this cancellation. A full
+        // SAF tree sweep per page made relaunch slow on large chapters;
+        // cross-page orphans stay with the chapter-boundary sweep.
         val orphans = buildList {
             add(layout.generationFile(generationId))
             listOf(page.detection, page.ocr, page.inpaint, page.translation, page.layout)

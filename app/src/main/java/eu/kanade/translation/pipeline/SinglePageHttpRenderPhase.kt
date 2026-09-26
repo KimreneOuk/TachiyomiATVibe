@@ -58,11 +58,10 @@ import java.io.InputStream
 import kotlin.coroutines.coroutineContext
 
 /**
- * Single-page HTTP+render phase moved from `TranslationPipeline` ( Phase 12).
- * Runs OUTSIDE the native permit: HTTP translate (contextual or plain, with the
- * bounded PARTIAL retry loop), color recompute, Canvas render, and guarded commit.
- * `OnnxPhaseResult` crosses this phase's entry with the cleaned bitmap alive;
- * bitmap recycle/ownership points are unchanged from the pre-move pipeline body.
+ * Runs HTTP translation and rendering outside the native permit. It handles
+ * contextual or plain translation, bounded partial retries, color recompute,
+ * Canvas rendering, and guarded commit. The cleaned bitmap in
+ * [OnnxPhaseResult] remains owned by this stage until its commit or cleanup.
  */
 internal class SinglePageHttpRenderPhase(
     private val translationPreferences: TranslationPreferences,
@@ -86,8 +85,7 @@ internal class SinglePageHttpRenderPhase(
     ) -> PageTranslation,
 ) {
 
-    // Same-name engine reads the moved body uses; resolved through [engines]
-    // so rebuilds are observed exactly as the in-class getters did.
+    // Read live engine state so rebuilds are observed.
     private val textTranslator get() = engines.textTranslator
 
     private val recognitionEngine get() = engines.recognitionEngine

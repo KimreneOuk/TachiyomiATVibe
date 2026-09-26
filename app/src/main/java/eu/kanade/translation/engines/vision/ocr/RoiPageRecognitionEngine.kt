@@ -1198,8 +1198,6 @@ class RoiPageRecognitionEngine(
         }
     }
 
-    //  Phase 5b: block dedup + parent-bubble geometry bodies moved to
-    // recognition/OcrBlockDeduplication.kt.
     private fun suppressCrossLabelDuplicates(
         textDetections: List<Detection>,
         bubbles: List<Detection>,
@@ -1241,11 +1239,4 @@ class RoiPageRecognitionEngine(
         verticalFallback: Boolean,
     ): String =
         VerticalLineOcr.recognizeMultiLine(engine, crop, paddleDet, verticalFallback, language) { closed }
-
-    private companion object {
-        // TachiyomiAT: text-color constants moved to RenderColorEstimator (and
-        // fixed there — the legacy INVERTED_TEXT_COLORS was a copy-paste of the
-        // default constant, both returning dark-gray text 0xFF1A1A1A, which made
-        // dark-inpainted bubbles illegible).
-    }
 }
