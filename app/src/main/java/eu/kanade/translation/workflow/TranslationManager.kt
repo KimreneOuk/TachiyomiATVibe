@@ -1093,18 +1093,6 @@ class TranslationManager(
         sourceId,
     )
 
-    /** True when persisted output is readable, including a retry/review-ready warning outcome. */
-    //  ANR fix: suspend for the same reason as [persistedChapterStatus]
-    // below (durable resolution performs I/O). Currently has no production
-    // callers; kept API-compatible.
-    suspend fun isChapterTranslated(
-        chapterName: String,
-        chapterScanlator: String?,
-        mangaTitle: String,
-        sourceId: Long,
-    ): Boolean = persistedChapterStatus(null, chapterName, chapterScanlator, mangaTitle, sourceId)
-        .let { it == Translation.State.TRANSLATED || it == Translation.State.READY_WITH_WARNINGS }
-
     // Durable status and document lookup share these manager-lifetime caches and invalidation rules.
     private val durableStatusResolver: DurableChapterStatusResolver
         get() = DurableChapterStatusResolver(
