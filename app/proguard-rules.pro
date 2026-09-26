@@ -82,9 +82,6 @@
 # XmlUtil
 -keep public enum nl.adaptivity.xmlutil.EventType { *; }
 
-# Firebase
--keep class com.google.firebase.installations.** { *; }
--keep interface com.google.firebase.installations.** { *; }
 
 # OpenCV
 -keep class org.opencv.** { *; }
