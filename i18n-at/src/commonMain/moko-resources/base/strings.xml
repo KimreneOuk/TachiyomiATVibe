@@ -231,7 +231,7 @@
     <string name="manga_batch_cancel_safe_hint">Cancelling only stops background processing. Saved pages and translations are kept intact.</string>
     <string name="manga_batch_status_queued">Queued / Ready to resume</string>
     <string name="manga_batch_status_paused">Paused</string>
-    <!-- TachiyomiAT T911 slice 1: phase-aware drawer hero. Shown instead of a
+    <!-- Phase-aware drawer hero. Shown instead of a
          numeric 0% / 0/0 while no real translation page total exists yet. -->
     <string name="manga_batch_phase_accepted">Accepted — preparing batch</string>
     <string name="manga_batch_phase_waiting_for_download">Waiting for chapter download</string>
@@ -242,14 +242,14 @@
     <string name="manga_batch_phase_finalizing">Finalizing translated chapter</string>
     <string name="manga_batch_phase_completed">Completed</string>
     <string name="manga_batch_phase_failed_no_pages">Translation failed — chapter has no readable pages</string>
-    <!-- TachiyomiAT T911 slice 2: explicit terminal download-side states and the
-         R10 admission-failure state that must never read as a download failure. -->
+    <!-- Explicit terminal download-side states and the
+         admission-failure state that must never read as a download failure. -->
     <string name="manga_batch_phase_cancelled">Translation cancelled</string>
     <string name="manga_batch_phase_admission_failed">Translation could not be queued</string>
-    <!-- T917 Phase 5 (D10): partial download — available pages are real, the
+    <!-- Partial download: available pages are real, the
          source total is unknown, and the drawer must never show a percentage. -->
     <string name="manga_batch_phase_unknown_total">Pages available; source total unknown</string>
-    <!-- T934 U: phase-truth copy for resume rebuild/restore, derived in
+    <!-- Phase-truth copy for resume rebuild/restore, derived in
          TranslationUiTruth and shared by the progress sheet and the reader
          bottom bar, so neither surface freezes on stale "Batch X/Y" copy. -->
     <string name="translation_status_rebuilding">Rebuilding pipeline…</string>
