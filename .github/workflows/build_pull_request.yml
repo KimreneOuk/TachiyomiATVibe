@@ -30,6 +30,7 @@ jobs:
 
       - name: Dependency Review
         uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4.5.0
+        continue-on-error: true # requires a dependency-graph snapshot, which GitHub has not generated for this repo yet
 
       - name: Set up JDK
         uses: actions/setup-java@8df1039502a15bceb9433410b1a100fbe190c53b # v4.5.0
