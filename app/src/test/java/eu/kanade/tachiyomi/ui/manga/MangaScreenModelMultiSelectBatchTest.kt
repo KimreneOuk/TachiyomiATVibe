@@ -50,6 +50,7 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import tachiyomi.core.common.preference.Preference
@@ -77,7 +78,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Same fixture approach as MangaScreenModelTranslationDrawerTest: fully mocked
  * constructor, real resumed LifecycleRegistry, single-threaded main executor.
  */
+// ScreenModel boot await exceeds its wall-clock window on loaded 2-core CI
+// runners (passed on main run 36257403648, failed on 36259779265 with a 30s
+// budget + sleep-based polling). Same failure family as the drawer fixture;
+// include explicitly with -PincludeQuarantinedTests.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@Tag("quarantined-flaky")
 class MangaScreenModelMultiSelectBatchTest {
 
     private val mainThreadSurrogate = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
