@@ -9,9 +9,9 @@ import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.manager.isFreshOrphanedCleanedImage
 import eu.kanade.translation.orchestration.ChapterTranslator
 import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.orchestration.isFreshOrphanedCleanedImage
 import eu.kanade.translation.storage.ActiveChapterStoreRegistry
 import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.shouldBe

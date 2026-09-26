@@ -81,20 +81,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
-//  Phase 16: the orphan-sweep constants and the freshness predicate moved
-// to manager/CleanedImageLifecycleController.kt; this stub keeps the old
-// qualified name (TranslationManagerArtifactReadTest).
-internal fun isFreshOrphanedCleanedImage(lastModified: Long, nowEpochMs: Long): Boolean =
-    eu.kanade.translation.manager.isFreshOrphanedCleanedImage(lastModified, nowEpochMs)
-
-//  Phase 9: body moved to manager/TranslationRequestCoordinator.kt; this
-// stub keeps the old qualified name (TranslationManagerPendingAcknowledgementTest).
-internal fun acknowledgePendingTranslationState(
-    current: Map<Long, TranslationRequestState>,
-    chapterIds: Iterable<Long>,
-): Map<Long, TranslationRequestState> =
-    eu.kanade.translation.manager.acknowledgePendingTranslationState(current, chapterIds)
-
 class TranslationManager(
     private val context: Context,
     private val provider: TranslationProvider = Injekt.get(),
