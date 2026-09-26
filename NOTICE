@@ -1,0 +1,18 @@
+# NOTICE
+
+## Product and project lineage
+
+**Product:** TachiyomiATVibe
+
+Project lineage: TachiyomiATVibe ← [TachiyomiAT](https://github.com/mannu691/TachiyomiAT) ← [Mihon](https://github.com/mihonapp/mihon) ← [Tachiyomi](https://github.com/inazuma110/tachiyomi). TachiyomiAT is Copyright © 2015 Javier Tomás.
+
+This product includes software developed by the TachiyomiAT, Mihon, and Tachiyomi projects under the Apache License 2.0. TachiyomiATVibe also contains modifications made for this fork.
+
+## Vendored files
+
+The `presentation-core` module includes these vendored files:
+
+- `presentation-core/src/main/java/tachiyomi/presentation/core/components/material/Scaffold.kt` and `presentation-core/src/main/java/tachiyomi/presentation/core/util/Elevation.kt`: Android Open Source Project, Copyright © 2021, Apache License 2.0.
+- `presentation-core/src/main/java/tachiyomi/presentation/core/util/Scrollbar.kt`: Albert Chang, Copyright © 2022, MIT License.
+
+Third-party libraries are licensed under their own terms. See the in-app Open Source Licenses screen and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

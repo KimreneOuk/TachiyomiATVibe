@@ -59,9 +59,11 @@ A small number of integration tests in the batch-translation coexistence suite â
 
 Stabilizing these tests and removing the tag is tracked work.
 
-## License and third-party assets
+## Licensing
 
-The project is distributed under the [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for fetched model and bundled font notices.
+The application code is licensed under the [Apache License 2.0](LICENSE). Except where otherwise noted, code is under Apache-2.0; see [NOTICE](NOTICE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and [docs/MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for project attribution, third-party notices, and model terms. Model weights are not covered by this project's Apache-2.0 license; their terms are those of their individual upstream sources, subject to the open questions in the model sources page, including one AGPL-3.0 model.
+
+The bundled fonts are described as free for personal use, but redistribution permission for these copies has not been verified. A maintainer decision is pending; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Disclaimer
 
