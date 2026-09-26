@@ -1030,6 +1030,7 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     private var batchJobStub: Job? = null
+    private val teardownJobsLock = Any()
     private val activeTeardownJobs = ConcurrentHashMap.newKeySet<Job>()
 
     @Volatile
@@ -1142,8 +1143,12 @@ internal class TranslationCoexistenceHarness private constructor(
 
     /** Register test-owned work that can still touch this harness after an assertion exits. */
     fun trackJobForTeardown(job: Job) {
-        activeTeardownJobs += job
-        job.invokeOnCompletion { activeTeardownJobs -= job }
+        synchronized(teardownJobsLock) {
+            activeTeardownJobs += job
+            job.invokeOnCompletion {
+                synchronized(teardownJobsLock) { activeTeardownJobs -= job }
+            }
+        }
     }
 
     /**
@@ -1256,7 +1261,9 @@ internal class TranslationCoexistenceHarness private constructor(
      * before global MockK shims or fixture resources are released.
      */
     private fun cancelAndJoinRunningJobs() {
-        val trackedJobs = activeTeardownJobs.toSet()
+        // Completion callbacks remove jobs from the live key set. Serialize the
+        // copy with those removals so size-based toSet() cannot race its iterator.
+        val trackedJobs = synchronized(teardownJobsLock) { activeTeardownJobs.toSet() }
         trackedJobs.forEach { it.cancel() }
         runBlocking {
             val drained = withTimeoutOrNull(JOB_DRAIN_TIMEOUT_MS) {
