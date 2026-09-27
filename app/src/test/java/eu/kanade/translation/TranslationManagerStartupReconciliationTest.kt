@@ -102,7 +102,7 @@ class TranslationManagerStartupReconciliationTest {
         return manager
     }
 
-    /** Chapters the translator actually admitted (recorded by the queueChapter stub). */
+    /** Chapters admitted by the translator, recorded by the fake queue callback. */
     private val admittedChapters = mutableListOf<Chapter>()
 
     private fun translatorWithQueue(initial: List<Translation> = emptyList()): ChapterTranslator {

@@ -287,7 +287,7 @@ fun interface AnalysisChunkRunner {
     ): AnalysisChunkRunOutcome
 }
 
-/** Typed outcome the coordinator persists / reacts to (slice-A contract). */
+/** Typed result for the coordinator to persist or handle. */
 sealed interface AnalysisChunkRunOutcome {
     data class Completed(
         val response: AnalysisResponseValidator.ValidatedAnalysisResponse,

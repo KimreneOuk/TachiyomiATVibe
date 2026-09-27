@@ -1,10 +1,8 @@
 package eu.kanade.translation.persistence.artifact
 
 /**
- *  Slice A1: Commit-point contract.
- *
  * Defines the authoritative set of store operations that require durable manifest
- * publication. Under group commit (Slice B), mutations occurring outside these points
+ * publication. When group commit is enabled, mutations outside these points
  * accumulate in an in-memory staged buffer and publish at the next commit point
  * or 250ms debounce window.
  *

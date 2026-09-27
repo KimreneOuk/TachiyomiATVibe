@@ -31,8 +31,8 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 /**
- *  Stage 5 slice A (/22, ): crash-safe analysis chunk
- * persistence. One validated chunk is ONE sidecar-then-pointer transaction
+ * Covers crash-safe analysis chunk persistence. One validated chunk is one
+ * sidecar-then-pointer transaction
  * appended in chunk-ordinal order; any rejection leaves the PRIOR manifest
  * authoritative and the failed chunk unpersisted (resume re-executes it).
  */

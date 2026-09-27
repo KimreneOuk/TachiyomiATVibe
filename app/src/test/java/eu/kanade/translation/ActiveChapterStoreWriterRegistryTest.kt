@@ -11,9 +11,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- *  Slice A2: Writer registry (N2) tests.
- *
- * Asserts:
+ * Writer registry behavior:
  * 1. Process-wide writer registry records writer origins.
  * 2. Observability-only semantics while flag OFF: multiple writers can register without exclusion.
  * 3. Token close unregisters the active writer.

@@ -77,12 +77,12 @@ import java.util.concurrent.ConcurrentHashMap
  * that tail before publishing COMPLETE; a page the drain genuinely cannot
  * finish takes the typed terminal and the run completes as a warning.
  *
- * Harness: Stage7FinalizeCoordinatorTest idioms. The fake overlap lane
+ * The fake overlap lane
  * mirrors the real lane's publication substage (cleaned-image reference) but
  * NOT the in-lane render-terminal stamp — exactly the order-inverted shape
- * the drain owns. Unlike Stage 7's, this harness's pages DO reach the
+ * the drain owns. This harness's pages reach the
  * committed-display promotion, so @BeforeEach seeds the cleaned companion
- * bytes and stubs the store's image probe (android.graphics is unavailable on
+ * bytes and uses a controlled store image probe (android.graphics is unavailable on
  * the JVM) — the display-base validation the promotion runs on every stamp.
  */
 class DisplayTailDrainTest {

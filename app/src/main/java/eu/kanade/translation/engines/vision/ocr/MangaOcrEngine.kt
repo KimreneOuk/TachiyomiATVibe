@@ -298,7 +298,7 @@ class MangaOcrEngine : RoiOcrEngine {
                         }
                     }
 
-                    // N1-5: Graph convention writes KV slice at slot = pos - 1
+                    // The graph convention writes the KV slice at slot = pos - 1.
                     writeCacheAtSlot(stepResult[1] as OnnxTensor, selfKCacheBuf, pos - 1)
                     writeCacheAtSlot(stepResult[2] as OnnxTensor, selfVCacheBuf, pos - 1)
 

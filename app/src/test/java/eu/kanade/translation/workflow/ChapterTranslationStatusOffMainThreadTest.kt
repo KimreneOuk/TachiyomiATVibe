@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit
  */
 class ChapterTranslationStatusOffMainThreadTest {
 
-    /** Stub whose slow leg blocks an IO worker (like a real SAF lookup) — never the caller. */
+    /** Fake whose slow lookup blocks an IO worker, never the caller. */
     private fun blockingProvider(lookupStarted: CountDownLatch, releaseLookup: CountDownLatch): TranslationProvider =
         mockk {
             every { findTranslationFile(any(), any(), any(), any()) } answers {

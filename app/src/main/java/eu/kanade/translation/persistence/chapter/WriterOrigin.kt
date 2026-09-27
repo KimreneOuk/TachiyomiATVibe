@@ -1,13 +1,11 @@
 package eu.kanade.translation.persistence.chapter
 
 /**
- *  Slice A2: Writer registry (N2).
- *
  * Process-wide registry of active chapter writers in [ActiveChapterStoreRegistry].
- * Under Slice A (flag OFF), this is observability-only: registration records writers
+ * With group commit disabled, registration is observability-only: it records writers
  * but excludes nothing, preserving existing probe/verify  choreography.
  *
- * Under Slice B (flag ON), exclusion semantics apply: a second writer
+ * With group commit enabled, a second writer
  * (probe store, health-verify, migration, glossary lane) force-flushes the owning
  * store's staged buffer before its own publication and re-reads durable truth.
  */

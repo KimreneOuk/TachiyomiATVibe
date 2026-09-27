@@ -126,8 +126,8 @@ class StandardLaneMultiPageCompletionTest {
             terminal.perStage.getValue(BatchPhase.RENDER).processed shouldBe pageKeys.size
         } finally {
             // The batch job may still be unwinding when an observation times
-            // out. Join it before removing global MockK shims or chapter-page
-            // stubs; otherwise the next test can observe a half-torn graph.
+            // out. Join it before removing global MockK hooks or chapter-page
+            // mocks; otherwise the next test can observe a half-torn graph.
             batch?.job?.cancelAndJoin()
             harness.removeGraphicsShims()
             harness.unstubChapterPages()

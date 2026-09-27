@@ -16,8 +16,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * 20 (Stage-6 slice A): the ADDITIVE NULLABLE provenance fields on
- * [TranslationStagePatch]. Pins:
+ * Covers nullable provenance fields on [TranslationStagePatch]:
  *
  *  - a patch constructed WITHOUT the new fields keeps byte-identical legacy
  *    merge behavior (accepted, no manifest reads, no new rejection class);

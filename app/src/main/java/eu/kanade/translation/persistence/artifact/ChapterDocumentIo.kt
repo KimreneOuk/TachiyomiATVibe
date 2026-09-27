@@ -363,7 +363,7 @@ class AtomicChapterDocuments(
         }
         val written = io.read(tempName)
         val matches = if (io.isFileBacked() && GroupCommitConfiguration.enabled) {
-            //  Slice B3: read-back elision on File-backed storage (parse-validate only)
+            // File-backed storage validates the written payload without a second read.
             written != null && validate(written)
         } else {
             written != null && written.contentEquals(bytes) && validate(written)

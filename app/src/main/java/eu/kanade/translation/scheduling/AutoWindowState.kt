@@ -6,9 +6,9 @@ package eu.kanade.translation.scheduling
  * These models define ONLY what the rolling coordinator intends to keep ready
  * and how that intent is observed. They carry no execution behavior, hold no
  * coroutines, and are NOT serialized — persisted durable state remains on
- * [eu.kanade.translation.model.PageTranslation]. A later ticket wires the
- * coordinator that reconciles page position, readiness, and memory/network
- * signals into these values and publishes an [AutoTranslationSnapshot].
+ * [eu.kanade.translation.model.PageTranslation]. The rolling coordinator
+ * reconciles page position, readiness, and memory/network signals into these
+ * values and publishes an [AutoTranslationSnapshot].
  *
  * Equality is structural throughout, so re-emitting an equivalent snapshot
  * through a StateFlow produces no observably different value.

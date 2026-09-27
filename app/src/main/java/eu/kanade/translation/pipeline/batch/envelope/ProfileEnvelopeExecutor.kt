@@ -127,15 +127,15 @@ internal class ProfileEnvelopeExecutor(
         /**  protocol parking: pages durably FAILED for omitted blocks. */
         var pagesParked: Int = 0,
         var replans: Int = 0,
-        /** Slice B: whole-page execution-time splits actually dispatched. */
+        /** Whole-page execution-time splits actually dispatched. */
         var envelopeSplits: Int = 0,
-        /** Slice B: envelopes sent in the ENRICHED prompt shape. */
+        /** Envelopes sent in the enriched prompt shape. */
         var promptShapeEnriched: Int = 0,
-        /** Slice B: envelopes sent in the LEGACY prompt shape. */
+        /** Envelopes sent in the legacy prompt shape. */
         var promptShapeLegacy: Int = 0,
-        /** Slice B: largest profile-subset fact count sent in ONE envelope. */
+        /** Largest profile-subset fact count sent in one envelope. */
         var profileSubsetFactsMax: Int = 0,
-        /** Slice B: largest gap-free rolling-context page count carried. */
+        /** Largest gap-free rolling-context page count carried. */
         var rollingContextPagesMax: Int = 0,
     ) {
         fun toMap(): Map<String, Int> = mapOf(
@@ -606,8 +606,8 @@ internal class ProfileEnvelopeExecutor(
     /**
      * Dispatches ONE provider request over ONE (sub-)batch of held pages —
      * the hard one-envelope-in-flight unit. Chunk assembly enriches per
-     * [frozenProfile] (slice B) or keeps the slice-A legacy shape; DR-A
-     * Option 1 classification and  provenance commits are unchanged.
+     * [frozenProfile] when present or keeps the legacy shape otherwise.
+     * Classification and provenance commits follow the same batch contract.
      * Page leases stay held; [dispatchEnvelope]'s `finally` releases them.
      */
     private suspend fun dispatchSingleHeldBatch(

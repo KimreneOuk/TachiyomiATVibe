@@ -17,13 +17,10 @@ import org.junit.jupiter.api.assertThrows
 import java.io.IOException
 
 /**
- *  wave-7c: the engine-backed analysis transport adapter. Pins the
- * identity triple sourced from the engine's own hooks (one spelling for
- * provenance AND Batch admission keys — wave-6 F-W6-4), the prompt framing
- * ( system + user above the raw JSON envelope), the typed-failure
- * guarantee ( a raw IO failure becomes NETWORK/PAUSE, typed
- * failures pass through, cancellation is never swallowed), and the
- * construction fence for engines without a raw completion.
+ * Pins the engine-backed analysis transport: identity comes from the engine
+ * hooks, the prompt preserves system/user framing, raw I/O failures become
+ * typed network pauses, typed failures pass through, cancellation is preserved,
+ * and engines without raw completion fail at construction.
  */
 class AnalysisEngineTransportTest {
 

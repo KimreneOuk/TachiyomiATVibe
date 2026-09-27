@@ -15,13 +15,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- *  Slice B comprehensive test suite.
- * Covers:
- * - B1: Staged mutations + combined publish at commit points (or 250ms debounce)
- * - B2: Candidate-promotion merge (skips redundant intermediate candidate publish)
- * - B3: Read-back elision on File-backed storage (parse-validate only)
- * - B4: Drain-to-commit stop, Amendment B (second writer force-flush), Amendment F (glossary force-flush)
- * - Flag OFF invariant: exact pre-Slice-B behavior preserved
+ * Covers staged mutation publication at commit points or after the debounce,
+ * candidate-promotion merging, file-backed read-back validation, stop-time
+ * draining, second-writer flushing, glossary flushing, and disabled-flag behavior.
  */
 class GroupCommitSliceBTest {
 

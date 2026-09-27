@@ -61,10 +61,9 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Stage-6 slice A: the serial envelope dispatch behind
- * (  revalidation + deterministic suffix re-plan,
- *  provenance commits, DR-A Option 1 retention, crash-resumable
- * progress, one-envelope-in-flight, Batch sub-limit riding).
+ * Covers serial envelope dispatch, deterministic suffix replanning,
+ * provenance commits, crash-resumable progress, one request in flight, and
+ * Batch provider sub-limit admission.
  */
 class ProfileEnvelopeDispatchTest {
 

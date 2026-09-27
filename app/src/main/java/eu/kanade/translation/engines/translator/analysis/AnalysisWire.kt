@@ -70,9 +70,9 @@ data class ValidatedTerm(
 /**
  * One validated entity record — the persistable subset of the
  * response entity ([eu.kanade.translation.persistence.artifact.ExtractedEntity]). Gender,
- * pronoun and conflict facts are VALIDATED here (V1..V9) but deliberately not
- * persisted on the chunk: the frozen-profile reconcile stage (slice B) is
- * their consumer; the chunk DTO carries relationships + conflict notes.
+ * pronoun and conflict facts are validated here but deliberately not persisted
+ * on the chunk: frozen-profile reconciliation consumes them; the chunk DTO
+ * carries relationships and conflict notes.
  */
 data class ValidatedEntity(
     val entityId: String,

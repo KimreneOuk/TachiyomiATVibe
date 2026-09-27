@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit
  * batch runner produce a typed terminal tracker snapshot with the real reason
  * — never a live nonterminal `0/0` tracker, never a silent empty projection.
  *
- * Chapter page enumeration is stubbed at the [getChapterPages] top-level seam:
+ * Chapter page enumeration is replaced with a fake at the [getChapterPages] seam:
  * the real implementation filters through ImageUtil, whose class initializer
  * needs Android graphics and cannot load on the JVM.
  */

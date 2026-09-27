@@ -56,13 +56,13 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 /**
- *  Stage 5 slices A+B: the coordinator's analysis phase
- * through profile freeze. After a COMPLETE OCR preflight the run publishes
+ * Covers the coordinator's analysis phase through profile freeze. After a
+ * complete OCR preflight, the run publishes
  * ANALYSIS_PLAN, executes the planned chunks through the typed runner,
  * persists validated results via the crash-safe sidecar-then-pointer
  * transaction, then synthesizes the glossary from the durable chunk
- * summaries and freezes the profile  — and STOPS
- * (PAUSED; envelope/translation are Stage 6). Resume reuses the checkpointed
+ * summaries and freezes the profile, then pauses because translation is not
+ * configured. Resume reuses the checkpointed
  * preflight (no re-OCR) and skips the persisted chunk prefix (no re-send).
  */
 class ChapterAnalysisPhaseCoordinatorTest {
@@ -311,10 +311,9 @@ class ChapterAnalysisPhaseCoordinatorTest {
         val outcome = coordinator(store, worker, pages, analyzer, synthesizer = synthesizer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // Slice B: the durable chunk set flows into reconcile + freeze.
-        // Stage-6 slice A: the run CONTINUES into the envelope phase and ends
-        // PAUSED at the typed TRANSLATE CONFIGURATION gate (no transport
-        // wired in this test) — never COMPLETED.
+        // Durable chunks flow through reconciliation and profile freeze. The
+        // run continues into envelope work, then pauses because no translator
+        // is configured; it must not report completion.
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         outcome.needsTranslation shouldBe emptyList()
@@ -330,7 +329,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         chunk.chunkOrdinal shouldBe 0
         chunk.chunkId shouldBe analyzer.chunkIdsByOrdinal.getValue(0)
         chunk.status shouldBe AnalysisChunkStatus.VALID
-        // Wave-4 F-W4-3: the DR-A coverage classification is durable.
+        // Coverage classification is part of the durable chunk record.
         chunk.coverage shouldBe AnalysisChunkCoverage.COMPLETE
         // Evidence page keys were translated to PERSISTED page keys at
         // publication — never wire `p<N>` identities in durable bytes.
@@ -367,13 +366,13 @@ class ChapterAnalysisPhaseCoordinatorTest {
         val outcome = coordinator(store, worker, pages, analyzer, synthesizer = synthesizer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // DR-A Option 1: the independently complete empty subset committed;
-        // the un-extracted remainder is pending and NEVER blocks the chapter.
+        // The independently complete empty subset is committed; the
+        // un-extracted remainder stays pending and does not block the chapter.
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         artifactStore().readManifest().shouldNotBeNull().analysisChunks.shouldHaveSize(1)
-        // Wave-4 F-W4-3: an empty-but-valid MISSING_ONLY chunk is durable as
-        // MISSING_ONLY, so slice-B reconcile treats it as pending, not canon.
+        // An empty-but-valid MISSING_ONLY chunk is durable and reconciliation
+        // treats it as pending rather than complete.
         readChunk(artifactStore().readManifest().shouldNotBeNull().analysisChunks.single())
             .coverage shouldBe AnalysisChunkCoverage.MISSING_ONLY
         val record = runRecord(store)
@@ -470,8 +469,8 @@ class ChapterAnalysisPhaseCoordinatorTest {
 
         // Only the changed page re-OCR'd (checkpoint identity reuse for the
         // rest). The re-planned corpus differs from the persisted chunk's, so
-        // the resume is a TYPED pause (wave-4 F-W4-1) — never a silent prefix
-        // skip that would append onto a mixed-plan chunk list.
+        // Resume pauses with a typed result instead of skipping a stale prefix
+        // and appending to a chunk list from a different plan.
         resumedWorker.ocrPages shouldContainExactly listOf("p2")
         analyzer2.executedOrdinals shouldBe emptyList()
         resumed.status shouldBe BatchPass1Status.PAUSED

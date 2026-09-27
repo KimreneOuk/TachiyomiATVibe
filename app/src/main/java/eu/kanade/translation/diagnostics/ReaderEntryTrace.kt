@@ -43,9 +43,9 @@ object ReaderEntryTrace {
     }
 
     /**
-     * Monotonic milliseconds. JVM unit tests run against the android.jar
-     * stubs where [SystemClock.elapsedRealtime] throws "not mocked"; fall
-     * back to [System.nanoTime] there so tracing stays usable in tests.
+     * Monotonic milliseconds. Android API placeholders in JVM unit tests make
+     * [SystemClock.elapsedRealtime] throw "not mocked"; fall back to
+     * [System.nanoTime] there so tracing stays usable in tests.
      */
     private fun nowMs(): Long =
         try {

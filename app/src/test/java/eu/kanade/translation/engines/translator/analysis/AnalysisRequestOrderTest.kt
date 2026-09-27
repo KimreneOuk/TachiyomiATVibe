@@ -11,12 +11,9 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 /**
- *  wave-2 review GAP-3 / F4 (BINDING): the request-builder pin. The wire
- * `pages` array MUST reproduce the contributing-set order exactly — CORE
- * pages first, CONTEXT overlap pages after — because the persisted
- * `contributingCorpusFingerprint`  hashes the same set in that
- * order with `naturalOrderProven=true`, and the  request payload is
- * the convention the whole pipeline references.
+ * Pins request page ordering. The wire `pages` array follows the contributing
+ * set exactly: core pages first, then context overlap pages. The persisted
+ * contributing-corpus fingerprint uses the same order.
  */
 class AnalysisRequestOrderTest {
 
@@ -75,7 +72,7 @@ class AnalysisRequestOrderTest {
             identity = identity(),
         )
 
-        // The exact convention pinned by wave-2 F4 / schemas contract §1.3.
+        // The request and persisted fingerprint use this same natural order.
         request.orderedPageKeys shouldBe listOf("p0", "p1", "p2", "p3")
 
         val parsed = Json.parseToJsonElement(request.requestJson).jsonObject

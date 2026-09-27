@@ -11,9 +11,8 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- *  Slice A3 (Amendment A): tests that the schema-guard cache applies
- * to the schema-normalization decision only, while future-schema guard reads
- * remain fresh from disk.
+ * Verifies that the schema-guard cache applies only to normalization decisions,
+ * while future-schema guard reads remain fresh from disk.
  */
 class ChapterArtifactSchemaGuardCacheTest {
 

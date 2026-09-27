@@ -56,14 +56,9 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- *  Stage 7: the drained TRANSLATE tail — FINALIZE (serial
- * inpaint drain through the overlap scheduler, stranded-page reconciliation,
- * flush, retention) and the run's FIRST/ONLY COMPLETE publication.
- *
- *  : the wave-2 F1 flag-off resume decision tests
- * (decideResume/resumeCompletedOutcome, OFF+COMPLETE ⇒ TreatAsFinished) were
- * deleted with the  flag; the  COMPLETE resume is covered by
- * Stage7FinalizeResumeCoordinatorTest and the dispatch-level wiring test.
+ * Pins chapter finalization: drain inpainting through the overlap scheduler,
+ * reconcile stranded pages, flush and apply retention, then publish COMPLETE
+ * exactly once. Resume behavior is covered by the companion resume test.
  */
 class Stage7FinalizeCoordinatorTest {
 

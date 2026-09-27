@@ -70,13 +70,10 @@ class ChapterTranslatorQueueRestoreTest {
     }
 
     // -------------------------------------------------------------------------
-    //  wave-2 review gap 2 (queue-restore obligation,  form):
-    // a chapter with an interrupted pipeline run restored from the persisted
-    // queue. The harness mirrors the interrupted-run idiom (real store, real
-    // interrupted pass) so the run record below is a genuine durable record
-    // with checkpoints, not a synthetic one. ( the  flag and its
-    // decideResume decision tree are gone — restore never auto-starts a run,
-    // and the durable state stays byte-untouched until explicit admission.)
+    // Restoring a chapter with an interrupted pipeline run uses its persisted
+    // queue and durable run record. The real store and interrupted pass keep
+    // the checkpoints realistic. Restore does not start the run; durable state
+    // stays unchanged until explicit admission.
     // -------------------------------------------------------------------------
 
     @TempDir

@@ -257,9 +257,8 @@ internal class AnalysisWorker(
 
         val runner = analysisChunkRunner
         if (runner == null) {
-            // Slice-A shell: no typed analysis transport is wired yet. A
-            // missing transport is a typed CONFIGURATION-class gate failure
-            // (provider-analysis contract §2.1) — never garbage chunks.
+            // No analysis runner is configured. Treat the missing transport as
+            // a typed CONFIGURATION failure; never publish empty or invalid chunks.
             publishRecord(
                 artifact,
                 record(

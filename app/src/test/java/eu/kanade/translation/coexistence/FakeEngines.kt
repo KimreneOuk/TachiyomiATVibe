@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger
 internal object FakeCoexistence {
 
     /**
-     * Byte size reported by the stub bitmap. Larger than HeldBitmapRegistry's
+     * Byte size reported by the test bitmap. Larger than HeldBitmapRegistry's
      * 48 MB ceiling so the batch render path always spills the held bitmap and
      * reloads it through the real `loadPersistedCleanedBitmap` seam — which is
      * where the RENDER barrier lives.
@@ -40,7 +40,7 @@ internal object FakeCoexistence {
      * JVM-safe bitmap stand-in. An
      * Unsafe-allocated Bitmap, but the batch's HeldBitmapRegistry.holdCleaned
      * reads `byteCount` outside any try/catch, which throws on the unit-test
-     * android.jar. A relaxed mockk Bitmap with a stubbed `byteCount` keeps the
+     * android.jar. A relaxed mockk Bitmap with a configured `byteCount` keeps the
      * real registry arithmetic working; every other Bitmap touchpoint in the
      * graph is recycle-guarded or behind the RenderColorEstimator shim.
      */

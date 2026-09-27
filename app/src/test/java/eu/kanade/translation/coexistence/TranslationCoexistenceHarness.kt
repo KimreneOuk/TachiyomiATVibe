@@ -1141,10 +1141,9 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     /**
-     * Stub for the chapter page enumeration seam (ChapterPagesKt) — the real
-     * implementation filters through ImageUtil, which cannot load on the JVM
-     * (precedent: ChapterTranslatorTerminalExitsTest.stubEnumeration). Streams
-     * are never opened: decode is faked at the sanctioned seam.
+     * Fake chapter page enumeration for JVM tests. The production implementation
+     * filters through ImageUtil, which cannot load here. Streams are in memory,
+     * and image decoding is replaced at its supported seam.
      */
     fun stubChapterPages(pageKeys: List<String> = listOf("p0", "p1")) {
         mockkStatic(CHAPTER_PAGES_KT)
@@ -1162,8 +1161,8 @@ internal class TranslationCoexistenceHarness private constructor(
      * single-page path cannot fake through a constructor (mockkObject(PageDecode))
      * and the render color estimator (bitmap.width/getPixels throw on the JVM
      * android.jar). mockkObject makes the whole PageDecode object strict, so the
-     * two pure-JVM helpers the REAL batch/manual paths still call through it are
-     * re-stubbed with callOriginal so pure-JVM test helpers keep their real behavior.
+     * two pure-JVM helpers the real batch/manual paths call through it are
+     * configured with callOriginal so JVM test helpers retain their behavior.
      * Install per test; uninstall with
      * [removeGraphicsShims].
      */

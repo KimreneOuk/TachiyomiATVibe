@@ -37,13 +37,11 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Stage 3 (WP4) coordinator-shell coverage: the  flagged
- * [ChapterProfileBatchCoordinator] runs the durable machine ONLY through
- * OCR_PREFLIGHT — serial per page (one decoded page at a time), checkpointOcr
- * CLOSE, lease release strictly after the checkpoint  — then
- * STOPS with a durable diagnostic instead of redefining completion.
+ * Covers [ChapterProfileBatchCoordinator] through OCR_PREFLIGHT: one decoded
+ * page at a time, checkpointOcr CLOSE, and lease release only after checkpoint.
+ * The run then stops with a durable diagnostic rather than claiming completion.
  *
- * Harness idioms follow `OcrCheckpointRestartReuseTest` (M1): real
+ * The harness uses a real
  * `ChapterTranslationStore` over `FakeUniFile`/`@TempDir`, a fake
  * [NativeLaneWorker] that acquires the BATCH lease, merges OCR under the
  * lease token and returns the fencing identity — the coordinator owns the
@@ -214,9 +212,9 @@ class OcrPreflightCoordinatorTest {
         val outcome = coordinator(store, worker, pages).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // Stopped-not-finished: never a COMPLETED pass (which would strand the
-        // untranslated pages as failed), always resumable. Stage-5 slice A:
-        // the complete corpus continues into the analysis phase, which pauses
-        // at the typed CONFIGURATION gate (no transport wired in this slice).
+        // untranslated pages as failed), and remains resumable. A complete
+        // corpus continues into analysis, which pauses at the typed
+        // CONFIGURATION gate because no transport is configured.
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.needsTranslation shouldContainExactly emptyList()
         outcome.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_NO_TRANSPORT_REASON
@@ -307,7 +305,7 @@ class OcrPreflightCoordinatorTest {
         // Only the remainder was OCR'd: the checkpointed page was skipped by
         // content identity, never re-decoded. The analysis
         // phase then pauses at the no-transport gate again (no chunks were
-        // persisted — the slice-A shell never wires a transport).
+        // persisted because no analysis transport is configured).
         resumed.status shouldBe BatchPass1Status.PAUSED
         resumed.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_NO_TRANSPORT_REASON
         resumedWorker.ocrPages shouldContainExactly listOf("p2", "p3")
