@@ -1,16 +1,16 @@
 package eu.kanade.translation.coexistence
 
 import android.graphics.Bitmap
+import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.ocr.PageRecognitionEngine
-import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.util.TranslationMemoryBudget
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecision
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecisionKind
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -20,8 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Phase 1 fakes — installed ONLY at the sanctioned externals of the
- * design note §1.2 (ONNX recognition/decode, provider HTTP transport, disk
+ * Fakes installed only at the sanctioned externals of the
+ * ONNX recognition/decode, provider HTTP transport, disk
  * render IO). Everything between the barriers is the real production graph.
  * The barriers suspend inside these fakes, so the harness never sleeps and
  * never polls.
@@ -29,18 +29,18 @@ import java.util.concurrent.atomic.AtomicInteger
 internal object FakeCoexistence {
 
     /**
-     * Byte size reported by the stub bitmap. Larger than HeldBitmapRegistry's
+     * Byte size reported by the test bitmap. Larger than HeldBitmapRegistry's
      * 48 MB ceiling so the batch render path always spills the held bitmap and
      * reloads it through the real `loadPersistedCleanedBitmap` seam — which is
-     * where the RENDER barrier lives (design note §2).
+     * where the RENDER barrier lives.
      */
     const val STUB_BITMAP_BYTES: Int = 48 * 1024 * 1024 + 1
 
     /**
-     * JVM-safe bitmap stand-in. The design note §1.2 proposed an
+     * JVM-safe bitmap stand-in. An
      * Unsafe-allocated Bitmap, but the batch's HeldBitmapRegistry.holdCleaned
      * reads `byteCount` outside any try/catch, which throws on the unit-test
-     * android.jar. A relaxed mockk Bitmap with a stubbed `byteCount` keeps the
+     * android.jar. A relaxed mockk Bitmap with a configured `byteCount` keeps the
      * real registry arithmetic working; every other Bitmap touchpoint in the
      * graph is recycle-guarded or behind the RenderColorEstimator shim.
      */
@@ -92,7 +92,7 @@ internal object FakeCoexistence {
 /**
  * Fake [PageRecognitionEngine] under the real EngineLane — used by the
  * single-page (reader) path. Hosts the NATIVE_RELEASE barrier at the return
- * gate of the native recognition call (design note §2).
+ * gate of the native recognition call.
  */
 internal class FakeRecognitionEngine(
     private val barrier: CoexistenceBarrier,
@@ -123,7 +123,7 @@ internal class FakeRecognitionEngine(
 }
 
 /**
- *  Phase 4  — cross-instance observation state shared by the primary
+ * Cross-instance observation state shared by the primary
  * fake transport and every translator the epoch retry's REBUILD produces.
  * The §1.4.1a oracle "any second call landed on the REBUILT translator
  * instance" is only observable if call/serving evidence survives across
@@ -151,7 +151,7 @@ internal class SharedTransportState {
  * HTTP phase and the batch standard translation lane. Hosts the PROVIDER_START
  * / PROVIDER_END barriers and records the exactly-once paid-call oracle.
  * Sets `block.translation = "tr-" + text` on every block so
- * TranslationBlockValidation.applyTo lands READY (design note §1.2.2).
+ * TranslationBlockValidation.applyTo lands READY.
  *
  * Per-page lane serialization (design-note determinism, no sleeps/polling):
  * production's remote lane overlaps the page's inpaint/publish with its

@@ -1,9 +1,9 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.TimeoutCancellationException
@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
 /**
- *  zero-legacy  — the DISPATCH-LEVEL resume wiring through the REAL
+ *    — the DISPATCH-LEVEL resume wiring through the REAL
  * production shell (`ChapterTranslator.translateChapterInternal` →
  * `BatchChapterTranslator.runBatchPass1` → the coordinator's
  * `resumeFinalizeOrComplete`), rewritten for the post-flag world.

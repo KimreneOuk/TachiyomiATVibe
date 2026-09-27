@@ -18,12 +18,12 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.model.TranslationSettingsSummary
-import eu.kanade.translation.model.snapshotTranslationSummary
-import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.presentation.TranslationSettingsSummary
+import eu.kanade.translation.presentation.snapshotTranslationSummary
+import eu.kanade.translation.workflow.ChapterQueuePreflight
+import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.clearMocks
@@ -50,6 +50,7 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import tachiyomi.core.common.preference.Preference
@@ -77,7 +78,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Same fixture approach as MangaScreenModelTranslationDrawerTest: fully mocked
  * constructor, real resumed LifecycleRegistry, single-threaded main executor.
  */
+// ScreenModel boot await exceeds its wall-clock window on loaded 2-core CI
+// runners (passed on main run 36257403648, failed on 36259779265 with a 30s
+// budget + sleep-based polling). Same failure family as the drawer fixture;
+// include explicitly with -PincludeQuarantinedTests.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@Tag("quarantined-flaky")
 class MangaScreenModelMultiSelectBatchTest {
 
     private val mainThreadSurrogate = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
@@ -214,7 +220,7 @@ class MangaScreenModelMultiSelectBatchTest {
         every { translationPreferences.translationConfirmPretranslate() } returns confirmPref
         // snapshotTranslationSummary is a top-level extension that reads real
         // preference values; static-mock it so the dialog test runs on the JVM.
-        mockkStatic("eu.kanade.translation.model.TranslationSettingsSummaryKt")
+        mockkStatic("eu.kanade.translation.presentation.TranslationSettingsSummaryKt")
         every { translationPreferences.snapshotTranslationSummary() } returns
             mockk<TranslationSettingsSummary>(relaxed = true)
 

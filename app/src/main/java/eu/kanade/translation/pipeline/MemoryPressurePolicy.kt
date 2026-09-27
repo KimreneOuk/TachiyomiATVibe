@@ -4,19 +4,14 @@ package eu.kanade.translation.pipeline
  * Coarse classification of an Android [android.content.ComponentCallbacks2] trim-memory
  * level into the two ownership classes the translation subsystem cares about.
  *
- * The raw level arrives from [App.onTrimMemory] via [forwardTranslationMemoryPressure]
- * and historically branched on `level >= TRIM_MEMORY_RUNNING_LOW` at three call sites
- * (TranslationManager, ChapterTranslator, ReaderViewModel). Because the trim levels are
- * NOT monotonic by severity — `TRIM_MEMORY_RUNNING_LOW` (15) is lower than
- * `TRIM_MEMORY_UI_HIDDEN` (20) / `BACKGROUND` (40) / `MODERATE` (60) — that comparison
- * treated a benign app-background trim as if it were a foreground memory crunch,
- * cancelling in-flight page work and resetting display state on every background trip.
+ * Android trim levels are not monotonic by severity:
+ * `TRIM_MEMORY_RUNNING_LOW` (15) is lower than `TRIM_MEMORY_UI_HIDDEN` (20),
+ * `BACKGROUND` (40), and `MODERATE` (60). Classifying the raw value with a
+ * single `>= RUNNING_LOW` check would treat ordinary background trims as a
+ * foreground memory crunch and could cancel active page work.
  *
- * This object consolidates the thresholds into one pure, JVM-testable classifier
- * (no `ComponentCallbacks2` statics are referenced here: those Android framework
- * constants do not resolve in plain-JVM unit tests, which is how every other policy
- * object — [eu.kanade.translation.scheduling.TranslationLifecyclePolicy] — is
- * structured). The numeric values mirror `ComponentCallbacks2` exactly.
+ * This classifier stays free of Android constants so plain-JVM tests can
+ * exercise the mapping. The numeric values mirror `ComponentCallbacks2`.
  */
 sealed interface MemoryPressureClass {
 

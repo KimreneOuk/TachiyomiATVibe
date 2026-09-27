@@ -7,11 +7,11 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
-import eu.kanade.translation.storage.TranslationPendingRequestRecord
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestRecord
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
+import eu.kanade.translation.workflow.ChapterTranslator
+import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -34,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  slice 2 (R9): the startup reconciler resolves every pending request
+ * The startup reconciler resolves every pending request
  * against its owners exactly once after both queues restore:
  * - pending + translation-queue member -> queue wins, clear pending;
  * - pending + download-queue member -> normalize WAITING;
@@ -72,7 +72,7 @@ class TranslationManagerStartupReconciliationTest {
             manager,
             "scheduler",
             eu.kanade.translation.scheduling.TranslationScheduler(
-                executor = mockk<eu.kanade.translation.scheduling.TranslationExecutor>(relaxed = true),
+                executor = mockk<eu.kanade.translation.pipeline.execution.TranslationExecutor>(relaxed = true),
                 storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { null },
                 immediateStoreResolver = { null },
             ),
@@ -102,7 +102,7 @@ class TranslationManagerStartupReconciliationTest {
         return manager
     }
 
-    /** Chapters the translator actually admitted (recorded by the queueChapter stub). */
+    /** Chapters admitted by the translator, recorded by the fake queue callback. */
     private val admittedChapters = mutableListOf<Chapter>()
 
     private fun translatorWithQueue(initial: List<Translation> = emptyList()): ChapterTranslator {
@@ -285,7 +285,7 @@ class TranslationManagerStartupReconciliationTest {
     }
 
     // -------------------------------------------------------------------------
-    //  hotfix: restore-admitted requests must never auto-start work. The
+    // Restore-admitted requests must never auto-start work. The
     // reconciler marks the chapters it admits (process-local, one-shot) and
     // the gated admission path enqueues them PAUSED instead of starting.
     // -------------------------------------------------------------------------

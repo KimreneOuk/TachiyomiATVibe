@@ -2,15 +2,18 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceSink
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.orchestration.TranslationSession
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.util.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.every
@@ -31,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Phase 3 (plan §6.3 cases 2, 5, 6 + amendment §10.2): correlated trace
+ * Correlated trace
  * wiring of [RollingAutoCoordinator] — one schedule per rolling session,
  * correlated page runs with distinct rids, measured prepared-queue waits,
  * exactly-one-terminal ownership under cancel/timeout/eviction, and the
@@ -447,7 +450,7 @@ private class TraceControllableExecutor(
         if (prepared.pageKey in persistenceRejectedFor) {
             return ChunkCompletionOutcome.PersistenceRejected(
                 anchorPageKey = prepared.pageKey,
-                stage = eu.kanade.translation.pipeline.batch.BatchDiagnosticStage.TRANSLATION,
+                stage = eu.kanade.translation.diagnostics.BatchDiagnosticStage.TRANSLATION,
                 reason = "lease rejected by manual owner",
             )
         }
@@ -463,16 +466,6 @@ private class TraceControllableExecutor(
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
     ): SinglePageOutcome = SinglePageOutcome.Completed
-
-    override suspend fun translateSinglePageFromStream(
-        manga: tachiyomi.domain.manga.model.Manga,
-        chapter: tachiyomi.domain.chapter.model.Chapter,
-        source: eu.kanade.tachiyomi.source.online.HttpSource,
-        pageKey: String,
-        streamFn: () -> InputStream,
-        force: Boolean,
-        stageListener: TranslationStageListener?,
-    ) {}
 
     suspend fun awaitAndCompletePrepare(callIndex: Int) {
         gate(prepareStarted, callIndex).await()

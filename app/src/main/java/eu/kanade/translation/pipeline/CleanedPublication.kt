@@ -4,14 +4,14 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.CleanedImagePublisher
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.CleanedImagePublisher
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,13 +21,12 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
 /**
- * Cleaned-image publication moved from `TranslationPipeline` ( Phase 7).
- * Wraps the already-extracted [CleanedImagePublisher]; the pipeline's
- * `currentInpaintingMode` is injected as a getter (it is re-wired by engine
- * rebuilds).
+ * Publishes cleaned images and retires files superseded by committed display
+ * bundles. The current inpainting mode is read through a getter so engine
+ * rebuilds are reflected.
  */
 internal class CleanedPublication(
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val streamRegistry: TranslationStreamRegistry,
     private val currentInpaintingMode: () -> InpaintingMode,
 ) {
@@ -400,10 +399,8 @@ internal fun markOriginalImageFallback(page: PageTranslation): PageTranslation =
 }
 
 /**
- * Resume copy hygiene moved with the cleaned-publication region ( Phase 7;
- * original position: between the pipeline's HTTP/render body and
- * [CleanedPublication.loadPersistedCleanedBitmap]). Top-level so the pipeline's
- * remaining resume-path call sites resolve the same declaration.
+ * Copies page data for resume without retaining transient bitmaps or text
+ * detections.
  */
 internal fun PageTranslation.copyForResume(): PageTranslation {
     return copy(blocks = blocks.map { it.copy() }.toMutableList()).also {

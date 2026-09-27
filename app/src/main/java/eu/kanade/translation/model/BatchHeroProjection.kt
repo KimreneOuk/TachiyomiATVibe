@@ -3,7 +3,7 @@ package eu.kanade.translation.model
 import eu.kanade.tachiyomi.data.download.model.Download
 
 /**
- *  slice 1: phase-aware hero projection for the manga-screen batch drawer.
+ * Maps batch progress to the manga-screen drawer's hero display.
  *
  * The batch snapshot only knows translation pages; while the work is still
  * owned by the pending request / downloader (accepted, waiting for download,
@@ -45,15 +45,15 @@ enum class BatchHeroPhase {
     /** Terminal failure of a chapter that has no translation pages at all. */
     FAILED_NO_PAGES,
 
-    /**  slice 2: the download was cancelled/removed/cleared/stopped. */
+    /** The download was cancelled, removed, cleared, or stopped. */
     CANCELLED,
 
-    /**  slice 2 (R10): the translation queue refused admission (not a download failure). */
+    /** The translation queue refused admission; this is not a download failure. */
     ADMISSION_FAILED,
 
     /**
-     * Phase 5 (spec §2.1): real committed pages exist, but the page
-     * set is not the trusted source total (partial download). The available
+     * Real committed pages exist, but the page set is not the trusted source
+     * total (partial download). The available
      * count must never render as a percentage or a complete chapter.
      */
     UNKNOWN_TOTAL,

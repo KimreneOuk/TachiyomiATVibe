@@ -1,13 +1,17 @@
 package eu.kanade.translation.scheduling
 
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.orchestration.TranslationSession
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -34,7 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Ticket 03 deterministic coordinator tests.
+ * Deterministic coordinator tests.
  *
  * Most tests inject a [Dispatchers.Unconfined] coordination scope so the
  * coordinator coroutines run inline on the test thread; the lifecycle race
@@ -1400,16 +1404,6 @@ class RollingAutoCoordinatorTest {
             stageListener: TranslationStageListener?,
             origin: PageWriteOrigin,
         ): SinglePageOutcome = SinglePageOutcome.Completed
-
-        override suspend fun translateSinglePageFromStream(
-            manga: tachiyomi.domain.manga.model.Manga,
-            chapter: tachiyomi.domain.chapter.model.Chapter,
-            source: eu.kanade.tachiyomi.source.online.HttpSource,
-            pageKey: String,
-            streamFn: () -> InputStream,
-            force: Boolean,
-            stageListener: TranslationStageListener?,
-        ) {}
 
         /** Waits for prepare[callIndex] to start, then immediately completes it. */
         suspend fun awaitAndCompletePrepare(callIndex: Int) {

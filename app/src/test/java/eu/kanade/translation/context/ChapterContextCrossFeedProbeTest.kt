@@ -1,27 +1,27 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.EvidenceStrength
-import eu.kanade.translation.artifact.FactConflictState
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.FactScope
-import eu.kanade.translation.artifact.FactType
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.PageRange
-import eu.kanade.translation.artifact.ProfileFact
-import eu.kanade.translation.artifact.ProfileScene
-import eu.kanade.translation.artifact.SceneRegister
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.engines.translator.contextual.ProfileSubsetMatcher
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.EvidenceStrength
+import eu.kanade.translation.persistence.artifact.FactConflictState
+import eu.kanade.translation.persistence.artifact.FactProvenance
+import eu.kanade.translation.persistence.artifact.FactScope
+import eu.kanade.translation.persistence.artifact.FactType
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.PageRange
+import eu.kanade.translation.persistence.artifact.ProfileFact
+import eu.kanade.translation.persistence.artifact.ProfileScene
+import eu.kanade.translation.persistence.artifact.SceneRegister
+import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.ProfileFreezePublication
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.contextual.ProfileSubsetMatcher
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -127,7 +127,7 @@ class ChapterContextCrossFeedProbeTest {
             ),
         )
 
-        val prepared = store.contextService.prepare(request)
+        val prepared = ChapterContextService(store).prepare(request)
 
         prepared.characterAndTermSheet shouldContain "CHARACTER & TERM SHEET"
         prepared.characterAndTermSheet shouldContain "[f-1]"
@@ -180,7 +180,7 @@ class ChapterContextCrossFeedProbeTest {
             rollingPairs = "勇者 => Hero",
         )
 
-        val prepared = store.contextService.prepare(batchRequest)
+        val prepared = ChapterContextService(store).prepare(batchRequest)
 
         prepared.characterAndTermSheet shouldContain "魔王"
         prepared.characterAndTermSheet shouldContain "Lord"
@@ -261,22 +261,22 @@ class ChapterContextCrossFeedProbeTest {
             laneCapability = LaneCapability.STANDARD_BATCH,
         )
 
-        val prepared = store.contextService.prepare(request)
+        val prepared = ChapterContextService(store).prepare(request)
         prepared shouldBe PreparedContext.EMPTY
         prepared.estimatedContextTokens shouldBe 0
         prepared.characterAndTermSheet shouldBe ""
         prepared.rollingContext shouldBe ""
 
         // Standard batch commits translated output to term producer across 3 pages
-        store.contextService.submitCommittedOutput(
+        ChapterContextService(store).submitCommittedOutput(
             pageKey = "p1",
             pairs = listOf("黒崎" to "Kurosaki", "戦士" to "Warrior"),
         )
-        store.contextService.submitCommittedOutput(
+        ChapterContextService(store).submitCommittedOutput(
             pageKey = "p2",
             pairs = listOf("黒崎" to "Kurosaki", "戦士" to "Warrior"),
         )
-        store.contextService.submitCommittedOutput(
+        ChapterContextService(store).submitCommittedOutput(
             pageKey = "p3",
             pairs = listOf("黒崎" to "Kurosaki", "戦士" to "Warrior"),
         )

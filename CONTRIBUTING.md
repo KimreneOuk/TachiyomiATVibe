@@ -1,49 +1,47 @@
-Looking to report an issue/bug or make a feature request? Please refer to the [README file](https://github.com/mihonapp/mihon#issues-feature-requests-and-contributing).
+# Contributing
 
----
+Contributions to TachiyomiATVibe are welcome. For bugs and feature requests, use the issue templates in this repository. For code changes, open a pull request against `main` and describe the behavior changed and how you verified it.
 
-Thanks for your interest in contributing to Mihon!
-
-
-# Code contributions
-
-Pull requests are welcome!
-
-If you're interested in taking on [an open issue](https://github.com/mihonapp/mihon/issues), please comment on it so others are aware.
-You do not need to ask for permission nor an assignment.
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Larger changes are easier to review when discussed in an issue before implementation.
 
 ## Prerequisites
 
-Before you start, please note that the ability to use following technologies is **required** and that existing contributors will not actively teach them to you.
+- Familiarity with Kotlin and Android development
+- Android Studio with JDK 17 and the Android SDK
+- An emulator or Android device for changes that need runtime verification
 
-- Basic [Android development](https://developer.android.com/)
-- [Kotlin](https://kotlinlang.org/)
+## Build and test
 
-### Tools
+Build the Standard debug app with:
 
-- [Android Studio](https://developer.android.com/studio)
-- Emulator or phone with developer options enabled to test changes.
+```sh
+./gradlew :app:assembleStandardDebug
+```
 
-## Getting help
+Run JVM unit tests with:
 
-- Join [the Discord server](https://discord.gg/mihon) for online help and to ask questions while developing.
+```sh
+./gradlew test
+```
 
-# Translations
+On Windows, use `gradlew.bat` in place of `./gradlew`.
 
-Translations are done externally via Weblate. See [our website](https://mihon.app/docs/contribute#translation) for more details.
+## Translation changes
 
+Before changing `eu.kanade.translation`, use the [translation architecture guide](docs/translation-architecture.md) to find the owner for the behavior. Put request, session, and chapter lifecycle decisions in `workflow`; use `scheduling` for when page jobs run. Keep shared page execution in `pipeline`, shared stage planning in `pipeline/planning`, decode/preflight/prefetch policy in `pipeline/memory`, engine heap/native-memory facts in `engines/runtime`, and mode-specific batch policy in `pipeline/batch`. Keep provider request logic under `engines/translator/providers`; put recognition, inpainting, rendering, and model runtime changes in their matching `engines` packages. `persistence/chapter` owns live state and `TranslationFileProvider`; `persistence/internal` owns the chapter glossary accumulator; `persistence/artifact` and `persistence/queue` own durable records.
 
-# Forks
+Preserve reader and batch coexistence, cancellation, crash recovery and committed artifact behavior. Keep dependencies directed toward concrete owners; add no package cycles, process-global state, or utility dumping grounds. Add or update focused tests for behavior changes; concurrency, lease, commit and state-machine changes need tests for the affected transitions and races. For a translation-focused JVM pass, run both variants:
 
-Forks are allowed so long as they abide by [the project's LICENSE](https://github.com/mihonapp/mihon/blob/main/LICENSE).
+```sh
+./gradlew testDevReleaseUnitTest testStandardReleaseUnitTest --tests "eu.kanade.translation.*" --max-workers=2
+```
 
-When creating a fork, remember to:
+On Windows, use `gradlew.bat` and PowerShell's `./gradlew.bat` invocation syntax.
 
-- To avoid confusion with the main app:
-    - Change the app name
-    - Change the app icon
-    - Change or disable the [app update checker](https://github.com/mihonapp/mihon/blob/main/app/src/main/java/eu/kanade/tachiyomi/data/updater/AppUpdateChecker.kt)
-- To avoid installation conflicts:
-    - Change the `applicationId` in [`build.gradle.kts`](https://github.com/mihonapp/mihon/blob/main/app/build.gradle.kts)
-- To avoid having your data polluting the main app's analytics and crash report services:
-    - If you want to use Firebase analytics, replace [`google-services.json`](https://github.com/mihonapp/mihon/blob/main/app/src/standard/google-services.json) with your own
+## Project lineage
+
+This is an unofficial fork of TachiyomiAT, based on Mihon and the Tachiyomi project. See the project links and attribution in [README.md](README.md). The upstream projects have separate issue trackers, communities, and contribution processes; use this repository for TachiyomiATVibe changes.
+
+## License
+
+By contributing, you agree that your contributions are provided under the repository's [Apache License 2.0](LICENSE).

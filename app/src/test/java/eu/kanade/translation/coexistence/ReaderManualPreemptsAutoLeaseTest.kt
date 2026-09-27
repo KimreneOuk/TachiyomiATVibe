@@ -2,9 +2,9 @@ package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
@@ -13,7 +13,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- *  Lease-priority behavior with the origin change.
+ * Lease priority and fencing between rolling auto work and manual reader work.
  *
  * Pins the one new acquisition rule and its fencing consequences on the REAL
  * store the coexistence harness wires:
@@ -30,13 +30,11 @@ import org.junit.jupiter.api.Test
  * `tryAcquirePageStageLease(AUTO)` is the rolling auto boundary's acquisition
  * (`TranslationPipeline.prepareSinglePage`), `tryAcquirePageStageLease(MANUAL)`
  * is the manual single-page boundary's acquisition
- * (`TranslationPipeline.runSinglePageBoundary`), and `patchPage` with a lease
+ * (`TranslationPipeline.translateSinglePage`), and `patchPage` with a lease
  * token is the guarded write every stage writer uses.
  *
- * Fixture note: store-level (same style as
- * [eu.kanade.translation.ChapterTranslationStorePhase3Test]) because the
- * semantics live entirely in the lease table + token fencing; driving them
- * through the full harness would only re-test 's choreography.
+ * Fixture note: store-level because the behavior lives in the lease table and
+ * token fencing; driving it through the full harness would add no coverage.
  */
 class ReaderManualPreemptsAutoLeaseTest {
 

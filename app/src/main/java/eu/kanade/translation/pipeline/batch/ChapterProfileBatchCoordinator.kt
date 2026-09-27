@@ -1,66 +1,66 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.AnalysisChunkCoverage
-import eu.kanade.translation.artifact.AnalysisChunkResult
-import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
-import eu.kanade.translation.artifact.ChapterRunRecord
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.artifact.EnvelopePlan
-import eu.kanade.translation.artifact.ExtractedEntity
-import eu.kanade.translation.artifact.ExtractedRelationship
-import eu.kanade.translation.artifact.ExtractedTerm
-import eu.kanade.translation.artifact.ExtractedTermKind
-import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.PageRange
-import eu.kanade.translation.artifact.ProfilePointer
-import eu.kanade.translation.artifact.ProfileScene
-import eu.kanade.translation.artifact.RunConfigSnapshot
-import eu.kanade.translation.artifact.SceneRegister
-import eu.kanade.translation.artifact.SidecarPointer
-import eu.kanade.translation.artifact.SidecarRead
-import eu.kanade.translation.artifact.StageFingerprints
-import eu.kanade.translation.artifact.ToneFlag
-import eu.kanade.translation.artifact.isSha256Hex
+import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.SharedBatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
+import eu.kanade.translation.engines.translator.analysis.AnalysisRequestBuilder
+import eu.kanade.translation.engines.translator.analysis.AnalyzerProvenanceFactory
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlanResult
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerBlock
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPage
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPolicy
+import eu.kanade.translation.engines.translator.contextual.GlobalEnvelopePlanner
+import eu.kanade.translation.engines.translator.contextual.OcrCorpusManifest
+import eu.kanade.translation.engines.translator.contextual.OcrCorpusPageEntry
+import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.BatchRequestSublimitGate
-import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.translator.analysis.AnalysisRequestBuilder
-import eu.kanade.translation.translator.analysis.AnalyzerProvenanceFactory
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
-import eu.kanade.translation.translator.contextual.EnvelopePlanResult
-import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy
-import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
-import eu.kanade.translation.translator.contextual.OcrCorpusManifest
-import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.EnvelopePlan
+import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.persistence.artifact.ProfilePointer
+import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.artifact.SidecarRead
+import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.isSha256Hex
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisCorpus
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisCorpusEntry
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisWorker
+import eu.kanade.translation.pipeline.batch.analysis.AnalysisWorkerContext
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatchWork
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatcher
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatcherContext
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
+import eu.kanade.translation.pipeline.batch.envelope.PageDispatchWork
+import eu.kanade.translation.pipeline.batch.envelope.PlannedBlock
+import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
@@ -90,7 +90,7 @@ import java.security.MessageDigest
  * authoritative.
  */
 /**
- * Typed identity of ONE unresolved preflight page failure (wave-2 review R2):
+ * Typed identity of one unresolved preflight page failure:
  * the durable-failure-ledger input for a page whose OCR_PREFLIGHT attempt
  * could not be resolved — a REJECTED `checkpointOcr` CLOSE transaction or a
  * thrown OCR-lane worker exception.
@@ -170,7 +170,7 @@ internal class ChapterProfileBatchCoordinator(
     private val listener: BatchScheduleListener = BatchScheduleListener.NOOP,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
     /**
-     * Wave-2 review R2: the durable failure-ledger writer for an unresolved
+     * Durable failure-ledger writer for an unresolved
      * preflight page. The DEFAULT writer mirrors the legacy
      * `persistUnexpectedBatchStageFailure` idiom: the
      * page patch (OCR FAILED + one `recordAttemptFailure()` charge per
@@ -183,35 +183,28 @@ internal class ChapterProfileBatchCoordinator(
     private val failureRecorder: suspend (PreflightStageFailure) -> Unit =
         { failure -> persistDurablePreflightFailure(store, failure, nowEpochMs) },
     /**
-     * Stage-5 slice A: the typed analysis runner (executor + transport, or a
-     * test fake). `null` keeps the slice-A shell behavior: the run pauses at
-     * ANALYSIS_CHUNKS with a typed CONFIGURATION-class skip counter instead of
-     * producing provider calls without a typed transport.
+     * Optional typed analysis runner (executor + transport, or a test fake).
+     * When absent, the run pauses at ANALYSIS_CHUNKS with a typed
+     * CONFIGURATION-class skip counter rather than making provider calls without
+     * a typed transport.
      */
     private val analysisChunkRunner: AnalysisChunkRunner? = null,
     /**
-     * Director decision (summary-glossary redesign): the one-shot chapter
-     * glossary builder over the durable chunk summaries. `null` is a typed
-     * CONFIGURATION-class gate exactly like [analysisChunkRunner] — the run
-     * pauses at PROFILE_RECONCILE instead of synthesizing without a transport.
+     * One-shot chapter glossary builder over durable chunk summaries. If
+     * absent, the run pauses at PROFILE_RECONCILE with a typed CONFIGURATION
+     * outcome rather than synthesizing without a transport.
      */
     private val glossarySynthesizer: GlossarySynthesizer? = null,
     /**
-     * Typed AI text translator for the envelope phase. `null` is a typed
-     * CONFIGURATION-class gate: the run
-     * plans nothing provider-bound and pauses at TRANSLATE — exactly like
-     * the analysis runner seam above. Production wiring of BOTH seams is
-     * the provider package's acceptance condition; tests drive the seam
-     * with fakes. Wave A: widened to [TextTranslator] so the standard lane
-     * can carry its plain per-page translator; the envelope path still
-     * requires the contextual type through a local cast (a non-contextual
-     * translator on the AI lane takes the same CONFIGURATION pause).
+     * Optional translator for the AI envelope path. If absent, or if the AI
+     * path receives a plain translator without contextual support, the run
+     * pauses at TRANSLATE with a CONFIGURATION outcome. The standard lane may
+     * provide its plain page translator. Tests drive this seam with fakes.
      */
     private val textTranslator: TextTranslator? = null,
     /**
-     * Stage-6 slice A: the Batch sub-limit gate every translation envelope
-     * must ride (wave-4 F-W4-2: ONE allowance per credential for ALL Batch
-     * traffic). Defaults to the process-wide shared gate.
+     * Shared sub-limit gate checked before each translation envelope. One
+     * credential allowance covers all batch traffic.
      */
     private val translationSublimitGate: BatchRequestSublimitGate =
         SharedBatchRequestSublimitGate.instance,
@@ -292,12 +285,7 @@ internal class ChapterProfileBatchCoordinator(
         }
     }
 
-    /**
-     * The batch pass-1 entry the shell's dispatch point calls (formerly
-     * call-shape-compatible with the deleted legacy coordinator's
-     * `runPass1`). [computeClass] is accepted for call-shape parity only —
-     * this stage never dispatches a provider lane.
-     */
+    /** Builds the preflight worker that checks existing OCR work and checkpoints. */
     private fun preflightWorker() = PreflightWorker(
         PreflightWorkerContext(
             store = store,
@@ -613,7 +601,7 @@ internal class ChapterProfileBatchCoordinator(
      *    closure record. Run identity (corpus fingerprint, progress counters)
      *    rides the durable FINALIZE record — the same run, not a new one.
      *  - `COMPLETE`: the run already closed — an idempotent finished outcome
-     *    with zero work and NO new record publication. Since the zero-legacy
+     *    with zero work and NO new record publication. Since the
      *    The shell-level OFF+COMPLETE decision tree is gone; this path is the
      *    only COMPLETE-resume route
      *    for both lanes.
@@ -783,9 +771,9 @@ internal class ChapterProfileBatchCoordinator(
                 "T924 envelope plan deferred: corpus checkpoints changed under the run",
             )
         val sceneStarts = frozenProfileSceneStartIndexes(artifact)
-        // Director decision (2026-09-16): ~5-page batch translation to cut API
-        // calls. The scene-break PREFERENCE would otherwise close an envelope
-        // at nearly every manhwa page (pages mark scene starts), collapsing
+        // Envelopes target about five pages to reduce API calls. The scene-break
+        // preference would otherwise close an envelope at nearly every manhwa
+        // page (pages mark scene starts), collapsing
         // batching to 1 page per call; scene crossing inside an envelope is
         // already flagged (crossesScene) and the glossary subset rides the
         // call, so packing through scene starts is safe. Only the structural
@@ -1302,134 +1290,6 @@ internal class ChapterProfileBatchCoordinator(
         return "${wirePageKey}_b${local ?: index.toString()}"
     }
 
-    /** One rebuilt-corpus OCR page entry (durable checkpoint + wire identity). */
-    internal class AnalysisCorpusEntry(
-        val storagePageKey: String,
-        val naturalPageIndex: Int,
-        val contentFingerprint: String,
-        val snapshotPointer: SidecarPointer,
-        val wirePageKey: String,
-        val wireBlockIds: List<String>,
-        val blockTexts: List<String>,
-        val estimatedInputTokens: Int,
-    )
-
-    internal class AnalysisCorpus(
-        val entries: List<AnalysisCorpusEntry>,
-        val corpusFingerprint: String,
-    ) {
-        /** Chunks are planned over STORAGE page keys; look them up here. */
-        private val byStorageKey = entries.associateBy { it.storagePageKey }
-
-        /** Wire evidence universe + source texts for one planned chunk. */
-        fun evidenceTextsFor(chunk: PlannedAnalysisChunk): AnalysisEvidenceTexts {
-            val blockIdsByPage = mutableMapOf<String, List<String>>()
-            val textByBlockId = mutableMapOf<String, String>()
-            val wirePageKeyByStorageKey = mutableMapOf<String, String>()
-            for (pageKey in chunk.contributingPageKeys) {
-                val entry = byStorageKey[pageKey] ?: continue
-                wirePageKeyByStorageKey[pageKey] = entry.wirePageKey
-                blockIdsByPage[entry.wirePageKey] = entry.wireBlockIds
-                entry.wireBlockIds.forEachIndexed { index, blockId ->
-                    textByBlockId[blockId] = entry.blockTexts[index]
-                }
-            }
-            return AnalysisEvidenceTexts(
-                blockIdsByPage = blockIdsByPage,
-                textByBlockId = textByBlockId,
-                wirePageKeyByStorageKey = wirePageKeyByStorageKey,
-            )
-        }
-
-        /**
-         * Maps a validated response onto the durable publication input:
-         * persistable subset only, evidence page keys translated from wire
-         * `p<N>` to the persisted page keys, and OCR artifact pointers in
-         * contributing (core-then-context) order.
-         */
-        fun publicationInput(
-            chunk: PlannedAnalysisChunk,
-            outcome: AnalysisChunkRunOutcome.Completed,
-        ): AnalysisChunkPublication.AnalysisChunkPublicationInput? {
-            val refs = mutableListOf<SidecarPointer>()
-            for (pageKey in chunk.contributingPageKeys) {
-                val entry = byStorageKey[pageKey] ?: return null
-                refs += entry.snapshotPointer
-            }
-
-            fun storageKey(wireKey: String): String =
-                entries.firstOrNull { it.wirePageKey == wireKey }?.storagePageKey ?: wireKey
-
-            val scenes = outcome.response.scenes.map { scene ->
-                ProfileScene(
-                    sceneId = scene.sceneId,
-                    pageRange = PageRange(
-                        firstNaturalPageIndex = naturalIndexOrZero(scene.fromPageWireKey),
-                        lastNaturalPageIndex = naturalIndexOrZero(scene.toPageWireKey),
-                    ),
-                    participants = scene.participants,
-                    toneFlags = (scene.tone + scene.contentTags).mapNotNull { name ->
-                        when (name) {
-                            "EXPLICIT", "INTIMATE", "VIOLENT", "COMEDIC", "SERIOUS", "ACTION" ->
-                                ToneFlag.valueOf(name)
-                            else -> ToneFlag.OTHER
-                        }
-                    }.toSet(),
-                    register = SceneRegister.entries.firstOrNull { it.name == scene.register }
-                        ?: SceneRegister.OTHER,
-                    narrativeContext = scene.narrative,
-                )
-            }
-            return AnalysisChunkPublication.AnalysisChunkPublicationInput(
-                provenance = outcome.provenance,
-                ocrArtifactRefs = refs,
-                // Wave-4 F-W4-3: the DR-A coverage classification is durable
-                // so slice-B reconcile can treat MISSING_ONLY as pending.
-                coverage = when (outcome.coverage.kind) {
-                    AnalysisCoverageKind.COMPLETE -> AnalysisChunkCoverage.COMPLETE
-                    AnalysisCoverageKind.MISSING_ONLY -> AnalysisChunkCoverage.MISSING_ONLY
-                },
-                terms = outcome.response.terms.map { term ->
-                    ExtractedTerm(
-                        termId = term.termId,
-                        sourceForm = term.sourceForm,
-                        canonicalTarget = term.canonicalTarget,
-                        aliases = term.aliases,
-                        kind = ExtractedTermKind.entries.firstOrNull { it.name == term.kind }
-                            ?: ExtractedTermKind.TERM,
-                    )
-                },
-                entities = outcome.response.entities.map { entity ->
-                    ExtractedEntity(
-                        entityId = entity.entityId,
-                        canonicalSourceName = entity.canonicalSourceName,
-                        proposedTargetName = entity.proposedTargetName,
-                        sourceNames = entity.sourceNames,
-                        titles = entity.titles,
-                    )
-                },
-                relationships = outcome.response.entities.flatMap { entity ->
-                    entity.relationships.map { relationship ->
-                        ExtractedRelationship(
-                            type = relationship.type,
-                            sourceEntityId = relationship.sourceEntityId,
-                            targetEntityId = relationship.targetEntityId,
-                        )
-                    }
-                },
-                scenes = scenes,
-                narrativeSummary = outcome.response.narrativeSummary,
-                conflictNotes = outcome.response.conflictNotes,
-                evidenceRefs = outcome.response.evidenceRefs.map { ref ->
-                    ref.copy(pageKey = storageKey(ref.pageKey))
-                },
-            )
-        }
-
-        private fun naturalIndexOrZero(wirePageKey: String): Int =
-            wirePageKey.removePrefix("p").toIntOrNull()?.coerceAtLeast(0) ?: 0
-    }
-
     /**
      * R2: route one unresolved page failure into the durable failure ledger.
      * Best-effort: a rejected ledger publication is logged and the honest
@@ -1464,13 +1324,10 @@ internal class ChapterProfileBatchCoordinator(
      * the shell from the record), while the advisory preflight callers may
      * ignore the return value.
      *
-     * The phase pointer itself MUST never be lost to the
-     * phaseCounters bound (32 keys): 's executor counters re-blew the
-     * wave-7b budget, silently dropping the  FINALIZE record and with
-     * it the durable state a crash resume needs. Counters are best-effort
-     * progress carriers, so an over-bound record publishes with the OLDEST
-     * counter keys trimmed (insertion order) — the phase transition always
-     * lands.
+     * Never drop the phase pointer when phaseCounters exceeds its 32-key
+     * bound. Counters are best-effort progress data, so trim the oldest keys
+     * in insertion order as needed to preserve the state transition for crash
+     * recovery.
      */
     private suspend fun publishRecord(
         artifact: ChapterArtifactEngine,
@@ -1553,13 +1410,13 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     enum class BatchCoordinatorKind {
-        /**  chapter-profile coordinator — the AI-model lane. */
+        /** Chapter-profile coordinator for the AI-model lane. */
         PROFILE_PIPELINE,
 
         /**
-         *  Phase 4 Wave A: the STANDARD-engine lane — the same
-         * coordinator with [standardLane] set: pure FULL OCR
-         * preflight, then per-page legacy-machinery batch translation
+         * The STANDARD-engine lane uses the same
+         * coordinator with [standardLane] set: full OCR
+         * preflight, then per-page standard-engine translation
          * (no glossary, no analysis/profile/envelope work) and the shared
          * engine-agnostic FINALIZE.
          */
@@ -1605,7 +1462,7 @@ internal class ChapterProfileBatchCoordinator(
         const val STOP_REASON =
             "T924 OCR preflight complete; analysis/profile/translation arrive in later stages"
 
-        /** Stage-5 slice A terminals (still PAUSED — slice B owns the freeze). */
+        /** Outcomes retained while analysis or glossary synthesis is unavailable. */
         const val ANALYSIS_NO_WORK_REASON =
             "T924 analysis skipped: no chunkable OCR work in this chapter"
         const val ANALYSIS_NO_TRANSPORT_REASON =
@@ -1613,20 +1470,14 @@ internal class ChapterProfileBatchCoordinator(
         const val GLOSSARY_SYNTHESIS_NO_TRANSPORT_REASON =
             "T924 glossary synthesis paused: no synthesis transport wired (CONFIGURATION gate)"
 
-        /** Stage-5 slice B terminals (STILL PAUSED — envelope/translation are Stage 6). */
+        /** Historical pause outcomes retained for durable run-history compatibility. */
         const val PROFILE_FROZEN_STOP_REASON =
             "T924 profile frozen; envelope plan/translation arrive in Stage 6"
         const val PROFILE_FROZEN_REUSE_REASON =
             "T924 compatible frozen profile reused (ST-05 skip-to-phase); " +
                 "envelope plan/translation arrive in Stage 6"
 
-        /**
-         * Stage-6 slice A terminals. The PROFILE_FROZEN_* reasons above are
-         * retained only for record-history compatibility — slice A runs no
-         * longer return them: PROFILE_FROZEN now CONTINUES into the envelope
-         * phase and the run terminates at one of the terminals below (still
-         * PAUSED — native/render are Stage 7 and COMPLETE is never published).
-         */
+        /** Current preflight and translation outcomes written to batch history. */
         const val ENVELOPE_NO_WORK_REASON =
             "T924 envelope plan skipped: no translatable OCR work in this chapter"
         const val TRANSLATE_NO_TRANSPORT_REASON =
@@ -1662,7 +1513,7 @@ internal class ChapterProfileBatchCoordinator(
             "T924 recorded run already COMPLETE; treated as finished (ST-14 idempotent resume)"
 
         /**
-         * Stage-7 review F-3: the run-closure COMPLETE publication was
+         * The run-closure COMPLETE publication was
          * rejected by the artifact store (whole-manifest CAS conflict), so
          * the run is still durably at FINALIZE. Reporting finished here
          * would let the shell mark the chapter done while the durable
@@ -1675,19 +1526,14 @@ internal class ChapterProfileBatchCoordinator(
             "T924 run-closure COMPLETE publication rejected; run stays at FINALIZE (ST-14 resume re-attempts closure)"
 
         /**
-         * Gate 7.8 ENCODED GATE (never activated on device-gated
-         * authority): redefining Batch completion as DISPLAY_READY (all reader
-         * paths hydrate durable plans instead of translating committed) is
-         * allowed ONLY after gate 7.5 — restart/LRU rehydrate with ZERO
-         * [TextLayoutPlanner][eu.kanade.translation.rendering.TextLayoutPlanner]
-         * invocations — has passed ON DEVICE for Pager AND Webtoon (evidence
-         * rows owed per `evidence/stage2/wp9-report.md` §6 + Stage-7 device
-         * evidence). It MUST remain `false` in this slice: runs complete under
-         * the legacy semantics regardless of hydration coverage.
+         * Enables DISPLAY_READY run completion only after durable-layout
+         * hydration has been validated after restart and cache eviction for
+         * both Pager and Webtoon. Until then, batch completion keeps its
+         * existing semantics regardless of hydration coverage.
          */
         const val GATE_7_8_DISPLAY_READY_COMPLETION_ENABLED = false
 
-        /** Stage-7 typed counters (operational only, never fingerprinted). */
+        /** Operational counters; these are not part of a fingerprint. */
         const val COUNTER_FINALIZE = "finalizeEntered"
         const val COUNTER_RUN_COMPLETE = "runComplete"
         const val COUNTER_LAYOUTS_PUBLISHED = "layoutPlansPublished"
@@ -1724,7 +1570,7 @@ internal class ChapterProfileBatchCoordinator(
          * Analysis output budget (`outputBudget`): free-form
          * chunk summaries are ~120 words, so the reservation is small and
          * the input side keeps the 8k window. Mirrors
-         * [eu.kanade.translation.translator.analysis.AnalysisEngineTransport
+         * [eu.kanade.translation.engines.translator.analysis.AnalysisEngineTransport
          * .ANALYSIS_MAX_OUTPUT_TOKENS].
          */
         const val ANALYSIS_MAX_OUTPUT_TOKENS = 512
@@ -1753,7 +1599,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_SKIPPED_NO_WORK = "analysisSkippedNoWork"
         const val COUNTER_SKIPPED_NO_TRANSPORT = "analysisSkippedNoTransport"
 
-        /** Stage-5 slice B typed counters (operational only, never fingerprinted). */
+        /** Analysis counters; these are operational and not fingerprinted. */
         const val COUNTER_PROFILE_CHUNKS_TOTAL = "profileChunksTotal"
         const val COUNTER_PROFILE_CHUNKS_RECONCILED = "profileChunksReconciled"
         const val COUNTER_PROFILE_CHUNKS_PENDING = "profileChunksPending"
@@ -1763,7 +1609,7 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_PROFILE_RECONCILE_REJECTED = "profileReconcileRejected"
         const val COUNTER_PROFILE_FREEZE_REJECTED = "profileFreezeRejected"
 
-        /** Stage-6 slice A typed counters (operational only, never fingerprinted). */
+        /** Envelope counters; these are operational and not fingerprinted. */
         const val COUNTER_ENVELOPES_TOTAL = "envelopesTotal"
         const val COUNTER_ENVELOPES_DONE = "envelopesDone"
         const val COUNTER_ENVELOPES_PENDING = "envelopesPending"
@@ -1844,19 +1690,15 @@ internal class ChapterProfileBatchCoordinator(
             ).take(8)}"
 
         /**
-         * Wave-2 review R2 (slice B): the DEFAULT durable failure-ledger
-         * writer, mirroring the legacy `persistUnexpectedBatchStageFailure`
-         * idiom through the store's ATOMIC
-         * [ChapterTranslationStore.persistDurableStageFailure] publication:
-         * the page patch and the `manifest.durableFailures` record are ONE
-         * manifest write, so a restart can never observe one without the other.
+         * Default durable failure-ledger writer. The page patch and its
+         * `manifest.durableFailures` record are one atomic
+         * [ChapterTranslationStore.persistDurableStageFailure] publication;
+         * a restart cannot observe one without the other.
          *
-         * Cap semantics (mirrored from the legacy attempt ledger,
-         * `ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED`): the
-         * record's `retryCount` counts CONSECUTIVE unresolved preflight
-         * attempts and stops at the bound — at the cap the record is
-         * re-stamped as an INTERRUPTED-class, manual-retry-only failure (the
-         * `applyAttemptCapPause` vocabulary) instead of charging forever.
+         * Retry counts measure consecutive unresolved preflight attempts and
+         * stop at [ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED].
+         * At the cap, the record is re-stamped as an INTERRUPTED failure that
+         * requires manual retry rather than charging attempts forever.
          */
         suspend fun persistDurablePreflightFailure(
             store: ChapterTranslationStore,

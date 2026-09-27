@@ -2,48 +2,49 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.EnvelopePolicySnapshot
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
+import eu.kanade.translation.engines.translator.analysis.AnalysisCoverage
+import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
+import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
+import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
+import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesisOutcome
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
+import eu.kanade.translation.engines.translator.analysis.ValidatedTerm
+import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
+import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
+import eu.kanade.translation.engines.translator.contextual.ContextualTranslationResult
+import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.engines.translator.providers.AiTranslator
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.BatchRequestSublimitGate
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.translator.analysis.AnalysisCoverage
-import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
-import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
-import eu.kanade.translation.translator.analysis.ValidatedEntity
-import eu.kanade.translation.translator.analysis.ValidatedTerm
-import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
-import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
-import eu.kanade.translation.translator.contextual.ContextualTranslationResult
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-import eu.kanade.translation.translator.providers.AiTranslator
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -55,14 +56,9 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- *  Stage 7: the drained TRANSLATE tail — FINALIZE (serial
- * inpaint drain through the overlap scheduler, stranded-page reconciliation,
- * flush, retention) and the run's FIRST/ONLY COMPLETE publication.
- *
- *  zero-legacy: the wave-2 F1 flag-off resume decision tests
- * (decideResume/resumeCompletedOutcome, OFF+COMPLETE ⇒ TreatAsFinished) were
- * deleted with the  flag; the  COMPLETE resume is covered by
- * Stage7FinalizeResumeCoordinatorTest and the dispatch-level wiring test.
+ * Pins chapter finalization: drain inpainting through the overlap scheduler,
+ * reconcile stranded pages, flush and apply retention, then publish COMPLETE
+ * exactly once. Resume behavior is covered by the companion resume test.
  */
 class Stage7FinalizeCoordinatorTest {
 
@@ -215,7 +211,7 @@ class Stage7FinalizeCoordinatorTest {
                 response = response,
                 coverage = AnalysisCoverage(AnalysisCoverageKind.COMPLETE, emptyList()),
                 droppedAuthorityKeys = emptyList(),
-                provenance = eu.kanade.translation.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
+                provenance = eu.kanade.translation.persistence.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
             )
         }
     }
@@ -258,7 +254,7 @@ class Stage7FinalizeCoordinatorTest {
         return ContextualRequestBuilder.toBatch(request, results)
     }
 
-    private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.artifact.ChapterRunRecord {
+    private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.artifact.ChapterRunRecord {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
         return (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record

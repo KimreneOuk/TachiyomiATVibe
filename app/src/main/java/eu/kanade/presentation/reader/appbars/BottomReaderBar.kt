@@ -28,8 +28,8 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.ui.BatchStatusLineKind
-import eu.kanade.translation.ui.TranslationUiTruth
+import eu.kanade.translation.presentation.BatchStatusLineKind
+import eu.kanade.translation.presentation.TranslationUiTruth
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource

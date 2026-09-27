@@ -1,8 +1,8 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.pipeline.WriterOrigin
-import eu.kanade.translation.storage.ActiveChapterStoreRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.WriterOrigin
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
@@ -11,9 +11,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- *  Slice A2: Writer registry (N2) tests.
- *
- * Asserts:
+ * Writer registry behavior:
  * 1. Process-wide writer registry records writer origins.
  * 2. Observability-only semantics while flag OFF: multiple writers can register without exclusion.
  * 3. Token close unregisters the active writer.

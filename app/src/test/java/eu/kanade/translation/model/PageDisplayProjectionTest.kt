@@ -1,14 +1,15 @@
 package eu.kanade.translation.model
 
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
-import eu.kanade.translation.artifact.ArtifactOrigin
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.CommittedBundleMetadata
-import eu.kanade.translation.artifact.DisplayBaseKind
-import eu.kanade.translation.artifact.DisplayBaseReference
-import eu.kanade.translation.artifact.PageArtifactRecord
-import eu.kanade.translation.artifact.StageArtifactRecord
-import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.persistence.artifact.ArtifactOrigin
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
+import eu.kanade.translation.persistence.artifact.DisplayBaseKind
+import eu.kanade.translation.persistence.artifact.DisplayBaseReference
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.StageArtifactRecord
+import eu.kanade.translation.persistence.artifact.toArtifactDisplayProjection
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.markOriginalImageFallback
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -138,7 +139,7 @@ class PageDisplayProjectionTest {
             it.toPageDisplayProjection().displayReady
         }
         snapshot.displayReadyPages shouldBe committedReadyCount
-        snapshot.perStage.getValue(eu.kanade.translation.pipeline.batch.BatchPhase.DISPLAY).succeeded shouldBe 1
+        snapshot.perStage.getValue(BatchPhase.DISPLAY).succeeded shouldBe 1
         snapshot.canReadTranslated shouldBe true
         snapshot.pages.map { it.index } shouldBe listOf(7, 20)
         snapshot.pages.first { it.index == 7 }.displayReady shouldBe false
@@ -187,10 +188,9 @@ class PageDisplayProjectionTest {
             layout = StageArtifactRecord(ArtifactStageStatus.READY, artifactFileName = "layout.json"),
         )
 
-        PageDisplayProjection.from(record).displayReady shouldBe true
-        PageDisplayProjection.from(
-            record.copy(layout = StageArtifactRecord(ArtifactStageStatus.ABSENT)),
-        ).displayReady shouldBe false
+        record.toArtifactDisplayProjection().displayReady shouldBe true
+        record.copy(layout = StageArtifactRecord(ArtifactStageStatus.ABSENT))
+            .toArtifactDisplayProjection().displayReady shouldBe false
     }
 
     private fun readyPage() = PageTranslation(

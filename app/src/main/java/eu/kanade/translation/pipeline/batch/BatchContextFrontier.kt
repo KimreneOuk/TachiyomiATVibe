@@ -1,10 +1,10 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 
 /**
  * Natural-order rolling-context state for a fragmented batch resume.

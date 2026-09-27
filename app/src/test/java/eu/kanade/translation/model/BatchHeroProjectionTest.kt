@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- *  slice 1: the batch drawer hero must never render an unknown translation
+ * The batch drawer hero must never render an unknown translation
  * total as 0% / 0/0. While the work is owned by the pending request/downloader,
  * the projection maps the owning phase — joined with the chapter's live
  * download state/progress — instead of numeric zero. A real zero-page failure
@@ -34,7 +34,7 @@ class BatchHeroProjectionTest {
                 batchPhase = batchPhase,
                 failedCount = failedCount,
                 aborted = aborted,
-                //  Phase 5: these fixtures model REGISTERED batch totals —
+                // These fixtures model registered batch totals —
                 // a trusted page set. Untrusted (partial-download) totals have
                 // their own unknown-total phase now.
                 expectedPageCountTrusted = true,

@@ -2,12 +2,11 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.SidecarPointer
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.translator.TranslationBlockValidation
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -15,17 +14,19 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslationBlockValidation
-import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -42,7 +43,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- *  Phase 4 Wave A — the STANDARD-engine lane inside the flagged
+ * The STANDARD-engine lane inside the
  * coordinator (STANDARD_PIPELINE). The Director design: both AI and standard
  * engines do the same OCR; the standard engine continues with per-page batch
  * translation exactly like the AI lane minus everything AI-specific (no
@@ -87,8 +88,8 @@ class StandardPipelineCoordinatorTest {
         // A "no translatable text" page models the real lane's trigger: blocks
         // whose text is BLANK (the worker's textless branch counts
         // `it.text.isNotBlank()`). Fully EMPTY blocks never persist a candidate
-        // (shouldPersistUpdate) and the preflight checkpoint CLOSE rejects
-        // them — a pre-existing Stage-3 gap, out of Wave A scope.
+        // (`shouldPersistUpdate`), so the preflight checkpoint CLOSE rejects
+        // them.
         blocks = if (textless) mutableListOf(block(" ")) else mutableListOf(block(text!!)),
         imgWidth = 100f,
         imgHeight = 160f,
@@ -121,7 +122,7 @@ class StandardPipelineCoordinatorTest {
     )
 
     /**
-     * A GENUINELY blank page (Wave B Task 1): OCR completes with ZERO blocks.
+     * A blank page: OCR completes with zero blocks.
      * Mirrors the real lane's post-OCR store shape: `mergeOcrLocked` copies
      * render/inpaint status (so the [finalizePostOcrStage] SKIPPED values
      * land) but NEVER `translationStatus` — the store page keeps PENDING until
@@ -241,7 +242,7 @@ class StandardPipelineCoordinatorTest {
     }
 
     /**
-     *  Phase 4 Wave A: a plain per-page [TextTranslator] fake (the
+     * A plain per-page [TextTranslator] fake (the
      * standard-engine shape — no contextual protocol). Stamps every non-blank
      * block `tr-<text>`; [onTranslate] observes each page call (test latch).
      */
@@ -362,7 +363,7 @@ class StandardPipelineCoordinatorTest {
         }
     }
 
-    private fun durableRunRecord(store: ChapterTranslationStore): eu.kanade.translation.artifact.ChapterRunRecord? {
+    private fun durableRunRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.artifact.ChapterRunRecord? {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun ?: return null
         return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
@@ -397,7 +398,7 @@ class StandardPipelineCoordinatorTest {
     )
 
     // ------------------------------------------------------------------
-    // T2 — the end-to-end standard run.
+    // End-to-end standard run.
     // ------------------------------------------------------------------
 
     @Test
@@ -522,7 +523,7 @@ class StandardPipelineCoordinatorTest {
     }
 
     // ------------------------------------------------------------------
-    // T3 — checkpoint resume parity (zero-work COMPLETE).
+    // Checkpoint resume parity with zero-work completion.
     // ------------------------------------------------------------------
 
     @Test
@@ -573,7 +574,7 @@ class StandardPipelineCoordinatorTest {
     }
 
     // ------------------------------------------------------------------
-    // T4 — frozenConfig snapshot identity.
+    // Frozen configuration snapshot identity.
     // ------------------------------------------------------------------
 
     @Test
@@ -642,7 +643,7 @@ class StandardPipelineCoordinatorTest {
     }
 
     // ------------------------------------------------------------------
-    // T5 — overlap window discipline.
+    // Overlap window discipline.
     // ------------------------------------------------------------------
 
     @Test
@@ -718,7 +719,7 @@ class StandardPipelineCoordinatorTest {
     }
 
     // ------------------------------------------------------------------
-    // T6 — genuinely blank pages (Wave B Task 1). Real chapters have them:
+    // Blank pages: real chapters can contain them.
     // a ZERO-block OCR result must checkpoint, complete, and resume — never
     // fail the preflight. Shared by the AI lane (same preflight loop).
     // ------------------------------------------------------------------
@@ -777,8 +778,8 @@ class StandardPipelineCoordinatorTest {
     }
 
     // ------------------------------------------------------------------
-    // T7 — flag-ON re-dispatch over a stale non-FINALIZE standard record
-    // (Wave B Task 2c, investigator risk 7): `resumeFinalizeOrComplete`
+    // Re-dispatch over a stale non-FINALIZE standard record:
+    // `resumeFinalizeOrComplete`
     // returns null, the SAME run id continues with a fresh RUN_SNAPSHOT
     // ( fingerprint match), the preflight reuses its checkpoints, and
     // the run closes with exactly ONE COMPLETE. No crash, no double closure.
@@ -838,8 +839,8 @@ class StandardPipelineCoordinatorTest {
     }
 
     // ------------------------------------------------------------------
-    // T8 — flag-ON zero-work resume over the SKIPPED no-text evidence shape
-    // (Wave B Task 2d): a masked blank-text page ends translation SKIPPED
+    // Zero-work resume over the SKIPPED no-text evidence shape: a masked
+    // blank-text page ends translation SKIPPED
     // with inpaint PENDING — NOT a full `isTextlessTerminal` — so the
     // gate must accept it through the `isNoTextTerminal` extension
     // (translationStatus SKIPPED alone), exactly like the unmasked twin.

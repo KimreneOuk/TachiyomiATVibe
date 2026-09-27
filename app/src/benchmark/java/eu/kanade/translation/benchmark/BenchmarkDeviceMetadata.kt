@@ -4,7 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.os.PowerManager
-import eu.kanade.translation.runtime.onnx.HardwareDiscoveryEngine
+import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import java.io.File
 import java.security.MessageDigest
 

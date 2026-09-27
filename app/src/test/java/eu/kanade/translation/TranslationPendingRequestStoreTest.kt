@@ -3,10 +3,9 @@ package eu.kanade.translation
 import android.content.Context
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.storage.TranslationPendingRequestRecord
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestRecord
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import io.kotest.matchers.collections.shouldContainExactly
-import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -31,11 +30,26 @@ class TranslationPendingRequestStoreTest {
         return TranslationPendingRequestStore(context)
     }
 
+    private fun addRequest(
+        store: TranslationPendingRequestStore,
+        chapterId: Long,
+        phase: TranslationRequestPhase,
+        reason: String? = null,
+    ) {
+        store.add(
+            TranslationPendingRequestRecord(
+                chapterId = chapterId,
+                phase = phase,
+                reason = reason,
+            ),
+        )
+    }
+
     @Test
     fun `add persists the phase and reason and load reports the chapter`() {
         val store = newStore()
 
-        store.add(7L, TranslationRequestPhase.DOWNLOAD_FAILED, "Chapter download failed")
+        addRequest(store, 7L, TranslationRequestPhase.DOWNLOAD_FAILED, "Chapter download failed")
 
         store.phase(7L) shouldBe TranslationRequestPhase.DOWNLOAD_FAILED
         store.reason(7L) shouldBe "Chapter download failed"
@@ -45,12 +59,12 @@ class TranslationPendingRequestStoreTest {
     @Test
     fun `adding a null or blank reason drops a stale reason key`() {
         val store = newStore()
-        store.add(7L, TranslationRequestPhase.DOWNLOAD_FAILED, "Chapter download failed")
+        addRequest(store, 7L, TranslationRequestPhase.DOWNLOAD_FAILED, "Chapter download failed")
 
-        store.add(7L, TranslationRequestPhase.WAITING_FOR_DOWNLOAD, null)
+        addRequest(store, 7L, TranslationRequestPhase.WAITING_FOR_DOWNLOAD)
         store.reason(7L).shouldBeNull()
 
-        store.add(7L, TranslationRequestPhase.PREPARING, "   ")
+        addRequest(store, 7L, TranslationRequestPhase.PREPARING, "   ")
         store.reason(7L).shouldBeNull()
         store.phase(7L) shouldBe TranslationRequestPhase.PREPARING
     }
@@ -58,7 +72,7 @@ class TranslationPendingRequestStoreTest {
     @Test
     fun `remove drops both the phase and the reason`() {
         val store = newStore()
-        store.add(7L, TranslationRequestPhase.DOWNLOAD_FAILED, "Chapter download failed")
+        addRequest(store, 7L, TranslationRequestPhase.DOWNLOAD_FAILED, "Chapter download failed")
 
         store.remove(7L)
 
@@ -70,8 +84,8 @@ class TranslationPendingRequestStoreTest {
     @Test
     fun `clear drops every pending request`() {
         val store = newStore()
-        store.add(7L, TranslationRequestPhase.STARTING, null)
-        store.add(8L, TranslationRequestPhase.PREPARING, null)
+        addRequest(store, 7L, TranslationRequestPhase.STARTING)
+        addRequest(store, 8L, TranslationRequestPhase.PREPARING)
 
         store.clear()
 
@@ -83,17 +97,15 @@ class TranslationPendingRequestStoreTest {
     @Test
     fun `load keeps only the numeric chapter keys and ignores reason keys`() {
         val store = newStore()
-        store.add(7L, TranslationRequestPhase.STARTING, "because")
+        addRequest(store, 7L, TranslationRequestPhase.STARTING, "because")
         preferences.entries["junk"] = "not-a-chapter"
 
         store.load() shouldContainExactly setOf(7L)
     }
 
-    //  slice 2: durable record (generation/group/timestamps/typed failure)
-
     @Test
     fun `legacy pending entry without new fields parses with defaults`() {
-        // Simulate a pre-slice-2 entry: phase + reason keys only.
+        // Simulate a saved entry using the original phase and reason keys.
         preferences.entries["9"] = TranslationRequestPhase.WAITING_FOR_DOWNLOAD.name
         preferences.entries["9.reason"] = "Chapter download failed"
         val store = newStore()
@@ -135,34 +147,6 @@ class TranslationPendingRequestStoreTest {
     }
 
     @Test
-    fun `legacy phase write preserves generation group and failure kind`() {
-        val store = newStore()
-        store.add(
-            TranslationPendingRequestRecord(
-                chapterId = 12L,
-                phase = TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
-                generation = 6L,
-                groupId = "batch-9",
-                failureKind = TranslationRequestFailureKind.DOWNLOAD_FAILED,
-                createdAtEpochMs = 50L,
-                updatedAtEpochMs = 60L,
-            ),
-        )
-
-        store.add(12L, TranslationRequestPhase.DOWNLOAD_FAILED, "Chapter download failed")
-
-        val record = store.record(12L)!!
-        record.phase shouldBe TranslationRequestPhase.DOWNLOAD_FAILED
-        record.reason shouldBe "Chapter download failed"
-        record.generation shouldBe 6L
-        record.groupId shouldBe "batch-9"
-        record.failureKind shouldBe TranslationRequestFailureKind.DOWNLOAD_FAILED
-        record.createdAtEpochMs shouldBe 50L
-        // The legacy shim refreshes the update timestamp.
-        record.updatedAtEpochMs shouldBeGreaterThan 50L
-    }
-
-    @Test
     fun `remove keeps a bumped generation tombstone for the next request`() {
         val store = newStore()
         store.add(
@@ -184,10 +168,16 @@ class TranslationPendingRequestStoreTest {
     }
 
     @Test
-    fun `legacy entry remains loadable after a new-format write and remove cycle`() {
+    fun `original phase keys are removed after a rich record write and remove cycle`() {
         val store = newStore()
-        store.add(14L, TranslationRequestPhase.STARTING, null)
-        store.add(14L, TranslationRequestPhase.WAITING_FOR_DOWNLOAD, null)
+        addRequest(store, 14L, TranslationRequestPhase.STARTING)
+        store.add(
+            TranslationPendingRequestRecord(
+                chapterId = 14L,
+                phase = TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
+                generation = 1L,
+            ),
+        )
         store.remove(14L)
         // An old-format reader only looks at the numeric phase key: it must be gone.
         preferences.entries.containsKey("14") shouldBe false

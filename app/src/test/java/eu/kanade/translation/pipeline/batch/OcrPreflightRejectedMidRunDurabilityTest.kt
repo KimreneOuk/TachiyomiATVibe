@@ -2,26 +2,27 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
-import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.RunConfigSnapshot
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
+import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -35,8 +36,8 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  wave-3 slice B (wave-2 review R2 + gap 9): a checkpoint-REJECTED page
- * mid-run must leave the chapter DURABLY restartable —
+ * A page rejected at checkpoint during a run must leave the chapter
+ * durably restartable:
  *
  *  (a) prior pages' checkpoints survive a simulated restart and stay reusable
  *      (never re-OCR'd);
@@ -265,8 +266,8 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         // (d) only p2 (rejected) and p3 (never reached) were re-OCR'd; p1 was
         // reused from its surviving checkpoint, never re-decoded.
         resumed.status shouldBe BatchPass1Status.PAUSED
-        // Stage 5 slice A: a COMPLETE corpus continues into the analysis
-        // phase, which stops at the typed no-transport CONFIGURATION gate.
+        // A complete corpus continues into analysis, which stops at the typed
+        // no-transport CONFIGURATION gate.
         resumed.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_NO_TRANSPORT_REASON
         resumedWorker.ocrPages shouldContainExactly listOf("p2", "p3")
         resumedStore.pageLeaseOwner("p1").shouldBeNull()

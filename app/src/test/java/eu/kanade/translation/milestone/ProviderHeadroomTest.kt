@@ -1,27 +1,27 @@
 package eu.kanade.translation.milestone
 
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.EvidenceStrength
-import eu.kanade.translation.artifact.FactConflictState
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.FactScope
-import eu.kanade.translation.artifact.FactType
-import eu.kanade.translation.artifact.PageRange
-import eu.kanade.translation.artifact.ProfileFact
-import eu.kanade.translation.artifact.ProfileScene
-import eu.kanade.translation.artifact.SceneRegister
-import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.context.SeriesProfileRegistry
+import eu.kanade.translation.engines.translator.AdmissionPriority
+import eu.kanade.translation.engines.translator.ProviderQuotaPolicy
+import eu.kanade.translation.engines.translator.ProviderRequestGovernor
+import eu.kanade.translation.engines.translator.ProviderRequestKey
+import eu.kanade.translation.engines.translator.ProviderRequestMetadata
+import eu.kanade.translation.engines.translator.providers.OpenAiCompatibleTranslator
+import eu.kanade.translation.engines.translator.routing.MultiBackendRouter
+import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.EvidenceStrength
+import eu.kanade.translation.persistence.artifact.FactConflictState
+import eu.kanade.translation.persistence.artifact.FactProvenance
+import eu.kanade.translation.persistence.artifact.FactScope
+import eu.kanade.translation.persistence.artifact.FactType
+import eu.kanade.translation.persistence.artifact.PageRange
+import eu.kanade.translation.persistence.artifact.ProfileFact
+import eu.kanade.translation.persistence.artifact.ProfileScene
+import eu.kanade.translation.persistence.artifact.SceneRegister
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
-import eu.kanade.translation.translator.AdmissionPriority
-import eu.kanade.translation.translator.ProviderQuotaPolicy
-import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderRequestKey
-import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.providers.OpenAiCompatibleTranslator
-import eu.kanade.translation.translator.routing.MultiBackendRouter
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.async
@@ -102,7 +102,7 @@ class ProviderHeadroomTest {
         sourceLang: String = "ja",
         targetLang: String = "en",
         providerKey: String = "lm_studio:qwen-2.5",
-    ): eu.kanade.translation.artifact.RunConfigSnapshot = ChapterProfileBatchCoordinator.frozenRunConfig(
+    ): eu.kanade.translation.persistence.artifact.RunConfigSnapshot = ChapterProfileBatchCoordinator.frozenRunConfig(
         sourceLang = sourceLang,
         targetLang = targetLang,
         ocrEngine = "MangaOcr",

@@ -14,11 +14,11 @@ import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.ui.NotificationAction
-import eu.kanade.translation.ui.SurfaceVisibility
-import eu.kanade.translation.ui.TranslationNotificationCopy
-import eu.kanade.translation.ui.TranslationUiTruth
+import eu.kanade.translation.presentation.NotificationAction
+import eu.kanade.translation.presentation.SurfaceVisibility
+import eu.kanade.translation.presentation.TranslationNotificationCopy
+import eu.kanade.translation.presentation.TranslationUiTruth
+import eu.kanade.translation.workflow.TranslationManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -102,7 +102,7 @@ class TranslationForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        eu.kanade.translation.storage.ActiveChapterStoreRegistry.flushAllActiveStores()
+        eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry.flushAllActiveStores()
         releaseWakeLock()
         monitorJob?.cancel()
         serviceScope.cancel()
@@ -156,7 +156,7 @@ class TranslationForegroundService : Service() {
 
     private fun handleFgsTimeout() {
         retainNotification = true
-        eu.kanade.translation.storage.ActiveChapterStoreRegistry.flushAllActiveStores()
+        eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry.flushAllActiveStores()
         manager.pauseTranslation()
         releaseWakeLock()
         serviceScope.launch {

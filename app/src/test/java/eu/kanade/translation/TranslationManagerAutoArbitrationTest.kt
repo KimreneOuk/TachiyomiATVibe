@@ -5,17 +5,17 @@ import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.orchestration.TranslationSession
-import eu.kanade.translation.orchestration.TranslationSessionCoordinator
-import eu.kanade.translation.orchestration.TranslationSessionState
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStoreResolver
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.workflow.ChapterTranslator
+import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.workflow.TranslationSessionCoordinator
+import eu.kanade.translation.workflow.TranslationSessionState
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -55,7 +55,7 @@ class TranslationManagerAutoArbitrationTest {
         every { manga.source } returns 1L
         every { chapter.id } returns 10L
         val scheduler = TranslationScheduler(
-            executor = mockk<eu.kanade.translation.scheduling.TranslationExecutor>(relaxed = true),
+            executor = mockk<eu.kanade.translation.pipeline.execution.TranslationExecutor>(relaxed = true),
             storeResolver = TranslationStoreResolver { null },
             immediateStoreResolver = { null },
         )
@@ -73,7 +73,6 @@ class TranslationManagerAutoArbitrationTest {
             manager.isTranslating() shouldBe false
             manager.isAnyBatchTranslationActive shouldBe false
             manager.isBatchTranslationActive(10L) shouldBe false
-            manager.isTranslationActive(10L) shouldBe false
             Unit
         } finally {
             scheduler.close()
@@ -108,7 +107,7 @@ class TranslationManagerAutoArbitrationTest {
         every { chapter.scanlator } returns null
         val session = TranslationSession("manager-arbitration", manga, chapter, source, store)
         val identity = AutoChapterIdentity(10L, "manager-arbitration")
-        val executor = mockk<eu.kanade.translation.scheduling.TranslationExecutor>(relaxed = true)
+        val executor = mockk<eu.kanade.translation.pipeline.execution.TranslationExecutor>(relaxed = true)
         val scheduler = TranslationScheduler(
             executor = executor,
             storeResolver = TranslationStoreResolver { store },
@@ -142,7 +141,7 @@ class TranslationManagerAutoArbitrationTest {
                 pageCount = 1,
                 session = session,
                 pageResolver = { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                computeClass = eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
+                computeClass = eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
 
@@ -166,7 +165,7 @@ class TranslationManagerAutoArbitrationTest {
                 1,
                 session,
                 { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
+                eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             val reArmedWhileQueued = autoWindowReArmed()
             withClue(
@@ -194,7 +193,7 @@ class TranslationManagerAutoArbitrationTest {
                 1,
                 session,
                 { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
+                eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
         } finally {
@@ -224,7 +223,7 @@ class TranslationManagerAutoArbitrationTest {
         )
         setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "pendingRequestMutationLock", Any())
-        //  slice 2: generation/attach/group state the coordinator resolves.
+        // Seed the request-generation and download-attachment state resolved by the coordinator.
         setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
         setField(manager, "pendingGroupIdSequence", AtomicLong(0))

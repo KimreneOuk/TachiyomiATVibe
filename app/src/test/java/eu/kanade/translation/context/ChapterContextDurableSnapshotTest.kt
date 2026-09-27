@@ -1,20 +1,20 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.AttemptOrigin
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.ChapterContextSnapshot
-import eu.kanade.translation.artifact.CleanedImageProbe
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.GroupCommitConfiguration
-import eu.kanade.translation.artifact.PageArtifactRecord
-import eu.kanade.translation.artifact.ProbedImage
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.AttemptOrigin
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ChapterContextSnapshot
+import eu.kanade.translation.persistence.artifact.CleanedImageProbe
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.ProbedImage
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -51,7 +51,7 @@ class ChapterContextDurableSnapshotTest {
     fun tearDown() {
         // Restore the suite-wide default-off baseline (see GroupCommitSliceCTest).
         GroupCommitConfiguration.enabled = false
-        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
+        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
         tempDir.deleteRecursively()
     }
 
@@ -138,7 +138,7 @@ class ChapterContextDurableSnapshotTest {
         initialManifest.context.shouldBeNull()
 
         // Publish durable context snapshot
-        val snapshot = store.contextService.snapshotForDurable(
+        val snapshot = ChapterContextService(store).snapshotForDurable(
             targetLang = "en",
             sourceLang = "ja",
             revision = 1L,
@@ -173,7 +173,7 @@ class ChapterContextDurableSnapshotTest {
         val store = createStoreWithManifest(io, initialManifest)
 
         // Capture request context before dispatch
-        val prepared = store.contextService.prepare(
+        val prepared = ChapterContextService(store).prepare(
             ContextRequest(
                 pageKeys = listOf("0001.jpg"),
                 targetLang = "en",
@@ -266,7 +266,7 @@ class ChapterContextDurableSnapshotTest {
         (timePage200 < 50_000_000L) shouldBe true
 
         // Context preparation budget measurement:
-        val prepared = store.contextService.prepare(
+        val prepared = ChapterContextService(store).prepare(
             ContextRequest(
                 pageKeys = listOf("0200.jpg"),
                 targetLang = "en",

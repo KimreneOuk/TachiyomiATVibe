@@ -1,9 +1,9 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.model.BatchPhase
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.pipeline.batch.BatchPhase
 import io.kotest.matchers.maps.shouldBeEmpty
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -47,7 +47,7 @@ class StandardLaneMultiPageCompletionTest {
     @Test
     fun `fresh standard batch translates every page of a multi-page chapter`() = runBlocking<Unit> {
         val pageKeys = listOf("p0", "p1", "p2")
-        //  zero-legacy: the batch requires artifact authority.
+        //  : the batch requires artifact authority.
         val harness = TranslationCoexistenceHarness.create(
             pageKeys,
             storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(pageKeys),
@@ -113,7 +113,7 @@ class StandardLaneMultiPageCompletionTest {
                 page.translationStatus shouldBe StageStatus.READY
                 page.renderStatus shouldBe StageStatus.READY
             }
-            //  zero-legacy: the shell's COMPLETED path settles every
+            //  : the shell's COMPLETED path settles every
             // expected page's RENDER phase as skipped terminal work
             // (markRenderSkipped per expected page before the terminal finish),
             // so the terminal snapshot's render arm is processed even though no
@@ -126,8 +126,8 @@ class StandardLaneMultiPageCompletionTest {
             terminal.perStage.getValue(BatchPhase.RENDER).processed shouldBe pageKeys.size
         } finally {
             // The batch job may still be unwinding when an observation times
-            // out. Join it before removing global MockK shims or chapter-page
-            // stubs; otherwise the next test can observe a half-torn graph.
+            // out. Join it before removing global MockK hooks or chapter-page
+            // mocks; otherwise the next test can observe a half-torn graph.
             batch?.job?.cancelAndJoin()
             harness.removeGraphicsShims()
             harness.unstubChapterPages()
@@ -137,7 +137,7 @@ class StandardLaneMultiPageCompletionTest {
 
     @Test
     fun `failed predecessor keeps successors honestly stranded`() = runBlocking<Unit> {
-        //  zero-legacy: the batch requires artifact authority; the
+        //  : the batch requires artifact authority; the
         // FAILED predecessor is seeded into the durable store post-build.
         val store = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0", "p1"))
         kotlinx.coroutines.runBlocking {
@@ -166,7 +166,7 @@ class StandardLaneMultiPageCompletionTest {
                 false
             }
             p1Started shouldBe false
-            //  zero-legacy: the successor's ordered-context skip is
+            //  : the successor's ordered-context skip is
             // a TYPED durable failure (predecessor terminally failed), never
             // a paid call and never a fake success.
             harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.FAILED

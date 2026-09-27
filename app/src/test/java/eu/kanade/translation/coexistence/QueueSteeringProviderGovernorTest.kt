@@ -1,14 +1,14 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.engines.translator.AdmissionPriority
+import eu.kanade.translation.engines.translator.ProviderAdmissionDecision
+import eu.kanade.translation.engines.translator.ProviderQuotaPolicy
+import eu.kanade.translation.engines.translator.ProviderRequestGovernor
+import eu.kanade.translation.engines.translator.ProviderRequestKey
+import eu.kanade.translation.engines.translator.ProviderRequestMetadata
+import eu.kanade.translation.engines.translator.SystemProviderRequestClock
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.translator.AdmissionPriority
-import eu.kanade.translation.translator.ProviderAdmissionDecision
-import eu.kanade.translation.translator.ProviderQuotaPolicy
-import eu.kanade.translation.translator.ProviderRequestGovernor
-import eu.kanade.translation.translator.ProviderRequestKey
-import eu.kanade.translation.translator.ProviderRequestMetadata
-import eu.kanade.translation.translator.SystemProviderRequestClock
+import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -124,12 +124,12 @@ class QueueSteeringProviderGovernorTest {
 
     private fun createTranslatorWithQueue(initial: List<Translation>): ChapterTranslator {
         val mockContext = mockk<android.content.Context>(relaxed = true)
-        val mockProvider = mockk<eu.kanade.translation.data.TranslationProvider>(relaxed = true)
+        val mockProvider = mockk<eu.kanade.translation.persistence.chapter.TranslationFileProvider>(relaxed = true)
         val mockDownloadProvider = mockk<eu.kanade.tachiyomi.data.download.DownloadProvider>(relaxed = true)
         val mockSourceManager = mockk<tachiyomi.domain.source.service.SourceManager>(relaxed = true)
         val mockPreferences = mockk<tachiyomi.domain.translation.TranslationPreferences>(relaxed = true)
-        val mockStreamRegistry = mockk<eu.kanade.translation.scheduling.TranslationStreamRegistry>(relaxed = true)
-        val mockQueueStore = mockk<eu.kanade.translation.storage.TranslationQueueStore>(relaxed = true)
+        val mockStreamRegistry = mockk<eu.kanade.translation.pipeline.execution.TranslationStreamRegistry>(relaxed = true)
+        val mockQueueStore = mockk<eu.kanade.translation.persistence.queue.TranslationQueueStore>(relaxed = true)
         val mockPipeline = mockk<eu.kanade.translation.pipeline.TranslationPipeline>(relaxed = true)
 
         val translator = ChapterTranslator(

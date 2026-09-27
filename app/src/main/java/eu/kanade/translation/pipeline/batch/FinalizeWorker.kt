@@ -1,12 +1,13 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterRunRecord
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.ProfilePointer
-import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.ProfilePointer
+import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -123,11 +124,10 @@ internal class FinalizeWorker(
                 frozenFingerprint,
                 sourceDigest,
                 baseCounters + mapOf(ChapterProfileBatchCoordinator.COUNTER_FINALIZE to 1) +
-                    // Gate-6.5 evidence rides the FINALIZE record: the schema
-                    // bounds phaseCounters at 32 keys, and baseCounters + the
-                    // finalize keys + the full overlap snapshot would push the
-                    // COMPLETE record past it (36 > 32 — the COMPLETE
-                    // publication would be silently rejected, wave-7b fix).
+                    // Overlap counters ride the FINALIZE record. The schema
+                    // caps phaseCounters at 32 keys, so adding the full overlap
+                    // snapshot to base and finalize counters could reject the
+                    // COMPLETE record. Counters are trimmed before publication.
                     (
                         overlapScheduler?.let { scheduler ->
                             scheduler.counters.snapshot().mapValues { it.value.toInt() }
@@ -327,33 +327,23 @@ internal class FinalizeWorker(
     }
 
     /**
-     *  Phase 4 Wave A — the STANDARD-engine translate tail, entered
-     * exactly when the OCR preflight published a COMPLETE corpus (the
-     * whole-corpus gap gate above is unchanged). The DIRECTOR design: the
-     * standard engine continues batch translation just like the AI lane,
-     * without the glossary and without anything AI-specific:
+     * Runs standard-engine page translation after OCR preflight confirms the
+     * complete corpus. It shares chapter completion semantics with the AI
+     * lane but does not use glossary, analysis, profile, or envelope work.
      *
-     *  1. `TRANSLATE` phase record carrying the run's OCR corpus fingerprint
-     *     and NO analysis/profile/envelope pointers (the standard lane never
-     *     produces them; the  resume gate reads the fingerprint from
-     *     the FINALIZE record this tail leads to).
-     *  2. IN-ORDER per-page translation through the injected
-     *     [standardTranslateOutcome] seam — the LEGACY per-page machinery
-     *     (BatchLaneWorkers idiom), never the envelope provenance ladder.
-     *     Pages already translation-terminal (READY/PARTIAL, textless, or
-     *     rendered — resume-reuse parity) are never re-paid. Every seam call
-     *     is bracketed by the overlap window (open before, close after) for
-     *     ALL standard engines: native inpaint must never overlap
-     *     translation.
-     *  3. Typed seam outcomes map to the SAME chapter-level semantics the
-     *     legacy schedule uses (SBC): Completed → next page; Paused → typed
-     *     PAUSE; Failed/Unexpected → FAILED; PersistenceRejected →
-     *     PERSISTENCE_REJECTED.
-     *  4. When the translate loop drains → [runFinalizeAndComplete] verbatim
-     *     — the engine-agnostic Stage-7 finalize (serial inpaint drain,
-     *     layout sweep, stranded reconciliation, single COMPLETE
-     *     publication). Completion is translation-terminal WITHOUT an
-     *     in-pass render, exactly like the AI lane (display rides the live
-     *     overlay + candidate snapshots; renderStatus stays PENDING).
+     * The run record carries the OCR corpus fingerprint and omits
+     * analysis/profile/envelope pointers. Translation proceeds in page order
+     * through [standardTranslateOutcome]. Already terminal pages are not
+     * translated again. Every call is bracketed by the overlap window so
+     * native inpaint never overlaps translation.
+     *
+     * Typed outcomes map to the shared chapter semantics: completed work
+     * advances, paused work records a pause, failures remain failures, and a
+     * rejected persistence write records PERSISTENCE_REJECTED. When the loop
+     * drains, [runFinalizeAndComplete] performs the serial inpaint drain,
+     * layout sweep, stranded-page reconciliation, and one COMPLETE
+     * publication. Completion is translation-terminal without an in-pass
+     * render; display uses the live overlay and candidate snapshots, and
+     * renderStatus remains PENDING.
      */
 }

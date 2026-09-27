@@ -10,9 +10,8 @@ import java.util.Locale
 import java.util.concurrent.CancellationException
 
 /*
- *  Phase 2 trace foundation: `translation_trace_v1` schema formatter,
- * privacy sanitizer, injectable log sink, stage budgets, and schedule/run
- * start/end APIs (plan §4, amendments §10.2–10.5).
+ * Formats bounded `translation_trace_v1` records and owns the privacy
+ * sanitizer, injectable log sink, stage budgets, and schedule/run entry points.
  *
  * Hard rules enforced here:
  *  - One log tag; every line starts `schema=translation_trace_v1` with fixed
@@ -26,8 +25,6 @@ import java.util.concurrent.CancellationException
  *  - No state is retained: this object owns only the gate, the sink, the ID
  *    generator, and the identity keys. Completed traces are owned (and
  *    dropped) by callers; nothing registered here grows.
- *  - Phase 2 scope: foundation only. No production pipeline file references
- *    this module yet (manual/Auto wiring is Phase 3, batch is Phase 4).
  */
 
 /** Destination for formatted trace lines; injectable for JVM tests. */
@@ -55,7 +52,7 @@ object LogcatTranslationTraceSink : TranslationTraceSink {
 }
 
 /**
- * Bounded, privacy-safe error surface (amendment §10.3): a whitelisted
+ * Bounded, privacy-safe error surface: a whitelisted
  * `errorType` token plus an optional numeric provider code. Raw exception
  * messages are never carried; the single numeric extraction allowed anywhere
  * in this module pulls only the digit group from OrtException provider
@@ -67,16 +64,15 @@ class TranslationTraceError internal constructor(
 )
 
 /**
- * Conservative lag budgets (plan §4.3). Diagnostic only: never consulted by
- * scheduling decisions. Values are unit-tested constants tuned from device
- * evidence in later phases.
+ * Conservative lag budgets. They are diagnostic only and never consulted by
+ * scheduling decisions.
  */
 object TranslationTraceBudgets {
     /** Queue-type waits: lease, native queue, prepared queue, governor, join. */
     const val QUEUE_WAIT_MS = 1_000L
     const val SOURCE_DECODE_MS = 750L
 
-    /**  Phase 4 (batch): source-fingerprint preflight (I/O-only hash). */
+    /** Batch source-fingerprint preflight (I/O-only hash). */
     const val SOURCE_FINGERPRINT_MS = 750L
     const val DETECT_MS = 750L
     const val SEGMENT_MS = 750L
@@ -139,7 +135,7 @@ object TranslationTraceBudgets {
 }
 
 /**
- * Unified privacy-safe translation tracing (plan §4). Entry points:
+ * Unified privacy-safe translation tracing. Entry points:
  *
  *  - [startSchedule] / [startRun]: create the bounded trace objects owned by
  *    pipeline code.
@@ -148,11 +144,10 @@ object TranslationTraceBudgets {
  *  - [routeChange]: model route demotion events.
  *  - [classifyError]: the only Throwable -> token mapping.
  *
- * Gate (amendment §10.5): [detailedTracingEnabled] controls detailed events
+ * [detailedTracingEnabled] controls detailed events
  * (stage_start bodies, success stage_end bodies, schedule_state,
  * route_change). Terminal summaries (run_end, schedule_end) plus lag/failure
- * stage variants are always emitted. Default is debug builds; Phase 3/4 own
- * the preference wiring.
+ * stage variants are always emitted. The default is debug builds.
  */
 object TranslationPipelineDiagnostics {
     const val TAG = "TachiyomiAT.Translation"
@@ -166,8 +161,7 @@ object TranslationPipelineDiagnostics {
     var sink: TranslationTraceSink = LogcatTranslationTraceSink
 
     /**
-     * Detailed-event gate. Injectable/settable boolean per amendment §10.5;
-     * defaults to debug builds until preference wiring lands in Phase 3/4.
+     * Detailed-event gate; defaults to debug builds.
      */
     @Volatile
     var detailedTracingEnabled: Boolean = BuildConfig.DEBUG
@@ -277,7 +271,7 @@ object TranslationPipelineDiagnostics {
     // ------------------------------------------------------------------
 
     /**
-     * Whitelisted classification (amendment §10.3). Messages are read ONLY
+     * Whitelisted classification. Messages are read ONLY
      * for [OrtException] and ONLY to extract a bare `error code <digits>`
      * group (QNN provider codes such as 1100); everything else reduces to a
      * type token with no text. Unknown throwables never leak class-specific
@@ -487,7 +481,7 @@ object TranslationPipelineDiagnostics {
     ) {
         val budgetMs = TranslationTraceBudgets.budgetMsFor(stage, provider)
         val lag = durationMs > budgetMs || queueMs > TranslationTraceBudgets.QUEUE_WAIT_MS
-        // Amendment §10.5: terminal-level stage events (lag/failure) survive
+        // Terminal-level stage events (lag/failure) survive
         // the gate; plain success bodies are detailed-only.
         if (!detailedTracingEnabled && !lag && outcome == TranslationTraceOutcome.SUCCESS) return
         try {
@@ -581,9 +575,8 @@ object TranslationPipelineDiagnostics {
     }
 
     // ------------------------------------------------------------------
-    //  Phase 4: batch facade helpers. Standalone, already-measured
-    // emissions for the legacy BatchTranslationDiagnostics compatibility
-    // surface. They correlate with the resolved identity but record into no
+    // Standalone, already-measured emissions for batch diagnostic callers.
+    // They correlate with the resolved identity but record into no
     // run/schedule state machine (no stage map, no accumulator), so legacy
     // events can never double-count against the trace-native spans.
     // ------------------------------------------------------------------
@@ -800,10 +793,10 @@ object TranslationPipelineDiagnostics {
             envelopeSuffix(envelope)
 
     /**
-     * Optional trailing provenance fields (plan §4.2, amendment §10.8):
+     * Optional trailing provenance fields:
      * appended only when the caller distinguishes the level, so pre-existing
      * schema lines remain byte-identical. `requestedProvider` is omitted
-     * entirely until any engine exposes it (Phase 5 scope).
+     * entirely until an engine exposes it.
      */
     private fun provenanceSuffix(
         registeredProvider: TranslationTraceProvider?,
@@ -814,7 +807,7 @@ object TranslationPipelineDiagnostics {
     }
 
     /**
-     * Optional trailing envelope field ( Phase 4 batch): the existing
+     * Optional trailing envelope field: the existing
      * opaque provider-envelope ID, charset-sanitized, appended only when the
      * caller supplies one — pre-existing schema lines stay byte-identical.
      */
@@ -882,7 +875,7 @@ object TranslationPipelineDiagnostics {
             ?: INVALID_TOKEN
 
     /**
-     * Bounded reason sanitizer (amendment §10.3): the `reason=` field accepts
+     * Bounded reason sanitizer: the `reason=` field accepts
      * ONLY tokens from the [TranslationTraceReason] vocabulary. Anything else —
      * unknown, empty, hostile, or charset-safe-but-unregistered — collapses to
      * the fixed `invalid` token. Fail-open: never throws, always returns a

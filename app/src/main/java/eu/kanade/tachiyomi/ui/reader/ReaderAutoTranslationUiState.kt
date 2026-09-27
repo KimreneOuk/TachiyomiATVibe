@@ -1,14 +1,14 @@
 package eu.kanade.tachiyomi.ui.reader
 
 import androidx.compose.runtime.Immutable
+import eu.kanade.translation.presentation.PageUiTruth
+import eu.kanade.translation.presentation.TranslationUiTruth
 import eu.kanade.translation.scheduling.AutoActivityStatus
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.AutoTranslationSnapshot
 import eu.kanade.translation.scheduling.AutoWindowSlot
-import eu.kanade.translation.ui.PageUiTruth
-import eu.kanade.translation.ui.TranslationUiTruth
 
 /**
  * Reader-facing state for one rolling auto-translation window.
@@ -36,14 +36,6 @@ data class ReaderAutoTranslationUiState(
     /** Monotonic desired-window version within [ownerVersion]. */
     val windowVersion: Long = 0L,
 ) {
-    /** The visible page's current stage, independent of offscreen activity. */
-    val foregroundStage: ReaderAutoTranslationSlotState?
-        get() = foreground?.state
-
-    /** True when a failed foreground or ahead slot needs an error affordance. */
-    val hasFailure: Boolean
-        get() = foreground?.state is ReaderAutoTranslationSlotState.Failed || failedAheadCount > 0
-
     companion object {
         fun empty(identity: AutoChapterIdentity? = null): ReaderAutoTranslationUiState =
             ReaderAutoTranslationUiState(

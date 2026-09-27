@@ -45,7 +45,7 @@ import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notify
-import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.workflow.TranslationManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -166,7 +166,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 object : BroadcastReceiver() {
                     override fun onReceive(context: Context, intent: Intent) {
                         scope.launch(Dispatchers.IO) {
-                            eu.kanade.translation.runtime.onnx.QnnDiagnostics.runOnce()
+                            eu.kanade.translation.engines.runtime.onnx.QnnDiagnostics.runOnce()
                         }
                     }
                 },

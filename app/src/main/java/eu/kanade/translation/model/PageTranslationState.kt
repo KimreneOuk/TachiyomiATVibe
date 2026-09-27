@@ -45,7 +45,7 @@ val PageTranslation.shouldShowTranslationOverlay: Boolean
     get() = blocks.any { it.translation.isNotBlank() }
 
 /**
- * TachiyomiAT: true when this page carries a persisted inpaint mask captured by
+ * true when this page carries a persisted inpaint mask captured by
  * the current OCR logic, so a resumed batch can safely skip re-OCR and still
  * erase detector-only + watermark regions.
  *
@@ -91,8 +91,8 @@ val PageTranslation.isStageFailed: Boolean
 /**
  * Flip every non-terminal RUNNING/PENDING stage to CANCELLED in place, used to
  * clear a page stranded in-flight after a cancellation (chapter switch, reader
- * exit, per-page cancel). Centralises the per-stage rewrite that was previously
- * copy-pasted in the scheduler's [markPageCancelled] / [markPageAutoSoftSkipped].
+ * exit, per-page cancel). Centralises the per-stage rewrite used by the
+ * scheduler's cancellation paths.
  * A cancel is NOT a failure, so retryCount is left untouched.
  */
 fun PageTranslation.cancelInFlightStages() {
@@ -118,7 +118,7 @@ fun PageTranslation.prepareForcedRetry() {
 }
 
 /**
- * TachiyomiAT: record that this page-translation attempt ended in a terminal
+ * record that this page-translation attempt ended in a terminal
  * failure. Increments [PageTranslation.attemptCount] AT MOST ONCE per attempt —
  * the FIRST terminal stage to call this owns the increment; subsequent stages
  * in the same attempt (e.g. a render failure cascading from an inpaint failure)
@@ -148,7 +148,7 @@ fun PageTranslation.recordAttemptFailure() {
 }
 
 /**
- * TachiyomiAT: clears the per-attempt "charged" flag so the next terminal
+ * clears the per-attempt "charged" flag so the next terminal
  * failure in a NEW attempt is counted. Called by [TranslationPipeline] at the
  * start of each fresh page-translation attempt (after [prepareForcedRetry] on
  * the forced path, or implicitly on the resume path when stages are reset to
@@ -174,12 +174,6 @@ val PageTranslation.hasRecognizedTranslation: Boolean
 val PageTranslation.hasExhaustedRetries: Boolean
     get() = isStageFailed && attemptCount >= StageStatus.MAX_STAGE_RETRIES
 
-val PageTranslation.shouldSkipAutoScheduling: Boolean
-    get() = hasRenderedResult ||
-        isStageRunning ||
-        hasExhaustedRetries ||
-        isTextlessTerminal
-
 val PageTranslation.lifecycle: PageLifecycle
     get() = when {
         hasRenderedResult -> PageLifecycle.Done
@@ -198,7 +192,7 @@ val PageTranslation.lifecycle: PageLifecycle
     }
 
 /**
- * TachiyomiAT: true when this page's [errorMessage] should be shown as a red
+ * true when this page's [errorMessage] should be shown as a red
  * error in the reader overlay.
  *
  * The view holders previously surfaced ANY non-null `errorMessage` once the

@@ -5,8 +5,8 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
-import eu.kanade.translation.ui.BatchStatusLineKind
-import eu.kanade.translation.ui.TranslationUiTruth
+import eu.kanade.translation.presentation.BatchStatusLineKind
+import eu.kanade.translation.presentation.TranslationUiTruth
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue

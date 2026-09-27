@@ -4,11 +4,14 @@ import eu.kanade.translation.diagnostics.TranslationIdentityKeys
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
 import eu.kanade.translation.diagnostics.TranslationTraceSink
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.orchestration.TranslationSession
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -27,7 +30,7 @@ import java.io.InputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- *  Phase 4 regression for Phase 3 review finding F1: the page-run trace
+ * The page-run trace
  * joins the terminal-sweep registry and the generation liveness re-check
  * ATOMICALLY under the lifecycle lock. The test forces the exact race window
  * deterministically: the trace sink fires synchronously inside
@@ -220,16 +223,6 @@ private class ParkingExecutor : TranslationExecutor {
         pageKey: String,
         force: Boolean,
         stageListener: TranslationStageListener?,
-        origin: eu.kanade.translation.pipeline.PageWriteOrigin,
+        origin: eu.kanade.translation.persistence.chapter.PageWriteOrigin,
     ): SinglePageOutcome = SinglePageOutcome.Completed
-
-    override suspend fun translateSinglePageFromStream(
-        manga: tachiyomi.domain.manga.model.Manga,
-        chapter: tachiyomi.domain.chapter.model.Chapter,
-        source: eu.kanade.tachiyomi.source.online.HttpSource,
-        pageKey: String,
-        streamFn: () -> InputStream,
-        force: Boolean,
-        stageListener: TranslationStageListener?,
-    ) = Unit
 }

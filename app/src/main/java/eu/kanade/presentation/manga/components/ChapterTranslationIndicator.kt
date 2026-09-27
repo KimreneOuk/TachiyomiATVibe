@@ -36,7 +36,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.ui.TranslationUiTruth
+import eu.kanade.translation.presentation.TranslationUiTruth
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.IconButtonTokens

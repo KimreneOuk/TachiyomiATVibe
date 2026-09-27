@@ -71,14 +71,14 @@ import eu.kanade.translation.model.AiBatchProgress
 import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
+import eu.kanade.translation.model.BatchPhase
 import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.pipeline.batch.BatchPhase
-import eu.kanade.translation.ui.BatchStatusLineKind
-import eu.kanade.translation.ui.TranslationUiTruth
+import eu.kanade.translation.presentation.BatchStatusLineKind
+import eu.kanade.translation.presentation.TranslationUiTruth
 import kotlinx.coroutines.delay
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR

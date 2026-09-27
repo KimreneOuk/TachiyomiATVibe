@@ -2,27 +2,27 @@ package eu.kanade.translation
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.CleanedImageProbe
-import eu.kanade.translation.artifact.CommittedBundleMetadata
-import eu.kanade.translation.artifact.ProbedImage
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.CleanedImageProbe
+import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
+import eu.kanade.translation.persistence.artifact.ProbedImage
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.CheckpointOcrResult
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.storage.CheckpointOcrResult
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -46,7 +46,7 @@ class ChapterTranslationStorePersistenceTest {
 
     @AfterEach
     fun restoreProductionProbe() {
-        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
+        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
     }
 
     private fun block(translation: String = "target", userEditedAt: Long? = null) = TranslationBlock(

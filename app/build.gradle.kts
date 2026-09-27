@@ -189,8 +189,8 @@ kotlin {
     }
 }
 
-// TachiyomiAT: static guard against the silent-JUnit-skip quirk (T906 audit,
-// area3-lifecycle-ui-tests.md section U3). A test declared as an expression
+// TachiyomiAT: static guard against the silent-JUnit-skip quirk (found in a
+// test-suite audit). A test declared as an expression
 // body — fun `t`() = runBlocking { ... } — gets its return type inferred; if
 // inference yields anything but Unit, the method compiles to a non-void JVM
 // method that JUnit silently skips while it still counts as a suite member.

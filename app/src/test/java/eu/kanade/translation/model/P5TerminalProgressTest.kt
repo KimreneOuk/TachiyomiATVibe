@@ -1,8 +1,8 @@
 package eu.kanade.translation.model
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
@@ -16,11 +16,10 @@ import org.junit.jupiter.api.Test
 import java.lang.reflect.Method
 
 /**
- *  Phase 5 (spec §2.1 batch rules, §6.2 commit 5) — RED tests for
- * terminal-only, honest batch progress totals.
+ * Tests for terminal-only, honest batch progress totals.
  *
  * Named defects pinned here (new value fields on [TranslationProgressSnapshot],
- * wired by the tracker/store paths in commit 6):
+ * wired by the tracker and store paths):
  *
  *  1. `terminalPages` — pages in exactly one current-pass terminal category
  *     (translated/reused-valid, textless, failed, partial, cancelled). A
@@ -41,7 +40,7 @@ import java.lang.reflect.Method
 class P5TerminalProgressTest {
 
     // ------------------------------------------------------------------
-    // Reflective readers (named-RED while the value fields are missing)
+    // Reflective readers for progress snapshot fields.
     // ------------------------------------------------------------------
 
     private fun intField(snapshot: TranslationProgressSnapshot, name: String, defect: String): Int =
@@ -110,9 +109,9 @@ class P5TerminalProgressTest {
 
     @Test
     fun `terminal totals keep readable success distinct from failed partial and textless work`() {
-        val snapshot = TranslationProgressSnapshot.compute(
+        val snapshot = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.TRANSLATING,
+            chapterState = Translation.State.TRANSLATING,
             pageMap = mapOf(
                 "p0" to translatedPage("p0"),
                 "p1" to failedPage("p1"),
@@ -160,9 +159,9 @@ class P5TerminalProgressTest {
             cleanedImageName = "p0.cleaned.jpg"
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         }
-        val snapshot = TranslationProgressSnapshot.compute(
+        val snapshot = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.TRANSLATING,
+            chapterState = Translation.State.TRANSLATING,
             pageMap = mapOf("p0" to uncommitted),
         )
 
@@ -227,9 +226,9 @@ class P5TerminalProgressTest {
         // Three committed pages of a partially downloaded chapter: the store
         // page set is NOT the trusted source total, so "3/3 · 100%" would be a
         // fabricated complete chapter ( fact).
-        val snapshot = TranslationProgressSnapshot.compute(
+        val snapshot = TranslationBatchProgressTracker.computeSnapshot(
             chapterId = 1L,
-            state = Translation.State.TRANSLATING,
+            chapterState = Translation.State.TRANSLATING,
             pageMap = mapOf(
                 "p0" to translatedPage("p0"),
                 "p1" to translatedPage("p1"),
@@ -266,7 +265,7 @@ class P5TerminalProgressTest {
             scope = scope,
         )
         try {
-            //  slice 3: the first snapshot is derived from the ordered work
+            // The first snapshot is derived from the ordered work
             // keys at construction — the batch's own total is trusted.
             val snapshot = tracker.snapshot.value
             withClue("batch totals come from the registered work set") {

@@ -4,8 +4,8 @@ import android.content.Context
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
+import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  slice 2 (R5): download-side lifecycle events must transition an
+ * Download-side lifecycle events must transition an
  * attached pending request to an explicit terminal phase with a typed failure
  * kind instead of leaving it WAITING forever — and must be a no-op (no phase
  * write at all) when no pending request exists for the chapter, so ordinary

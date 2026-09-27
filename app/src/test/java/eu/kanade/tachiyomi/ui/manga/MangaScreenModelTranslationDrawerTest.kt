@@ -23,7 +23,7 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.workflow.TranslationManager
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk

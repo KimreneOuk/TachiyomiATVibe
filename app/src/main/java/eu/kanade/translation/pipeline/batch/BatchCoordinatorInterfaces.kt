@@ -1,9 +1,10 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.translator.ProviderFailure
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.engines.translator.ProviderFailure
 
 /**
- * TachiyomiAT: testable batch coordinator interfaces.
+ * testable batch coordinator interfaces.
  */
 
 /** Natural-order page identity retained by the live sequential coordinator. */
@@ -69,7 +70,7 @@ interface TranslatorLaneWorker {
             ChunkCompletionOutcome.Completed(setOf(ref.pageKey))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
-        } catch (e: eu.kanade.translation.translator.ProviderFailureException) {
+        } catch (e: eu.kanade.translation.engines.translator.ProviderFailureException) {
             e.toChunkCompletionOutcome(ref.pageKey)
         }
 }
@@ -213,18 +214,18 @@ open class BatchScheduleListener {
     }
 }
 
-internal fun eu.kanade.translation.translator.ProviderFailureException.toChunkCompletionOutcome(
+internal fun eu.kanade.translation.engines.translator.ProviderFailureException.toChunkCompletionOutcome(
     pageKey: String,
 ): ChunkCompletionOutcome = when (failure.retryability) {
-    eu.kanade.translation.translator.ProviderFailureRetryability.PAUSE,
-    eu.kanade.translation.translator.ProviderFailureRetryability.RETRY_AFTER,
+    eu.kanade.translation.engines.translator.ProviderFailureRetryability.PAUSE,
+    eu.kanade.translation.engines.translator.ProviderFailureRetryability.RETRY_AFTER,
     -> ChunkCompletionOutcome.Paused(
         anchorPageKey = pageKey,
         failure = failure,
         nextEligibleRetryAtEpochMs = failure.retryAfterAtEpochMs,
     )
-    eu.kanade.translation.translator.ProviderFailureRetryability.RETRY_NOW,
-    eu.kanade.translation.translator.ProviderFailureRetryability.TERMINAL,
+    eu.kanade.translation.engines.translator.ProviderFailureRetryability.RETRY_NOW,
+    eu.kanade.translation.engines.translator.ProviderFailureRetryability.TERMINAL,
     -> ChunkCompletionOutcome.Failed(
         anchorPageKey = pageKey,
         failure = failure,

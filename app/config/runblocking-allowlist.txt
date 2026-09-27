@@ -3,9 +3,8 @@
 # WHY: a unit test declared as an expression body — fun `t`() = runBlocking { ... } —
 # has its return type inferred by the compiler. If inference yields anything but Unit,
 # the method compiles to a non-void JVM method that JUnit SILENTLY SKIPS while the
-# test still counts as a suite member. Found in the T906 test-suite audit via a
-# bytecode sweep (8 skipped methods in RollingAutoCoordinatorTest):
-# Plan/active/2026-08-27_T906_test-suite-audit/review/area3-lifecycle-ui-tests.md, section U3.
+# test still counts as a suite member. Found in a test-suite audit via a
+# bytecode sweep (8 skipped methods in RollingAutoCoordinatorTest).
 #
 # CURE: declare the coroutine scope explicitly as runBlocking<Unit> (or end the
 # lambda with Unit), then remove the file's entry below.
@@ -14,11 +13,11 @@
 # relative to app/ (forward slashes). Blank lines and lines starting with '#'
 # are ignored. Do not add new entries without an audit note.
 
-# STATUS (T910, 2026-08-29): EMPTY — every prior entry was cured (converted to
+# STATUS (2026-08-29): EMPTY — every prior entry was cured (converted to
 # runBlocking<Unit>, javap-verified void over app/build/tmp/kotlin-classes/
 # standardDebugUnitTest, test class re-run green) and removed:
 # - scheduling/RollingAutoCoordinatorTest.kt — 8 revived tests, 3 needed test-infra
-#   fixes (see Plan/active/2026-08-29_T910_test-suite-remediation/reports/deadlock-investigation.md)
+#   fixes (documented in the fork's development records)
 # - translation/TranslationManagerReaderTeardownTest.kt — 2 bare methods converted
 # - translation/TranslationManagerAutoArbitrationTest.kt — 1 bare method converted
 # - translation/TranslationManagerDownloadFailureRecoveryTest.kt — 1 bare method converted

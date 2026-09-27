@@ -67,7 +67,7 @@ class ReaderAutoTranslationUiStateTest {
             expectedIdentity = activeIdentity,
         )
 
-        uiState.foregroundStage shouldBe ReaderAutoTranslationSlotState.Translating
+        uiState.foreground?.state shouldBe ReaderAutoTranslationSlotState.Translating
         uiState.readyAheadCount shouldBe 1
         uiState.availableAheadTarget shouldBe 3
         uiState.activity shouldBe AutoActivityStatus.Working
@@ -152,7 +152,7 @@ class ReaderAutoTranslationUiStateTest {
             expectedIdentity = activeIdentity,
         )
         failed.activity shouldBe AutoActivityStatus.Idle
-        failed.hasFailure shouldBe true
+        failed.foreground?.state shouldBe ReaderAutoTranslationSlotState.Failed(retryable = false)
     }
 
     @Test

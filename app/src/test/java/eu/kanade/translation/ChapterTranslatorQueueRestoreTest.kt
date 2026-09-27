@@ -2,30 +2,30 @@ package eu.kanade.translation
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterRunRecord
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.orchestration.mergeRestoredQueueEntries
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.NativeLaneWorker
 import eu.kanade.translation.pipeline.batch.OcrReadyPageRef
 import eu.kanade.translation.pipeline.batch.PageKey
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.workflow.mergeRestoredQueueEntries
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -70,13 +70,10 @@ class ChapterTranslatorQueueRestoreTest {
     }
 
     // -------------------------------------------------------------------------
-    //  wave-2 review gap 2 (queue-restore obligation, zero-legacy form):
-    // a chapter with an interrupted pipeline run restored from the persisted
-    // queue. The harness mirrors the interrupted-run idiom (real store, real
-    // interrupted pass) so the run record below is a genuine durable record
-    // with checkpoints, not a synthetic one. ( the  flag and its
-    // decideResume decision tree are gone — restore never auto-starts a run,
-    // and the durable state stays byte-untouched until explicit admission.)
+    // Restoring a chapter with an interrupted pipeline run uses its persisted
+    // queue and durable run record. The real store and interrupted pass keep
+    // the checkpoints realistic. Restore does not start the run; durable state
+    // stays unchanged until explicit admission.
     // -------------------------------------------------------------------------
 
     @TempDir
@@ -228,11 +225,11 @@ class ChapterTranslatorQueueRestoreTest {
         manifestBefore.ocrCheckpoints.keys shouldBe checkpointedKeys
         store.pageLeaseOwner("p1").shouldBeNull()
         store.pageLeaseOwner("p2").shouldBeNull()
-        //  zero-legacy: the surviving record IS the resume evidence — the
+        //  : the surviving record IS the resume evidence — the
         // phase pointer advanced past RUN_SNAPSHOT with p1's checkpointed OCR
         // (OCR_PLAN, done=1) and p2's mid-preflight death left it there. The
         // next explicit run resumes from this pointer; restore starts nothing.
-        record.state shouldBe eu.kanade.translation.artifact.ChapterRunState.OCR_PLAN
+        record.state shouldBe eu.kanade.translation.persistence.artifact.ChapterRunState.OCR_PLAN
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] shouldBe 1
     }
 }

@@ -134,9 +134,10 @@ class BenchmarkCorpusLoader(private val context: Context) {
 
     private fun File.resolveNestedCorpusDirectory(): File {
         val nested = resolve("real_corpus")
-        val hasPageDirectory = nested.isDirectory && nested.listFiles()
-            .orEmpty()
-            .any { it.isDirectory && IMAGE_NAMES.any { name -> File(it, name).isFile } }
+        val hasPageDirectory = nested.isDirectory &&
+            nested.listFiles()
+                .orEmpty()
+                .any { it.isDirectory && IMAGE_NAMES.any { name -> File(it, name).isFile } }
         return if (hasPageDirectory) nested else this
     }
 

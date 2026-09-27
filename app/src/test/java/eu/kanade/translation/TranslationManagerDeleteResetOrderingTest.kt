@@ -1,18 +1,18 @@
 package eu.kanade.translation
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.manager.DurableChapterKey
-import eu.kanade.translation.manager.DurableStatus
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.orchestration.ChapterTranslator
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.storage.ActiveChapterStoreRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.workflow.ChapterTranslator
+import eu.kanade.translation.workflow.DurableChapterKey
+import eu.kanade.translation.workflow.DurableStatus
+import eu.kanade.translation.workflow.TranslationManager
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -30,18 +30,9 @@ import java.lang.reflect.Field
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- *  Phase 19 prerequisite: characterization test for the
- * deleteTranslation / reset-flow region of `TranslationManager`.
- *
- * These tests pin the CURRENT call ordering of the region — cancellation,
- * queue removal, batch-worker join, tracker disposal, registry eviction
- * (markDefunct), stream-registry clearing, durable-status-cache
- * invalidation, deletion, and companion-image retirement — before the
- * region moves to `manager/ChapterDataResetController.kt`. The ordering is
- * load-bearing (see the strictly-sequenced ordering comment inside
- * [TranslationManager.deleteTranslation]); the tests assert the exact
- * observed event sequences below so a pure move cannot silently reorder
- * them.
+ * Pins the required delete/reset order: cancellation and worker joins precede store eviction,
+ * reader-stream clearing, artifact deletion, cache invalidation, and companion-image retirement.
+ * Exact event sequences protect this teardown contract from accidental reordering.
  */
 class TranslationManagerDeleteResetOrderingTest {
 
@@ -124,7 +115,7 @@ class TranslationManagerDeleteResetOrderingTest {
         every { translator.removeFromQueue(any<Chapter>()) } answers { log("removeFromQueue") }
         coEvery { translator.cancelTranslatorJobAndJoin() } answers { log("cancelTranslatorJobAndJoin") }
 
-        val provider = mockk<TranslationProvider>(relaxed = true)
+        val provider = mockk<TranslationFileProvider>(relaxed = true)
         every { provider.findMangaDir(any(), any()) } returns null
         every {
             provider.findTranslationFile(any(), any(), any(), any())

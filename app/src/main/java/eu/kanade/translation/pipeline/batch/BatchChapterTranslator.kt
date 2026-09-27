@@ -1,20 +1,31 @@
 package eu.kanade.translation.pipeline.batch
-
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
-import eu.kanade.translation.artifact.GroupCommitConfiguration
-import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.BatchDiagnosticReason
+import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationScheduleTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceStage
-import eu.kanade.translation.inpainting.InpaintingMode
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.BatchStage
+import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkExecutor
+import eu.kanade.translation.engines.translator.analysis.AnalysisEngineGlossarySynthesizer
+import eu.kanade.translation.engines.translator.analysis.AnalysisEngineTransport
+import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.engines.translator.providers.AiTranslator
+import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
+import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -22,25 +33,19 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.ocr.PageRecognitionEngine
-import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.DecodedPage
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkExecutor
-import eu.kanade.translation.translator.analysis.AnalysisEngineGlossarySynthesizer
-import eu.kanade.translation.translator.analysis.AnalysisEngineTransport
-import eu.kanade.translation.translator.contextual.ContextualTextTranslator
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.providers.AiTranslator
-import eu.kanade.translation.translator.providers.LmStudioTranslator
+import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -63,17 +68,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- *  Phase 20.6: the staged batch translation shell moved verbatim from
- * `TranslationPipeline.translateBatch` ( phase 20). Owns the batch
- * preamble/generation protocol, engine-setup admission, component wiring
- * (write gate, resume planner, held-bitmap registry, render join, lane
- * workers, coordinator), pass-1 reconciliation, and the outer teardown
- * (lease release/cancel, `NonCancellable` flush, artifact retention,
- * `onBatchClosed`). Engine/native collaborators arrive as constructor
- * lambdas behind same-name private members.
+ * Owns chapter-batch admission, generation setup, component wiring, pass-1
+ * reconciliation, and teardown. Teardown preserves lease release, cancellation,
+ * NonCancellable flush, retention work, and the `onBatchClosed` callback order.
+ * Engine and native collaborators are supplied by the pipeline.
  */
 internal class BatchChapterTranslator(
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val translationPreferences: TranslationPreferences,
     private val nativeLane: NativeLaneRunner,
     private val engineRebuildMutex: Mutex,
@@ -133,8 +134,7 @@ internal class BatchChapterTranslator(
     private val onBatchClosedFn: () -> (suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit)?,
 ) {
 
-    // Same-name wiring for the injected collaborators: the moved bodies call
-    // these as plain named functions / property-style reads.
+    // Resolve engine and callback state through the injected collaborators.
     private val recognitionEngine get() = recognitionEngineFn()
 
     private val textTranslator get() = textTranslatorFn()
@@ -166,7 +166,7 @@ internal class BatchChapterTranslator(
     ): ChapterTranslationStore.PatchResult = updatePageFromCurrentSnapshotFn(store, pageKey, description, update)
 
     /**
-     * TachiyomiAT: STAGED BATCH translation — the pre-translate path used by the
+     * STAGED BATCH translation — the pre-translate path used by the
      * manga-screen "translate chapter" action (and anything that wants to
      * prepare a whole chapter before the reader opens). Replaces the old
      * page-1-first sequential loop.
@@ -184,14 +184,13 @@ internal class BatchChapterTranslator(
      *      image, recompute render colors and persist page state. The reader
      *      draws translated text live over the cleaned image.
      *
-     * Memory model: one page bitmap is alive at a time (recycled after analyze,
-     * re-decoded for inpaint, recycled after inpaint). Stage 2 persists each
-     * cleaned image to disk (.cleaned.jpg) and releases the in-memory cleaned
-     * bitmap immediately — stage 3 reloads one at a time — so the batch holds at
-     * most one cleaned bitmap at any instant regardless of chapter length.
-     * (Previously stage 2 kept every cleaned bitmap live across the whole chapter
-     * until stage 3, which OOM'd on large chapters.) The reader is NOT open on
-     * this path, so there is no concurrent display decode to race.
+     * Memory model: one page bitmap is alive at a time (recycled after analysis,
+     * re-decoded for inpainting, recycled afterward). Inpainting persists each
+     * cleaned image to disk and releases its bitmap immediately; rendering
+     * reloads one page at a time. This bounds cleaned-image memory regardless
+     * of chapter length. Keeping every cleaned bitmap until rendering exhausted
+     * memory on large chapters. The reader is not open on this path, so there
+     * is no concurrent display decode to race.
      *
      * [orderedStreams] is already in natural page order (1..N). Resume is a
      * per-stage decision; reader viewport and last-read position never rotate
@@ -205,12 +204,9 @@ internal class BatchChapterTranslator(
         orderedStreams: List<Pair<String, () -> InputStream>>,
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
-    ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
-        //  Phase 4 (plan §4.4 batch): ONE schedule trace per batch
-        // invocation, created before engine setup and closed in the OUTER
-        // finally on EVERY exit (empty batch, setup timeout, OOM, pause,
-        // failure, cancellation, success). The closure is exception-safe even
-        // when the teardown/flush/callback region itself throws.
+    ): eu.kanade.translation.pipeline.batch.progress.ReconciliationResult? {
+        // One schedule trace covers setup, translation, and teardown, and is
+        // closed on every exit, including failures in the teardown callback.
         val scheduleTrace = TranslationPipelineDiagnostics.startSchedule(
             mode = TranslationTraceMode.BATCH,
             origin = TranslationTraceMode.BATCH,
@@ -218,10 +214,18 @@ internal class BatchChapterTranslator(
             pages = orderedStreams.size.takeIf { it > 0 },
         )
         BatchTranslationDiagnostics.noteActiveSchedule(scheduleTrace)
+        val candidateReuseObservation = store.observeCandidateReuse { reused ->
+            BatchTranslationDiagnostics.reuse(
+                stage = BatchDiagnosticStage.ARTIFACT,
+                pageKey = reused.pageKey,
+                reason = BatchDiagnosticReason.CANDIDATE_ACTIVE,
+                fingerprint = reused.dependencyFingerprint,
+            )
+        }
         var scheduleOutcome = TranslationTraceOutcome.TEARDOWN_EXCEPTION
         try {
             if (orderedStreams.isEmpty()) {
-                //  slice 3 (R4): a zero-page chapter must terminate its tracker.
+                // A zero-page chapter must terminate its tracker.
                 // The empty ordered set keeps this a DISTINCT zero-page failure
                 // (0 total pages, aborted with a reason) — the sheet's hero renders
                 // it as FAILED_NO_PAGES, never as a numeric 0/0 or a generic error.
@@ -250,8 +254,9 @@ internal class BatchChapterTranslator(
             scheduleOutcome = TranslationTraceOutcome.TEARDOWN_EXCEPTION
             throw t
         } finally {
-            // Exactly-once terminal summary; the Phase 2 handle is idempotent
-            // and never throws, so teardown exceptions above cannot starve it.
+            // The terminal summary is idempotent and never throws, so teardown
+            // exceptions cannot prevent it from being emitted.
+            candidateReuseObservation.close()
             scheduleTrace.end(scheduleOutcome)
             if (BatchTranslationDiagnostics.activeSchedule === scheduleTrace) {
                 BatchTranslationDiagnostics.noteActiveSchedule(null)
@@ -260,8 +265,8 @@ internal class BatchChapterTranslator(
     }
 
     /**
-     *  Phase 4: the traced batch body (verbatim pre-existing shell) plus
-     * schedule-scoped stage measurement. [setScheduleOutcome] publishes the
+     * Runs the batch body with schedule-scoped stage measurement.
+     * [setScheduleOutcome] publishes the
      * typed terminal for every planned exit; unplanned throwaways keep the
      * [TranslationTraceOutcome.TEARDOWN_EXCEPTION] default set by the caller.
      */
@@ -275,7 +280,7 @@ internal class BatchChapterTranslator(
         naturalPageIndexes: Map<String, Int>,
         scheduleTrace: TranslationScheduleTrace,
         setScheduleOutcome: (TranslationTraceOutcome) -> Unit,
-    ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
+    ): eu.kanade.translation.pipeline.batch.progress.ReconciliationResult? {
         val resolvedNaturalPageIndexes = if (naturalPageIndexes.isNotEmpty()) {
             naturalPageIndexes
         } else {
@@ -297,8 +302,8 @@ internal class BatchChapterTranslator(
                 // the candidate that explains the durable state.
                 val durableFailurePageKeys = ConcurrentHashMap.newKeySet<String>()
                 try {
-                    //  Phase 4: schedule-scoped engine_setup stage; the span
-                    // settles on every exit, including a teardown-lane throw.
+                    // Settle the engine-setup span on every exit, including a
+                    // throw from native-lane teardown.
                     val engineSetupSpan = scheduleTrace.beginStage(
                         TranslationTraceStage.ENGINE_SETUP,
                     )
@@ -326,15 +331,14 @@ internal class BatchChapterTranslator(
                         if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.SUCCESS,
                     )
                     if (engineSetupResult == null) {
-                        // Phase 3: no batch page lease outlives its run, whatever exit
-                        // path the batch takes.
+                        // No batch page lease outlives its run, whatever exit
+                        // path it takes.
                         setScheduleOutcome(
                             if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.FAILURE,
                         )
                         store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                        //  slice 3: an engine-setup failure is an exceptional
-                        // exit — terminate the tracker with the typed reason instead
-                        // of leaving a live nonterminal tracker behind.
+                        // Terminate the tracker with a typed reason rather than
+                        // leaving it live after setup fails.
                         tracker?.abort(
                             remainingPageKeys = remainingAbortKeys(orderedStreams, store),
                             reason = "Translation could not start: batch engine setup failed or timed out",
@@ -362,9 +366,7 @@ internal class BatchChapterTranslator(
                         TranslationContextChunkPlanner.Profile.DEFAULT
                     }
 
-                    //  Phase 20.1: held-cleaned-bitmap registry moved to
-                    // pipeline/batch/HeldBitmapRegistry.kt. The same-name aliases below
-                    // keep the not-yet-moved closures reading the same registry state.
+                    // All batch stages share this registry and its byte/count accounting.
                     val heldBitmapRegistry = HeldBitmapRegistry()
                     val heldBitmapBytes = heldBitmapRegistry.heldBitmapBytes
                     val countSlots = heldBitmapRegistry.countSlots
@@ -384,8 +386,7 @@ internal class BatchChapterTranslator(
                     // page under the same natural key cannot reuse old artifacts.
                     // This is an I/O-only preflight; no detector/OCR/inpaint or
                     // translator work is invoked for a matching completed page.
-                    //  Phase 4: schedule-scoped source_fingerprint stage.
-                    // M3: Lazy per-page source fingerprinting eliminates the whole-chapter
+                    // Lazy per-page source fingerprinting eliminates the whole-chapter
                     // I/O barrier before planning and starting page 1.
                     val fingerprintSpan = scheduleTrace.beginStage(
                         TranslationTraceStage.SOURCE_FINGERPRINT,
@@ -397,10 +398,7 @@ internal class BatchChapterTranslator(
                         items = sourceFingerprints.size,
                     )
 
-                    //  Phase 20.3: resume planning (page plans, provenance stamping,
-                    // translation failure fence, context-frontier bookkeeping, resume gate)
-                    // moved to pipeline/batch/BatchResumePlanner.kt. The frontier is the SAME
-                    // instance the shell and the lane workers hold.
+                    // The planner and lane workers share the same context frontier.
                     val resumePlanner = BatchResumePlanner(
                         store = store,
                         provider = provider,
@@ -415,10 +413,8 @@ internal class BatchChapterTranslator(
                         inpaintingModeFromPref = inpaintingModeFromPref,
                     )
 
-                    //  Phase 20.2: the batch write gate moved to
-                    // pipeline/batch/BatchWriteGate.kt. It receives the SAME identity-map
-                    // and durable-failure-set instances the shell holds; the same-name
-                    // local delegates below keep the not-yet-moved closures' call sites.
+                    // All batch writers use this gate with the same identity map and
+                    // durable-failure set held by the shell.
                     val batchWriteGate = BatchWriteGate(
                         store = store,
                         batchWriteIdentities = batchWriteIdentities,
@@ -451,9 +447,6 @@ internal class BatchChapterTranslator(
 
                     suspend fun resumeGate(page: PageTranslation?) = resumePlanner.resumeGate(page)
 
-                    //  Phase 20.2: guardedBatchUpdate / refreshBatchIdentity /
-                    // batchWritePrecondition / persistAiFailure(OrThrow) / releaseBatchLease /
-                    // persistBatchPageWithOomRecovery moved to pipeline/batch/BatchWriteGate.kt.
                     suspend fun guardedBatchUpdate(
                         pageKey: String,
                         description: String,
@@ -493,9 +486,6 @@ internal class BatchChapterTranslator(
                         pageTranslation: PageTranslation,
                     ) = batchWriteGate.persistBatchPageWithOomRecovery(pageKey, pageTranslation)
 
-                    //  Phase 20.3: the resumeGate body moved verbatim to
-                    // pipeline/batch/BatchResumePlanner.kt (delegate above keeps call sites).
-
                     suspend fun abortBatchCandidate(pageKey: String, reason: String) {
                         heldBitmapRegistry.recycleHeld(pageKey)
                         translationRegistry.remove(pageKey)
@@ -514,10 +504,8 @@ internal class BatchChapterTranslator(
                         }
                     }
 
-                    //  Phase 20.4: the render join lives in
-                    // pipeline/batch/BatchRenderJoin.kt — the lane workers call its
-                    // tryRender at commit boundaries, and the flagged coordinator
-                    // drives its per-page persisted-layout publication.
+                    // Lane workers call tryRender at commit boundaries; the
+                    // coordinator publishes persisted layouts for completed pages.
                     val renderJoin = BatchRenderJoin(
                         store = store,
                         manga = manga,
@@ -536,10 +524,8 @@ internal class BatchChapterTranslator(
 
                     val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
 
-                    //  Phase 20.5: the lane workers moved to
-                    // pipeline/batch/BatchLaneWorkers.kt (nativeWorker,
-                    // translatorWorker). The closure web became class
-                    // state; the SAME registry/identity/frontier instances are injected.
+                    // Workers receive the same registry, identity map, and context
+                    // frontier used by the shell and its other collaborators.
                     val batchScheduleListener = object : BatchScheduleListener() {
                         override fun ocrStarted(pageKey: String) {
                             // Live progress: reused preflight pages emit the same
@@ -619,25 +605,10 @@ internal class BatchChapterTranslator(
                         scheduleListener = batchScheduleListener,
                     )
 
-                    /**
-                     *  zero-legacy: THE single dispatch point. The
-                     * A/B flag completed its lifecycle and is gone — the engine
-                     * category alone picks the lane ( semantics, minus the
-                     * flag):
-                     *  - STANDARD engine → STANDARD_PIPELINE (the same
-                     *    [ChapterProfileBatchCoordinator] with its per-page
-                     *    standard translate tail);
-                     *  - AI_MODEL → PROFILE_PIPELINE. The degenerate
-                     *    non-contextual AI config no longer falls back to a
-                     *    legacy coordinator: it runs the coordinator's typed
-                     *    CONFIGURATION pause at the envelope seam (wave A added
-                     *    the envelope-path cast + pause).
-                     *
-                     * Resume goes through the coordinator's
-                     * `resumeFinalizeOrComplete`  for BOTH lanes;
-                     * the shell-level flag-OFF consultation
-                     * (shell-level OFF+COMPLETE outcome) was deleted with
-                     * the flag — there is no flag-OFF state anymore.
+                    /** The engine category selects the chapter's batch lane.
+                     * Standard translators use the per-page standard tail;
+                     * AI translators use profile analysis and envelopes.
+                     * Both lanes share coordinator resume and completion.
                      */
                     suspend fun runBatchPass1(
                         orderedPages: List<PageKey>,
@@ -650,22 +621,11 @@ internal class BatchChapterTranslator(
                             engineCategoryIsStandard = engineCategoryIsStandard,
                         )
 
-                        //  Phase 4 Wave A: the injected standard translate seam —
-                        // the coordinator's per-page tail calls THIS, and it
-                        // delegates verbatim to `TranslatorLaneWorker.translateOutcome`
-                        // (the per-page standard translate path, exactly the
-                        // legacy schedule's semantics).
-                        // ADAPTATION (the one delta vs the legacy schedule): the
-                        // flagged preflight releases each page's lease strictly
-                        // after its checkpoint, so the tail's ref carries durable
-                        // identity but NO live lease — and the legacy worker's
-                        // guarded commit fences against a live BATCH identity. The
-                        // wrapper therefore acquires a fresh BATCH page lease,
-                        // registers the write identity, arms the ref with it, and
-                        // releases the lease in `finally` ( strictly after
-                        // the page's translate settled). A denied lease (a MANUAL
-                        // owner owns the page) is a SKIP — that origin's outcome
-                        // is authoritative, never preempted ( ).
+                        // The coordinator's standard tail calls the regular
+                        // translator worker. Preflight has already released its
+                        // lease, so this seam acquires a fresh batch lease and
+                        // identity, then releases it only after translation settles.
+                        // A denied lease leaves the manual owner's work untouched.
                         suspend fun standardTranslateOutcome(
                             ref: OcrReadyPageRef,
                         ): ChunkCompletionOutcome {
@@ -686,8 +646,7 @@ internal class BatchChapterTranslator(
                                 }
                                 is LeaseAcquisition.Granted -> {
                                     val lease = acquisition.lease
-                                    //  exactly-once ( zero-legacy ): the
-                                    // tail's terminal pre-check ran BEFORE this
+                                    // The tail's terminal pre-check ran before
                                     // lease acquisition. A concurrent owner (the
                                     // manual/reader lane) can commit its terminal
                                     // stage and release in that window
@@ -735,17 +694,11 @@ internal class BatchChapterTranslator(
                         }
                         return when (dispatchKind) {
                             ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE -> {
-                                //  (wave-3 owed): the run snapshot freezes
-                                // the REAL provider/model identity from the active
-                                // translator configuration, not a class name. The
-                                // credential freezes as a one-way signature, never
-                                // a raw key. Wave-7c: the engine part
-                                // of the key uses the TRANSLATOR'S governor backend
-                                // spelling (e.g. `lm_studio`, not the enum's
-                                // `lmstudio`) so the envelope work builder's
-                                // `substringBefore(':')` derivation and every
-                                // Batch admission key share ONE spelling per
-                                // backend (wave-6 F-W6-4 alignment).
+                                // Freeze the configured provider and model in the
+                                // run identity. Store only a one-way credential
+                                // signature, never the raw secret. Use the same
+                                // backend spelling as the provider governor and
+                                // envelope work builder.
                                 val aiEnginePref = translationPreferences.translationAiEngine().get()
                                 val aiEngine = contextualTranslator as? AiTranslator
                                 val providerKeyEngine = aiEngine?.analysisBackendId
@@ -758,12 +711,9 @@ internal class BatchChapterTranslator(
                                 } else {
                                     translationPreferences.translationAiApiKey(aiEnginePref).get()
                                 }
-                                //  wave-7c: the typed analysis transport rides
-                                // the SAME engine instance — the runner seam is
-                                // now production-wired for every engine that
-                                // exposes a raw completion (Gemini +
-                                // OpenAI-compatible family). Engines without one
-                                // keep the typed CONFIGURATION pause.
+                                // Share the translator instance with analysis
+                                // transport. Engines without raw completion keep
+                                // the typed CONFIGURATION pause.
                                 val analysisRunner = aiEngine
                                     ?.takeIf { it.analysisBackendId != null }
                                     ?.let { engine ->
@@ -771,21 +721,18 @@ internal class BatchChapterTranslator(
                                             transport = AnalysisEngineTransport(engine),
                                         ).runner()
                                     }
-                                // Summary-glossary redesign (Director decision): the
-                                // same engine also builds the one-shot chapter
-                                // glossary over the durable chunk summaries.
+                                // The same engine builds the chapter glossary
+                                // from durable chunk summaries.
                                 val glossarySynthesizer = aiEngine
                                     ?.takeIf { it.analysisBackendId != null }
                                     ?.let { engine ->
                                         AnalysisEngineGlossarySynthesizer(engine)
                                     }
-                                //  Stage 7: the overlap scheduler runs
-                                // the EXISTING native inpaint lane inside each
-                                // remote envelope window  and the render
-                                // join publishes persisted layouts per page
-                                // . Both ride the shared identity map
-                                // + lease release idiom; the legacy OFF branch
-                                // below stays byte-identical.
+                                // The overlap scheduler runs the existing
+                                // native inpaint lane during provider requests,
+                                // and the render join publishes persisted layouts
+                                // per page. Both use the shared identity map and
+                                // lease-release path.
                                 val overlapScheduler = OverlapScheduler(
                                     store = store,
                                     nativeWorker = batchLaneWorkers.nativeWorker,
@@ -811,17 +758,13 @@ internal class BatchChapterTranslator(
                                         pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
                                     },
                                     releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
-                                    //  Stage-6 slice A: the resolved AI text
-                                    // translator rides the profile lane; a
-                                    // non-contextual translator on this lane is
-                                    // the typed CONFIGURATION pause inside the
-                                    // coordinator (the envelope path's local
-                                    // cast).
+                                    // The profile lane owns AI translation. A
+                                    // non-contextual translator produces a typed
+                                    // CONFIGURATION pause in the coordinator.
                                     textTranslator = contextualTranslator,
-                                    //  wave-7c: production analysis transport
-                                    // (engine-backed raw completions) feeds the
-                                    // Stage 3-5 profile chunk runner; null keeps
-                                    // the typed CONFIGURATION pause.
+                                    // The profile chunk runner uses this
+                                    // engine-backed transport; null keeps the
+                                    // typed CONFIGURATION pause.
                                     analysisChunkRunner = analysisRunner,
                                     glossarySynthesizer = glossarySynthesizer,
                                     overlapScheduler = overlapScheduler,
@@ -830,9 +773,8 @@ internal class BatchChapterTranslator(
                                 ).runPass1(orderedPages, computeClass)
                             }
                             ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
-                                //  Phase 4: a STANDARD engine rides the SAME
-                                // coordinator with its per-page translate tail.
-                                // The provider identity freezes as
+                                // Standard translation uses the coordinator's
+                                // per-page tail. The provider identity freezes as
                                 // `standard:<engine>`; DeepL is the only credentialed
                                 // standard engine (one-way signature, never a raw
                                 // key). NO AnalysisChunkExecutor and NO contextual
@@ -915,9 +857,8 @@ internal class BatchChapterTranslator(
                             "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
                         }
                         setScheduleOutcome(TranslationTraceOutcome.FAILURE)
-                        //  slice 3: the OOM abort is a terminal exit — emit the
-                        // aborted snapshot with the still-untranslated pages instead
-                        // of leaving a live nonterminal tracker behind.
+                        // Emit the aborted snapshot with untranslated pages so
+                        // the tracker is not left live.
                         tracker?.abort(
                             remainingPageKeys = remainingAbortKeys(orderedStreams, store),
                             reason = "Translation aborted: device memory pressure (OOM)",
@@ -985,7 +926,7 @@ internal class BatchChapterTranslator(
                         "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
                     }
 
-                    //   / zero-legacy: BOTH surviving lanes end
+                    //   / : BOTH surviving lanes end
                     // COMPLETED runs translation-terminal WITHOUT an in-pass
                     // render, so the post-pass completion projection is ALWAYS
                     // the flagged projection — the legacy done-predicate would
@@ -1012,7 +953,7 @@ internal class BatchChapterTranslator(
                         }
                     }
                     store.flush()
-                    //  zero-legacy: no surviving lane emits render events
+                    //  : no surviving lane emits render events
                     // for translatable pages, so the tracker's RENDER phase would
                     // stay processed=0 forever and the processed/total fraction
                     // would top out at 4/5 per display-ready page even at terminal.
@@ -1043,8 +984,7 @@ internal class BatchChapterTranslator(
                     batchWriteIdentities.clear()
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                     withContext(NonCancellable) {
-                        //  Phase 4: schedule-scoped store_flush; try/finally so
-                        // the span settles even when the flush itself throws.
+                        // Settle the flush span even when persistence throws.
                         val flushSpan = scheduleTrace.beginStage(
                             TranslationTraceStage.STORE_FLUSH,
                             lane = TranslationTraceLane.STORAGE,
@@ -1062,7 +1002,7 @@ internal class BatchChapterTranslator(
         }
     }
 
-    /**  Phase 4: typed schedule terminal per pass-1 stop status. */
+    /** Maps a pass-1 stop status to its schedule terminal outcome. */
     private fun BatchPass1Status.toScheduleOutcome(): TranslationTraceOutcome = when (this) {
         BatchPass1Status.PAUSED -> TranslationTraceOutcome.PAUSE
         BatchPass1Status.PERSISTENCE_REJECTED -> TranslationTraceOutcome.PERSISTENCE_REJECTED
@@ -1124,7 +1064,7 @@ internal class BatchChapterTranslator(
 
     internal companion object {
         /**
-         *  zero-legacy: the dispatch decision is ENGINE-CATEGORY
+         *  : the dispatch decision is ENGINE-CATEGORY
          * only — the  flag completed its A/B lifecycle and was removed.
          *  - STANDARD engine → STANDARD_PIPELINE (the same coordinator's
          *    standard tail — pure FULL OCR preflight, then per-page legacy
@@ -1143,8 +1083,8 @@ internal class BatchChapterTranslator(
             )
 
         /**
-         *  slice 3: pages that are NOT durably terminal when the batch
-         * aborts (OOM / engine-setup failure). Rendered, textless, and already
+         * Pages that are not durably terminal when the batch aborts (OOM or
+         * engine-setup failure). Rendered, textless, and already
          * failed pages carry their outcome in the store; everything else in the
          * ordered work set is "remaining" and is reported by the aborted
          * terminal snapshot. Pure and unit-testable.

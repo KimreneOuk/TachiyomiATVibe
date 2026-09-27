@@ -20,10 +20,10 @@ import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBindin
 import eu.kanade.tachiyomi.ui.reader.viewer.toReaderPageFeedback
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
+import eu.kanade.translation.engines.translator.NativeStallState
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
-import eu.kanade.translation.translator.NativeStallState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

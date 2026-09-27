@@ -1,8 +1,8 @@
 package eu.kanade.translation.benchmark
 
-import eu.kanade.translation.ocr.paddle.batch.PaddleOcrBatchSize
-import eu.kanade.translation.ocr.paddle.batch.PaddleOcrWidthBucket
-import eu.kanade.translation.runtime.onnx.PaddleOcrProviderTarget
+import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTarget
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchSize
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrWidthBucket
 
 data class PaddleBenchmarkMatrixCellSpec(
     val provider: PaddleOcrProviderTarget,

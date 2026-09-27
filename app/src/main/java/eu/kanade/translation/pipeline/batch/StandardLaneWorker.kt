@@ -1,12 +1,12 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterRunRecord
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.ProfilePointer
-import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.ProfilePointer
+import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -164,8 +164,8 @@ internal class StandardLaneWorker(
             renderJoin?.publishPersistedLayoutForCompletedPage(pageKey)
             Unit
         }
-        //  Stage 7  idiom: the overlap loop runs BESIDE the serial
-        // translate loop and is stopped between pages once the tail ends.
+        // The overlap loop runs beside the serial translate loop and stops
+        // between pages when the translation tail ends.
         val overlapLoop: suspend (suspend () -> BatchPass1Outcome) -> BatchPass1Outcome =
             { runTail ->
                 if (overlapScheduler == null) {
@@ -318,7 +318,7 @@ internal class StandardLaneWorker(
 
             // Drained: every ordered page reached its terminal. The drained
             // TRANSLATE record mirrors the AI lane's (counters + stop), then
-            // the SHARED engine-agnostic Stage-7 finalize publishes the run's
+            // the shared engine-agnostic finalizer publishes the run's
             // single COMPLETE.
             publishRecord(
                 artifact,

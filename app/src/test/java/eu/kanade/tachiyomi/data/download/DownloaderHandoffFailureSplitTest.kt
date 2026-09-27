@@ -10,8 +10,8 @@ import eu.kanade.translation.InMemorySharedPreferences
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.orchestration.TranslationManager
-import eu.kanade.translation.storage.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
+import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery

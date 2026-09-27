@@ -1,7 +1,7 @@
 package eu.kanade.translation
 
 import android.content.Context
-import eu.kanade.translation.storage.TranslationQueueStore
+import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.mockk.every
 import io.mockk.mockk

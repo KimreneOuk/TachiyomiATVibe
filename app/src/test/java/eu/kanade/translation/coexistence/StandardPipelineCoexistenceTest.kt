@@ -1,9 +1,9 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 4 Wave B — the STANDARD_PIPELINE lane through the REAL shell
+ * The STANDARD_PIPELINE lane through the real shell
  * (Director contract for the coexistence harness,  ON + STANDARD engine).
  *
  * [TranslationCoexistenceHarness.createStandard] drives

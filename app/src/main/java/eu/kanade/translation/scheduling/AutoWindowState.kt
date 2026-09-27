@@ -1,14 +1,14 @@
 package eu.kanade.translation.scheduling
 
 /**
- * TachiyomiAT: pure, transient contract for the rolling auto-translation window.
+ * pure, transient contract for the rolling auto-translation window.
  *
  * These models define ONLY what the rolling coordinator intends to keep ready
  * and how that intent is observed. They carry no execution behavior, hold no
  * coroutines, and are NOT serialized — persisted durable state remains on
- * [eu.kanade.translation.model.PageTranslation]. A later ticket wires the
- * coordinator that reconciles page position, readiness, and memory/network
- * signals into these values and publishes an [AutoTranslationSnapshot].
+ * [eu.kanade.translation.model.PageTranslation]. The rolling coordinator
+ * reconciles page position, readiness, and memory/network signals into these
+ * values and publishes an [AutoTranslationSnapshot].
  *
  * Equality is structural throughout, so re-emitting an equivalent snapshot
  * through a StateFlow produces no observably different value.
@@ -70,13 +70,6 @@ val AutoSlotState.isActive: Boolean
         this is AutoSlotState.Translating ||
         this is AutoSlotState.Rendering
 
-/** Work is past queue admission and inside a real pipeline stage. */
-val AutoSlotState.isProcessing: Boolean
-    get() = this is AutoSlotState.ReadingText ||
-        this is AutoSlotState.Cleaning ||
-        this is AutoSlotState.Translating ||
-        this is AutoSlotState.Rendering
-
 /** A translated, displayable result exists for this slot. */
 val AutoSlotState.isReady: Boolean
     get() = this is AutoSlotState.Ready
@@ -87,7 +80,7 @@ val AutoSlotState.deferralReason: AutoDeferralReason?
 
 /**
  * One page slot in the rolling auto window. [pageIndex] is the 0-based reader
- * page index (matching [eu.kanade.translation.orchestration.TranslationPageId.pageIndex]).
+ * page index supplied by the reader page resolver.
  * Ordering is implied by position in [AutoTranslationSnapshot.orderedSlots]:
  * the foreground slot first, then ahead slots in ascending page index.
  */
@@ -230,10 +223,6 @@ data class AutoTranslationSnapshot(
      */
     val readyAheadCount: Int
         get() = aheadSlots.count { it.state.isReady }
-
-    /** Ahead slots currently queued or executing through a real stage. */
-    val activeAheadCount: Int
-        get() = aheadSlots.count { it.state.isActive }
 
     /** Ahead slots that have failed and may or may not be retried. */
     val failedAheadCount: Int

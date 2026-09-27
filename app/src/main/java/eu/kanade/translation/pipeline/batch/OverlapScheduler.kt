@@ -1,14 +1,14 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.BatchRequestSublimitGate
-import eu.kanade.translation.translator.ProviderRequestMetadata
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -18,94 +18,27 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  Stage 7 (WP7, implementation-sequence §S7 / ): the inpaint-overlap
- * scheduler behind +Stage 7. Runs the EXISTING serial native inpaint lane
- * (`NativeLaneWorker.runInpaintStage` — re-decode + detector mask + durable
- * inpaint merge, unchanged admission rules) inside the window of the single
- * in-flight remote translation request.
+ * Runs the existing serial native inpaint lane while batch translation is in
+ * flight, then drains any remaining eligible pages after translation.
  *
- * Binding rules (never-rules, enforced structurally):
- *  -  track V (Director decision 2026-09-18): admission is CONTINUOUS
- *    for the whole batch pass. [runOverlapLoop] no longer gates work on the
- *    window flag: every wake event (window open — the executor's per-dispatch
- *    trigger, now just one producer among several — and
- *    [notifyCandidatesChanged]) runs ONE full drain pass that attempts
- *    candidates back-to-back, straight through the in-flight provider
- *    round-trip, and only then parks back on the event channel (no polling,
- *    no timers — virtual-time safe). On-device evidence (2026-09-17 run):
- *    strictly window-gated admission throttled overlap inpaint to roughly
- *    once per envelope gap (~8 pages/min against ~12 pages/min committed by
- *    the envelopes) while the NPU idled ~90%. Bounded by structure: one
- *    attempt per page per drain (the  round-2 anti-spin rule,
- *    generalized from one-attempt-per-window) and strictly one native
- *    inpaint at a time ([inpaintMutex]).
- *  - Inpaint work runs EXCLUSIVELY inside those drain passes or in the serial
- *    post-translate drain ([drainSerial] — the legacy post-translate serial
- *    semantics, the gate-6.5 "keep serial" arm).  track I decoupling
- *    (2026-09-16): candidate admission NO LONGER waits for the page's own
- *    translation — the inpaint artifact fingerprint
- *    (`StageFingerprints.inpaint`) has no translation input, so the data
- *    dependency is detection/OCR only and an OCR-final page is a candidate
- *    regardless of translation status (see [nextInpaintCandidate]). What is
- *    NOT relaxed: detector/OCR NEVER run here — the OCR preflight phase is
- *    fully terminal before TRANSLATE (the scheduler is only started for the
- *    TRANSLATE phase, below), and the native lane itself stays strictly
- *    one-native-job-at-a-time process-wide.
- *  - Strictly ONE native inpaint at a time ([inpaintMutex]); memory stays
- *    within the legacy one-decoded-bitmap envelope (gate 6.4 budget: overlap
- *    adds no second concurrent bitmap, it only re-times the same lane).
- *  - Native admission is unchanged: the page's BATCH inpaint lease is
- *    acquired with `tryAcquirePageStageLease`; a denied foreign-owner lease
- *    skips the page (counted) — MANUAL/native quarantine rules are never
- *    preempted. Same-origin sibling attaches remain part of the batch overlap
- *    contract.  track I round 2 adds a
- *    slot-free ADMISSION pre-check ahead of the acquire (see
- *    [inpaintOne]): a page whose BATCH write slot is CURRENTLY held by an
- *    in-flight same-origin writer (the standard translate tail or the
- *    profile envelope commit — both hold the page's one write slot for the
- *    whole dispatch→commit of the page's OWN translation) is deferred to
- *    the next window / the serial drain instead of sibling-attaching onto
- *    the live hold. Attaching would let the inpaint write race the
- *    translation commit's plan-time CAS, and the inpaint's (plain) release
- *    would retire the writer's lease record out from under it — the
- *    commit then fails closed ("Batch persistence publication rejected").
- *    The hold is transient (freed at the writer's commit), so this defers
- *    on WRITE EXCLUSIVITY only — it is the same-page replacement for the
- *    old translation-status gate, not a re-coupling to translation data.
- *  - Defer-retry discipline ( round 2): every unsuccessful attempt is
- *    retried only when something CHANGES, never spun on inside a still-
- *    open window. Lease-denied (foreign owner) pages are deferred for the
- *    rest of the pass (the owner's outcome is authoritative); slot-busy
- *    and lane-failed pages are deferred until the NEXT window opens (or
- *    the serial drain starts) — one attempt per page per window. The
- *    serial drain keeps its existing "deferred for the rest of this
- *    drain" rule. This replaces the previous behavior where a failed page
- *    was immediately re-selected inside the same window, which spun the
- *    loop hot (a hang under virtual time — StandardPipelineCoordinatorTest
- *    T5) and burned the lane on a page whose outcome had just settled.
- *  - Starts only AFTER profile freeze: the coordinator constructs/starts this
- *    scheduler only for the TRANSLATE phase, which is entered only after
- *     PROFILE_FROZEN (contract  entry).
- *  - Cancel/teardown safe: [stopOverlap] stops window-driven work between
- *    pages; a running inpaint finishes or is cancelled through the lane's own
- *    timeout/cancellation idiom; the write identity is deregistered and the
- *    BATCH lease released in `finally` ( release discipline — the lease
- *    is released only after the inpaint attempt settled).
+ * OCR preflight finishes before this scheduler starts. It handles only
+ * OCR-final pages and never reruns detection or OCR. Each drain attempts a
+ * page at most once, and [inpaintMutex] keeps native inpainting exclusive.
+ * Admission uses a BATCH lease and never preempts a MANUAL lease or native
+ * engine quarantine. Before acquiring a lease, [inpaintOne] checks the page's
+ * write slot; a same-origin writer holding that slot makes the page wait for a
+ * later event or the serial drain. Attaching to that live hold could race the
+ * writer's plan-time CAS and release its lease record before its commit.
  *
- * The lane's durable write path is consumed as-is: the scheduler registers a
- * [BatchWriteIdentity] (fresh snapshot + the just-acquired lease token) into
- * the SAME identity map the legacy write gate reads, so
- * `NativeLaneWorker.runInpaintStage` performs its guarded INPAINT merges and
- * durable mask/cleaned-image publications exactly like the legacy schedule
- * (`mergeInpaint` mask-fingerprint identity per ). If the lane is busy,
- * the lease is denied, or a page write is rejected, the page simply remains
- * for the serial post-translate drain — semantics identical to the legacy
- * serial schedule (fallback discipline).
- *
- * Gate 6.5 counters ([countersSnapshot]) feed the keep-or-revert decision
- * rule ("if median wall-time improvement < 5% on the 200-page reference run,
- * retain the simpler serial schedule without changing semantics") — evidence
- * goes to `evidence/stage6/overlap-vs-serial.md`.
+ * A drain is event-driven: lease denial defers a page for the rest of that
+ * pass, while a busy write slot or failed lane attempt waits for a later
+ * window or serial drain. This avoids retrying settled work in a hot loop.
+ * The coordinator starts the scheduler only after profile freeze. On teardown,
+ * window-driven work stops between pages; each attempt deregisters its write
+ * identity and releases its BATCH lease in `finally` after the attempt settles.
+ * The existing guarded merge and durable mask/cleaned-image publication path
+ * remains responsible for the write. Pages that cannot complete here remain
+ * eligible for the serial post-translation drain.
  */
 internal class OverlapScheduler(
     private val store: ChapterTranslationStore,
@@ -220,7 +153,7 @@ internal class OverlapScheduler(
             counters.overlapWindowsMs.addAndGet((nowEpochMs() - openedAt).coerceAtLeast(0))
         }
         windowOpen.set(false)
-        // Gate-6.5 serial-fallback accounting is per deferred PAGE (counted in
+        // Serial-fallback accounting is per deferred page (counted in
         // [inpaintOne]'s overlap lease-denial and slot-busy branches), not per
         // window: a window that both deferred a MANUAL-owned page and
         // committed another page still produced overlap progress.
@@ -230,7 +163,7 @@ internal class OverlapScheduler(
     /**
      * The gate wrapper installed by the coordinator: delegates admission and
      * the request block unchanged to the process-wide sub-limit gate, and
-     * signals the overlap windows around it (gate 6.5 timing basis).
+     * signals overlap windows around the request.
      */
     internal class WindowSignallingGate(
         private val delegate: BatchRequestSublimitGate,

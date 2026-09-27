@@ -2,52 +2,58 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.ArtifactDocumentJson
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.EnvelopePolicySnapshot
-import eu.kanade.translation.artifact.EvidenceRef
-import eu.kanade.translation.artifact.StageFingerprints
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
+import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
+import eu.kanade.translation.engines.translator.analysis.AnalysisCoverage
+import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
+import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
+import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
+import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.engines.translator.analysis.GlossaryEntry
+import eu.kanade.translation.engines.translator.analysis.GlossaryEntryKind
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesisOutcome
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
+import eu.kanade.translation.engines.translator.analysis.ValidatedTerm
+import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
+import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
+import eu.kanade.translation.engines.translator.contextual.ContextualTranslationResult
+import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPolicy
+import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.engines.translator.providers.AiTranslator
+import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.BatchRequestSublimitGate
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.translator.analysis.AnalysisCoverage
-import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.translator.analysis.AnalysisResponseValidator
-import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.translator.analysis.GlossaryEntry
-import eu.kanade.translation.translator.analysis.GlossaryEntryKind
-import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
-import eu.kanade.translation.translator.analysis.ValidatedEntity
-import eu.kanade.translation.translator.analysis.ValidatedTerm
-import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
-import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
-import eu.kanade.translation.translator.contextual.ContextualTranslationResult
-import eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy
-import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
-import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.providers.AiTranslator
+import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
+import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatchWork
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
+import eu.kanade.translation.pipeline.batch.envelope.PageDispatchWork
+import eu.kanade.translation.pipeline.batch.envelope.PlannedBlock
+import eu.kanade.translation.pipeline.batch.envelope.ProfileEnvelopeExecutor
+import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
@@ -59,8 +65,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Stage-6 slice B (design §7 + §8 tail; gates 5.6/5.8 in-repo portion):
- * profile-aware PROMPT ENRICHMENT of the serial envelope executor —
+ * Covers profile-aware prompt enrichment in the serial envelope executor:
  * enriched chunk shape (profile subset sheet + scene fence + gap-free
  * rolling history with the pronoun-marking rule), execution-time token
  * recompute with WHOLE-PAGE splits, single-oversized-page rejection,
@@ -73,7 +78,7 @@ class ProfileEnvelopePromptEnrichmentTest {
     lateinit var mangaDir: File
 
     // ------------------------------------------------------------------
-    // Scaffolding (slice-A dispatch-test idioms).
+    // Shared dispatch-test fixtures.
     // ------------------------------------------------------------------
 
     private fun hex64(tag: String): String =
@@ -716,7 +721,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             planArtifactPageVersion = snapshot.artifactPageVersion,
             blocks = listOf(plannedBlock),
         )
-        val envelope = eu.kanade.translation.artifact.PlannedEnvelope(
+        val envelope = eu.kanade.translation.persistence.artifact.PlannedEnvelope(
             envelopeId = "e-0",
             orderedPageKeys = listOf(pageKey),
             blockIds = listOf("p0_b1"),
@@ -727,7 +732,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             contributingPageCount = 1,
         )
         // The SC-10 plan fingerprint, computed exactly like the publication.
-        val hashingView = eu.kanade.translation.artifact.EnvelopePlan(
+        val hashingView = eu.kanade.translation.persistence.artifact.EnvelopePlan(
             planFingerprint = "",
             planInputFingerprint = hex64("plan-input"),
             plannerVersion = 1,
@@ -735,11 +740,11 @@ class ProfileEnvelopePromptEnrichmentTest {
             createdAtEpochMs = 0L,
         )
         val canonical = ArtifactDocumentJson.encodeToString(
-            eu.kanade.translation.artifact.EnvelopePlan.serializer(),
+            eu.kanade.translation.persistence.artifact.EnvelopePlan.serializer(),
             hashingView,
         )
         val planFingerprint = StageFingerprints.envelopePlanContentFingerprint(canonical)
-        val plan = eu.kanade.translation.artifact.EnvelopePlan(
+        val plan = eu.kanade.translation.persistence.artifact.EnvelopePlan(
             planFingerprint = planFingerprint,
             planInputFingerprint = hex64("plan-input"),
             plannerVersion = 1,
@@ -753,25 +758,25 @@ class ProfileEnvelopePromptEnrichmentTest {
         // does in production.
         val artifact = store.artifactEngine.shouldNotBeNull()
         if (artifact.readManifest() == null) {
-            artifact.publishManifest(eu.kanade.translation.artifact.ChapterArtifactManifest(chapterKey = "Chapter 1"))
+            artifact.publishManifest(eu.kanade.translation.persistence.artifact.ChapterArtifactManifest(chapterKey = "Chapter 1"))
         }
-        val draft = eu.kanade.translation.artifact.ChapterTranslationProfile(
+        val draft = eu.kanade.translation.persistence.artifact.ChapterTranslationProfile(
             version = 1,
             contentFingerprint = "",
             profileInputFingerprint = hex64("fp04"),
             sourceRunId = "run-1",
-            analyzerProvenance = eu.kanade.translation.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
+            analyzerProvenance = eu.kanade.translation.persistence.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
             entities = listOf(
-                eu.kanade.translation.artifact.ProfileFact(
+                eu.kanade.translation.persistence.artifact.ProfileFact(
                     factId = "f-1",
-                    type = eu.kanade.translation.artifact.FactType.ENTITY_IDENTITY,
+                    type = eu.kanade.translation.persistence.artifact.FactType.ENTITY_IDENTITY,
                     canonicalSourceForm = "カイル",
                     canonicalTargetForm = "Kyle",
-                    evidenceStrength = eu.kanade.translation.artifact.EvidenceStrength.STRONG_CONTEXTUAL,
+                    evidenceStrength = eu.kanade.translation.persistence.artifact.EvidenceStrength.STRONG_CONTEXTUAL,
                     evidenceRefs = listOf(EvidenceRef("p1", "p1_b1", hex64("excerpt"))),
-                    scope = eu.kanade.translation.artifact.FactScope.CANONICAL_CHAPTER_WIDE,
-                    provenance = eu.kanade.translation.artifact.FactProvenance.CHAPTER_ANALYSIS,
-                    conflictState = eu.kanade.translation.artifact.FactConflictState.RESOLVED,
+                    scope = eu.kanade.translation.persistence.artifact.FactScope.CANONICAL_CHAPTER_WIDE,
+                    provenance = eu.kanade.translation.persistence.artifact.FactProvenance.CHAPTER_ANALYSIS,
+                    conflictState = eu.kanade.translation.persistence.artifact.FactConflictState.RESOLVED,
                 ),
             ),
             frozenAtEpochMs = 42L,
@@ -812,8 +817,7 @@ class ProfileEnvelopePromptEnrichmentTest {
         val outcome = executor.run(work)
         outcome.shouldBeInstanceOf<ProfileEnvelopeExecutor.PhaseOutcome.Drained>()
 
-        // Legacy shape: NO enriched sheet, and the slice-A rolling-context
-        // path (empty frontier -> empty rolling context).
+        // Without a frozen profile, no enriched sheet or rolling context is sent.
         captured.size shouldBe 1
         captured.single().glossary shouldBe ""
         captured.single().rollingContext shouldBe ""

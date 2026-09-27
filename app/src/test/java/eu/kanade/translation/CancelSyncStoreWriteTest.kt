@@ -4,16 +4,16 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.scheduling.PreparedPage
-import eu.kanade.translation.scheduling.SinglePageOutcome
-import eu.kanade.translation.scheduling.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStoreResolver
-import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
@@ -55,15 +55,7 @@ class CancelSyncStoreWriteTest {
                 stageListener: TranslationStageListener?,
                 origin: PageWriteOrigin,
             ): SinglePageOutcome = SinglePageOutcome.Completed
-            override suspend fun translateSinglePageFromStream(
-                manga: Manga,
-                chapter: Chapter,
-                source: HttpSource,
-                pageKey: String,
-                streamFn: () -> InputStream,
-                force: Boolean,
-                stageListener: TranslationStageListener?,
-            ) {}
+
             override suspend fun prepareSinglePage(
                 manga: Manga,
                 chapter: Chapter,

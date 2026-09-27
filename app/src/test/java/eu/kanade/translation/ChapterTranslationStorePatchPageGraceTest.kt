@@ -1,20 +1,20 @@
 package eu.kanade.translation
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.ArtifactSeed
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.loadArtifact
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.artifact.ArtifactSeed
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.loadArtifact
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.storage.ChapterTranslationStore
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -38,8 +38,8 @@ import org.junit.jupiter.api.Test
  * `patchPage`'s dependency clause ("candidate dependency fingerprint changed")
  * even though no real candidate ever moved — while the guarded-writer chain
  * (`pageWriteRejection`) and `persistArtifactMutationLocked` both waive the
- * check when `candidate == null`. A retried page, never corruption — but a
- * known false-reject under the  stamp traffic, so it aligns in Phase 3.
+ * check when `candidate == null`. A retried page must not be rejected solely
+ * because of unrelated stamp traffic when no candidate exists.
  *
  * The grace is fail-direction-preserving: the generation, pageVersion,
  * artifact-pageVersion, candidate-generation, block-fingerprint, and

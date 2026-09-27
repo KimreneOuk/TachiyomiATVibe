@@ -43,14 +43,14 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.model.TranslationSettingsSummary
-import eu.kanade.translation.model.TranslationUiProjection
-import eu.kanade.translation.model.snapshotTranslationSummary
-import eu.kanade.translation.orchestration.TranslationManager
+import eu.kanade.translation.presentation.TranslationSettingsSummary
+import eu.kanade.translation.presentation.TranslationUiProjection
+import eu.kanade.translation.presentation.snapshotTranslationSummary
+import eu.kanade.translation.workflow.ChapterQueuePreflight
+import eu.kanade.translation.workflow.TranslationManager
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
@@ -1801,7 +1801,7 @@ class MangaScreenModel(
         data class TranslationProgress(val chapterId: Long) : Dialog
         data class ChapterReset(
             val item: ChapterList.Item,
-            val preflight: eu.kanade.translation.orchestration.ChapterResetPreflight,
+            val preflight: eu.kanade.translation.persistence.chapter.ChapterResetPreflight,
         ) : Dialog
         data class ConfirmTranslation(
             val item: ChapterList.Item,
@@ -1817,7 +1817,7 @@ class MangaScreenModel(
         // copy and for cancelRunningChapterForReplace.
         data class RunningTranslationConflict(
             val item: ChapterList.Item,
-            val conflict: eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict,
+            val conflict: ChapterQueuePreflight.RunningConflict,
         ) : Dialog
 
         // A probed "downloaded"

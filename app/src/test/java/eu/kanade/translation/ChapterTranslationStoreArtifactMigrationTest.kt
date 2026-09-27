@@ -1,23 +1,23 @@
 package eu.kanade.translation
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.artifact.ChapterArtifactLayout
-import eu.kanade.translation.artifact.ChapterArtifactManifest
-import eu.kanade.translation.artifact.CleanedImageProbe
-import eu.kanade.translation.artifact.CommittedBundleMetadata
-import eu.kanade.translation.artifact.DisplayBaseKind
-import eu.kanade.translation.artifact.DisplayBaseReference
-import eu.kanade.translation.artifact.PageArtifactRecord
-import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.CleanedImageProbe
+import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
+import eu.kanade.translation.persistence.artifact.DisplayBaseKind
+import eu.kanade.translation.persistence.artifact.DisplayBaseReference
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.ProbedImage
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -55,7 +55,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
 
     @AfterEach
     fun restoreProductionProbe() {
-        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
+        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
     }
 
     /** Complete PNG fixture; the production path never validates fabricated text/header-only bytes. */
@@ -202,7 +202,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
                     committed = CommittedBundleMetadata(
                         generationId = "legacy-page.jpg",
                         displayBase = DisplayBaseReference(kind = DisplayBaseKind.ORIGINAL_SOURCE),
-                        origin = eu.kanade.translation.artifact.ArtifactOrigin.LEGACY,
+                        origin = eu.kanade.translation.persistence.artifact.ArtifactOrigin.LEGACY,
                         provisional = true,
                         pageSnapshotFileName = snapshotFile,
                     ),

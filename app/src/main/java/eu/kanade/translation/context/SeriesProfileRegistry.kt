@@ -1,20 +1,16 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.RunConfigSnapshot
-import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.FactProvenance
+import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Milestone M5 (S6 / P8): Series-scoped profile carry-over registry.
- *
- * Caches the most recently frozen [ChapterTranslationProfile] by series/manga key.
- * Subsequent chapters in the same series can adopt the carried-over profile under
- * strict drift-gating rules (language pair compatibility, provider family, and 8k
- * token bounds), skipping the expensive analysis phase (ANALYSIS_PLAN -> ANALYSIS_CHUNKS -> PROFILE_RECONCILE)
- * to achieve massive speedup on LAN and local model pipelines.
+ * Carries the most recently frozen [ChapterTranslationProfile] across chapters
+ * in one series. A later chapter may reuse it only when its language pair,
+ * provider family, and token budget remain compatible.
  */
 object SeriesProfileRegistry {
 

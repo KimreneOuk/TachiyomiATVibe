@@ -1,27 +1,27 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.artifact.AnalysisChunkResult
-import eu.kanade.translation.artifact.AnalyzerProvenance
-import eu.kanade.translation.artifact.ChapterArtifactEngine
-import eu.kanade.translation.artifact.ChapterRunRecord
-import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.ChapterTranslationProfile
-import eu.kanade.translation.artifact.EvidenceStrength
-import eu.kanade.translation.artifact.FactConflictState
-import eu.kanade.translation.artifact.FactProvenance
-import eu.kanade.translation.artifact.FactScope
-import eu.kanade.translation.artifact.FactType
-import eu.kanade.translation.artifact.ProfileFact
-import eu.kanade.translation.artifact.ProfilePointer
-import eu.kanade.translation.artifact.RunConfigSnapshot
-import eu.kanade.translation.artifact.SidecarRead
-import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.context.SeriesProfileRegistry
-import eu.kanade.translation.storage.ChapterTranslationStore
-import eu.kanade.translation.translator.ProviderFailure
-import eu.kanade.translation.translator.analysis.GlossaryEntryKind
-import eu.kanade.translation.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.engines.translator.analysis.GlossaryEntryKind
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesisOutcome
+import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
+import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
+import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.EvidenceStrength
+import eu.kanade.translation.persistence.artifact.FactConflictState
+import eu.kanade.translation.persistence.artifact.FactProvenance
+import eu.kanade.translation.persistence.artifact.FactScope
+import eu.kanade.translation.persistence.artifact.FactType
+import eu.kanade.translation.persistence.artifact.ProfileFact
+import eu.kanade.translation.persistence.artifact.ProfilePointer
+import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.artifact.SidecarRead
+import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -184,12 +184,9 @@ internal class ProfileReconciler(
             ),
         )
 
-        // Director decision (summary-glossary redesign): the profile's
-        // content is ONE small identity sheet synthesized from the durable
-        // chunk summaries — characters and places only, capped hard, because
-        // anything beyond identity anchors is noise for the translation
-        // envelopes. The deterministic cross-chunk reconcile of structured
-        // extraction records is retired with the strict response contract.
+        // Build a bounded identity profile from durable chunk summaries.
+        // Characters and places provide useful envelope context; broader
+        // material is dropped before it can expand translation prompts.
         val synthesis = when (val source = synthesizeProfileContent(chunks)) {
             is ProfileContentSource.Content -> source
             is ProfileContentSource.Pause -> {
@@ -307,10 +304,8 @@ internal class ProfileReconciler(
                     "TachiyomiAT t924 profile frozen version=$nextVersion " +
                         "synthesized=${synthesis.summarizedChunks} entries=${synthesis.entities.size + synthesis.terms.size}"
                 }
-                // Stage-6 slice A: PROFILE_FROZEN no longer terminates the
-                // run — the coordinator CONTINUES into ENVELOPE_PLAN
-                // and TRANSLATE. The terminal stays PAUSED (native /
-                // render are Stage 7; NEVER COMPLETE in this slice).
+                // Continue to envelope planning and translation. Finalize
+                // owns native/render completion and the terminal COMPLETE state.
                 return runEnvelopePlanAndTranslate(
                     artifact = artifact,
                     runId = runId,

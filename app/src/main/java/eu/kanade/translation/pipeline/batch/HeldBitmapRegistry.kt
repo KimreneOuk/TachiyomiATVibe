@@ -6,10 +6,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  Phase 20.1: bounded in-memory cleaned-bitmap registry moved verbatim
- * from `TranslationPipeline.translateBatch` ( phase 20).
- *
- * Held-cleaned-bitmap registry: render reuses the in-memory bitmap instead of
+ * Holds cleaned bitmaps so render can reuse them instead of
  * reloading from disk. Bounded by BOTH a byte ceiling and a count cap; a page
  * exceeding either spills (its .cleaned.jpg is already durable, so the bitmap
  * recycles immediately and render reloads it).

@@ -1,12 +1,13 @@
 package eu.kanade.translation.pipeline.batch
-
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.storage.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -21,7 +22,7 @@ import tachiyomi.domain.translation.TranslationPreferences
 import java.io.InputStream
 
 /**
- *  slice 3 (contract item 2): every exceptional exit of the batch pipeline
+ * Every exceptional exit of the batch pipeline
  * terminates the tracker with a typed terminal snapshot — no live nonterminal
  * `0/0` tracker may survive. The zero-page failure stays DISTINCT (empty work
  * set + aborted reason), never a generic failure or a numeric 0/0.

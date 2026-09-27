@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test
 /**
  * JVM tests for the trace engine: clock clamping, coroutine identity
  * propagation, overlap math, repeated-stage accumulation, and idempotent
- * terminals (plan §6.2, amendments §10.2, §10.6).
+ * terminals.
  */
 class TranslationTraceTest {
 

@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test
  *     second call; the interrupted page gets exactly one retry), and no page
  *     is re-decoded.
  *
- * Choreography determinism (harness note §2): page 1's paid call parks at
+ * Choreography determinism: page 1's paid call parks at
  * PROVIDER_START AFTER it started (the counter increments before the park), so
  * the cancellation cuts REAL paid work with page 1's native invocation already
  * exited (a native invocation parked on a signal only a later stage can fire
@@ -38,10 +38,9 @@ import org.junit.jupiter.api.Test
  * suspension point. No sleeps, no polling — barrier gates and bounded
  * state.first{} awaits only.
  *
- *  zero-legacy: the fixture moved to the durable ARTIFACTS-authority
- * store, so run 1's work products (OCR checkpoints + committed translation
- * work products) are genuinely durable sidecars and the former re-seed
- * deviation is DELETED — the restart consults the real artifacts. The lane is
+ * The fixture uses the durable ARTIFACTS-authority store, so run 1's work
+ * products (OCR checkpoints and committed translation results) are durable
+ * sidecars and restart consults the real artifacts. The lane is
  * translation-terminal without an in-pass render, so the terminal render
  * expectations became translation-terminal ones. The cancellation itself, the
  * terminal snapshot, the queue settlement, and the restart's work routing are
@@ -58,10 +57,8 @@ class CancelledBatchRestartReuseTest {
         // cleanedImagesOnDisk models the DURABLE cleaned images run 1 persisted
         // (document IO is a sanctioned fake seam): the resume gate's
         // physical-presence check consults it ( precedent).
-        //  zero-legacy: the batch requires artifact authority — the
-        // durable ARTIFACTS-authority store is also what makes run 1's work
-        // products (OCR checkpoints + candidate work products) genuinely
-        // resumable, so the legacy re-seed deviation is gone.
+        // Artifact authority preserves run 1's OCR and translation products
+        // for restart reuse.
         val harness = TranslationCoexistenceHarness.create(
             listOf("p0", "p1"),
             storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0", "p1")),
@@ -148,7 +145,7 @@ class CancelledBatchRestartReuseTest {
             withClue("the restart must complete the chapter") {
                 restart.translation.status shouldBe Translation.State.TRANSLATED
                 reconciliation.nonDurableFailure shouldBe false
-                //  zero-legacy  + 2026-09-16 E-fix +  track I
+                //    + 2026-09-16 E-fix +  track I
                 // round 3: the lane commits translations with NO in-pass
                 // render WORK. Both pages still end render-terminal:
                 // p0's inpaint ran in run 1 with its translation already
