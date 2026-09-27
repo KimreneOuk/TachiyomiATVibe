@@ -6,7 +6,6 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.OcrCheckpointMode
-import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -43,7 +42,6 @@ internal class PreflightWorkerContext(
         String,
         Map<String, Int>,
         String?,
-        ProfilePointer?,
     ) -> ChapterRunRecord,
     val admissionSourceSha: (String) -> String?,
     val orientationOf: (ChapterTranslationStore.PageSnapshot) -> String?,
@@ -108,7 +106,6 @@ internal class PreflightWorker(
         sourceDigest: String,
         counters: Map<String, Int>,
         ocrCorpusFingerprint: String? = null,
-        profilePointer: ProfilePointer? = null,
     ): ChapterRunRecord = context.record(
         runId,
         state,
@@ -116,7 +113,6 @@ internal class PreflightWorker(
         sourceDigest,
         counters,
         ocrCorpusFingerprint,
-        profilePointer,
     )
 
     private suspend fun resumeFinalizeOrComplete(

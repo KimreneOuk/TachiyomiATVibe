@@ -411,7 +411,6 @@ class ProfileEnvelopeDispatchTest {
                 pageKeys = listOf("p2"),
                 targetLang = "en",
                 sourceLang = "ja",
-                requestedOutputTokens = TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS,
                 profile = TranslationContextChunkPlanner.Profile.DEFAULT,
                 laneCapability = LaneCapability.PROFILE_BATCH,
             ),

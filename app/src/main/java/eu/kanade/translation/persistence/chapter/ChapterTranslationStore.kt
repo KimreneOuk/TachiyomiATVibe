@@ -1630,14 +1630,11 @@ class ChapterTranslationStore(
     }
 
     /**
-     * Provenance preconditions are active only when
-     * the patch carries at least one of the new nullable provenance fields;
+     * The envelope-plan precondition is active only when the patch carries its
+     * nullable plan fingerprint;
      * a fully-null patch returns `null` before touching the manifest, so
      * every legacy caller keeps byte-identical merge behavior.
      *
-     *  - `profileContentFingerprint` must equal the manifest's currently
-     *    frozen `profile` pointer content fingerprint  — a
-     *    commit built from a superseded/absent frozen profile is rejected.
      *  - `envelopePlanFingerprint` must equal the manifest's current
      *    `envelopePlan` pointer content fingerprint  — a commit
      *    built from a superseded plan is rejected.
@@ -1645,17 +1642,8 @@ class ChapterTranslationStore(
      * A rejected patch never mutates page state or advances a frontier.
      */
     private fun translationProvenanceRejection(patch: TranslationStagePatch): String? {
-        if (patch.profileContentFingerprint == null && patch.envelopePlanFingerprint == null) {
-            return null
-        }
+        if (patch.envelopePlanFingerprint == null) return null
         val manifest = artifactManifest
-        patch.profileContentFingerprint?.let { expected ->
-            val frozen = manifest?.profile?.contentFingerprint
-            if (frozen != expected) {
-                return "translation provenance rejected: frozen profile changed " +
-                    "(expected=$expected current=${frozen ?: "<absent>"})"
-            }
-        }
         patch.envelopePlanFingerprint?.let { expected ->
             val plan = manifest?.envelopePlan?.contentFingerprint
             if (plan != expected) {
@@ -2985,15 +2973,6 @@ class ChapterTranslationStore(
     suspend fun foldPageContribution(pageKey: String, pairs: List<Pair<String, String>>) {
         glossaryStore.foldPageContribution(pageKey, pairs)
     }
-
-    /**
-     * TachiyomiAT   live glossary version for the reuse gate and
-     * provenance stamps; `null` = gate off (legacy authority / no glossary
-     * ever published). Delegates to [ChapterGlossaryStore]; a pure in-memory
-     * read, safe under the store mutex (the batch provenance stamp consumes it
-     * inside the guarded patch lambda).
-     */
-    internal fun currentGlossaryVersion(): Int? = glossaryStore.currentGlossaryVersion()
 
     fun readReusableProfile(): ChapterTranslationProfile? {
         val artifact = artifactEngine ?: return null

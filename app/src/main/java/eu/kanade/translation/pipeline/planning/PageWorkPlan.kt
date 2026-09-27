@@ -60,12 +60,6 @@ enum class StageReasonCode {
     PARTIAL_ARTIFACT,
     TEXTLESS,
     NO_ERASE_REGIONS,
-
-    /**
-     * TachiyomiAT   the chapter glossary matured past the version
-     * recorded on the page's persisted translation, so its REUSE was
-     * downgraded to RUN for a one-time terminology repair.
-     */
 }
 
 data class StageWorkDecision(
@@ -102,13 +96,6 @@ data class BatchPlannerInput(
     val nowEpochMs: Long = System.currentTimeMillis(),
     /** Explicit user force-retry bypasses a retryable cooldown. */
     val forceRetry: Boolean = false,
-    /**
-     * The chapter's current glossary version
-     * (manifest pointer), or `null` when the gate is OFF — the standard
-     * engine lane, a legacy-authority manifest, or a chapter with no glossary
-     * ever published. Absence keeps REUSE unchanged, so
-     * glossary-less and standard-lane chapters stay cost-flat).
-     */
 )
 
 data class BatchPageWorkPlan(

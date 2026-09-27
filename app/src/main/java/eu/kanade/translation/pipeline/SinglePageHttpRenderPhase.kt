@@ -322,7 +322,6 @@ internal class SinglePageHttpRenderPhase(
                     pageKeys = listOf(pageKey),
                     targetLang = targetLang,
                     sourceLang = sourceLang,
-                    requestedOutputTokens = requestedOutputTokens,
                     profile = profile,
                     laneCapability = laneCap,
                 ),

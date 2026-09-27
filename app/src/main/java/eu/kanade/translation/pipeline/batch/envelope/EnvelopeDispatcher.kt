@@ -8,7 +8,6 @@ import eu.kanade.translation.engines.translator.contextual.TranslationContextChu
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
@@ -46,7 +45,6 @@ internal class EnvelopeDispatcherContext(
         String,
         Map<String, Int>,
         String?,
-        ProfilePointer?,
     ) -> ChapterRunRecord,
     val buildEnvelopeDispatchWork: suspend (
         ChapterArtifactEngine,
@@ -110,7 +108,6 @@ internal class EnvelopeDispatcher(
         sourceDigest: String,
         counters: Map<String, Int>,
         ocrCorpusFingerprint: String? = null,
-        profilePointer: ProfilePointer? = null,
     ): ChapterRunRecord = context.record(
         runId,
         state,
@@ -118,7 +115,6 @@ internal class EnvelopeDispatcher(
         sourceDigest,
         counters,
         ocrCorpusFingerprint,
-        profilePointer,
     )
 
     private suspend fun buildEnvelopeDispatchWork(

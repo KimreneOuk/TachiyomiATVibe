@@ -1026,7 +1026,6 @@ internal class BatchLaneWorkers(
                         pageKeys = listOf(pageKey),
                         targetLang = activeTranslator.toLang.code,
                         sourceLang = activeTranslator.fromLang.code,
-                        requestedOutputTokens = requestedOutputTokens,
                         profile = chunkProfile,
                         laneCapability = LaneCapability.STANDARD_BATCH,
                     ),

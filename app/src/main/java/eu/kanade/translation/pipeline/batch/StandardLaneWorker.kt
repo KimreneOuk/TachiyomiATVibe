@@ -4,7 +4,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
@@ -34,7 +33,6 @@ internal class StandardLaneWorkerContext(
         String,
         Map<String, Int>,
         String?,
-        ProfilePointer?,
     ) -> ChapterRunRecord,
     val runFinalizeAndComplete: suspend (
         ChapterArtifactEngine,
@@ -74,7 +72,6 @@ internal class StandardLaneWorker(
         sourceDigest: String,
         counters: Map<String, Int>,
         ocrCorpusFingerprint: String? = null,
-        profilePointer: ProfilePointer? = null,
     ): ChapterRunRecord = context.record(
         runId,
         state,
@@ -82,7 +79,6 @@ internal class StandardLaneWorker(
         sourceDigest,
         counters,
         ocrCorpusFingerprint,
-        profilePointer,
     )
 
     private suspend fun runFinalizeAndComplete(

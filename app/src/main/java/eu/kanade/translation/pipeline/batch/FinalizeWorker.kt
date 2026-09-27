@@ -4,7 +4,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
@@ -31,7 +30,6 @@ internal class FinalizeWorkerContext(
         String,
         Map<String, Int>,
         String?,
-        ProfilePointer?,
     ) -> ChapterRunRecord,
     val drainDisplayTailBeforeComplete: suspend (
         List<String>,
@@ -68,7 +66,6 @@ internal class FinalizeWorker(
         sourceDigest: String,
         counters: Map<String, Int>,
         ocrCorpusFingerprint: String? = null,
-        profilePointer: ProfilePointer? = null,
     ): ChapterRunRecord = context.record(
         runId,
         state,
@@ -76,7 +73,6 @@ internal class FinalizeWorker(
         sourceDigest,
         counters,
         ocrCorpusFingerprint,
-        profilePointer,
     )
 
     private suspend fun drainDisplayTailBeforeComplete(

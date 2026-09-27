@@ -386,7 +386,6 @@ class RollingHistoryContextContractTest {
                     pageKeys = listOf(pageKey),
                     targetLang = "en",
                     sourceLang = "ja",
-                    requestedOutputTokens = 2048,
                     profile = TranslationContextChunkPlanner.Profile.DEFAULT,
                     laneCapability = lane,
                 ),

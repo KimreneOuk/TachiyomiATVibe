@@ -549,7 +549,6 @@ internal class ProfileEnvelopeExecutor(
             pageKeys = held.map { it.pageKey },
             targetLang = textTranslator.toLang.code,
             sourceLang = textTranslator.fromLang.code,
-            requestedOutputTokens = TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS,
             profile = providerProfile,
             laneCapability = LaneCapability.PROFILE_BATCH,
         ),

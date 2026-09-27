@@ -457,7 +457,7 @@ class RollingAutoCoordinator(
             logcat(LogPriority.WARN) {
                 // Page keys may contain source identifiers; log only the
                 // correlated page index.
-                "TachiyomiAT D9: auto attempt-ledger record failed (fail-open): " +
+                "TachiyomiAT D9: auto attempt-cap check failed (fail-open): " +
                     "pageIndex=${work.pageIndex}"
             }
         }.getOrDefault(true)

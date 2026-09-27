@@ -32,7 +32,6 @@ import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FailureCategory
-import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -282,8 +281,8 @@ internal class ChapterProfileBatchCoordinator(
             publishRecord = { recordArtifact, runRecord ->
                 publishRecord(recordArtifact, runRecord)
             },
-            record = { id, state, fingerprint, digest, counters, ocrFingerprint, profile ->
-                record(id, state, fingerprint, digest, counters, ocrFingerprint, profile)
+            record = { id, state, fingerprint, digest, counters, ocrFingerprint ->
+                record(id, state, fingerprint, digest, counters, ocrFingerprint)
             },
             admissionSourceSha = { pageKey -> admissionSourceSha(pageKey) },
             orientationOf = { snapshot -> orientationOf(snapshot) },
@@ -339,8 +338,8 @@ internal class ChapterProfileBatchCoordinator(
             publishRecord = { recordArtifact, runRecord ->
                 publishRecord(recordArtifact, runRecord)
             },
-            record = { id, state, fingerprint, digest, counters, ocrFingerprint, profile ->
-                record(id, state, fingerprint, digest, counters, ocrFingerprint, profile)
+            record = { id, state, fingerprint, digest, counters, ocrFingerprint ->
+                record(id, state, fingerprint, digest, counters, ocrFingerprint)
             },
             buildEnvelopeDispatchWork = { recordArtifact, pages, fingerprint ->
                 buildEnvelopeDispatchWork(recordArtifact, pages, fingerprint)
@@ -394,8 +393,8 @@ internal class ChapterProfileBatchCoordinator(
             publishRecord = { recordArtifact, runRecord ->
                 publishRecord(recordArtifact, runRecord)
             },
-            record = { id, state, fingerprint, digest, counters, ocrFingerprint, profile ->
-                record(id, state, fingerprint, digest, counters, ocrFingerprint, profile)
+            record = { id, state, fingerprint, digest, counters, ocrFingerprint ->
+                record(id, state, fingerprint, digest, counters, ocrFingerprint)
             },
             drainDisplayTailBeforeComplete = { pageKeys ->
                 drainDisplayTailBeforeComplete(pageKeys)
@@ -456,8 +455,8 @@ internal class ChapterProfileBatchCoordinator(
             publishRecord = { recordArtifact, runRecord ->
                 publishRecord(recordArtifact, runRecord)
             },
-            record = { id, state, fingerprint, digest, counters, ocrFingerprint, profile ->
-                record(id, state, fingerprint, digest, counters, ocrFingerprint, profile)
+            record = { id, state, fingerprint, digest, counters, ocrFingerprint ->
+                record(id, state, fingerprint, digest, counters, ocrFingerprint)
             },
             runFinalizeAndComplete = { recordArtifact, id, pages, fingerprint, counters ->
                 runFinalizeAndComplete(recordArtifact, id, pages, fingerprint, counters)
@@ -1158,7 +1157,6 @@ internal class ChapterProfileBatchCoordinator(
         sourceDigest: String,
         counters: Map<String, Int>,
         ocrCorpusFingerprint: String? = null,
-        profilePointer: ProfilePointer? = null,
     ): ChapterRunRecord {
         val now = nowEpochMs()
         return ChapterRunRecord(
@@ -1177,7 +1175,6 @@ internal class ChapterProfileBatchCoordinator(
                 frozenConfig.envelopePolicy.maxBlocks,
                 frozenConfig.envelopePolicy.maxPages,
             ),
-            profilePointer = profilePointer,
             phaseCounters = counters,
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
@@ -1244,14 +1241,6 @@ internal class ChapterProfileBatchCoordinator(
         const val STOP_REASON =
             "T924 OCR preflight complete; envelope planning/translation arrive in later stages"
 
-        /** Outcomes retained while analysis or glossary synthesis is unavailable. */
-        const val ANALYSIS_NO_WORK_REASON =
-            "T924 analysis skipped: no chunkable OCR work in this chapter"
-        const val ANALYSIS_NO_TRANSPORT_REASON =
-            "T924 analysis paused: no typed analysis transport wired (CONFIGURATION gate)"
-        const val GLOSSARY_SYNTHESIS_NO_TRANSPORT_REASON =
-            "T924 glossary synthesis paused: no synthesis transport wired (CONFIGURATION gate)"
-
         /** Current preflight and translation outcomes written to batch history. */
         const val ENVELOPE_NO_WORK_REASON =
             "T924 envelope plan skipped: no translatable OCR work in this chapter"
@@ -1264,8 +1253,7 @@ internal class ChapterProfileBatchCoordinator(
          * The standard lane's typed CONFIGURATION pause —
          * the coordinator was constructed with [ChapterProfileBatchCoordinator.standardLane]
          * but no [ChapterProfileBatchCoordinator.standardTranslateOutcome]
-         * seam. Same discipline as [ANALYSIS_NO_TRANSPORT_REASON]: never run
-         * provider-bound work without a typed transport.
+         * seam. Never run provider-bound work without a typed transport.
          */
         const val STANDARD_NO_SEAM_REASON =
             "T924 standard translation paused: no typed standard translate seam wired (CONFIGURATION gate)"
@@ -1354,19 +1342,10 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_STOP = "preflightStop"
         const val COUNTER_GAPS = "preflightCheckpointGaps"
 
-        /**
-         * Typed checkpoint-adoption failures. The aggregate is
-         * emitted only when nonzero, alongside one bounded `ocrAdopt<Reason>`
-         * key per observed reason ([CheckpointAdoptionFailure.counterKey]) —
-         * appended AFTER the fixed keys so the publishRecord over-bound trim
-         * can never drop the phase-critical `ocrPages*` keys.
-         */
+        /** Typed checkpoint-adoption failures, emitted only when nonzero. */
         const val COUNTER_ADOPT_FAILED = "ocrPagesAdoptFailed"
-        const val COUNTER_ANALYSIS_PLAN = "analysisPlanPublished"
-        const val COUNTER_CHUNKS_TOTAL = "analysisChunksTotal"
-        const val COUNTER_CHUNKS_DONE = "analysisChunksDone"
-        const val COUNTER_CHUNKS_PENDING = "analysisChunksPending"
-        const val COUNTER_CHUNKS_FAILURES = "analysisChunkFailures"
+
+        // Retained labels are part of the persisted run-counter schema.
         const val COUNTER_SKIPPED_NO_WORK = "analysisSkippedNoWork"
         const val COUNTER_SKIPPED_NO_TRANSPORT = "analysisSkippedNoTransport"
 

@@ -446,9 +446,8 @@ class AiTranslationRetryControllerTest {
     )
 
     private fun AiChunkOutcome.Paused.rollingContextUnavailable() {
-        // A paused outcome intentionally has no rollingContextDelta. This
-        // assertion keeps the test explicit without adding a nullable field
-        // to the public result contract.
+        // A paused outcome carries no rolling-context state; each request
+        // rebuilds that section from durable committed predecessor pages.
         missingBlockIds.isNotEmpty() shouldBe true
     }
 }

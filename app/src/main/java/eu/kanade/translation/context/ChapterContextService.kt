@@ -25,7 +25,6 @@ data class ContextRequest(
     val pageKeys: List<String>,
     val targetLang: String,
     val sourceLang: String? = null,
-    val requestedOutputTokens: Int,
     val profile: TranslationContextChunkPlanner.Profile,
     val laneCapability: LaneCapability,
 )
@@ -41,8 +40,8 @@ data class PreparedContext(
      * profile/glossary compatibility inputs are deliberately absent.
      */
     fun computeRequestContextFingerprint(
-        targetLang: String = "",
-        sourceLang: String? = null,
+        targetLang: String,
+        sourceLang: String?,
         finalizedRollingContext: String = rollingContext,
     ): String {
         val payload = buildString {
@@ -88,9 +87,10 @@ class ChapterContextService(
             .mapNotNull { key -> manifest.pages[key]?.naturalPageIndex }
             .minOrNull()
             ?: return PreparedContext.EMPTY
+        val predecessorRecords = indexedRecords.filter { (index, _) -> index < currentIndex }
 
         val durablePages = linkedMapOf<String, PageTranslation>()
-        for ((_, record) in indexedRecords) {
+        for ((_, record) in predecessorRecords) {
             val committed = record.committed?.pageSnapshotFileName?.let(artifact::readPageSnapshot)
             val page = committed ?: PageTranslation(sourceFileName = record.pageKey)
             val failedTranslation = manifest.durableFailures.values.any { failure ->
@@ -107,9 +107,8 @@ class ChapterContextService(
 
         val orderedPairs = when (request.laneCapability) {
             LaneCapability.MANUAL, LaneCapability.AUTO ->
-                indexedRecords
+                predecessorRecords
                     .asSequence()
-                    .filter { (index, _) -> index < currentIndex }
                     .flatMap { (_, record) ->
                         durablePages[record.pageKey].orEmptyPairs().asSequence()
                     }

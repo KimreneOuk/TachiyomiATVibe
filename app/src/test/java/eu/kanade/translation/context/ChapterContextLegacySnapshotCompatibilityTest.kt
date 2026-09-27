@@ -100,7 +100,6 @@ class ChapterContextLegacySnapshotCompatibilityTest {
             ContextRequest(
                 pageKeys = listOf("0002.jpg"),
                 targetLang = "en",
-                requestedOutputTokens = 2048,
                 profile = TranslationContextChunkPlanner.Profile.DEFAULT,
                 laneCapability = LaneCapability.MANUAL,
             ),
