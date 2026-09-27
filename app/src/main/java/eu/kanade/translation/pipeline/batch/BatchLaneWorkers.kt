@@ -2,6 +2,9 @@ package eu.kanade.translation.pipeline.batch
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.context.ChapterContextService
+import eu.kanade.translation.context.ContextRequest
+import eu.kanade.translation.context.LaneCapability
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
@@ -13,8 +16,11 @@ import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.TranslationBlockValidation
+import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
+import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.engines.translator.contextual.StableBlockIds
 import eu.kanade.translation.engines.translator.contextual.StreamingChunkPlanner
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
@@ -1014,15 +1020,45 @@ internal class BatchLaneWorkers(
                 // Standard (per-page) path: translate, validate, persist, render.
                 var succeeded = false
                 var failedOutcome: TranslationCompletionOutcome? = null
+                val activeTranslator = textTranslator
+                val preparedContext = ChapterContextService(store).prepare(
+                    ContextRequest(
+                        pageKeys = listOf(pageKey),
+                        targetLang = activeTranslator.toLang.code,
+                        sourceLang = activeTranslator.fromLang.code,
+                        profile = chunkProfile,
+                        laneCapability = LaneCapability.STANDARD_BATCH,
+                    ),
+                )
+                val contextChunk = TranslationContextChunkPlanner.withRollingContext(
+                    chunk = TranslationContextChunk(
+                        pages = linkedMapOf(pageKey to p),
+                        blockCount = p.blocks.count { it.text.isNotBlank() },
+                        rollingContext = "",
+                        estimatedPromptTokens = TranslationContextChunkPlanner.PROMPT_OVERHEAD_TOKENS +
+                            p.blocks.sumOf { TranslationContextChunkPlanner.estimateTokens(it.text) },
+                        maxOutputTokens = requestedOutputTokens,
+                        protocol = ContextualRequestProtocol.LEGACY,
+                    ),
+                    rollingContext = preparedContext.rollingContext,
+                    requestedOutputTokens = requestedOutputTokens,
+                    profile = chunkProfile,
+                )
+                val requestContextFingerprint = preparedContext.computeRequestContextFingerprint(
+                    targetLang = activeTranslator.toLang.code,
+                    sourceLang = activeTranslator.fromLang.code,
+                    finalizedRollingContext = contextChunk.rollingContext,
+                )
                 // Persist the durable attempt entry before
                 // the paid call; resolved on any completed call (success or
                 // typed provider failure). Write failure is fail-open.
                 runCatching {
                     store.recordAttemptStart(
                         pageKey = pageKey,
-                        providerKeyHash = ShortHash.hash(textTranslator.javaClass.name),
+                        providerKeyHash = ShortHash.hash(activeTranslator.javaClass.name),
                         origin = AttemptOrigin.BATCH,
                         generation = store.currentGeneration,
+                        requestContextFingerprint = requestContextFingerprint,
                     )
                 }.onFailure {
                     logcat(LogPriority.WARN) {
@@ -1033,7 +1069,11 @@ internal class BatchLaneWorkers(
                     tracker?.markAiRunning(pageKey)
                     tracker?.markTranslateRunning(pageKey)
                     try {
-                        textTranslator.translatePage(pageKey, p)
+                        if (activeTranslator is ContextualTextTranslator) {
+                            activeTranslator.translateContextual(contextChunk)
+                        } else {
+                            activeTranslator.translatePage(pageKey, p)
+                        }
                     } catch (e: CancellationException) {
                         // Process death / scope kill: the entry stays unresolved
                         // for startup reconciliation.
@@ -1155,16 +1195,6 @@ internal class BatchLaneWorkers(
                             reason = "Batch persistence publication rejected",
                         )
                     } else {
-                        if (!isAi) {
-                            val pairs = p.blocks.mapNotNull { block ->
-                                val s = block.text.trim()
-                                val t = block.translation?.trim().orEmpty()
-                                if (s.isBlank() || t.isBlank() || t == s) null else s to t
-                            }
-                            if (pairs.isNotEmpty()) {
-                                store.foldPageContribution(pageKey, pairs)
-                            }
-                        }
                         standardOutcome = TranslationCompletionOutcome.Completed(setOf(pageKey))
                     }
                 }

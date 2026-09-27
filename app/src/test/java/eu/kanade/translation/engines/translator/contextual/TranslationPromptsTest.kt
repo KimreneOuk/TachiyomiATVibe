@@ -83,20 +83,18 @@ class TranslationPromptsTest {
 
     @Test
     fun `contextPrefix is empty when both inputs are blank`() {
-        TranslationPrompts.contextPrefix(rollingContext = "   ", glossary = "") shouldBe ""
-        TranslationPrompts.contextPrefix(rollingContext = "", glossary = "   ") shouldBe ""
+        TranslationPrompts.contextPrefix(rollingContext = "   ") shouldBe ""
     }
 
     @Test
-    fun `contextPrefix emits a glossary section and a pairs section`() {
+    fun `contextPrefix emits only rolling history`() {
         val out = TranslationPrompts.contextPrefix(
             rollingContext = "源 => source",
-            glossary = "太郎 => Taro",
         )
-        out shouldContain "Established terms"
-        out shouldContain "太郎 => Taro"
         out shouldContain "Previous context"
         out shouldContain "源 => source"
+        out.contains("Established terms") shouldBe false
+        out.contains("太郎 => Taro") shouldBe false
     }
 
     @Test
@@ -133,14 +131,5 @@ class TranslationPromptsTest {
             parseLine("b3 | He said he wouldn't come.") shouldBe ParsedLine("b3", "He said he wouldn't come.")
             parseLine("invalid") shouldBe null
         }
-    }
-
-    @Test
-    fun `formatGlossary renders source-arrow-target lines`() {
-        val text = TranslationPrompts.formatGlossary(
-            linkedMapOf("太郎" to "Taro", "東京" to "Tokyo"),
-        )
-
-        text shouldBe "太郎 => Taro\n東京 => Tokyo"
     }
 }

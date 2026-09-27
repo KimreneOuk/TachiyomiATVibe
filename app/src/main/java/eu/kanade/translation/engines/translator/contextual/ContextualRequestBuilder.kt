@@ -119,9 +119,8 @@ object ContextualRequestBuilder {
     fun renderPrompt(
         request: Request,
         rollingContext: String,
-        extraGlossary: String = "",
     ): String {
-        val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, extraGlossary)
+        val contextPrefix = TranslationPrompts.contextPrefix(rollingContext)
         val requestBody = request.promptLines.joinToString("\n")
         return if (contextPrefix.isEmpty()) requestBody else contextPrefix + requestBody
     }

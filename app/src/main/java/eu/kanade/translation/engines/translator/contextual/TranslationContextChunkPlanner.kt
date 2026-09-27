@@ -32,9 +32,7 @@ object TranslationContextChunkPlanner {
     const val BATCH_RESPONSE_BLOCK_OVERHEAD_TOKENS = 8
     const val BATCH_RESPONSE_WHITESPACE_OVERHEAD_TOKENS = 2
 
-    // Token budget for the combined rolling-context + chapter glossary injected
-    // via TranslationPrompts.contextPrefix. Large enough for a small glossary
-    // (~400) plus ~32 recent pairs; drops cleanly when exceeded.
+    // Token budget for the rolling-history section.
     const val MAX_ROLLING_CONTEXT_TOKENS = 1_500
 
     // Pair-count cap on the rolling recent-pairs window.
@@ -80,41 +78,35 @@ object TranslationContextChunkPlanner {
         rollingContext: String,
         requestedOutputTokens: Int,
         profile: Profile = Profile.DEFAULT,
-        glossary: String = "",
     ): TranslationContextChunk {
         val constraints = constraintsFor(profile)
-        val trimmedRolling = rollingContext.trim()
-        val trimmedGlossary = glossary.trim()
-        if (trimmedRolling.isEmpty() && trimmedGlossary.isEmpty()) {
+        val historyLines = rollingContext.lineSequence().map(String::trim).filter(String::isNotEmpty).toMutableList()
+        if (historyLines.isEmpty()) {
             return chunk.withOutputCap(requestedOutputTokens, constraints)
         }
         val maxContextPrompt = maxPromptTokensFor(chunk, constraints)
-        val rollingTokens = estimateTokens(trimmedRolling)
-        val glossaryTokens = estimateTokens(trimmedGlossary)
-
-        fun overCap(roll: Int, glos: Int): Boolean {
-            val context = roll + glos
-            val candidate = chunk.estimatedPromptTokens + context
-            return context > constraints.maxRollingContextTokens || candidate > maxContextPrompt
+        fun currentRolling(): String = historyLines.joinToString("\n")
+        fun overCap(): Boolean {
+            val history = currentRolling()
+            val contextTokens = estimateTokens(history)
+            val candidate = chunk.estimatedPromptTokens + contextTokens
+            return contextTokens > constraints.maxRollingContextTokens || candidate > maxContextPrompt
         }
 
-        var useGlossary = trimmedGlossary
-        var useRolling = trimmedRolling
-        if (overCap(rollingTokens, glossaryTokens)) {
-            // Drop the glossary first (recent pairs carry more speaker/pronoun
-            // continuity); if the pairs alone still blow the cap, drop them too
-            // (the original drop-all behaviour, so a runaway context can't shrink
-            // the output cap toward the min floor).
-            useGlossary = ""
-            if (overCap(rollingTokens, 0)) {
-                return chunk.copy(rollingContext = "", glossary = "")
-                    .withOutputCap(requestedOutputTokens, constraints)
-            }
+        // History is a sequence of complete pairs. Evict the oldest complete
+        // lines until the section and current request fit; never trim source
+        // content or lower the output floor to preserve history.
+        while (historyLines.isNotEmpty() && overCap()) {
+            historyLines.removeAt(0)
         }
-        val contextTokens = estimateTokens(useRolling) + estimateTokens(useGlossary)
+        val useRolling = currentRolling()
+        if (useRolling.isEmpty()) {
+            return chunk.copy(rollingContext = "")
+                .withOutputCap(requestedOutputTokens, constraints)
+        }
+        val contextTokens = estimateTokens(useRolling)
         return chunk.copy(
             rollingContext = useRolling,
-            glossary = useGlossary,
             estimatedPromptTokens = chunk.estimatedPromptTokens + contextTokens,
         ).withOutputCap(requestedOutputTokens, constraints)
     }
@@ -227,7 +219,6 @@ data class TranslationContextChunk(
     val pages: LinkedHashMap<String, PageTranslation>,
     val blockCount: Int,
     val rollingContext: String,
-    val glossary: String = "",
     val estimatedPromptTokens: Int,
     val maxOutputTokens: Int,
     val protocol: ContextualRequestProtocol = ContextualRequestProtocol.LEGACY,

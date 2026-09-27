@@ -58,18 +58,9 @@ data class PageTranslation(
     var translationFingerprint: String? = null,
     var layoutFingerprint: String? = null,
     /**
-     * TachiyomiAT   the chapter glossary version ([eu.kanade.translation.persistence.artifact.GlossaryPointer])
-     * live in the store when this page's translation was durably committed
-     * (stamped at commit-provenance time). Comparable, NOT
-     * hashed into [translationFingerprint]: hash-embedding would blanket-stale
-     * every existing AI-lane page — including glossary-less chapters — for no
-     * repair benefit. The batch planner downgrades a
-     * translation-stage REUSE to RUN iff the chapter's current version is
-     * GREATER than this recorded value (`null` absence compares as 0), so a
-     * page translated before the glossary matured is repaired exactly once and
-     * the pass converges (re-folding identical pairs does not bump the
-     * version). Additive nullable default keeps pre- translation JSON
-     * compatible in both directions.
+     * Legacy glossary version stamp retained for compatibility with persisted
+     * page JSON. Current translation requests and resume planning do not read
+     * or write it; rolling context is derived from committed predecessor pages.
      */
     var translationGlossaryVersion: Int? = null,
     /** Reader-ad-hoc output is displayable but lacks full-chapter context. */

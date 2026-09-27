@@ -16,7 +16,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -45,16 +44,15 @@ class AiTranslationRetryControllerTest {
         // translation nor the stable ID assignment leaks into the live page.
         page.blocks.map { it.translation } shouldContainExactly listOf("", "")
         page.blocks.map { it.blockId } shouldContainExactly listOf(null, null)
-        complete.rollingContextDelta shouldNotBe ""
     }
 
     @Test
     fun `transient failure gets one whole envelope retry with stable identity`() = runTest {
         val requests = mutableListOf<List<String>>()
-        val contexts = mutableListOf<Pair<String, String>>()
+        val contexts = mutableListOf<String>()
         val translator = ScriptedTranslator { attempt, chunk ->
             requests += requestIds(chunk)
-            contexts += chunk.rollingContext to chunk.glossary
+            contexts += chunk.rollingContext
             if (attempt == 1) throw IOException("temporary network failure")
             response(chunk)
         }
@@ -63,7 +61,7 @@ class AiTranslationRetryControllerTest {
         outcome.shouldBeInstanceOf<AiChunkOutcome.Complete>()
         translator.calls shouldBe 2
         requests[0] shouldBe requests[1]
-        contexts shouldBe listOf("previous => context" to "term => glossary", "previous => context" to "term => glossary")
+        contexts shouldBe listOf("previous => context", "previous => context")
         outcome.envelopeId.isNotBlank() shouldBe true
         outcome.wholeEnvelopeRetries shouldBe 1
     }
@@ -382,7 +380,6 @@ class AiTranslationRetryControllerTest {
         pages = linkedMapOf("page.jpg" to page),
         blockCount = page.blocks.count { it.text.isNotBlank() },
         rollingContext = "previous => context",
-        glossary = "term => glossary",
         estimatedPromptTokens = 1_500,
         maxOutputTokens = 512,
         protocol = ContextualRequestProtocol.BATCH_V1,
@@ -449,9 +446,8 @@ class AiTranslationRetryControllerTest {
     )
 
     private fun AiChunkOutcome.Paused.rollingContextUnavailable() {
-        // A paused outcome intentionally has no rollingContextDelta. This
-        // assertion keeps the test explicit without adding a nullable field
-        // to the public result contract.
+        // A paused outcome carries no rolling-context state; each request
+        // rebuilds that section from durable committed predecessor pages.
         missingBlockIds.isNotEmpty() shouldBe true
     }
 }

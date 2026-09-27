@@ -93,6 +93,13 @@ internal class ChapterAttemptLedger(private val store: ChapterTranslationStore) 
         return persistLocked(next)
     }
 
+    /** Caller holds the store mutex. The actual request path records the attempt with its context fingerprint. */
+    fun autoAttemptAllowedLocked(pageKey: String): Boolean {
+        val current = documentLocked()
+        return (current.consecutiveUnresolved[pageKey] ?: 0) <
+            ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED
+    }
+
     /**
      * A completed call for [pageKey]: drop its entries and reset its
      * consecutive counter. A no-op when nothing is pending (the common path —

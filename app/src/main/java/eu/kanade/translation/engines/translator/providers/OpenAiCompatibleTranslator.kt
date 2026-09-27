@@ -343,7 +343,6 @@ abstract class OpenAiCompatibleTranslator(
         val finalPrompt = ContextualRequestBuilder.renderPrompt(
             request = request,
             rollingContext = chunk.rollingContext,
-            extraGlossary = chunk.glossary,
         )
         val payloadJson = buildPayload(systemPrompt, finalPrompt)
 

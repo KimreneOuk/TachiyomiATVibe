@@ -1,7 +1,6 @@
 package eu.kanade.translation.persistence.artifact
 
 import kotlinx.serialization.Serializable
-import java.security.MessageDigest
 
 /**
  *  Increment 2 (schemas contract): reference to a committed page's
@@ -16,9 +15,8 @@ data class PageContextReference(
 )
 
 /**
- *  Increment 2: Durable unified chapter context snapshot sidecar document.
- * Represents the immutable snapshot of context facts, character sheets,
- * and recent pairs used or committed for a chapter.
+ * Read-compatibility model for legacy chapter context sidecars. Translation
+ * requests now build history directly from committed page snapshots.
  */
 @Serializable
 data class ChapterContextSnapshot(
@@ -69,44 +67,8 @@ data class ChapterContextSnapshot(
 
     val isSemanticallyValid: Boolean get() = validationError() == null
 
-    /**
-     * Identity 2: canonical identity of the exact selected/truncated payload sent.
-     * Excludes publication timestamp, run ID, and chapterContextRevision.
-     */
-    fun computeRequestContextFingerprint(): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        val payload = buildString {
-            append("v:").append(serializationPolicyVersion).append('\n')
-            append("tLang:").append(targetLang).append('\n')
-            append("sLang:").append(sourceLang.orEmpty()).append('\n')
-            append("compat:").append(reuseCompatibility).append('\n')
-            append("glossaryFp:").append(glossaryFingerprint.orEmpty()).append('\n')
-            append("profileFp:").append(profileInputFingerprint.orEmpty()).append('\n')
-            append("sheet:").append(characterAndTermSheet).append('\n')
-            append("rolling:").append(rollingContext).append('\n')
-            selectedTerms.forEach { (s, t) -> append("term:").append(s).append('=').append(t).append('\n') }
-            selectedPairs.forEach { (s, t) -> append("pair:").append(s).append('=').append(t).append('\n') }
-        }
-        val bytes = md.digest(payload.toByteArray(Charsets.UTF_8))
-        return bytes.joinToString("") { "%02x".format(it) }
-    }
-
     companion object {
         const val SCHEMA_VERSION = 1
         const val KIND = "CHAPTER_CONTEXT_SNAPSHOT"
-
-        fun computeContentFingerprint(
-            chapterKey: String,
-            targetLang: String,
-            sourceLang: String?,
-            revision: Long,
-            sheet: String,
-            rolling: String,
-        ): String {
-            val md = MessageDigest.getInstance("SHA-256")
-            val payload = "ctx:$chapterKey:$targetLang:${sourceLang.orEmpty()}:$revision:$sheet:$rolling"
-            val bytes = md.digest(payload.toByteArray(Charsets.UTF_8))
-            return bytes.joinToString("") { "%02x".format(it) }
-        }
     }
 }

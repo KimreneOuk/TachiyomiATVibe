@@ -49,7 +49,7 @@ class ChunkTranslationPayloadTest {
     }
 
     @Test
-    fun `context prefix injects glossary and recent pairs before the source lines`() {
+    fun `context prefix carries rolling history before the source lines`() {
         val request = ContextualRequestBuilder.Request(
             idMap = mapOf("b0" to eu.kanade.translation.engines.translator.contextual.AnchoredTargetKey(0, 0)),
             orderedIds = listOf("b0"),
@@ -57,22 +57,20 @@ class ChunkTranslationPayloadTest {
             promptLines = listOf("b0|おはよう"),
         )
         val rolling = "おはよう => Good morning"
-        val glossary = "Jin-Woo: Shadow Monarch"
 
-        val prompt = ContextualRequestBuilder.renderPrompt(request, rolling, glossary)
+        val prompt = ContextualRequestBuilder.renderPrompt(request, rolling)
 
-        prompt shouldContain "Established terms (reuse these exact English renderings; keep names consistent):"
-        prompt shouldContain "Jin-Woo: Shadow Monarch"
         prompt shouldContain "Previous context / recent translated pairs (use for speaker, name & pronoun continuity):"
         prompt shouldContain "おはよう => Good morning"
         prompt shouldContain "b0|おはよう"
-        assertTrue(prompt.indexOf("Jin-Woo: Shadow Monarch") < prompt.indexOf("b0|おはよう"))
+        assertFalse(prompt.contains("Jin-Woo: Shadow Monarch"))
+        assertTrue(prompt.indexOf("おはよう => Good morning") < prompt.indexOf("b0|おはよう"))
     }
 
     @Test
     fun `context prefix is empty when glossary and pairs are blank`() {
-        TranslationPrompts.contextPrefix("   ", "  ") shouldBe ""
-        TranslationPrompts.contextPrefix("", "") shouldBe ""
+        TranslationPrompts.contextPrefix("   ") shouldBe ""
+        TranslationPrompts.contextPrefix("") shouldBe ""
     }
 
     @Test

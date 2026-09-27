@@ -266,9 +266,9 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         // (d) only p2 (rejected) and p3 (never reached) were re-OCR'd; p1 was
         // reused from its surviving checkpoint, never re-decoded.
         resumed.status shouldBe BatchPass1Status.PAUSED
-        // A complete corpus continues into analysis, which stops at the typed
-        // no-transport CONFIGURATION gate.
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_NO_TRANSPORT_REASON
+        // A complete corpus publishes its envelope plan, then stops at the
+        // typed translation no-transport CONFIGURATION gate.
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         resumedWorker.ocrPages shouldContainExactly listOf("p2", "p3")
         resumedStore.pageLeaseOwner("p1").shouldBeNull()
 

@@ -2,6 +2,9 @@ package eu.kanade.translation.pipeline.batch
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.context.ChapterContextService
+import eu.kanade.translation.context.ContextRequest
+import eu.kanade.translation.context.LaneCapability
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
@@ -25,6 +28,7 @@ import eu.kanade.translation.engines.translator.contextual.ContextualTranslation
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationResult
 import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.providers.AiTranslator
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageStage
@@ -59,6 +63,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Covers serial envelope dispatch, deterministic suffix replanning,
@@ -136,6 +141,7 @@ class ProfileEnvelopeDispatchTest {
         pages: List<PageKey>,
         runner: AnalysisChunkRunner,
         translator: FakeTranslator?,
+        glossarySynthesizer: GlossarySynthesizer = emptyGlossarySynthesizer,
         maxPagesPerEnvelope: Int = 8,
         gate: BatchRequestSublimitGate = BatchRequestSublimitGate(),
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
@@ -156,7 +162,7 @@ class ProfileEnvelopeDispatchTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
-        glossarySynthesizer = emptyGlossarySynthesizer,
+        glossarySynthesizer = glossarySynthesizer,
         textTranslator = translator,
         translationSublimitGate = gate,
     )
@@ -325,6 +331,92 @@ class ProfileEnvelopeDispatchTest {
     // ------------------------------------------------------------------
     // Tests.
     // ------------------------------------------------------------------
+
+    @Test
+    fun `N1 AI batch translates with no profile artifact and does not synthesize one`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
+
+        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), translator)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        translator.requests.size shouldBe 1
+        store.artifactEngine?.readManifest()?.profile shouldBe null
+        store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+    }
+
+    @Test
+    fun `N2 normal AI batch makes zero analysis and glossary synthesis transport calls`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val analysis = FakeAnalyzer()
+        val synthesisCalls = AtomicInteger()
+        val synthesizer = GlossarySynthesizer { _, _, _ ->
+            synthesisCalls.incrementAndGet()
+            GlossarySynthesisOutcome.Glossary(emptyList())
+        }
+        val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
+
+        val outcome = coordinator(
+            store,
+            FakePreflightOcrWorker(store),
+            pages,
+            analysis,
+            translator,
+            glossarySynthesizer = synthesizer,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        analysis.executedOrdinals shouldBe emptyList()
+        synthesisCalls.get() shouldBe 0
+    }
+
+    @Test
+    fun `production batch attempt ledger records finalized rolling context fingerprint`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val observedFingerprint = AtomicReference<String?>()
+        val translator = FakeTranslator { _, chunk ->
+            val currentPage = chunk.pages.keys.single()
+            if (currentPage == "p2") {
+                observedFingerprint.set(
+                    store.artifactEngine?.readAttemptLedger()?.entries
+                        ?.singleOrNull { it.pageKey == currentPage }
+                        ?.requestContextFingerprint,
+                )
+            }
+            responseFor(chunk)
+        }
+
+        val outcome = coordinator(
+            store,
+            FakePreflightOcrWorker(store),
+            pages,
+            FakeAnalyzer(),
+            translator,
+            maxPagesPerEnvelope = 1,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        val expected = ChapterContextService(store).prepare(
+            ContextRequest(
+                pageKeys = listOf("p2"),
+                targetLang = "en",
+                sourceLang = "ja",
+                profile = TranslationContextChunkPlanner.Profile.DEFAULT,
+                laneCapability = LaneCapability.PROFILE_BATCH,
+            ),
+        ).computeRequestContextFingerprint(targetLang = "en", sourceLang = "ja")
+        observedFingerprint.get().shouldNotBeNull() shouldBe expected
+    }
 
     @Test
     fun `full dispatch commits every page through tx20 and pauses with the translate stop reason`() = runTest {

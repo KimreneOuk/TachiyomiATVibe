@@ -76,7 +76,6 @@ open class GeminiTranslator(
                 pages = linkedPages,
                 blockCount = blockCount,
                 rollingContext = "",
-                glossary = "",
                 estimatedPromptTokens = 0,
                 maxOutputTokens = maxOutputToken,
                 protocol = ContextualRequestProtocol.LEGACY,
@@ -104,7 +103,6 @@ open class GeminiTranslator(
         val finalPrompt = ContextualRequestBuilder.renderPrompt(
             request = request,
             rollingContext = chunk.rollingContext,
-            extraGlossary = chunk.glossary,
         )
         val responseText = withTranslationRetry(
             logTag = "gemini",

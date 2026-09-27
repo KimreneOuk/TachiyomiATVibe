@@ -18,7 +18,8 @@ import tachiyomi.core.common.util.system.logcat
  * into the content-addressed `envelopes/` directory FIRST, then the manifest
  * `envelopePlan` pointer ([SidecarPointer]) moves in ONE
  * `publishSidecarPointers` transaction, following the same pattern as
- * [ProfileFreezePublication]. These guarantees hold by construction:
+ * the same sidecar-then-pointer pattern used by other durable artifacts. These
+ * guarantees hold by construction:
  *
  *  - the plan sidecar is content-addressed by `planFingerprint`; publishing
  *    identical bytes again uses the same name and is idempotent;
