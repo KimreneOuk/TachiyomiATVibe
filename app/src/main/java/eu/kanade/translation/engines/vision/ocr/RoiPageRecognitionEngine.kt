@@ -14,6 +14,7 @@ import eu.kanade.translation.engines.inpainting.PageInpaintingEngine
 import eu.kanade.translation.engines.inpainting.PageInpaintingPlanner
 import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
+import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTestConfiguration
@@ -39,7 +40,6 @@ import eu.kanade.translation.model.Detection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -382,7 +382,7 @@ class RoiPageRecognitionEngine(
             ?: throw IllegalStateException("ONNX OCR engine closed mid-analyze")
         var localPaddlePageCoordinator = paddlePageOcrCoordinator
         val startTime = System.nanoTime()
-        TranslationMemoryBudget.logSnapshot("analyze_start", bitmap.width, bitmap.height)
+        EngineMemoryBudget.logSnapshot("analyze_start", bitmap.width, bitmap.height)
         // hold nativeGuard across detect + the per-ROI OCR loop so
         // close() cannot free a native session out from under an in-flight
         // OrtSession.run(). Each native pass (detect + every recognize()) must

@@ -3,10 +3,7 @@ package eu.kanade.translation.pipeline.memory
 import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
-import android.os.Debug
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.translation.TranslationPreferences
+import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.math.max
@@ -21,17 +18,7 @@ object TranslationMemoryBudget {
         FLAGSHIP,
     }
 
-    // Keep one translation page well below the app heap cap. Android heap is much smaller than physical RAM.
-    private const val MAX_SINGLE_PAGE_BUDGET_BYTES = 384L * MIB
-    private const val MIN_SINGLE_PAGE_BUDGET_BYTES = 96L * MIB
     private const val MAX_FULL_RES_DECODE_PIXELS = 45_000_000L
-    private const val NEURAL_INPAINT_PEAK_MULTIPLIER = 10L
-
-    // ORT model weights and execution arenas live in native/system memory, not the
-    // managed heap. Keep these reserves separate from bitmap/tensor heap estimates.
-    // AOT currently keeps the fixed and dynamic graphs alive independently.
-    internal const val AOT_NATIVE_RESERVE_PER_SESSION_BYTES = 96L * MIB
-    internal const val AOT_INFERENCE_SYSTEM_RESERVE_BYTES = 64L * MIB
 
     fun deviceMemoryTier(): DeviceMemoryTier {
         val app = try {
@@ -221,75 +208,6 @@ object TranslationMemoryBudget {
         return sample
     }
 
-    data class NeuralInpaintDecision(
-        val canRun: Boolean,
-        val mode: String,
-        val sessionCount: Int,
-        val heapRequiredBytes: Long,
-        val heapAvailableBytes: Long,
-        val nativeSystemReserveBytes: Long,
-        val systemHeadroomBytes: Long?,
-        val reason: String?,
-    )
-
-    fun neuralInpaintDecision(
-        pageWidth: Int,
-        pageHeight: Int,
-        cropWidth: Int,
-        cropHeight: Int,
-        sessionCount: Int,
-        snapshot: Snapshot = snapshot(),
-        systemHeadroomBytes: Long? = systemHeadroomBytes(),
-    ): NeuralInpaintDecision {
-        val boundedSessionCount = sessionCount.coerceAtLeast(0)
-        val mode = when (boundedSessionCount) {
-            0 -> "push_pull"
-            1 -> "single_session"
-            else -> "dual_session"
-        }
-        val nativeReserve = neuralNativeSystemReserveBytes(boundedSessionCount)
-        if (pageWidth <= 0 || pageHeight <= 0 || cropWidth <= 0 || cropHeight <= 0 || boundedSessionCount == 0) {
-            return NeuralInpaintDecision(
-                canRun = false,
-                mode = mode,
-                sessionCount = boundedSessionCount,
-                heapRequiredBytes = 0L,
-                heapAvailableBytes = snapshot.availableHeapBytes,
-                nativeSystemReserveBytes = nativeReserve,
-                systemHeadroomBytes = systemHeadroomBytes,
-                reason = if (boundedSessionCount == 0) "no_neural_session" else "invalid_dimensions",
-            )
-        }
-
-        val pagePixels = pageWidth.toLong() * pageHeight.toLong()
-        val cropPixels = cropWidth.toLong() * cropHeight.toLong()
-        val estimatedHeapPeak = (pagePixels * 4L * 3L) +
-            (cropPixels * 4L * NEURAL_INPAINT_PEAK_MULTIPLIER)
-        val heapBudget = singlePageBudgetBytes(snapshot.availableHeapBytes)
-        val heapFits = estimatedHeapPeak <= heapBudget
-        val systemFits = systemHeadroomBytes == null || systemHeadroomBytes >= nativeReserve
-        val reason = when {
-            !heapFits -> "heap_budget"
-            !systemFits -> "native_system_reserve"
-            else -> null
-        }
-        return NeuralInpaintDecision(
-            canRun = reason == null,
-            mode = mode,
-            sessionCount = boundedSessionCount,
-            heapRequiredBytes = estimatedHeapPeak,
-            heapAvailableBytes = snapshot.availableHeapBytes,
-            nativeSystemReserveBytes = nativeReserve,
-            systemHeadroomBytes = systemHeadroomBytes,
-            reason = reason,
-        )
-    }
-
-    internal fun neuralNativeSystemReserveBytes(sessionCount: Int): Long {
-        return sessionCount.coerceAtLeast(0).toLong() * AOT_NATIVE_RESERVE_PER_SESSION_BYTES +
-            if (sessionCount > 0) AOT_INFERENCE_SYSTEM_RESERVE_BYTES else 0L
-    }
-
     fun canStartDecode(sourceBytesSize: Long, width: Int, height: Int): MemoryPreflightDecision {
         val snapshot = snapshot()
         val targetBitmapBytes = width.toLong() * height.toLong() * 4L
@@ -387,7 +305,7 @@ object TranslationMemoryBudget {
      */
     fun hasHeadroomForPrefetch(): Boolean {
         val snapshot = snapshot()
-        val sysHeadroom = systemHeadroomBytes()
+        val sysHeadroom = EngineMemoryBudget.systemHeadroomBytes()
         if (sysHeadroom != null && sysHeadroom < 100L * MIB) return false
         val minimum = if (sysHeadroom != null && sysHeadroom > 400L * MIB) {
             max(32L * MIB, snapshot.maxHeapBytes / 10L)
@@ -397,99 +315,5 @@ object TranslationMemoryBudget {
         return snapshot.availableHeapBytes >= minimum
     }
 
-    fun logSnapshot(tag: String, width: Int? = null, height: Int? = null, extra: String = "") {
-        if (!diagnosticsEnabled) return
-        val snapshot = snapshot()
-        val nativeHeap = Debug.getNativeHeapAllocatedSize()
-        val gcCount = try {
-            Debug.getRuntimeStat("art.gc.gc-count")
-        } catch (_: Throwable) {
-            null
-        }
-        val gcTime = try {
-            Debug.getRuntimeStat("art.gc.gc-time")
-        } catch (_: Throwable) {
-            null
-        }
-
-        val app = Injekt.get<Application>()
-        val activityManager = app.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        var lowMem = false
-        var sysAvail = 0L
-        if (activityManager != null) {
-            val memInfo = ActivityManager.MemoryInfo()
-            activityManager.getMemoryInfo(memInfo)
-            lowMem = memInfo.lowMemory
-            sysAvail = memInfo.availMem
-        }
-
-        val dims = if (width != null && height != null) " page=${width}x$height" else ""
-        logcat(LogPriority.INFO) {
-            "[translation_mem] $tag$dims " +
-                "heap=${snapshot.usedHeapBytes.toMiB()}MiB/${snapshot.maxHeapBytes.toMiB()}MiB " +
-                "avail=${snapshot.availableHeapBytes.toMiB()}MiB " +
-                "nativeAlloc=${nativeHeap.toMiB()}MiB " +
-                "sysAvail=${sysAvail.toMiB()}MiB (lowMemory=$lowMem) " +
-                "gcCount=$gcCount gcTime=${gcTime}ms " +
-                "budget=${singlePageBudgetBytes().toMiB()}MiB $extra"
-        }
-    }
-
-    /**
-     * cached value of the translation_diagnostics preference. Read
-     * lazily once and cached for the process lifetime; the pref rarely changes
-     * mid-session and re-reading SharedPreferences on every hot-path log call
-     * would defeat the purpose of gating. Falls back to false if Injekt isn't
-     * ready (e.g. during very early init), keeping logging off by default.
-     */
-    private val diagnosticsEnabled: Boolean by lazy {
-        try {
-            Injekt.get<TranslationPreferences>().translationDiagnostics().get()
-        } catch (e: Throwable) {
-            false
-        }
-    }
-
-    data class NnapiMemorySnapshot(
-        val availableHeapBytes: Long,
-        val systemHeadroomBytes: Long?,
-        val lowMemory: Boolean,
-    )
-
-    fun nnapiMemorySnapshot(): NnapiMemorySnapshot {
-        val heap = snapshot().availableHeapBytes
-        val app = try {
-            Injekt.get<Application>()
-        } catch (_: Throwable) {
-            return NnapiMemorySnapshot(heap, null, false)
-        }
-        val activityManager = app.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-            ?: return NnapiMemorySnapshot(heap, null, false)
-        val memInfo = ActivityManager.MemoryInfo()
-        activityManager.getMemoryInfo(memInfo)
-        return NnapiMemorySnapshot(
-            availableHeapBytes = heap,
-            systemHeadroomBytes = max(0L, memInfo.availMem - memInfo.threshold),
-            lowMemory = memInfo.lowMemory,
-        )
-    }
-
-    private fun systemHeadroomBytes(): Long? {
-        val app = try {
-            Injekt.get<Application>()
-        } catch (_: Throwable) {
-            return null
-        }
-        val activityManager = app.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return null
-        val memInfo = ActivityManager.MemoryInfo()
-        activityManager.getMemoryInfo(memInfo)
-        return if (memInfo.lowMemory) 0L else max(0L, memInfo.availMem - memInfo.threshold)
-    }
-
-    private fun singlePageBudgetBytes(availableHeapBytes: Long = snapshot().availableHeapBytes): Long {
-        return (availableHeapBytes * 5L / 10L)
-            .coerceAtLeast(MIN_SINGLE_PAGE_BUDGET_BYTES)
-            .coerceAtMost(MAX_SINGLE_PAGE_BUDGET_BYTES)
-    }
     private fun Long.toMiB(): Long = this / MIB
 }

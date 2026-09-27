@@ -3,6 +3,7 @@ package eu.kanade.translation.pipeline.memory
 import android.content.Context
 import android.graphics.Bitmap
 import coil3.imageLoader
+import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
@@ -31,7 +32,7 @@ internal object MemoryGovernance {
         if (recognitionEngine() !is RoiPageRecognitionEngine) return
         val decision = TranslationMemoryBudget.canStartAnalyze(bitmap.width, bitmap.height)
         if (decision is TranslationMemoryBudget.MemoryPreflightDecision.Defer) {
-            TranslationMemoryBudget.logSnapshot(
+            EngineMemoryBudget.logSnapshot(
                 tag = "onnx_analyze_preflight_defer",
                 width = bitmap.width,
                 height = bitmap.height,
@@ -49,7 +50,7 @@ internal object MemoryGovernance {
         if (recognitionEngine() !is RoiPageRecognitionEngine) return
         val decision = TranslationMemoryBudget.canStartInpaint(bitmap.width, bitmap.height)
         if (decision is TranslationMemoryBudget.MemoryPreflightDecision.Defer) {
-            TranslationMemoryBudget.logSnapshot(
+            EngineMemoryBudget.logSnapshot(
                 tag = "onnx_inpaint_preflight_defer",
                 width = bitmap.width,
                 height = bitmap.height,
@@ -119,6 +120,6 @@ internal object MemoryGovernance {
         BitmapPool.releaseAll()
         forceReleaseNativeBuffers()
         System.gc()
-        TranslationMemoryBudget.logSnapshot(tag = "oom_recovery", extra = "stage=$stage message=${oom.message}")
+        EngineMemoryBudget.logSnapshot(tag = "oom_recovery", extra = "stage=$stage message=${oom.message}")
     }
 }

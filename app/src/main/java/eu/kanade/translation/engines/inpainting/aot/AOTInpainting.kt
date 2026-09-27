@@ -12,12 +12,12 @@ import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
 import eu.kanade.translation.engines.inpainting.bubble.SmartBubbleTextCleaner
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
+import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.DeviceCapability
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.QnnContextCacheManager
-import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -219,7 +219,7 @@ class AOTInpainting(
     }
 
     private fun initializeStrictNnapiSession(modelFile: File?): OrtSession? {
-        val memory = TranslationMemoryBudget.nnapiMemorySnapshot()
+        val memory = EngineMemoryBudget.nnapiMemorySnapshot()
         val providers = try {
             OrtEnvironment.getAvailableProviders()
         } catch (error: Throwable) {
@@ -686,7 +686,7 @@ class AOTInpainting(
             ?: return image
         val side = crop[2] - crop[0]
         if (side <= 0 || crop[3] - crop[1] != side) return image
-        val memoryDecision = TranslationMemoryBudget.neuralInpaintDecision(
+        val memoryDecision = EngineMemoryBudget.neuralInpaintDecision(
             pageWidth = image.width,
             pageHeight = image.height,
             cropWidth = side,
@@ -694,7 +694,7 @@ class AOTInpainting(
             sessionCount = neuralSessionCount(),
         )
         if (!memoryDecision.canRun) {
-            TranslationMemoryBudget.logSnapshot(
+            EngineMemoryBudget.logSnapshot(
                 tag = "skip_report_aot",
                 width = image.width,
                 height = image.height,
@@ -706,7 +706,7 @@ class AOTInpainting(
             )
             return inpaintReportFreeTextFast(image, boxes)
         }
-        TranslationMemoryBudget.logSnapshot(
+        EngineMemoryBudget.logSnapshot(
             tag = "run_report_aot",
             width = image.width,
             height = image.height,
@@ -790,7 +790,7 @@ class AOTInpainting(
         side: Int,
     ): AotFallbackCoordinator.CandidateResult {
         val nnapiSession = fixedNnapiSession
-        val memory = TranslationMemoryBudget.nnapiMemorySnapshot()
+        val memory = EngineMemoryBudget.nnapiMemorySnapshot()
         val useNnapi = nnapiSession != null &&
             NnapiCapabilityGate.decide(
                 NnapiCapabilityGate.Snapshot(

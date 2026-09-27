@@ -62,63 +62,6 @@ class TranslationMemoryBudgetTest {
         decision.sampleSize shouldBe 2
     }
 
-    @Test
-    fun `one neural session proceeds with its native system reserve`() {
-        val reserve = TranslationMemoryBudget.neuralNativeSystemReserveBytes(sessionCount = 1)
-
-        val decision = TranslationMemoryBudget.neuralInpaintDecision(
-            pageWidth = 2_000,
-            pageHeight = 3_000,
-            cropWidth = 512,
-            cropHeight = 512,
-            sessionCount = 1,
-            snapshot = snapshot(available = 512L * MIB),
-            systemHeadroomBytes = reserve,
-        )
-
-        decision.canRun shouldBe true
-        decision.mode shouldBe "single_session"
-        decision.nativeSystemReserveBytes shouldBe 160L * MIB
-    }
-
-    @Test
-    fun `dual neural sessions decline when only one-session reserve is available`() {
-        val oneSessionReserve = TranslationMemoryBudget.neuralNativeSystemReserveBytes(sessionCount = 1)
-
-        val decision = TranslationMemoryBudget.neuralInpaintDecision(
-            pageWidth = 2_000,
-            pageHeight = 3_000,
-            cropWidth = 512,
-            cropHeight = 512,
-            sessionCount = 2,
-            snapshot = snapshot(available = 512L * MIB),
-            systemHeadroomBytes = oneSessionReserve,
-        )
-
-        decision.canRun shouldBe false
-        decision.mode shouldBe "dual_session"
-        decision.nativeSystemReserveBytes shouldBe 256L * MIB
-        decision.reason shouldBe "native_system_reserve"
-    }
-
-    @Test
-    fun `dual neural sessions proceed at exact deterministic reserve boundary`() {
-        val reserve = TranslationMemoryBudget.neuralNativeSystemReserveBytes(sessionCount = 2)
-
-        val decision = TranslationMemoryBudget.neuralInpaintDecision(
-            pageWidth = 2_000,
-            pageHeight = 3_000,
-            cropWidth = 512,
-            cropHeight = 512,
-            sessionCount = 2,
-            snapshot = snapshot(available = 512L * MIB),
-            systemHeadroomBytes = reserve,
-        )
-
-        decision.canRun shouldBe true
-        decision.nativeSystemReserveBytes shouldBe 256L * MIB
-    }
-
     private fun snapshot(available: Long): TranslationMemoryBudget.Snapshot {
         return TranslationMemoryBudget.Snapshot(
             maxHeapBytes = 512L * MIB,
