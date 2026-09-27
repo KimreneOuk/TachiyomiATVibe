@@ -162,11 +162,15 @@ internal class TranslationCoexistenceHarness private constructor(
         private val nextChapterId = AtomicLong(1_000_000L)
         private val nextArtifactChapterKey = AtomicLong(1L)
 
-        /** Bound for every event-driven await. */
-        const val AWAIT_TIMEOUT_MS = 10_000L
+        /**
+         * Bound for every event-driven await. Generous on purpose: cold-cache CI
+         * runners can be an order of magnitude slower than a warm developer
+         * machine, and this cap only ever fires on a hang.
+         */
+        const val AWAIT_TIMEOUT_MS = 60_000L
 
         /** Keep teardown bounded when a canceled job has a non-cancellable tail. */
-        private const val JOB_DRAIN_TIMEOUT_MS = 2_000L
+        private const val JOB_DRAIN_TIMEOUT_MS = 10_000L
 
         /**
          * Bound for NEGATIVE oracles ("X must NOT happen while Y is parked").
