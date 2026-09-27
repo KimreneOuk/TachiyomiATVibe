@@ -11,10 +11,9 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- *  U.4/U.7: the reader bottom bar's copy mapping consumes the SAME
- * phase truth as the progress sheet. During a resume rebuild the bar shows
- * rebuild/restore copy — never a frozen "Batch X/Y" — and every legacy bar
- * behavior (wording, visibility) is preserved byte-identically.
+ * The reader bottom bar uses the same phase truth as the progress sheet.
+ * During a resume rebuild it shows rebuild/restore copy instead of a frozen
+ * "Batch X/Y" count, while preserving the existing wording and visibility.
  */
 class ReaderBarTruthTest {
 
@@ -84,7 +83,7 @@ class ReaderBarTruthTest {
         line.fallback shouldBe "Restoring 0 pages…"
     }
 
-    // ------------------------------------ priority chain (U.3) on the bar -----
+    // ------------------------------------ priority chain on the bar -----
 
     @Test
     fun `request phase outranks the rebuild phase`() {

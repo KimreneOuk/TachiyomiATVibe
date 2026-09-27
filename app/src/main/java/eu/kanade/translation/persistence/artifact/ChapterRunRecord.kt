@@ -54,26 +54,22 @@ data class RunConfigSnapshot(
     val envelopePolicy: EnvelopePolicySnapshot = EnvelopePolicySnapshot(),
     val readingOrderVersion: Int,
     /**
-     * 01d: historical A/B flag value, once read at dispatch and
-     * frozen into the run snapshot. The flag completed its lifecycle
-     * ( wave) and every new snapshot freezes `true`; the field
-     * stays in the schema — nullable so pre-field records (written with the
-     * flag as a phaseCounters key only) decode unchanged — and it still
-     * participates in frozenRunConfigFingerprint by construction, so
-     * flag-era records keep their original fingerprints and resume
-     * unchanged (per-page checkpoint reuse is unaffected, being keyed by
-     * content fingerprints).
+     * Profile-pipeline selection frozen into the run configuration. New
+     * snapshots store `true`; `null` remains valid for records written before
+     * this field existed, when the value may only appear in [phaseCounters].
+     * It remains part of [frozenRunConfigFingerprint] so stored run identity
+     * and per-page checkpoint reuse remain stable during resume.
      */
     val flagProfilePipeline: Boolean? = null,
 )
 
-/** Analysis policy fields frozen at RUN_SNAPSHOT (values owned by ). */
+/** Analysis policy values frozen in the run snapshot. */
 @Serializable
 data class AnalysisPolicySnapshot(
     val overlapPages: Int = 1,
 )
 
-/** Envelope policy fields frozen at RUN_SNAPSHOT (values owned by ). */
+/** Envelope policy values frozen in the run snapshot. */
 @Serializable
 data class EnvelopePolicySnapshot(
     /**
@@ -150,10 +146,10 @@ data class ChapterRunRecord(
         const val SCHEMA_VERSION = 1
         const val KIND = "CHAPTER_RUN_RECORD"
 
-        /** 02 schema bound: phaseCounters keys (T, tunable). */
+        /** Maximum number of named phase counters stored in a run record. */
         const val MAX_PHASE_COUNTER_KEYS = 32
 
-        /** 02 schema bound: serialized frozenConfig size (T, tunable). */
+        /** Maximum serialized size of the frozen run configuration. */
         const val MAX_FROZEN_CONFIG_SERIALIZED_BYTES = 64 * 1024
     }
 }

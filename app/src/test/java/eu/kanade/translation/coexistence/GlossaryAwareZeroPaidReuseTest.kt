@@ -148,7 +148,7 @@ class GlossaryAwareZeroPaidReuseTest {
             )
         }
 
-    /** OCR recognized no text: translation/render skip terminally (gate-exempt shape). */
+    /** OCR recognized no text: translation and rendering finish terminally without provider work. */
     private fun textlessPage(key: String, expected: BatchExpectedFingerprints): PageTranslation =
         PageTranslation(sourceFileName = key).apply {
             ocrStatus = StageStatus.READY

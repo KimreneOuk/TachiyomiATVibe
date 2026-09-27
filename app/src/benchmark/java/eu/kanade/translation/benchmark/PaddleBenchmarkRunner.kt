@@ -9,8 +9,8 @@ import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTarget
-import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTestConfiguration
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6BatchTelemetry
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrRollingP95Config
@@ -256,7 +256,7 @@ class PaddleBenchmarkRunner(private val context: Context) {
                 cells += untestedCell(spec, "no representative crop for width bucket")
                 continue
             }
-            val providerConfiguration = PaddleOcrProviderTestConfiguration(spec.provider)
+            val providerConfiguration = PaddleOcrProviderOverride(spec.provider)
             val startedPss = currentPssKb()
             val thermalStart = ThermalStatus.describe(powerManager)
             val timings = ArrayList<Double>(config.matrixIterations)

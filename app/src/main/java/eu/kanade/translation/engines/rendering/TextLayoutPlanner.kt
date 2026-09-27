@@ -476,10 +476,6 @@ object TextLayoutPlanner {
         renderSourceText: Boolean,
         measurer: TextMeasurer,
     ): PageLayoutPlan {
-        // Count every asynchronous planner entry. Hydrated binds never reach
-        // this method because TextLayoutCoordinator consults the
-        // persisted-plan hydrate hook first).
-        TextLayoutPlannerProbe.recordInvocation()
         return planPageInternal(
             blocks,
             pageWidth,

@@ -37,12 +37,12 @@ import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.SinglePageHttpRenderPhase
 import eu.kanade.translation.pipeline.SinglePageOnnxPhase
 import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
@@ -408,7 +408,7 @@ class TranslationPipeline(
         // Typed HTTP+render phase completion and its timeout/terminality
         // resolution; declared at boundary scope so the post-finally mapping
         // can see them while the `finally` still owns the lease release.
-        var httpOutcome: ChunkCompletionOutcome? = null
+        var httpOutcome: TranslationCompletionOutcome? = null
         // Set when the HTTP+render timer fired
         // while the phase had ALREADY committed a durable terminal result —
         // store truth outranks the timer there, and no timeout placeholder
@@ -598,12 +598,12 @@ class TranslationPipeline(
                 } else {
                     SinglePageOutcome.Failed(pageKey, REASON_HTTP_RENDER_TIMER_EXPIRED)
                 }
-            is ChunkCompletionOutcome.Paused -> SinglePageOutcome.Paused(outcome.nextEligibleRetryAtEpochMs)
-            is ChunkCompletionOutcome.PersistenceRejected ->
+            is TranslationCompletionOutcome.Paused -> SinglePageOutcome.Paused(outcome.nextEligibleRetryAtEpochMs)
+            is TranslationCompletionOutcome.PersistenceRejected ->
                 SinglePageOutcome.Rejected(null, REASON_TRANSLATION_NOT_SAVED)
-            is ChunkCompletionOutcome.Failed -> SinglePageOutcome.Failed(pageKey, outcome.reason)
-            is ChunkCompletionOutcome.Unexpected -> SinglePageOutcome.Failed(pageKey, outcome.reason)
-            is ChunkCompletionOutcome.Completed -> SinglePageOutcome.Completed
+            is TranslationCompletionOutcome.Failed -> SinglePageOutcome.Failed(pageKey, outcome.reason)
+            is TranslationCompletionOutcome.Unexpected -> SinglePageOutcome.Failed(pageKey, outcome.reason)
+            is TranslationCompletionOutcome.Completed -> SinglePageOutcome.Completed
         }
     }
 
@@ -908,13 +908,13 @@ class TranslationPipeline(
         source: HttpSource,
         prepared: PreparedPage,
         stageListener: TranslationStageListener?,
-    ): ChunkCompletionOutcome? {
+    ): TranslationCompletionOutcome? {
         if (prepared.isTerminal) {
             logcat(LogPriority.INFO) {
                 "TachiyomiAT translatePreparedPage: terminal skip pageKey=${prepared.pageKey} " +
                     "cleaned=${prepared.cleanedImageName}"
             }
-            return ChunkCompletionOutcome.Completed()
+            return TranslationCompletionOutcome.Completed()
         }
         val store = resolveActiveStore(manga, chapter, source) ?: return null
         // prepareSinglePage owns the auto lease only through the native
@@ -1151,7 +1151,7 @@ class TranslationPipeline(
         ctx: OnnxPhaseResult,
         stageListener: TranslationStageListener? = null,
         origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
-    ): ChunkCompletionOutcome =
+    ): TranslationCompletionOutcome =
         singlePageHttpRenderPhase.translateSinglePageHttpRender(manga, chapter, source, pageKey, ctx, stageListener, origin)
 
     private suspend fun loadPersistedCleanedBitmap(

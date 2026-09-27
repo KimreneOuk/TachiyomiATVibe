@@ -43,7 +43,7 @@ import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.persistence.chapter.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
@@ -167,7 +167,7 @@ internal class SinglePageHttpRenderPhase(
         ctx: OnnxPhaseResult,
         stageListener: TranslationStageListener? = null,
         origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
-    ): ChunkCompletionOutcome {
+    ): TranslationCompletionOutcome {
         val pageTranslation = ctx.pageTranslation
         // Reader-ad-hoc output is displayable; a later batch reuses it when
         // its fingerprints still match.   two-vocabulary rule: the lease
@@ -221,7 +221,7 @@ internal class SinglePageHttpRenderPhase(
             lane = TranslationTraceLane.PROVIDER,
         )
         var governorSpanSettled = false
-        var translationOutcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
+        var translationOutcome: TranslationCompletionOutcome = TranslationCompletionOutcome.Completed()
         // A lazy cleaned-image worker may still be encoding this bitmap while
         // the live page reaches its terminal commit. Keep the ownership
         // reference until the existing final store.flush() barrier has joined
@@ -239,7 +239,7 @@ internal class SinglePageHttpRenderPhase(
             pageTranslation.renderStatus = StageStatus.FAILED
             pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage = renderFailure.safeSummary
-            translationOutcome = ChunkCompletionOutcome.Failed(
+            translationOutcome = TranslationCompletionOutcome.Failed(
                 anchorPageKey = pageKey,
                 terminalPageKeys = emptySet(),
                 failure = renderFailure,
@@ -475,7 +475,7 @@ internal class SinglePageHttpRenderPhase(
                             TranslationBlockValidation.applyTo(pageTranslation)
                         }
                     }
-                    if (translationOutcome is ChunkCompletionOutcome.Completed &&
+                    if (translationOutcome is TranslationCompletionOutcome.Completed &&
                         pageTranslation.translationStatus == StageStatus.PARTIAL
                     ) {
                         // A translator may report a partial response without throwing.
@@ -487,7 +487,7 @@ internal class SinglePageHttpRenderPhase(
                             safeSummary = "translation output is partial",
                         )
                         pageTranslation.translationError = partialFailure.safeSummary
-                        translationOutcome = ChunkCompletionOutcome.Paused(
+                        translationOutcome = TranslationCompletionOutcome.Paused(
                             anchorPageKey = pageKey,
                             retryablePageKeys = setOf(pageKey),
                             failure = partialFailure,
@@ -511,8 +511,8 @@ internal class SinglePageHttpRenderPhase(
                     // creates, guaranteeing one wasted batch repair per manually translated
                     // page after every session. A concurrent mode's fold between request
                     // build and commit is claimed but unseen: rare, converging, accepted.
-                    // Absence of a pointer stamps 0 (gate-off semantics: `0 > recorded` can
-                    // only repair chapters where a glossary exists and matured).
+                    // A missing glossary version is represented as zero so an
+                    // uninitialized glossary does not look like a newer version.
                     pageTranslation.translationGlossaryVersion = store.currentGlossaryVersion() ?: 0
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
                     logcat(LogPriority.INFO) {
@@ -528,7 +528,7 @@ internal class SinglePageHttpRenderPhase(
                     if (retryable) {
                         pageTranslation.translationStatus = StageStatus.PARTIAL
                         pageTranslation.translationError = failure.safeSummary
-                        translationOutcome = ChunkCompletionOutcome.Paused(
+                        translationOutcome = TranslationCompletionOutcome.Paused(
                             anchorPageKey = pageKey,
                             retryablePageKeys = setOf(pageKey),
                             failure = failure,
@@ -538,7 +538,7 @@ internal class SinglePageHttpRenderPhase(
                     } else {
                         pageTranslation.translationStatus = StageStatus.FAILED
                         pageTranslation.errorMessage = failure.safeSummary
-                        translationOutcome = ChunkCompletionOutcome.Failed(
+                        translationOutcome = TranslationCompletionOutcome.Failed(
                             anchorPageKey = pageKey,
                             terminalPageKeys = setOf(pageKey),
                             failure = failure,
@@ -562,7 +562,7 @@ internal class SinglePageHttpRenderPhase(
                     if (retryable) {
                         pageTranslation.translationStatus = StageStatus.PARTIAL
                         pageTranslation.translationError = failure.safeSummary
-                        translationOutcome = ChunkCompletionOutcome.Paused(
+                        translationOutcome = TranslationCompletionOutcome.Paused(
                             anchorPageKey = pageKey,
                             retryablePageKeys = setOf(pageKey),
                             failure = failure,
@@ -572,7 +572,7 @@ internal class SinglePageHttpRenderPhase(
                     } else {
                         pageTranslation.translationStatus = StageStatus.FAILED
                         pageTranslation.errorMessage = failure.safeSummary
-                        translationOutcome = ChunkCompletionOutcome.Failed(
+                        translationOutcome = TranslationCompletionOutcome.Failed(
                             anchorPageKey = pageKey,
                             terminalPageKeys = setOf(pageKey),
                             failure = failure,
@@ -591,7 +591,7 @@ internal class SinglePageHttpRenderPhase(
 
             coroutineContext.ensureActive()
 
-            if (translationOutcome is ChunkCompletionOutcome.Completed &&
+            if (translationOutcome is TranslationCompletionOutcome.Completed &&
                 pageTranslation.blocks.isNotEmpty() &&
                 (
                     pageTranslation.translationStatus == StageStatus.READY ||
@@ -808,9 +808,9 @@ internal class SinglePageHttpRenderPhase(
                     "TachiyomiAT single-page late result rejected: chapter=${chapter.name} " +
                         "pageKey=$pageKey reason=${commit.reason}"
                 }
-                translationOutcome = ChunkCompletionOutcome.PersistenceRejected(
+                translationOutcome = TranslationCompletionOutcome.PersistenceRejected(
                     anchorPageKey = pageKey,
-                    stage = BatchDiagnosticStage.TRANSLATION,
+                    stage = TranslationStageEvent.TRANSLATING,
                     reason = "Batch persistence publication rejected",
                 )
             } else {

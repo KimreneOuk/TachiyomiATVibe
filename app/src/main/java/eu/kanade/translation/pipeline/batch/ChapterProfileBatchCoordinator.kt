@@ -61,6 +61,7 @@ import eu.kanade.translation.pipeline.batch.envelope.PlannedBlock
 import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
@@ -230,15 +231,14 @@ internal class ChapterProfileBatchCoordinator(
      */
     private val standardLane: Boolean = false,
     /**
-     * Typed standard translate seam, injected by
-     * the shell so the coordinator never touches the legacy worker graph
-     * directly. Mirrors `TranslatorLaneWorker.translateOutcome(ref)` (the
-     * SBC per-page bridge): one page in, one typed [ChunkCompletionOutcome]
-     * out — commits ride the LEGACY per-page machinery, never the envelope
-     * provenance ladder. `null` with [standardLane] is a typed
-     * CONFIGURATION-class pause (same discipline as the analysis runner).
+     * Typed standard translate callback supplied by the caller. This keeps
+     * the profile coordinator independent of the page executor implementation.
+     * Standard translation uses per-page commits and does not publish
+     * profile-envelope provenance. `null` with [standardLane] is a typed
+     * configuration pause, matching the analysis runner's missing-transport
+     * behavior.
      */
-    private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> ChunkCompletionOutcome)? = null,
+    private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> TranslationCompletionOutcome)? = null,
     private val envelopePlannerPolicy: EnvelopePlannerPolicy? = null,
     private val seriesKey: String? = null,
 ) {
@@ -1495,11 +1495,7 @@ internal class ChapterProfileBatchCoordinator(
         const val STANDARD_NO_SEAM_REASON =
             "T924 standard translation paused: no typed standard translate seam wired (CONFIGURATION gate)"
 
-        /**
-         * The terminal of a drained run. The completion
-         * semantics are the LEGACY translation-committed ones — the
-         * DISPLAY_READY redefinition below is still gate-7.8-gated OFF.
-         */
+        /** Reason recorded when a drained run reaches its durable terminal. */
         const val TRANSLATE_COMPLETE_REASON =
             "T924 run complete: every page reached its durable terminal state " +
                 "(legacy completion semantics; DISPLAY_READY redefinition is gate-7.8-gated OFF)"

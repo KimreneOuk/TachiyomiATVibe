@@ -8,9 +8,9 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageStageLease
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationScheduler
@@ -75,7 +75,7 @@ class CancelBatchLeaseSkipTest {
                 source: HttpSource,
                 prepared: PreparedPage,
                 stageListener: TranslationStageListener?,
-            ): ChunkCompletionOutcome? = null
+            ): TranslationCompletionOutcome? = null
         }
         val resolver = TranslationStoreResolver { id -> if (id == chapterId) store else null }
         val immediate = { id: Long -> if (id == chapterId) store else null }

@@ -37,6 +37,8 @@ import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumeGate
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.util.ShortHash
@@ -754,14 +756,9 @@ internal class BatchLaneWorkers(
                 // from the committed blocks. A page that just reached
                 // inpaint-terminal with translated blocks is therefore
                 // display-complete as-is, but the durable record kept
-                // renderStatus PENDING, so hasRenderedResult never fired: the
-                // page never promoted to a committed display bundle (no
-                // pageSnapshotFileName), the reader's displayImageName gate
-                // stayed null and every batch page showed the ORIGINAL forever
-                // (2026-09-16 field report), while the reader's stranded-page
-                // sweep healed these healthy pages one by one. Stamp render
-                // terminal here: the durable write carries hasRenderedResult,
-                // which fires the committed promotion and flips the reader gate.
+                // Persist render terminality so the store commits the page snapshot
+                // and updates displayImageName. Without that projection, the reader
+                // keeps showing the source image until its stranded-page sweep runs.
                 if (target.translationStatus == StageStatus.READY ||
                     target.translationStatus == StageStatus.PARTIAL
                 ) {
@@ -850,12 +847,12 @@ internal class BatchLaneWorkers(
 
         private val pendingAiEmissions = mutableListOf<StreamingChunkPlanner.Emission>()
         private val contextBlockedPages = linkedSetOf<String>()
-        private var standardOutcome: ChunkCompletionOutcome? = null
+        private var standardOutcome: TranslationCompletionOutcome? = null
 
-        override suspend fun translateOutcome(ref: OcrReadyPageRef): ChunkCompletionOutcome {
+        override suspend fun translateOutcome(ref: OcrReadyPageRef): TranslationCompletionOutcome {
             standardOutcome = null
             translate(ref)
-            return standardOutcome ?: ChunkCompletionOutcome.Completed(setOf(ref.pageKey))
+            return standardOutcome ?: TranslationCompletionOutcome.Completed(setOf(ref.pageKey))
         }
 
         override suspend fun translate(ref: OcrReadyPageRef) {
@@ -1016,7 +1013,7 @@ internal class BatchLaneWorkers(
             } else {
                 // Standard (per-page) path: translate, validate, persist, render.
                 var succeeded = false
-                var failedOutcome: ChunkCompletionOutcome? = null
+                var failedOutcome: TranslationCompletionOutcome? = null
                 // Persist the durable attempt entry before
                 // the paid call; resolved on any completed call (success or
                 // typed provider failure). Write failure is fail-open.
@@ -1067,7 +1064,7 @@ internal class BatchLaneWorkers(
                             )
                             tracker?.markTranslatePaused(pageKey, failure.safeSummary)
                             tracker?.markAiPaused(pageKey, failure.safeSummary)
-                            failedOutcome = ChunkCompletionOutcome.Paused(
+                            failedOutcome = TranslationCompletionOutcome.Paused(
                                 anchorPageKey = pageKey,
                                 retryablePageKeys = setOf(pageKey),
                                 failure = failure,
@@ -1091,7 +1088,7 @@ internal class BatchLaneWorkers(
                             )
                             tracker?.markTranslateFailed(pageKey, failure.safeSummary)
                             tracker?.markAiFailed(pageKey, failure.safeSummary)
-                            failedOutcome = ChunkCompletionOutcome.Failed(
+                            failedOutcome = TranslationCompletionOutcome.Failed(
                                 anchorPageKey = pageKey,
                                 terminalPageKeys = setOf(pageKey),
                                 failure = failure,
@@ -1119,7 +1116,7 @@ internal class BatchLaneWorkers(
                     if (retryable) {
                         tracker?.markTranslatePaused(pageKey, failure.safeSummary)
                         tracker?.markAiPaused(pageKey, failure.safeSummary)
-                        failedOutcome = ChunkCompletionOutcome.Paused(
+                        failedOutcome = TranslationCompletionOutcome.Paused(
                             anchorPageKey = pageKey,
                             retryablePageKeys = setOf(pageKey),
                             failure = failure,
@@ -1128,7 +1125,7 @@ internal class BatchLaneWorkers(
                     } else {
                         tracker?.markTranslateFailed(pageKey, failure.safeSummary)
                         tracker?.markAiFailed(pageKey, failure.safeSummary)
-                        failedOutcome = ChunkCompletionOutcome.Failed(
+                        failedOutcome = TranslationCompletionOutcome.Failed(
                             anchorPageKey = pageKey,
                             terminalPageKeys = setOf(pageKey),
                             failure = failure,
@@ -1152,9 +1149,9 @@ internal class BatchLaneWorkers(
                         val reason = "translation commit rejected: ${persisted.reason}"
                         tracker?.markTranslateFailed(pageKey, reason)
                         tracker?.markAiFailed(pageKey, reason)
-                        standardOutcome = ChunkCompletionOutcome.PersistenceRejected(
+                        standardOutcome = TranslationCompletionOutcome.PersistenceRejected(
                             anchorPageKey = pageKey,
-                            stage = BatchDiagnosticStage.TRANSLATION,
+                            stage = TranslationStageEvent.TRANSLATING,
                             reason = "Batch persistence publication rejected",
                         )
                     } else {
@@ -1168,7 +1165,7 @@ internal class BatchLaneWorkers(
                                 store.foldPageContribution(pageKey, pairs)
                             }
                         }
-                        standardOutcome = ChunkCompletionOutcome.Completed(setOf(pageKey))
+                        standardOutcome = TranslationCompletionOutcome.Completed(setOf(pageKey))
                     }
                 }
             }

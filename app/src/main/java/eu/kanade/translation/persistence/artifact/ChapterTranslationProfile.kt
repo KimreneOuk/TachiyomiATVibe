@@ -178,7 +178,7 @@ data class ProfileFact(
     private fun String?.length(): Int = this?.length ?: 0
 
     companion object {
-        /** 02 schema bounds (T, tunable). */
+        /** Validation limits for profile metadata. */
         const val MAX_NAME_CHARS = 128
         const val MAX_ALIASES = 32
         const val MAX_EVIDENCE_REFS = 32
@@ -215,7 +215,7 @@ data class ProfileScene(
     private fun String?.length(): Int = this?.length ?: 0
 
     companion object {
-        /** 02 schema bounds (T, tunable). */
+        /** Validation limits for profile coverage and narrative fields. */
         const val MAX_BLOCK_RANGES = 64
         const val MAX_PARTICIPANTS = 16
         const val MAX_NARRATIVE_CHARS = 1000
@@ -298,7 +298,7 @@ data class ChapterTranslationProfile(
         const val SCHEMA_VERSION = 1
         const val KIND = "CHAPTER_TRANSLATION_PROFILE"
 
-        /** 02 schema bounds (T, tunable). */
+        /** Validation limits for extracted profile content. */
         const val MAX_FACTS_PER_LIST = 512
         const val MAX_SCENES = 256
         const val MAX_CANDIDATES = 128

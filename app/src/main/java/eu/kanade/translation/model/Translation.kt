@@ -5,13 +5,8 @@ import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 data class Translation(
     val source: HttpSource,
@@ -59,20 +54,5 @@ data class Translation(
 
         /** Retryable provider work remains durable but is not currently running. */
         PAUSED(6),
-    }
-
-    companion object {
-        suspend fun fromChapterId(
-            chapterId: Long,
-            getChapter: GetChapter = Injekt.get(),
-            getManga: GetManga = Injekt.get(),
-            sourceManager: SourceManager = Injekt.get(),
-        ): Translation? {
-            val chapter = getChapter.await(chapterId) ?: return null
-            val manga = getManga.await(chapter.mangaId) ?: return null
-            val source = sourceManager.get(manga.source) as? HttpSource ?: return null
-
-            return Translation(source, manga, chapter)
-        }
     }
 }

@@ -148,7 +148,7 @@ data class AnalysisChunkResult(
         const val SCHEMA_VERSION = 1
         const val KIND = "ANALYSIS_CHUNK_RESULT"
 
-        /** 02 schema bounds (T, tunable). */
+        /** Validation limits for persisted analysis-chunk content. */
         const val MAX_CORE_PAGES = 16
         const val MAX_OVERLAP_PAGES = 2
         const val MAX_RECORDS_PER_KIND = 128

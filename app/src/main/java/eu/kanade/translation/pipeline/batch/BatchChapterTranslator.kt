@@ -44,6 +44,7 @@ import eu.kanade.translation.pipeline.TranslationPipeline.Companion.UNKNOWN_SOUR
 import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.util.ShortHash
@@ -528,11 +529,9 @@ internal class BatchChapterTranslator(
                     // frontier used by the shell and its other collaborators.
                     val batchScheduleListener = object : BatchScheduleListener() {
                         override fun ocrStarted(pageKey: String) {
-                            // Live progress: reused preflight pages emit the same
-                            // marks as fresh OCR pages — the tracker recomputes its
-                            // snapshot only on events, so silent adoption left the
-                            // drawer frozen at pre-resume counts for the whole
-                            // revalidation phase (2026-09-15/16 field report).
+                            // Reused preflight pages emit the same progress mark as
+                            // fresh OCR pages. The tracker publishes snapshots on
+                            // events, so each resumed page must advance the display.
                             tracker?.markOcrRunning(pageKey)
                         }
 
@@ -628,7 +627,7 @@ internal class BatchChapterTranslator(
                         // A denied lease leaves the manual owner's work untouched.
                         suspend fun standardTranslateOutcome(
                             ref: OcrReadyPageRef,
-                        ): ChunkCompletionOutcome {
+                        ): TranslationCompletionOutcome {
                             val pageKey = ref.pageKey
                             return when (
                                 val acquisition = store.tryAcquirePageStageLease(
@@ -642,7 +641,7 @@ internal class BatchChapterTranslator(
                                         "TachiyomiAT t924 standard translate defers ${acquisition.owner}-owned " +
                                             "page: pageKey=$pageKey"
                                     }
-                                    ChunkCompletionOutcome.Completed(emptySet())
+                                    TranslationCompletionOutcome.Completed(emptySet())
                                 }
                                 is LeaseAcquisition.Granted -> {
                                     val lease = acquisition.lease
@@ -667,7 +666,7 @@ internal class BatchChapterTranslator(
                                                 "terminal before lease use, pageKey=$pageKey"
                                         }
                                         releaseBatchPageLease(store, pageKey)
-                                        return ChunkCompletionOutcome.Completed(emptySet())
+                                        return TranslationCompletionOutcome.Completed(emptySet())
                                     }
                                     batchWriteIdentities[pageKey] = BatchWriteIdentity(
                                         generation = lease.generation,

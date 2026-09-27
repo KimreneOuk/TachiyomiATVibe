@@ -1,4 +1,5 @@
-package eu.kanade.translation.model
+package eu.kanade.translation.presentation
+
 import eu.kanade.tachiyomi.R
 import tachiyomi.core.common.preference.Preference
 

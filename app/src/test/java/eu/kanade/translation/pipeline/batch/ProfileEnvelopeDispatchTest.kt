@@ -337,8 +337,8 @@ class ProfileEnvelopeDispatchTest {
         val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), translator)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // Stage-7 terminal: the drained run FINALIZEs and completes under the
-        // legacy completion semantics (gate-7.8 DISPLAY_READY stays OFF).
+        // The drained run completes after finalization under the current
+        // translation-terminal rule; display readiness is not an extra gate.
         outcome.status shouldBe BatchPass1Status.COMPLETED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
         outcome.needsTranslation shouldBe emptyList()

@@ -8,8 +8,7 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Test
 
 /**
- * Characterization tests for the durable batch-queue membership store
- * ( area-3 finding F3: no direct unit coverage). Pins the
+ * Characterizes the durable batch-queue membership store. It verifies the
  * SharedPreferences round-trip, ordering, and the `load()` parse contract:
  * the positional scan stops at the first missing or unparseable index.
  */

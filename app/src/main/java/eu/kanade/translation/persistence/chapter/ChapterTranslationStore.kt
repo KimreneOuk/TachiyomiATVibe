@@ -793,11 +793,6 @@ class ChapterTranslationStore(
         }
     }
 
-    /** Establishes artifact authority before a caller installs a new page state. */
-    suspend fun ensureArtifactAuthorityForMutation(): MutationAdmission = mutex.withLock {
-        admitMutationLocked()
-    }
-
     internal fun admitMutationLocked(): MutationAdmission {
         if (defunct) {
             return MutationAdmission.Rejected(
@@ -1198,7 +1193,7 @@ class ChapterTranslationStore(
         return flipped
     }
 
-    suspend fun patchBlock(
+    internal suspend fun patchBlock(
         pageKey: String,
         blockIndex: Int,
         expected: PatchPrecondition,
@@ -1222,7 +1217,7 @@ class ChapterTranslationStore(
     }
 
     /** Apply a stage patch while checking only the identities owned by that stage. */
-    suspend fun applyStagePatch(
+    private suspend fun applyStagePatch(
         patch: StagePatch,
         description: String,
     ): StagePatchResult {
@@ -1240,7 +1235,6 @@ class ChapterTranslationStore(
             when (patch) {
                 is StagePatch.Ocr -> mergeOcrLocked(current, patch.value, description)
                 is StagePatch.Translation -> mergeTranslationLocked(current, patch.value, description)
-                is StagePatch.Inpaint -> mergeInpaintLocked(current, patch.value, description)
                 is StagePatch.Render -> mergeRenderLocked(current, patch.value, description)
             }
         }
@@ -1367,11 +1361,6 @@ class ChapterTranslationStore(
         patch: TranslationStagePatch,
         description: String = "translation stage merge",
     ): StagePatchResult = applyStagePatch(StagePatch.Translation(patch), description)
-
-    suspend fun mergeInpaint(
-        patch: InpaintStagePatch,
-        description: String = "inpaint stage merge",
-    ): StagePatchResult = applyStagePatch(StagePatch.Inpaint(patch), description)
 
     suspend fun mergeRender(
         patch: RenderStagePatch,
@@ -1672,44 +1661,6 @@ class ChapterTranslationStore(
         return null
     }
 
-    private fun mergeInpaintLocked(
-        current: PageTranslation?,
-        patch: InpaintStagePatch,
-        description: String,
-    ): StagePatchResult {
-        val rejection = stageIdentityRejection(
-            current,
-            patch.generation,
-            patch.expectedPageVersion,
-            patch.expectedLeaseToken,
-            patch.pageKey,
-            patch.expectedCandidateGenerationId,
-            patch.expectedDependencyFingerprint,
-            patch.expectedArtifactPageVersion,
-        )
-            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, null)
-            ?: current?.takeUnless { it.inpaintMaskFingerprint() == patch.expectedMaskFingerprint }
-                ?.let { "inpaint mask identity changed" }
-        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
-
-        val updated = ownedPage(
-            patch.pageKey,
-            current!!.detachedCopy().apply {
-                cleanedImageName = patch.cleanedImageName
-                inpaintRevision = patch.inpaintRevision
-                inpaintingModeUsed = patch.inpaintingModeUsed
-                inpaintStatus = patch.inpaintStatus
-                errorMessage = patch.errorMessage
-            },
-        )
-        pages = pages.put(patch.pageKey, updated)
-        if (!publishLocked(current, updated, patch.toPrecondition())) {
-            restorePageLocked(patch.pageKey, current)
-            return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
-        }
-        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey))
-    }
-
     private fun mergeRenderLocked(
         current: PageTranslation?,
         patch: RenderStagePatch,
@@ -1814,15 +1765,6 @@ class ChapterTranslationStore(
         artifactPageVersion = expectedArtifactPageVersion,
     )
 
-    private fun InpaintStagePatch.toPrecondition() = PatchPrecondition(
-        generation = generation,
-        pageVersion = expectedPageVersion ?: 0L,
-        leaseToken = expectedLeaseToken,
-        candidateGenerationId = expectedCandidateGenerationId,
-        dependencyFingerprint = expectedDependencyFingerprint,
-        artifactPageVersion = expectedArtifactPageVersion,
-    )
-
     private fun RenderStagePatch.toPrecondition() = PatchPrecondition(
         generation = generation,
         pageVersion = expectedPageVersion ?: 0L,
@@ -1882,7 +1824,7 @@ class ChapterTranslationStore(
         return StagePatchResult.Rejected(reason)
     }
 
-    suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
+    internal suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
         if (defunct) {
             rejected(pageKey, "updatePage", "store is defunct")
             return
@@ -2821,7 +2763,7 @@ class ChapterTranslationStore(
     }
 
     /** The frozen committed display bundle for [pageKey], if one exists. */
-    fun committedDisplayPage(pageKey: String): PageTranslation? =
+    internal fun committedDisplayPage(pageKey: String): PageTranslation? =
         committedDisplay[pageKey]?.page?.detachedCopy()
 
     /**
@@ -2849,7 +2791,7 @@ class ChapterTranslationStore(
      * a newer bundle promoted; retained names are drained as a set so rapid
      * promotions cannot orphan an earlier superseded file.
      */
-    fun drainRetiredCleanedImage(pageKey: String): String? =
+    internal fun drainRetiredCleanedImage(pageKey: String): String? =
         retiredCleanedImages[pageKey]?.let { retired ->
             val name = retired.firstOrNull() ?: return@let null
             retired.remove(name)

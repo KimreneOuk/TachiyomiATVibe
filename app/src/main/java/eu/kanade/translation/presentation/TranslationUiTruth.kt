@@ -612,7 +612,7 @@ object TranslationUiTruth {
     )
 
     // ------------------------------------------------------------------
-    //  U.3/U.6: chapter-level batch status-line truth.
+    // Chapter-level batch status-line truth.
     //
     // One priority chain (requestState → queuePosition → pauseReason →
     // coordinator phase+counters → batchPhase) resolved ONCE here, rendered
@@ -689,7 +689,7 @@ object TranslationUiTruth {
             !hasPagesNeedingAttention(snapshot)
 
     /**
-     * The single chapter-level status-line priority chain (U.3):
+     * The single chapter-level status-line priority chain:
      * requestState → queuePosition → pauseReason → coordinator
      * rebuild/restore phase + counters → batchPhase. The sheet subtitle and
      * the reader bottom bar both derive their copy from this mapping (via
@@ -908,11 +908,11 @@ object TranslationUiTruth {
     }
 
     /**
-     *  U.4: the reader bottom bar's short rendering of the SAME truth.
+     * The reader bottom bar's short rendering of the same truth.
      * Returns null exactly when the bar must stay hidden (no request, no
-     * pause, idle phase — the legacy visibility rule). The rebuild/restore
+     * pause, idle phase — the existing visibility rule). The rebuild/restore
      * kinds replace the frozen "Batch X/Y" line during a resume rebuild;
-     * every legacy branch keeps its historical bar wording byte-identically.
+     * all other branches retain their existing wording byte-identically.
      */
     fun readerBarLine(
         snapshot: TranslationProgressSnapshot,
@@ -990,7 +990,7 @@ object TranslationUiTruth {
         "Queued (${ordinalSuffixOf(position)} of $total) — waiting for earlier batches"
 }
 
-/** Bounded vocabulary for chapter-level batch status lines ( U.3). */
+/** Bounded vocabulary for chapter-level batch status lines. */
 enum class BatchStatusLineKind {
     RESUMING,
     REQUEST_STARTING,
@@ -1003,10 +1003,10 @@ enum class BatchStatusLineKind {
     QUEUED_READY,
     PAUSED,
 
-    /**  U.1: run record says the resumed run is re-validating sources. */
+    /** The run record says the resumed run is revalidating sources. */
     REBUILDING,
 
-    /**  U.1: run record says the resumed run is re-adopting durable page work. */
+    /** The run record says the resumed run is adopting durable page work. */
     RESTORING,
     BUILDING_CONTEXT,
     FIRST_PASS_STAGES,
@@ -1025,7 +1025,7 @@ enum class BatchStatusLineKind {
 }
 
 /**
- * One chapter-level batch status line ( U.3). [formatArgs] feeds the
+ * One chapter-level batch status line. [formatArgs] feeds the
  * surface's string-resource lookup for [kind]; [fallback] is the English
  * source wording for surfaces (or locales) that render without the resource.
  */

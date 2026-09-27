@@ -25,10 +25,10 @@ class TranslationSessionCoordinator(
     val state: StateFlow<TranslationSessionState> = _state.asStateFlow()
 
     /**
-     * Admit reader-owned work. A reader request during a batch is rejected
-     * until the UI explicitly confirms a switch; the confirmed P3-01 path
-     * performs the existing non-blocking pause callback and transfers the
-     * owner. P3-02 replaces that callback with a joined transition.
+     * Admit reader-owned work immediately. A request during a batch requires
+     * explicit confirmation, then transfers session state and invokes the
+     * batch-pause callback without waiting for jobs to drain. Use
+     * [switchBatchToReader] when reader work must wait for batch quiescence.
      */
     fun requestReaderSession(intent: ReaderSessionIntent): SessionAdmission {
         var invokeBatchPause = false

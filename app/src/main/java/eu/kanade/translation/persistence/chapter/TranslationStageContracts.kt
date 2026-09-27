@@ -104,24 +104,6 @@ data class TranslationStagePatch(
     val envelopePlanFingerprint: String? = null,
 )
 
-/** Inpaint-owned fields and the durable OCR/mask identity they were derived from. */
-data class InpaintStagePatch(
-    val pageKey: String,
-    val generation: Long,
-    val expectedOcrBlockFingerprints: List<String>,
-    val expectedMaskFingerprint: String,
-    val cleanedImageName: String,
-    val inpaintRevision: Int,
-    val inpaintingModeUsed: String?,
-    val inpaintStatus: String,
-    val errorMessage: String? = null,
-    val expectedPageVersion: Long? = null,
-    val expectedLeaseToken: Long? = null,
-    val expectedCandidateGenerationId: String? = null,
-    val expectedDependencyFingerprint: String? = null,
-    val expectedArtifactPageVersion: Long? = null,
-)
-
 /** Render-owned colors for one block. No image or bitmap is retained. */
 data class RenderBlockPatch(
     val blockIndex: Int,
@@ -149,7 +131,7 @@ data class RenderStagePatch(
     val expectedArtifactPageVersion: Long? = null,
 )
 
-sealed interface StagePatch {
+internal sealed interface StagePatch {
     val pageKey: String
     val generation: Long
 
@@ -159,11 +141,6 @@ sealed interface StagePatch {
     }
 
     data class Translation(val value: TranslationStagePatch) : StagePatch {
-        override val pageKey: String get() = value.pageKey
-        override val generation: Long get() = value.generation
-    }
-
-    data class Inpaint(val value: InpaintStagePatch) : StagePatch {
         override val pageKey: String get() = value.pageKey
         override val generation: Long get() = value.generation
     }

@@ -1,11 +1,12 @@
 package eu.kanade.translation.engines.runtime.onnx
 
 /**
- * An explicit provider request used by the staged Paddle benchmark.
+ * An explicit provider override for a Paddle OCR session.
  *
- * Production routing remains owned by [HardwareDiscoveryEngine]. The matrix
- * runner uses this value only to make a cell's requested provider unambiguous
- * and to prevent a failed accelerator session from being retried on CPU.
+ * Normal production routing remains owned by [HardwareDiscoveryEngine] and
+ * [PaddleOcrSessionFactory]. The staged benchmark uses this value to bind each
+ * matrix cell to one provider, while production uses it for explicit fallback
+ * choices such as the CPU B1 emergency route.
  */
 enum class PaddleOcrProviderTarget {
     CPU,
@@ -35,13 +36,13 @@ enum class PaddleOcrProviderTarget {
 }
 
 /**
- * Session policy for one provider-matrix cell.
+ * Provider choice and fallback policy for one Paddle session.
  *
  * Accelerator cells are strict by construction. CPU fallback is therefore an
  * explicit property of the CPU cell, never an implicit recovery path for an
  * accelerator claim.
  */
-data class PaddleOcrProviderTestConfiguration(
+data class PaddleOcrProviderOverride(
     val target: PaddleOcrProviderTarget,
     val strictNoCpuFallback: Boolean = target.isAccelerator,
 ) {
@@ -66,8 +67,8 @@ data class PaddleOcrProviderTestConfiguration(
             PaddleOcrProviderTarget.NNAPI,
         )
 
-        fun cpuB1EmergencyFallback(): PaddleOcrProviderTestConfiguration =
-            PaddleOcrProviderTestConfiguration(
+        fun cpuB1EmergencyFallback(): PaddleOcrProviderOverride =
+            PaddleOcrProviderOverride(
                 target = PaddleOcrProviderTarget.CPU,
                 strictNoCpuFallback = false,
             )

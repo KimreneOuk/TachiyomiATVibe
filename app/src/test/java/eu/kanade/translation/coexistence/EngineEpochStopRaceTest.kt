@@ -12,7 +12,7 @@ import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
@@ -38,43 +38,16 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.translation.pools.BitmapPool
 
 /**
- *  Engine-epoch stop race and drain-not-close behavior.
- * This timing-sensitive test is quarantined because CI-load starvation can make
- * the race flaky.
+ * Exercises translator shutdown while a provider call is using the translator.
+ * It checks bounded draining, close ordering, the single epoch retry after a
+ * drain timeout, native-lane exclusion, and that the drain grace covers the
+ * configured provider-call budget. This timing-sensitive test is quarantined
+ * because CI load can starve its race probes.
  *
- * The only production `pipeline.closeEngines()` caller is `ChapterTranslator.stop`
- * (ACTION_STOP via `TranslationManager.clearQueue`, the reader Stop button, and the
- * translation toggle). While a single page is mid-PROVIDER-call the native lane is
- * idle, so today's close tears the captured translator down UNDER the in-flight
- * call — the accepted-trade-off comment at SinglePageHttpRenderPhase (:143-147).
- * The target contract:
- *  - the borrow is observable (`translatorUseCount`) and close DRAINS it within a
- *    bounded grace instead of killing in-flight work (a);
- *  - close happened only AFTER `endTranslatorUse` on the grace path (b, close-order
- *    event evidence);
- *  - on grace expiry the close proceeds under the call and the EPOCH GUARD transparently
- *    retries exactly once against the REBUILT translator; a second mid-retry close
- *    fails the page honestly with no loop (c);
- *  - a parked NATIVE call still blocks the close (tryRunExclusive — idle-lane contract,
- *    unchanged) (d);
- *  - the  provider drain grace can never be shorter than the chain's own legitimate
- *    budget (e).
- *
- * The original failure: (a) occurs because the parked call
- * FAILS when closeEngines closes the fake translator mid-call (the fake models the
- * production close defect: providers close their executors/pools in `close()`);
- * (b) fails because the close lands while the borrow is still held; (c) and
- * (d)'s epoch probe fail on the missing EngineLane seams (named assertions, bridge
- * pattern — never a timeout); (e) fails on the 90_000 < 210_000 bound. (d)'s
- * no-close guard is a green pin of the contract that must survive.
- *
- * Fixture: the REAL production graph over the REAL AUTO prepared-page boundary
- * (`pipeline.prepareSinglePage` + `pipeline.translatePreparedPage` — the two calls the
- * RollingAutoCoordinator makes, driven directly for determinism; the coordinator's own
- * drain/cancel semantics are already covered by AutoProviderCallDrainsNotCancelsTest) on an
- * ARTIFACT-authority store ( fresh-chapter recipe) so the  ledger is observable.
- * The stop analogue is the REAL `manager.clearQueue()` → `translator.stop()` →
- * `pipeline.closeEngines()` chain.
+ * The fixture drives the production prepared-page and translation path against
+ * an artifact-authority store, then follows the same shutdown path used by the
+ * reader. Coordinator cancellation and drain behavior are covered separately by
+ * `AutoProviderCallDrainsNotCancelsTest`.
  */
 @Tag("quarantined-flaky")
 class EngineEpochStopRaceTest {
@@ -149,7 +122,7 @@ class EngineEpochStopRaceTest {
         return store
     }
 
-    private class AutoRun(val outcome: CompletableDeferred<ChunkCompletionOutcome?>) {
+    private class AutoRun(val outcome: CompletableDeferred<TranslationCompletionOutcome?>) {
         /** Set when the boundary died before the paid call (fixture diagnosis). */
         @Volatile var earlyFailure: Throwable? = null
 
@@ -170,7 +143,7 @@ class EngineEpochStopRaceTest {
         val h = checkNotNull(harness)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("d7-auto"))
         autoScope = scope
-        val outcome = CompletableDeferred<ChunkCompletionOutcome?>()
+        val outcome = CompletableDeferred<TranslationCompletionOutcome?>()
         val run = AutoRun(outcome)
         run.job = scope.launch {
             try {
@@ -287,7 +260,7 @@ class EngineEpochStopRaceTest {
                     "epoch retry wins) — RED fails it mid-call because closeEngines closed the " +
                     "translator under the parked call",
             ) {
-                if (outcome !is ChunkCompletionOutcome.Completed) {
+                if (outcome !is TranslationCompletionOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1a defect: the parked AUTO call FAILED across the stop — " +
                             "outcome was $outcome",
@@ -372,7 +345,7 @@ class EngineEpochStopRaceTest {
             withClue(
                 "T917 D7 §1.4.1b: with the grace large enough the call itself completes untouched",
             ) {
-                if (outcome !is ChunkCompletionOutcome.Completed) {
+                if (outcome !is TranslationCompletionOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1b defect: the call failed even though the grace had not expired — " +
                             "outcome was $outcome",
@@ -432,7 +405,7 @@ class EngineEpochStopRaceTest {
                 "T917 D7 §1.4.1c defect: the epoch guard must transparently retry the racing page ONCE " +
                     "against the REBUILT translator — RED fails the page outright",
             ) {
-                if (outcome !is ChunkCompletionOutcome.Completed) {
+                if (outcome !is TranslationCompletionOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1c defect: the grace-expired call was not recovered by the epoch " +
                             "retry — outcome was $outcome",
@@ -510,7 +483,7 @@ class EngineEpochStopRaceTest {
                 "T917 D7 §1.4.1c defect: a SECOND epoch mismatch must fail the page honestly (typed " +
                     "failure) — never complete it and never loop",
             ) {
-                if (outcome is ChunkCompletionOutcome.Completed) {
+                if (outcome is TranslationCompletionOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1c defect: the twice-closed page completed instead of failing " +
                             "honestly — outcome was $outcome",
