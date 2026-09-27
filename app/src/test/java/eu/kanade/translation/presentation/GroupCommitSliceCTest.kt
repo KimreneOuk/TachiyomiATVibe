@@ -16,9 +16,9 @@ import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.toPrecondition
@@ -94,7 +94,7 @@ class GroupCommitSliceCTest {
             source: HttpSource,
             prepared: PreparedPage,
             stageListener: TranslationStageListener?,
-        ): ChunkCompletionOutcome? = null
+        ): TranslationCompletionOutcome? = null
     }
 
     private fun mockSession(chapterId: Long = 42L): Triple<

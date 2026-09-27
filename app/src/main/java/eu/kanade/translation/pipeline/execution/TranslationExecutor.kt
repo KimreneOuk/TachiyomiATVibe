@@ -1,8 +1,8 @@
 package eu.kanade.translation.pipeline.execution
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream
@@ -87,9 +87,9 @@ interface TranslationExecutor {
      * native permit so a caller's other native page may overlap this page's
      * remote translation.
      *
-     * @return [ChunkCompletionOutcome.Completed] when translate/render work
-     *   completed (including textless terminal no-ops), [ChunkCompletionOutcome.Paused]
-     *   or [ChunkCompletionOutcome.Failed] when the page was actually attempted
+     * @return [TranslationCompletionOutcome.Completed] when translate/render work
+     *   completed (including textless terminal no-ops), [TranslationCompletionOutcome.Paused]
+     *   or [TranslationCompletionOutcome.Failed] when the page was actually attempted
      *   but produced a typed provider outcome, and null ONLY when the prepared
      *   reference no longer matches the durable store (generation / pageVersion
      *   / fingerprint mismatch, missing page, or missing cleaned image) — a
@@ -110,7 +110,7 @@ interface TranslationExecutor {
         source: HttpSource,
         prepared: PreparedPage,
         stageListener: TranslationStageListener? = null,
-    ): ChunkCompletionOutcome?
+    ): TranslationCompletionOutcome?
 }
 
 /**
@@ -193,4 +193,52 @@ enum class TranslationStageEvent {
  */
 fun interface TranslationStageListener {
     fun onStageEntered(pageKey: String, stage: TranslationStageEvent)
+}
+
+/** Outcome of translation work shared by reader and chapter-batch execution. */
+sealed interface TranslationCompletionOutcome {
+    data class Completed(
+        val completedPageKeys: Set<String> = emptySet(),
+    ) : TranslationCompletionOutcome
+
+    data class Paused(
+        val anchorPageKey: String,
+        val completedPageKeys: Set<String> = emptySet(),
+        val retryablePageKeys: Set<String> = setOf(anchorPageKey),
+        val failure: ProviderFailure? = null,
+        val nextEligibleRetryAtEpochMs: Long? = failure?.retryAfterAtEpochMs,
+        val reason: String = failure?.safeSummary ?: "Translation paused; retryable provider work remains",
+    ) : TranslationCompletionOutcome
+
+    data class Failed(
+        val anchorPageKey: String? = null,
+        val completedPageKeys: Set<String> = emptySet(),
+        val terminalPageKeys: Set<String> = anchorPageKey?.let(::setOf).orEmpty(),
+        val failure: ProviderFailure? = null,
+        val reason: String = failure?.safeSummary ?: "Translation failed",
+    ) : TranslationCompletionOutcome
+
+    /**
+     * A worker failed outside the typed provider-failure contract. Keep this
+     * distinct from [Failed] so a programming or persistence error cannot be
+     * mistaken for a durable provider failure. Later pages remain pending.
+     */
+    data class Unexpected(
+        val anchorPageKey: String,
+        val stage: TranslationStageEvent,
+        val completedPageKeys: Set<String> = emptySet(),
+        val terminalPageKeys: Set<String> = setOf(anchorPageKey),
+        val reason: String = "Unexpected ${stage.name.lowercase()} stage failure",
+    ) : TranslationCompletionOutcome
+
+    /**
+     * A guarded page publication was rejected. The affected page is not
+     * terminal; the caller stops and reconciles against the current store state.
+     */
+    data class PersistenceRejected(
+        val anchorPageKey: String,
+        val stage: TranslationStageEvent,
+        val completedPageKeys: Set<String> = emptySet(),
+        val reason: String = "Batch persistence publication rejected",
+    ) : TranslationCompletionOutcome
 }

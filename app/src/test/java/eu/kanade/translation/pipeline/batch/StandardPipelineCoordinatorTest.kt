@@ -27,6 +27,7 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -283,12 +284,12 @@ class StandardPipelineCoordinatorTest {
     ) {
         val invoked = mutableListOf<String>()
 
-        suspend fun translateOutcome(ref: OcrReadyPageRef): ChunkCompletionOutcome {
+        suspend fun translateOutcome(ref: OcrReadyPageRef): TranslationCompletionOutcome {
             if (invoked.isEmpty()) onFirstInvoke?.invoke()
             val pageKey = ref.pageKey
             invoked += pageKey
             if (pageKey in pauseOnPages) {
-                return ChunkCompletionOutcome.Paused(
+                return TranslationCompletionOutcome.Paused(
                     anchorPageKey = pageKey,
                     reason = "test pause at $pageKey",
                 )
@@ -306,7 +307,7 @@ class StandardPipelineCoordinatorTest {
             identities[pageKey] = identity
             try {
                 val p = store.state.value[pageKey]?.detachedCopy()
-                    ?: return ChunkCompletionOutcome.Completed(emptySet())
+                    ?: return TranslationCompletionOutcome.Completed(emptySet())
                 val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
                 if (sourceBlocks == 0) {
                     // Legacy textless branch: a durable SKIPPED terminal, no
@@ -314,20 +315,20 @@ class StandardPipelineCoordinatorTest {
                     p.translationStatus = StageStatus.SKIPPED
                     p.renderStatus = StageStatus.SKIPPED
                     commit(pageKey, p)
-                    return ChunkCompletionOutcome.Completed(setOf(pageKey))
+                    return TranslationCompletionOutcome.Completed(setOf(pageKey))
                 }
                 translator.translatePage(pageKey, p)
                 TranslationBlockValidation.applyTo(p)
                 return when (p.translationStatus) {
                     StageStatus.READY -> {
                         commit(pageKey, p)
-                        ChunkCompletionOutcome.Completed(setOf(pageKey))
+                        TranslationCompletionOutcome.Completed(setOf(pageKey))
                     }
-                    StageStatus.PARTIAL -> ChunkCompletionOutcome.Paused(
+                    StageStatus.PARTIAL -> TranslationCompletionOutcome.Paused(
                         anchorPageKey = pageKey,
                         reason = "translation output is partial",
                     )
-                    else -> ChunkCompletionOutcome.Failed(
+                    else -> TranslationCompletionOutcome.Failed(
                         anchorPageKey = pageKey,
                         reason = "translation returned an unknown state",
                     )

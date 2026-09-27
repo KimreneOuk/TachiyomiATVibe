@@ -81,7 +81,7 @@ class TranslationManagerQueueAdmissionFailureKindTest {
         val state = manager.pendingTranslationRequests.value[10L]
         state?.phase shouldBe TranslationRequestPhase.ADMISSION_FAILED
         state?.failureKind shouldBe TranslationRequestFailureKind.QUEUE_ADMISSION_FAILED
-        // R10 invariant: never the download-failure phase for an admission issue.
+        // An admission failure must not be projected as a download failure.
         state?.phase shouldNotBe TranslationRequestPhase.DOWNLOAD_FAILED
     }
 

@@ -22,7 +22,7 @@ import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.providers.AiModelFetcher
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.TranslationFont
+import eu.kanade.translation.presentation.TranslationFont
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.launch

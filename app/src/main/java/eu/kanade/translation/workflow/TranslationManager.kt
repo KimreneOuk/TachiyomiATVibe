@@ -526,7 +526,7 @@ class TranslationManager(
     internal suspend fun reconcilePendingRequestsForStartup(
         downloadQueueChapterIds: Set<Long>,
         resolveTranslation: suspend (Long) -> Translation? = { chapterId ->
-            Translation.fromChapterId(chapterId)
+            resolveTranslationFromChapterId(chapterId)
         },
         hasDownloadedFiles: (Translation) -> Boolean = { translation ->
             downloadProvider.findChapterDir(
@@ -1117,7 +1117,7 @@ class TranslationManager(
      */
     internal suspend fun reconstructDurableTerminalSnapshot(
         chapterId: Long,
-        resolveTranslation: suspend (Long) -> Translation? = { Translation.fromChapterId(it) },
+        resolveTranslation: suspend (Long) -> Translation? = { resolveTranslationFromChapterId(it) },
     ): TranslationProgressSnapshot? {
         val translation = resolveTranslation(chapterId) ?: return null
         val chapter = translation.chapter

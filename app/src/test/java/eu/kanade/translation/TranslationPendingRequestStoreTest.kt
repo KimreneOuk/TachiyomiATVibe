@@ -14,10 +14,9 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Test
 
 /**
- * Characterization tests for the durable pre-queue request store (
- * area-3 finding F3: no direct unit coverage). Pins the add/phase/reason/
- * remove round-trip over SharedPreferences, the blank-reason drop, and the
- * `load()` numeric-key filter that keeps reason keys out of the id set.
+ * Verifies that queued request phases and reasons round-trip through
+ * SharedPreferences, blank reasons are dropped, and `load()` ignores
+ * nonnumeric reason keys when collecting chapter IDs.
  */
 class TranslationPendingRequestStoreTest {
 

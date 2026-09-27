@@ -6,9 +6,9 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
@@ -1370,7 +1370,7 @@ class RollingAutoCoordinatorTest {
             source: eu.kanade.tachiyomi.source.online.HttpSource,
             prepared: PreparedPage,
             stageListener: TranslationStageListener?,
-        ): ChunkCompletionOutcome? {
+        ): TranslationCompletionOutcome? {
             val callNum = translateCount.getAndIncrement()
             translateCallsByPage.merge(prepared.pageKey, 1) { a, b -> a + b }
             translateChapterIdsByPage[prepared.pageKey] = chapter.id
@@ -1390,9 +1390,9 @@ class RollingAutoCoordinatorTest {
             }
             val paused = pausedTranslateRemaining[prepared.pageKey]
             if (paused != null && paused.getAndDecrement() > 0) {
-                return ChunkCompletionOutcome.Paused(prepared.pageKey)
+                return TranslationCompletionOutcome.Paused(prepared.pageKey)
             }
-            return ChunkCompletionOutcome.Completed(setOf(prepared.pageKey))
+            return TranslationCompletionOutcome.Completed(setOf(prepared.pageKey))
         }
 
         override suspend fun translateSinglePage(

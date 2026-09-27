@@ -9,11 +9,9 @@ import androidx.core.content.edit
  *
  * Mirrors the established [eu.kanade.tachiyomi.data.download.DownloadStore]
  * pattern: a private [SharedPreferences] file holds an ordered list of chapter
- * ids (keyed by position). On launch the queue is rehydrated via
- * [Translation.fromChapterId], which rebuilds the full [Translation] (source,
- * manga, chapter, languages) from a single durable key. Deleted chapters
- * self-heal — `fromChapterId` returns null for a gone chapter, so stale ids
- * are silently dropped on rehydration.
+ * ids (keyed by position). On launch the workflow resolves each id back to its
+ * chapter, manga, and source. Deleted chapters are silently dropped when those
+ * records can no longer be loaded.
  *
  * Only queue MEMBERSHIP + ORDER is persisted here. [Translation.State] is
  * `@Transient`; queue rehydration normally rebuilds it as [Translation.State.QUEUE],

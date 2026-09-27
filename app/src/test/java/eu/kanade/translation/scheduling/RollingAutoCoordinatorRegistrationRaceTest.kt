@@ -7,9 +7,9 @@ import eu.kanade.translation.diagnostics.TranslationTraceSink
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe
@@ -214,7 +214,7 @@ private class ParkingExecutor : TranslationExecutor {
         source: eu.kanade.tachiyomi.source.online.HttpSource,
         prepared: PreparedPage,
         stageListener: TranslationStageListener?,
-    ): ChunkCompletionOutcome? = null
+    ): TranslationCompletionOutcome? = null
 
     override suspend fun translateSinglePage(
         manga: tachiyomi.domain.manga.model.Manga,

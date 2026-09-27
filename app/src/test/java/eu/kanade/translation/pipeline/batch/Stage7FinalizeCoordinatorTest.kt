@@ -324,8 +324,8 @@ class Stage7FinalizeCoordinatorTest {
             overlapScheduler,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // Stage-7 terminal: the run COMPLETES (legacy completion semantics;
-        // DISPLAY_READY redefinition is gate-7.8-gated OFF).
+        // The run completes when every page reaches its durable translation
+        // terminal; display readiness remains a separate projection.
         outcome.status shouldBe BatchPass1Status.COMPLETED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
         outcome.needsTranslation shouldBe emptyList()
@@ -341,10 +341,9 @@ class Stage7FinalizeCoordinatorTest {
         overlapLane.inpainted shouldContainExactly pageKeys
         overlapScheduler.counters.snapshot()["serialInpaintsExecuted"] shouldBe 3L
 
-        // The run record is CLOSED as COMPLETE with the finalize counters —
-        // the FIRST and ONLY COMPLETE publication of the run. (The gate-6.5
-        // overlap counters ride the FINALIZE record — the 32-key
-        // phaseCounters bound; the live snapshot is asserted above.)
+        // The run publishes its only COMPLETE record at finalization. Overlap
+        // counters are included in the bounded phaseCounters map; the live
+        // snapshot is asserted above.
         val record = runRecord(store)
         record.state shouldBe ChapterRunState.COMPLETE
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_RUN_COMPLETE] shouldBe 1

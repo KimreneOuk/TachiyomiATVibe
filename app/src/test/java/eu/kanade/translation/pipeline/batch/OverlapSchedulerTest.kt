@@ -40,7 +40,7 @@ import java.util.concurrent.ConcurrentHashMap
  * remote request window, EXISTING native inpaint lane + guarded identity
  * path, native admission unchanged (never preempts a MANUAL owner), strictly
  * one inpaint at a time, zero detector/OCR overlap, teardown safety, and the
- * gate-6.5 keep-or-revert counters.
+ * operational counters for overlap work and serial fallback.
  */
 class OverlapSchedulerTest {
 
@@ -265,7 +265,7 @@ class OverlapSchedulerTest {
         lane.ocrEntries shouldBe emptyList()
         lane.concurrent.observedMax() shouldBe 1
 
-        // Gate-6.5 counters: overlap arm did the work.
+        // Counters show the overlap arm completed the inpaint work.
         scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 3L
         scheduler.counters.snapshot()["overlapWindowsCount"] shouldBe 1L
         scheduler.counters.snapshot()["serialInpaintsExecuted"] shouldBe 0L
@@ -300,7 +300,7 @@ class OverlapSchedulerTest {
         // p1 skipped (MANUAL wins), p2 inpainted through the lane.
         lane.inpainted shouldBe listOf("p2")
         scheduler.counters.snapshot()["overlapInpaintsExecuted"] shouldBe 1L
-        // The window could not serve its full work — gate-6.5 fallback marker.
+        // The overlap window had no slot for this page, so it fell back to serial execution.
         scheduler.counters.snapshot()["serialFallbacks"] shouldBe 1L
         // The MANUAL lease is untouched.
         store.snapshot("p1").leaseToken.shouldNotBeNull()

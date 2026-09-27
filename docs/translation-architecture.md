@@ -14,7 +14,7 @@ reader or batch request
   -> live display projection and reader stream
 ```
 
-`pipeline/TranslationPipeline.kt` is the shared execution entry point. Its single-page work is split between `pipeline/SinglePageOnnxPhase.kt` (native-lane decode, recognition, inpainting and OCR commit) and `pipeline/SinglePageHttpRenderPhase.kt` (provider work and rendering outside the native permit). `pipeline/planning/PageWorkPlanner.kt` owns plans shared by single-page and batch paths; keep it here rather than under `pipeline/batch` so the single-page path can share it without depending on a batch package. `ResumeOrdering` in the same package takes a stable snapshot of chapter pages already in natural order. `pipeline/memory/TranslationMemoryBudget.kt` and `MemoryGovernance.kt` own page decode/preflight/prefetch decisions and memory-reclamation policy. `engines/runtime/EngineMemoryBudget.kt` owns process heap and system-memory facts, NNAPI snapshots, neural-inpaint reserves, and memory diagnostics used by OCR and inpainting. `engines/vision/ocr/RoiPageRecognitionEngine.kt` composes detection, optional bubble segmentation and OCR for the ROI path; `MlKitFullPageRecognitionEngine` is the alternate full-page path. `pipeline/PageStoreWriter.kt` and `persistence/chapter/ChapterTranslationStore.kt` mediate candidate stage writes and commits. `persistence/artifact/ChapterArtifactEngine.kt` owns durable chapter artifact documents and recovery.
+`pipeline/TranslationPipeline.kt` is the shared execution entry point. Its single-page work is split between `pipeline/SinglePageOnnxPhase.kt` (native-lane decode, recognition, inpainting and OCR commit) and `pipeline/SinglePageHttpRenderPhase.kt` (provider work and rendering outside the native permit). `pipeline/planning/PageWorkPlanner.kt` owns plans shared by single-page and batch paths; keep it here rather than under `pipeline/batch` so the single-page path can share it without depending on a batch package. Chapter traversal snapshots pages in their existing natural order directly. `pipeline/memory/TranslationMemoryBudget.kt` and `MemoryGovernance.kt` own page decode/preflight/prefetch decisions and memory-reclamation policy. `engines/runtime/EngineMemoryBudget.kt` owns process heap and system-memory facts, NNAPI snapshots, neural-inpaint reserves, and memory diagnostics used by OCR and inpainting. `engines/vision/ocr/RoiPageRecognitionEngine.kt` composes detection, optional bubble segmentation and OCR for the ROI path; `MlKitFullPageRecognitionEngine` is the alternate full-page path. `pipeline/PageStoreWriter.kt` and `persistence/chapter/ChapterTranslationStore.kt` mediate candidate stage writes and commits. `persistence/artifact/ChapterArtifactEngine.kt` owns durable chapter artifact documents and recovery.
 
 ## Execution modes
 
@@ -32,7 +32,7 @@ The session coordinator in `workflow` arbitrates reader and batch admission. Pag
 | --- | --- |
 | `workflow` | Request admission, reader/batch session ownership, chapter lifecycle and reader teardown. `TranslationManager` is the public façade. |
 | `scheduling` | Which page jobs run and when: manual/auto reader jobs, rolling windows, cancellation and auto reader windows. Workflow decides ownership and intent. |
-| `pipeline` | Page execution, engine lane, stage contracts, writes, decoding and single-page phases. `pipeline.execution` owns the page executor contract, prepared-page boundary, native-run quarantine and image-stream registry. `pipeline.planning` owns `PageWorkPlanner` (shared stage planning for single-page and batch paths) and `ResumeOrdering` (stable page-order snapshots); `pipeline.memory` owns `TranslationMemoryBudget` and `MemoryGovernance`, page decode/preflight/prefetch decisions and memory-reclamation policy. Engine-level heap/native-memory facts are in `engines/runtime/EngineMemoryBudget`. `pipeline.batch` owns chapter coordination and mode-specific work; `pipeline.batch.analysis` owns chapter-wide analysis and durable chunk publication; `pipeline.batch.envelope` owns AI profile envelope dispatch and plan publication; `pipeline.batch.progress` owns progress events, tracking and reconciliation; `pipeline.batch.recovery` owns resume-stage policy and batch recovery workers. |
+| `pipeline` | Page execution, engine lane, stage contracts, writes, decoding and single-page phases. `pipeline.execution` owns the page executor contract, prepared-page boundary, native-run quarantine and image-stream registry. `pipeline.planning` owns `PageWorkPlanner` (shared stage planning for single-page and batch paths); chapter traversal snapshots its already ordered stream directly. `pipeline.memory` owns `TranslationMemoryBudget` and `MemoryGovernance`, page decode/preflight/prefetch decisions and memory-reclamation policy. Engine-level heap/native-memory facts are in `engines/runtime/EngineMemoryBudget`. `pipeline.batch` owns chapter coordination and mode-specific work; `pipeline.batch.analysis` owns chapter-wide analysis and durable chunk publication; `pipeline.batch.envelope` owns AI profile envelope dispatch and plan publication; `pipeline.batch.progress` owns progress events, tracking and reconciliation; `pipeline.batch.recovery` owns resume-stage policy and batch recovery workers. |
 | `engines/vision/{detection,segmentation,ocr,webtoon}` | Text/panel detection, bubble masks, recognition engines and webtoon image behavior. OCR engines compose the specialized recognition stages; `TranslationSafetyPrimitives` keeps the OCR native-buffer drain guard beside its lock owner. |
 | `engines/translator` | Translation contracts and provider behavior. Add a provider under `engines/translator/providers`; keep provider request/response details there. `contextual`, `analysis`, `retry` and `routing` retain their focused roles. |
 | `context` | Chapter and series context used to prepare translation requests. |
@@ -65,3 +65,22 @@ Keep candidate output separate from committed display output until the artifact 
 - Add no package cycle, process-global state, or general-purpose abstraction without a real boundary. Prefer an existing concrete owner and a focused test seam.
 
 Changes to leases, cancellation, generation fencing, store commits, artifact publication, recovery, or session coexistence need tests that exercise the relevant state transition and race—not only a happy-path output assertion.
+
+## Naming vocabulary
+
+Use a suffix when it describes a type's primary responsibility, not as a generic decoration. Each suffix below appears in the translation subsystem; the role should remain distinct from nearby owners.
+
+| Suffix | Intended role |
+| --- | --- |
+| `Engine` | Executes a focused processing capability such as recognition, translation, inpainting, or rendering. |
+| `Coordinator` | Coordinates admission, lifecycle, or collaboration across distinct components. |
+| `Planner` | Computes a plan, ordering, or layout; it does not execute the resulting work. |
+| `Store` | Owns live or durable state and its guarded mutation boundary. |
+| `Registry` | Tracks keyed or active objects for lookup; it is not the durable source of truth. |
+| `Provider` | Supplies or adapts a backing implementation/resource behind a contract. |
+| `Projection` | Builds a read-facing view of state; it does not own authoritative mutations. |
+| `Policy` | Encapsulates a focused decision rule without taking over lifecycle coordination. |
+| `Resolver` | Maps current input or state to a concrete target, reference, or status. |
+| `Worker` | Performs a bounded asynchronous job; admission and durable ownership remain elsewhere. |
+
+When a responsibility does not fit one of these roles, prefer a precise domain name over adding a suffix by analogy.

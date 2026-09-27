@@ -7,6 +7,7 @@ import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.ProfilePointer
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -19,7 +20,7 @@ internal class StandardLaneWorkerContext(
     val store: ChapterTranslationStore,
     val frozenConfig: RunConfigSnapshot,
     val effectiveSourcePairs: List<Pair<String, String>>,
-    val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> ChunkCompletionOutcome)?,
+    val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> TranslationCompletionOutcome)?,
     val overlapScheduler: OverlapScheduler?,
     val renderJoin: BatchRenderJoin?,
     val publishRecord: suspend (
@@ -53,7 +54,7 @@ internal class StandardLaneWorker(
         get() = context.frozenConfig
     private val effectiveSourcePairs: List<Pair<String, String>>
         get() = context.effectiveSourcePairs
-    private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> ChunkCompletionOutcome)?
+    private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> TranslationCompletionOutcome)?
         get() = context.standardTranslateOutcome
     private val overlapScheduler: OverlapScheduler?
         get() = context.overlapScheduler
@@ -215,8 +216,8 @@ internal class StandardLaneWorker(
                     overlapScheduler?.onRemoteWindowClosed()
                 }
                 when (outcome) {
-                    is ChunkCompletionOutcome.Completed -> translatedPages += outcome.completedPageKeys.size
-                    is ChunkCompletionOutcome.Paused -> {
+                    is TranslationCompletionOutcome.Completed -> translatedPages += outcome.completedPageKeys.size
+                    is TranslationCompletionOutcome.Paused -> {
                         publishRecord(
                             artifact,
                             translateRecord(
@@ -243,7 +244,7 @@ internal class StandardLaneWorker(
                             reason = outcome.reason,
                         )
                     }
-                    is ChunkCompletionOutcome.Failed -> {
+                    is TranslationCompletionOutcome.Failed -> {
                         publishRecord(
                             artifact,
                             translateRecord(
@@ -269,7 +270,7 @@ internal class StandardLaneWorker(
                             reason = outcome.reason,
                         )
                     }
-                    is ChunkCompletionOutcome.Unexpected -> {
+                    is TranslationCompletionOutcome.Unexpected -> {
                         publishRecord(
                             artifact,
                             translateRecord(
@@ -289,10 +290,10 @@ internal class StandardLaneWorker(
                             completedPageKeys = allPageKeys,
                             terminalPageKeys = outcome.terminalPageKeys,
                             reason = outcome.reason,
-                            unexpectedStage = outcome.stage,
+                            unexpectedStage = outcome.stage.toBatchDiagnosticStage(),
                         )
                     }
-                    is ChunkCompletionOutcome.PersistenceRejected -> {
+                    is TranslationCompletionOutcome.PersistenceRejected -> {
                         publishRecord(
                             artifact,
                             translateRecord(
@@ -310,7 +311,7 @@ internal class StandardLaneWorker(
                             status = BatchPass1Status.PERSISTENCE_REJECTED,
                             anchorPageKey = outcome.anchorPageKey,
                             reason = outcome.reason,
-                            persistenceRejectedStage = outcome.stage,
+                            persistenceRejectedStage = outcome.stage.toBatchDiagnosticStage(),
                         )
                     }
                 }
