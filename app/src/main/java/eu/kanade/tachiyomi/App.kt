@@ -236,9 +236,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        eu.kanade.translation.pipeline.forwardTranslationMemoryPressure(level) {
-            Injekt.get<TranslationManager>().onMemoryPressure(it)
-        }
+        Injekt.get<TranslationManager>().onMemoryPressure(level)
     }
 
     override fun onStart(owner: LifecycleOwner) {
