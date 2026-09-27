@@ -8,10 +8,11 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import io.kotest.matchers.shouldBe
@@ -438,7 +439,7 @@ private class TraceControllableExecutor(
         source: eu.kanade.tachiyomi.source.online.HttpSource,
         prepared: PreparedPage,
         stageListener: TranslationStageListener?,
-    ): ChunkCompletionOutcome? {
+    ): TranslationCompletionOutcome? {
         val callNum = translateCount.getAndIncrement()
         gate(translateStarted, callNum).complete(Unit)
         incConcurrent()
@@ -448,13 +449,13 @@ private class TraceControllableExecutor(
             decConcurrent()
         }
         if (prepared.pageKey in persistenceRejectedFor) {
-            return ChunkCompletionOutcome.PersistenceRejected(
+            return TranslationCompletionOutcome.PersistenceRejected(
                 anchorPageKey = prepared.pageKey,
-                stage = eu.kanade.translation.diagnostics.BatchDiagnosticStage.TRANSLATION,
+                stage = TranslationStageEvent.TRANSLATING,
                 reason = "lease rejected by manual owner",
             )
         }
-        return ChunkCompletionOutcome.Completed(setOf(prepared.pageKey))
+        return TranslationCompletionOutcome.Completed(setOf(prepared.pageKey))
     }
 
     override suspend fun translateSinglePage(

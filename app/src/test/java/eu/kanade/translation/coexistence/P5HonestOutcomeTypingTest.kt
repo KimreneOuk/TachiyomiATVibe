@@ -46,8 +46,8 @@ import java.util.concurrent.atomic.AtomicReference
  *  - **Condition B (-1):** an HTTP+render timeout (`withTimeoutOrNull` → null
  *    outcome) falls through to `SinglePageOutcome.Completed`. It must be typed
  *    honestly (Failed family, naming the HTTP+render timer).
- *  - **Condition C:** `ChunkCompletionOutcome.PersistenceRejected`
- *    and `ChunkCompletionOutcome.Failed` returned as VALUES by the HTTP phase are
+ *  - **Condition C:** `TranslationCompletionOutcome.PersistenceRejected`
+ *    and `TranslationCompletionOutcome.Failed` returned as VALUES by the HTTP phase are
  *    mapped only for `Paused`; everything else falls through to `Completed`.
  *  - **Batch:** the `nonDurableFailure` fact must reach the progress
  *    snapshot as a bounded value field (boolean + nullable reason, no enum).
@@ -192,7 +192,7 @@ class P5HonestOutcomeTypingTest {
         val failure = when (outcome) {
             is SinglePageOutcome.Completed -> AssertionError(
                 "T917 P5 RED defect (condition B / D8-1): an HTTP+render result-timer timeout " +
-                    "(withTimeoutOrNull → null ChunkCompletionOutcome) fell through the Paused-only " +
+                    "(withTimeoutOrNull → null TranslationCompletionOutcome) fell through the Paused-only " +
                     "mapping to SinglePageOutcome.Completed — the same §7 lie class D8 fixed for " +
                     "the native timer, one level up. It must be typed as a visible non-success " +
                     "naming the HTTP+render timer.",
@@ -225,7 +225,7 @@ class P5HonestOutcomeTypingTest {
         // Park the transport AFTER the paid call so the phase's commit
         // precondition is captured, then break the commit's ownership under
         // it: the guarded final patchPage must reject →
-        // ChunkCompletionOutcome.PersistenceRejected.
+        // TranslationCompletionOutcome.PersistenceRejected.
         h.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p0")
         h.tapManual("p0")
         h.barrier.awaitArrivalWithin(
@@ -256,8 +256,8 @@ class P5HonestOutcomeTypingTest {
         if (rejected == null) {
             throw AssertionError(
                 "T917 P5 RED defect (condition C, P3 finding 5): a guarded-commit rejection " +
-                    "(ChunkCompletionOutcome.PersistenceRejected from the HTTP phase) surfaced as " +
-                    "$outcome — the boundary maps only ChunkCompletionOutcome.Paused and returns " +
+                    "(TranslationCompletionOutcome.PersistenceRejected from the HTTP phase) surfaced as " +
+                    "$outcome — the boundary maps only TranslationCompletionOutcome.Paused and returns " +
                     "Completed for every other value. A page whose translation could not be saved " +
                     "must be a visible typed non-success (Rejected with the stable not-saved reason), " +
                     "never Completed.",
@@ -331,7 +331,7 @@ class P5HonestOutcomeTypingTest {
         h.registerReaderStream(h.CHAPTER_ID, "p0")
         // Swap the engine lane's translator for a terminal-failing fake: the
         // HTTP phase catches the typed ProviderFailureException and returns
-        // ChunkCompletionOutcome.Failed as a VALUE (never throws).
+        // TranslationCompletionOutcome.Failed as a VALUE (never throws).
         val failingTransport = object : eu.kanade.translation.engines.translator.TextTranslator {
             override val fromLang = TextRecognizerLanguage.JAPANESE
             override val toLang = TextTranslatorLanguage.ENGLISH
@@ -363,7 +363,7 @@ class P5HonestOutcomeTypingTest {
         val failed = outcome as? SinglePageOutcome.Failed
         if (failed == null) {
             throw AssertionError(
-                "T917 P5 RED defect (condition C, P3 finding 5): ChunkCompletionOutcome.Failed " +
+                "T917 P5 RED defect (condition C, P3 finding 5): TranslationCompletionOutcome.Failed " +
                     "returned as a VALUE by the HTTP phase surfaced as $outcome — a terminal page " +
                     "failure must never be typed Completed. Expected SinglePageOutcome.Failed " +
                     "carrying the provider's safe reason.",

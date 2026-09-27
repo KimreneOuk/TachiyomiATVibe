@@ -12,7 +12,7 @@ import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
@@ -149,7 +149,7 @@ class EngineEpochStopRaceTest {
         return store
     }
 
-    private class AutoRun(val outcome: CompletableDeferred<ChunkCompletionOutcome?>) {
+    private class AutoRun(val outcome: CompletableDeferred<TranslationCompletionOutcome?>) {
         /** Set when the boundary died before the paid call (fixture diagnosis). */
         @Volatile var earlyFailure: Throwable? = null
 
@@ -170,7 +170,7 @@ class EngineEpochStopRaceTest {
         val h = checkNotNull(harness)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("d7-auto"))
         autoScope = scope
-        val outcome = CompletableDeferred<ChunkCompletionOutcome?>()
+        val outcome = CompletableDeferred<TranslationCompletionOutcome?>()
         val run = AutoRun(outcome)
         run.job = scope.launch {
             try {
@@ -287,7 +287,7 @@ class EngineEpochStopRaceTest {
                     "epoch retry wins) — RED fails it mid-call because closeEngines closed the " +
                     "translator under the parked call",
             ) {
-                if (outcome !is ChunkCompletionOutcome.Completed) {
+                if (outcome !is TranslationCompletionOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1a defect: the parked AUTO call FAILED across the stop — " +
                             "outcome was $outcome",
@@ -372,7 +372,7 @@ class EngineEpochStopRaceTest {
             withClue(
                 "T917 D7 §1.4.1b: with the grace large enough the call itself completes untouched",
             ) {
-                if (outcome !is ChunkCompletionOutcome.Completed) {
+                if (outcome !is TranslationCompletionOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1b defect: the call failed even though the grace had not expired — " +
                             "outcome was $outcome",
@@ -432,7 +432,7 @@ class EngineEpochStopRaceTest {
                 "T917 D7 §1.4.1c defect: the epoch guard must transparently retry the racing page ONCE " +
                     "against the REBUILT translator — RED fails the page outright",
             ) {
-                if (outcome !is ChunkCompletionOutcome.Completed) {
+                if (outcome !is TranslationCompletionOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1c defect: the grace-expired call was not recovered by the epoch " +
                             "retry — outcome was $outcome",
@@ -510,7 +510,7 @@ class EngineEpochStopRaceTest {
                 "T917 D7 §1.4.1c defect: a SECOND epoch mismatch must fail the page honestly (typed " +
                     "failure) — never complete it and never loop",
             ) {
-                if (outcome is ChunkCompletionOutcome.Completed) {
+                if (outcome is TranslationCompletionOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1c defect: the twice-closed page completed instead of failing " +
                             "honestly — outcome was $outcome",

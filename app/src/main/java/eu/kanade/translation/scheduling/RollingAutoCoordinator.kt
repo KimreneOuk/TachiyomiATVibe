@@ -20,8 +20,8 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
@@ -459,7 +459,7 @@ class RollingAutoCoordinator(
      * was written and the caller must run the call via [runAutoAttempt].
      * Write failures are fail-open (entry skipped, call proceeds).
      */
-    private suspend fun recordAutoAttemptStart(work: PreparedWork): ChunkCompletionOutcome? {
+    private suspend fun recordAutoAttemptStart(work: PreparedWork): TranslationCompletionOutcome? {
         val admitted = runCatching {
             work.session.store.recordAttemptStart(
                 pageKey = work.prepared.pageKey,
@@ -481,7 +481,7 @@ class RollingAutoCoordinator(
             retryability = ProviderFailureRetryability.PAUSE,
             safeSummary = "repeatedly interrupted before completing; manual retry required",
         )
-        return ChunkCompletionOutcome.Paused(
+        return TranslationCompletionOutcome.Paused(
             anchorPageKey = work.prepared.pageKey,
             retryablePageKeys = setOf(work.prepared.pageKey),
             failure = failure,
@@ -494,8 +494,8 @@ class RollingAutoCoordinator(
      * (any returned outcome, or a typed provider failure) and stays
      * unresolved ONLY on cancellation (process death / scope kill).
      */
-    private suspend fun runAutoAttempt(work: PreparedWork): ChunkCompletionOutcome? {
-        val outcome: ChunkCompletionOutcome? = try {
+    private suspend fun runAutoAttempt(work: PreparedWork): TranslationCompletionOutcome? {
+        val outcome: TranslationCompletionOutcome? = try {
             executor.translatePreparedPage(
                 work.session.manga,
                 work.session.chapter,
@@ -583,7 +583,7 @@ class RollingAutoCoordinator(
                 }
                 if (isWorkCurrent(work)) {
                     when (translated) {
-                        is ChunkCompletionOutcome.Completed -> {
+                        is TranslationCompletionOutcome.Completed -> {
                             markCompleted(work.pageIndex, work.generation)
                             clearReprepareAttempts(work.pageIndex, work.generation)
                             clearTranslationPause(work.pageIndex, work.generation)
@@ -598,7 +598,7 @@ class RollingAutoCoordinator(
                             // tight-loop the native lane.
                             handleStaleTranslate(work.pageIndex, work.generation)
                         }
-                        is ChunkCompletionOutcome.Paused -> {
+                        is TranslationCompletionOutcome.Paused -> {
                             // The provider budget was consumed by this attempt. A
                             // completion poke must not immediately reset that
                             // budget; defer until an external reconcile after the
@@ -610,7 +610,7 @@ class RollingAutoCoordinator(
                                 nextEligibleRetryAtEpochMs = translated.nextEligibleRetryAtEpochMs,
                             )
                         }
-                        is ChunkCompletionOutcome.Failed -> {
+                        is TranslationCompletionOutcome.Failed -> {
                             clearReprepareAttempts(work.pageIndex, work.generation)
                             val retryable = translated.failure?.retryability !=
                                 ProviderFailureRetryability.TERMINAL
@@ -625,7 +625,7 @@ class RollingAutoCoordinator(
                                 )
                             }
                         }
-                        is ChunkCompletionOutcome.Unexpected -> {
+                        is TranslationCompletionOutcome.Unexpected -> {
                             clearReprepareAttempts(work.pageIndex, work.generation)
                             clearTranslationPause(work.pageIndex, work.generation)
                             updateSlot(
@@ -634,7 +634,7 @@ class RollingAutoCoordinator(
                                 work.generation,
                             )
                         }
-                        is ChunkCompletionOutcome.PersistenceRejected -> {
+                        is TranslationCompletionOutcome.PersistenceRejected -> {
                             clearReprepareAttempts(work.pageIndex, work.generation)
                             clearTranslationPause(work.pageIndex, work.generation)
                             updateSlot(
@@ -695,14 +695,14 @@ class RollingAutoCoordinator(
      */
     private fun mapTranslatedTraceOutcome(
         work: PreparedWork,
-        translated: ChunkCompletionOutcome?,
+        translated: TranslationCompletionOutcome?,
     ): TranslationTraceOutcome = when (translated) {
-        is ChunkCompletionOutcome.Completed -> TranslationTraceOutcome.SUCCESS
+        is TranslationCompletionOutcome.Completed -> TranslationTraceOutcome.SUCCESS
         null -> TranslationTraceOutcome.STALE_HANDOFF
-        is ChunkCompletionOutcome.Paused -> TranslationTraceOutcome.PAUSE
-        is ChunkCompletionOutcome.Failed -> TranslationTraceOutcome.FAILURE
-        is ChunkCompletionOutcome.Unexpected -> TranslationTraceOutcome.FAILURE
-        is ChunkCompletionOutcome.PersistenceRejected -> {
+        is TranslationCompletionOutcome.Paused -> TranslationTraceOutcome.PAUSE
+        is TranslationCompletionOutcome.Failed -> TranslationTraceOutcome.FAILURE
+        is TranslationCompletionOutcome.Unexpected -> TranslationTraceOutcome.FAILURE
+        is TranslationCompletionOutcome.PersistenceRejected -> {
             val owner = runCatching {
                 work.session.store.pageLeaseOwner(work.prepared.pageKey)
             }.getOrNull()

@@ -2,6 +2,8 @@ package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 
 /**
  * Shared worker, progress-listener, and result contracts for batch execution.
@@ -64,14 +66,14 @@ interface TranslatorLaneWorker {
      * this bridge to return a retryable pause without throwing it through the
      * lane. Unexpected exceptions still reach the coordinator's failure path.
      */
-    suspend fun translateOutcome(ref: OcrReadyPageRef): ChunkCompletionOutcome =
+    suspend fun translateOutcome(ref: OcrReadyPageRef): TranslationCompletionOutcome =
         try {
             translate(ref)
-            ChunkCompletionOutcome.Completed(setOf(ref.pageKey))
+            TranslationCompletionOutcome.Completed(setOf(ref.pageKey))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: eu.kanade.translation.engines.translator.ProviderFailureException) {
-            e.toChunkCompletionOutcome(ref.pageKey)
+            e.toTranslationCompletionOutcome(ref.pageKey)
         }
 }
 
@@ -87,56 +89,6 @@ enum class BatchPass1Status {
      * to justify a terminal chapter error or a durable pause projection.
      */
     PERSISTENCE_REJECTED,
-}
-
-/** Typed result returned by one translator chunk or one per-page request. */
-sealed interface ChunkCompletionOutcome {
-    data class Completed(
-        val completedPageKeys: Set<String> = emptySet(),
-    ) : ChunkCompletionOutcome
-
-    data class Paused(
-        val anchorPageKey: String,
-        val completedPageKeys: Set<String> = emptySet(),
-        val retryablePageKeys: Set<String> = setOf(anchorPageKey),
-        val failure: ProviderFailure? = null,
-        val nextEligibleRetryAtEpochMs: Long? = failure?.retryAfterAtEpochMs,
-        val reason: String = failure?.safeSummary ?: "Translation paused; retryable provider work remains",
-    ) : ChunkCompletionOutcome
-
-    data class Failed(
-        val anchorPageKey: String? = null,
-        val completedPageKeys: Set<String> = emptySet(),
-        val terminalPageKeys: Set<String> = anchorPageKey?.let(::setOf).orEmpty(),
-        val failure: ProviderFailure? = null,
-        val reason: String = failure?.safeSummary ?: "Translation failed",
-    ) : ChunkCompletionOutcome
-
-    /**
-     * A worker failed outside the typed provider-failure contract. This is kept
-     * distinct from [Failed] so an unexpected programming/persistence error can
-     * never be mistaken for a successfully completed page or a durable provider
-     * failure. Only the affected page is terminal; later pages remain pending.
-     */
-    data class Unexpected(
-        val anchorPageKey: String,
-        val stage: BatchDiagnosticStage,
-        val completedPageKeys: Set<String> = emptySet(),
-        val terminalPageKeys: Set<String> = setOf(anchorPageKey),
-        val reason: String = "Unexpected ${stage.name.lowercase()} stage failure",
-    ) : ChunkCompletionOutcome
-
-    /**
-     * A guarded artifact publication was rejected. The affected page is not
-     * terminal and must not be reported as a durable provider failure: the
-     * in-memory pass stops so a later run can re-read the current store state.
-     */
-    data class PersistenceRejected(
-        val anchorPageKey: String,
-        val stage: BatchDiagnosticStage,
-        val completedPageKeys: Set<String> = emptySet(),
-        val reason: String = "Batch persistence publication rejected",
-    ) : ChunkCompletionOutcome
 }
 
 /** Result of the only live batch coordinator's first pass. */
@@ -214,20 +166,27 @@ open class BatchScheduleListener {
     }
 }
 
-internal fun eu.kanade.translation.engines.translator.ProviderFailureException.toChunkCompletionOutcome(
+internal fun eu.kanade.translation.engines.translator.ProviderFailureException.toTranslationCompletionOutcome(
     pageKey: String,
-): ChunkCompletionOutcome = when (failure.retryability) {
+): TranslationCompletionOutcome = when (failure.retryability) {
     eu.kanade.translation.engines.translator.ProviderFailureRetryability.PAUSE,
     eu.kanade.translation.engines.translator.ProviderFailureRetryability.RETRY_AFTER,
-    -> ChunkCompletionOutcome.Paused(
+    -> TranslationCompletionOutcome.Paused(
         anchorPageKey = pageKey,
         failure = failure,
         nextEligibleRetryAtEpochMs = failure.retryAfterAtEpochMs,
     )
     eu.kanade.translation.engines.translator.ProviderFailureRetryability.RETRY_NOW,
     eu.kanade.translation.engines.translator.ProviderFailureRetryability.TERMINAL,
-    -> ChunkCompletionOutcome.Failed(
+    -> TranslationCompletionOutcome.Failed(
         anchorPageKey = pageKey,
         failure = failure,
     )
+}
+
+internal fun TranslationStageEvent.toBatchDiagnosticStage(): BatchDiagnosticStage = when (this) {
+    TranslationStageEvent.READING -> BatchDiagnosticStage.OCR
+    TranslationStageEvent.CLEANING -> BatchDiagnosticStage.INPAINT
+    TranslationStageEvent.TRANSLATING -> BatchDiagnosticStage.TRANSLATION
+    TranslationStageEvent.RENDERING -> BatchDiagnosticStage.RENDER
 }

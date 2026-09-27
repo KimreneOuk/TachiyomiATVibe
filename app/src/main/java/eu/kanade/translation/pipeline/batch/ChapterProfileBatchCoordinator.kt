@@ -61,6 +61,7 @@ import eu.kanade.translation.pipeline.batch.envelope.PlannedBlock
 import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
+import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
@@ -233,12 +234,12 @@ internal class ChapterProfileBatchCoordinator(
      * Typed standard translate seam, injected by
      * the shell so the coordinator never touches the legacy worker graph
      * directly. Mirrors `TranslatorLaneWorker.translateOutcome(ref)` (the
-     * SBC per-page bridge): one page in, one typed [ChunkCompletionOutcome]
+     * SBC per-page bridge): one page in, one typed [TranslationCompletionOutcome]
      * out — commits ride the LEGACY per-page machinery, never the envelope
      * provenance ladder. `null` with [standardLane] is a typed
      * CONFIGURATION-class pause (same discipline as the analysis runner).
      */
-    private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> ChunkCompletionOutcome)? = null,
+    private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> TranslationCompletionOutcome)? = null,
     private val envelopePlannerPolicy: EnvelopePlannerPolicy? = null,
     private val seriesKey: String? = null,
 ) {
