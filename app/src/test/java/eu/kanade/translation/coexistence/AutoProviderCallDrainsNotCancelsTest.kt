@@ -48,9 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * When the reader leaves (auto window shutdown/cancel), an auto provider call
  * already in flight must DRAIN to completion inside a bounded grace window —
  * translate + commit run under NonCancellable — instead of being torn down
- * mid-call (which strands the page and, per  leaves an unresolved attempt
- * ledger entry). Grace expiry must cancel the call cleanly and leave the
- * entry unresolved.
+ * mid-call. Grace expiry must cancel the call cleanly without committing.
  *
  * Before this behavior was implemented, `drainGraceMs` was not
  * configurable and the consumer cancels in-flight work, so the drain variant's
@@ -59,17 +57,15 @@ import java.util.concurrent.atomic.AtomicInteger
  * assertions, and the grace bridge raises a named assertion when the seam is
  * missing.
  *
- * Fixture: the REAL [RollingAutoCoordinator] over a minimal executor fake, with
- * the REAL [ChapterTranslationStore] in artifact authority ( fresh-chapter
- * recipe) so the ledger sidecar is durable and observable. The scheduler-level
- * routing into this coordinator is covered by the existing scheduler tests;
- * the coordinator boundary is the unit that owns the §2.3 drain seam.
+ * Fixture: the REAL [RollingAutoCoordinator] over a minimal executor fake and
+ * the REAL [ChapterTranslationStore]. The fake bypasses the single-page
+ * request boundary, which owns the durable attempt ledger; these tests focus
+ * on the coordinator's bounded drain seam.
  */
 class AutoProviderCallDrainsNotCancelsTest {
 
     companion object {
         private const val AWAIT_TIMEOUT_MS = 60_000L
-        private const val LEDGER_FILE = "D6 Drain Chapter_artifacts/attempts/ledger.json"
     }
 
     // Shared "disk" across the two variants.
@@ -132,21 +128,6 @@ class AutoProviderCallDrainsNotCancelsTest {
             injectedScope = injected,
         )
     }
-
-    // ------------------------------------------------------------------
-    // ledger-file observation ( schema mirror)
-    // ------------------------------------------------------------------
-
-    @kotlinx.serialization.Serializable
-    private data class LedgerMirror(
-        val entries: List<kotlinx.serialization.json.JsonObject> = emptyList(),
-        val consecutiveUnresolved: Map<String, Int> = emptyMap(),
-    )
-
-    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-
-    private fun readLedger(): LedgerMirror? =
-        io.read(LEDGER_FILE)?.let { bytes -> json.decodeFromString<LedgerMirror>(bytes.decodeToString()) }
 
     // ------------------------------------------------------------------
     // §2.3 seam bridge — named failure, never a timeout.
@@ -251,12 +232,6 @@ class AutoProviderCallDrainsNotCancelsTest {
             page.ocrStatus shouldBe StageStatus.READY
             page.inpaintStatus shouldBe StageStatus.READY
         }
-        withClue(
-            "T917 D6 §2.3 defect: a drained COMPLETED call must consume its D9 attempt entry — " +
-                "RED leaves it unresolved, so the next startup would count a false crash",
-        ) {
-            readLedger()?.entries.orEmpty() shouldBe emptyList()
-        }
         withClue("T917 D6 §2.3: exactly one paid call — the drain must not re-translate") {
             executor.translateCallsFor("p0") shouldBe 1
             executor.cancelledCalls.get() shouldBe 0
@@ -268,7 +243,7 @@ class AutoProviderCallDrainsNotCancelsTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun `grace expiry cancels the parked call and leaves the ledger entry unresolved`() = runBlocking<Unit> {
+    fun `grace expiry cancels the parked call without committing`() = runBlocking<Unit> {
         val store = freshStore(listOf("p0"))
         val executor = DrainExecutor(store)
         val coordinator = newGraceBoundedCoordinator(executor, graceMs = 300L)
@@ -300,18 +275,6 @@ class AutoProviderCallDrainsNotCancelsTest {
             "T917 D6 §2.3 defect: grace expiry must NOT commit — the page stays un-READY",
         ) {
             store.state.value.getValue("p0").renderStatus shouldBe StageStatus.PENDING
-        }
-        withClue(
-            "T917 D6 §2.3 defect: grace expiry is cancellation-class — the D9 attempt entry " +
-                "must stay unresolved (exactly one entry), not consumed and not doubled",
-        ) {
-            val ledger = readLedger()
-            if (ledger == null) {
-                throw AssertionError(
-                    "T917 D6 §2.3 defect: the attempt ledger sidecar was never written",
-                )
-            }
-            ledger.entries.size shouldBe 1
         }
         withClue("T917 D6 §2.3: the expiry must not re-issue the call") {
             executor.translateCallsFor("p0") shouldBe 1

@@ -26,7 +26,6 @@ import eu.kanade.translation.engines.translator.contextual.ContextualRequestProt
 import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.engines.translator.contextual.TranslationPrompts
 import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
 import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.engines.translator.retry.RequestRetryBudget
@@ -154,9 +153,9 @@ internal class SinglePageHttpRenderPhase(
      * inside a bounded grace instead of closing the translator mid-call. The
      * borrow is paired with an epoch capture: if the HTTP call fails and the
      * engine epoch has moved, the close DID race this call — the phase rebuilds
-     * the closed translator once (`ensureTranslatorRebuiltForEpochRetry`), re-reads
-     * the chapter glossary, and retries INSIDE the same ledger-wrapped call (one
-     *  entry). A second epoch mismatch fails the page honestly; there is no
+     * the closed translator once (`ensureTranslatorRebuiltForEpochRetry`) and
+     * retries the same finalized request inside the ledger-wrapped call (one
+     * entry). A second epoch mismatch fails the page honestly; there is no
      * retry loop, and the close path itself never touches the ledger.
      */
     suspend fun translateSinglePageHttpRender(
@@ -266,9 +265,8 @@ internal class SinglePageHttpRenderPhase(
             }
         }
 
-        // AI translators use translateContextual with the chapter glossary so on-demand
-        // single-page translation reuses established terms/pronouns (same continuity the
-        // batch path gets). Standard translators keep plain translatePage.
+        // Contextual translators receive the shared rolling-history context.
+        // Plain translators keep the simple translatePage call.
         val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
             ?: TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
         fun singlePageProfile(translator: Any): TranslationContextChunkPlanner.Profile =
@@ -283,13 +281,14 @@ internal class SinglePageHttpRenderPhase(
         // on any completed call (success or typed provider failure); only
         // cancellation (process death / scope kill) leaves the entry for the
         // startup reconcile. Write failures are fail-open.
-        suspend fun runLedgerWrapped(call: suspend () -> Unit) {
+        suspend fun runLedgerWrapped(requestContextFingerprint: String, call: suspend () -> Unit) {
             runCatching {
                 store.recordAttemptStart(
                     pageKey = pageKey,
                     providerKeyHash = ShortHash.hash(activeTranslator.javaClass.name),
                     origin = AttemptOrigin.valueOf(origin.name),
                     generation = store.currentGeneration,
+                    requestContextFingerprint = requestContextFingerprint,
                 )
             }.onFailure {
                 logcat(LogPriority.WARN) {
@@ -307,11 +306,46 @@ internal class SinglePageHttpRenderPhase(
             runCatching { store.resolveAttempt(pageKey) }
         }
 
-        // One translate round against the CURRENT [activeTranslator]: builds the
-        // contextual chunk (glossary snapshot + rolling pairs are re-read per
-        // round, so an epoch retry naturally picks up a fresh glossary) or makes
-        // the plain translatePage call.
-        suspend fun translateOnce(targetPage: PageTranslation) {
+        // One shared context construction for contextual and plain providers.
+        // A plain provider may ignore the prepared section, but its attempt
+        // ledger still identifies the same finalized chapter-local history.
+        fun prepareTranslationContext(
+            targetPage: PageTranslation,
+            translator: Any,
+        ): Pair<eu.kanade.translation.context.PreparedContext, TranslationContextChunk> {
+            val targetLang = translationPreferences.translateToLanguage().get()
+            val sourceLang = translationPreferences.translateFromLanguage().get()
+            val laneCap = if (origin == PageWriteOrigin.AUTO) LaneCapability.AUTO else LaneCapability.MANUAL
+            val profile = singlePageProfile(translator)
+            val prepared = ChapterContextService(store).prepare(
+                ContextRequest(
+                    pageKeys = listOf(pageKey),
+                    targetLang = targetLang,
+                    sourceLang = sourceLang,
+                    profile = profile,
+                    laneCapability = laneCap,
+                ),
+            )
+            val baseChunk = TranslationContextChunk(
+                pages = linkedMapOf(pageKey to targetPage),
+                blockCount = targetPage.blocks.count { it.text.isNotBlank() },
+                rollingContext = "",
+                estimatedPromptTokens = TranslationContextChunkPlanner.PROMPT_OVERHEAD_TOKENS +
+                    targetPage.blocks.sumOf { TranslationContextChunkPlanner.estimateTokens(it.text) },
+                maxOutputTokens = requestedOutputTokens,
+                protocol = ContextualRequestProtocol.LEGACY,
+            )
+            val finalizedChunk = TranslationContextChunkPlanner.withRollingContext(
+                chunk = baseChunk,
+                rollingContext = prepared.rollingContext,
+                requestedOutputTokens = requestedOutputTokens,
+                profile = profile,
+            )
+            return prepared to finalizedChunk
+        }
+
+        // One translate round against the CURRENT [activeTranslator].
+        suspend fun translateOnce(targetPage: PageTranslation, chunk: TranslationContextChunk) {
             // The first translator invocation is the moment the
             // governor/admission wait ends.
             if (!governorSpanSettled) {
@@ -320,53 +354,6 @@ internal class SinglePageHttpRenderPhase(
             }
             val ct = activeTranslator as? ContextualTextTranslator
             if (ct != null) {
-                val targetLang = translationPreferences.translateToLanguage().get()
-                val sourceLang = translationPreferences.translateFromLanguage().get()
-                val laneCap = if (origin == PageWriteOrigin.AUTO) {
-                    LaneCapability.AUTO
-                } else {
-                    LaneCapability.MANUAL
-                }
-                val estPrompt = TranslationContextChunkPlanner.PROMPT_OVERHEAD_TOKENS +
-                    targetPage.blocks.sumOf { TranslationContextChunkPlanner.estimateTokens(it.text) }
-                val baseChunk = TranslationContextChunk(
-                    pages = linkedMapOf(pageKey to targetPage),
-                    blockCount = targetPage.blocks.count { it.text.isNotBlank() },
-                    rollingContext = "",
-                    estimatedPromptTokens = estPrompt,
-                    maxOutputTokens = requestedOutputTokens,
-                    protocol = eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol.LEGACY,
-                )
-                // Recent translated pairs give on-demand single-page translation the
-                // same voice/speaker continuity the batch path gets.
-                val recentPairs = store.translatedPairs()
-                    .mapNotNull { (src, tgt) ->
-                        val t = tgt.trim()
-                        if (t.isBlank() || t == src.trim()) null else "$src => $t"
-                    }
-                    .takeLast(TranslationContextChunkPlanner.MAX_ROLLING_PAIRS)
-                    .joinToString("\n")
-                val glossaryText = TranslationPrompts.formatGlossary(store.glossarySnapshot())
-                val prepared = ChapterContextService(store).prepare(
-                    ContextRequest(
-                        pageKeys = listOf(pageKey),
-                        targetLang = targetLang,
-                        sourceLang = sourceLang,
-                        requestedOutputTokens = requestedOutputTokens,
-                        profile = singlePageProfile(activeTranslator),
-                        laneCapability = laneCap,
-                        rollingPairs = recentPairs,
-                    ),
-                )
-                val effectiveGlossary = prepared.characterAndTermSheet.ifBlank { glossaryText }
-                val effectiveRolling = prepared.rollingContext.ifBlank { recentPairs }
-                val chunk = TranslationContextChunkPlanner.withRollingContext(
-                    chunk = baseChunk,
-                    rollingContext = effectiveRolling,
-                    requestedOutputTokens = requestedOutputTokens,
-                    profile = singlePageProfile(activeTranslator),
-                    glossary = effectiveGlossary,
-                )
                 ct.translateContextual(chunk)
             } else {
                 activeTranslator.translatePage(pageKey, targetPage)
@@ -380,9 +367,15 @@ internal class SinglePageHttpRenderPhase(
         // rethrows into the caller's typed-failure handling — no loop.
         var epochRetryUsed = false
         suspend fun runTranslate(targetPage: PageTranslation) {
-            runLedgerWrapped {
+            val (preparedContext, contextChunk) = prepareTranslationContext(targetPage, activeTranslator)
+            val requestContextFingerprint = preparedContext.computeRequestContextFingerprint(
+                targetLang = translationPreferences.translateToLanguage().get(),
+                sourceLang = translationPreferences.translateFromLanguage().get(),
+                finalizedRollingContext = contextChunk.rollingContext,
+            )
+            runLedgerWrapped(requestContextFingerprint) {
                 try {
-                    translateOnce(targetPage)
+                    translateOnce(targetPage, contextChunk)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     if (!epochRetryUsed && engines.currentEngineEpoch() != epochAtCapture) {
@@ -398,7 +391,7 @@ internal class SinglePageHttpRenderPhase(
                             TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage()),
                         )
                         activeTranslator = textTranslator
-                        translateOnce(targetPage)
+                        translateOnce(targetPage, contextChunk)
                     } else {
                         throw e
                     }
@@ -495,25 +488,6 @@ internal class SinglePageHttpRenderPhase(
                             reason = partialFailure.safeSummary,
                         )
                     }
-                    // Fold this page's translated pairs into the chapter glossary so later
-                    // on-demand/batch translations reuse its established terms.
-                    if (activeTranslator is ContextualTextTranslator) {
-                        val pairs = pageTranslation.blocks.mapNotNull { block ->
-                            val s = block.text.trim()
-                            val t = block.translation.trim()
-                            if (s.isBlank() || t.isBlank() || t == s) null else s to t
-                        }
-                        store.foldPageContribution(pageKey, pairs)
-                    }
-                    // Stamp the live glossary version AFTER
-                    // this page's own pairs folded, before the durable write — a pre-fold
-                    // stamp would record the version BELOW the one this page's own fold
-                    // creates, guaranteeing one wasted batch repair per manually translated
-                    // page after every session. A concurrent mode's fold between request
-                    // build and commit is claimed but unseen: rare, converging, accepted.
-                    // A missing glossary version is represented as zero so an
-                    // uninitialized glossary does not look like a newer version.
-                    pageTranslation.translationGlossaryVersion = store.currentGlossaryVersion() ?: 0
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT translate step DONE: pageHash=${ShortHash.hash(pageKey)} " +

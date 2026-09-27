@@ -977,10 +977,6 @@ class ChapterArtifactEngine(
     internal fun analysisChunkSidecarName(contentFingerprint: String): String =
         layout.analysisChunkFile(contentFingerprint)
 
-    /** Content-addressed `ChapterTranslationProfile` sidecar name under `profiles/`. */
-    internal fun profileSidecarName(contentFingerprint: String): String =
-        layout.profileFile(contentFingerprint)
-
     /**
      * Content-addressed `EnvelopePlan` sidecar name under `envelopes/`.
      */
@@ -990,10 +986,6 @@ class ChapterArtifactEngine(
     /** Content-addressed `ColorStylePreparation` sidecar name under `color/`. */
     internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.colorPreparationFile(pageKey, contentFingerprint)
-
-    /** Content-addressed `ChapterContextSnapshot` sidecar name under `context/`. */
-    internal fun contextSidecarName(contentFingerprint: String): String =
-        layout.contextFile(contentFingerprint)
 
     sealed interface ContextSnapshotRead {
         data class Usable(val snapshot: ChapterContextSnapshot) : ContextSnapshotRead
@@ -1018,33 +1010,6 @@ class ChapterArtifactEngine(
             return ContextSnapshotRead.Absent
         }
         return ContextSnapshotRead.Usable(snapshot)
-    }
-
-    fun publishContextSnapshot(
-        manifest: ChapterArtifactManifest,
-        snapshot: ChapterContextSnapshot,
-        nowEpochMs: Long = System.currentTimeMillis(),
-    ): TransactionOutcome {
-        val err = snapshot.validationError()
-        if (err != null) return TransactionOutcome.Rejected("invalid context snapshot: $err")
-        val fileName = contextSidecarName(snapshot.contentFingerprint)
-        val sidecar = jsonSidecarPublication(
-            fileName = fileName,
-            contentFingerprint = snapshot.contentFingerprint,
-            document = snapshot,
-            serializer = ChapterContextSnapshot.serializer(),
-        )
-        val pointer = SidecarPointer(
-            fileName = fileName,
-            schemaVersion = ChapterContextSnapshot.SCHEMA_VERSION,
-            contentFingerprint = snapshot.contentFingerprint,
-        )
-        return publishSidecarPointers(
-            manifest = manifest,
-            sidecars = listOf(sidecar),
-            updatePointers = { it.copy(context = pointer) },
-            nowEpochMs = nowEpochMs,
-        )
     }
 
     /**

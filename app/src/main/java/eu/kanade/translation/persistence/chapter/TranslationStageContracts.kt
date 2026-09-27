@@ -90,12 +90,6 @@ data class TranslationStagePatch(
     val expectedDependencyFingerprint: String? = null,
     val expectedArtifactPageVersion: Long? = null,
     /**
-     * Frozen profile content fingerprint used to build the translation request.
-     * When present, the merge rejects if the manifest's current frozen profile
-     * has a different fingerprint.
-     */
-    val profileContentFingerprint: String? = null,
-    /**
      * Envelope-plan fingerprint used to plan the dispatch.
      * When present, the merge rejects if the manifest's `envelopePlan`
      * pointer has a different fingerprint. A rejected commit never advances

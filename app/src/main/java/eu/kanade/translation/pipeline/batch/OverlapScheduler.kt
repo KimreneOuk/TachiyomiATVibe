@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicLong
  * A drain is event-driven: lease denial defers a page for the rest of that
  * pass, while a busy write slot or failed lane attempt waits for a later
  * window or serial drain. This avoids retrying settled work in a hot loop.
- * The coordinator starts the scheduler only after profile freeze. On teardown,
+ * The coordinator starts the scheduler only after OCR preflight. On teardown,
  * window-driven work stops between pages; each attempt deregisters its write
  * identity and releases its BATCH lease in `finally` after the attempt settles.
  * The existing guarded merge and durable mask/cleaned-image publication path

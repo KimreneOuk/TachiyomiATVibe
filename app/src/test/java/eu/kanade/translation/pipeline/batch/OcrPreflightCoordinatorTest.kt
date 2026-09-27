@@ -213,11 +213,11 @@ class OcrPreflightCoordinatorTest {
 
         // Stopped-not-finished: never a COMPLETED pass (which would strand the
         // untranslated pages as failed), and remains resumable. A complete
-        // corpus continues into analysis, which pauses at the typed
-        // CONFIGURATION gate because no transport is configured.
+        // corpus publishes its envelope plan and pauses at the typed
+        // translation CONFIGURATION gate because no translator is configured.
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.needsTranslation shouldContainExactly emptyList()
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_NO_TRANSPORT_REASON
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         outcome.completedPageKeys shouldBe setOf("p1", "p2", "p3")
 
         // Serial OCR only: natural order, one decoded page at a time, every
@@ -233,11 +233,11 @@ class OcrPreflightCoordinatorTest {
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         manifest.ocrCheckpoints.keys shouldBe setOf("p1", "p2", "p3")
 
-        // The durable diagnostic: preflight complete + counter summary +
-        // corpus fingerprint; the analysis phase recorded its CONFIGURATION
-        // gate (no transport in this slice); flag frozen.
+        // The durable diagnostic: preflight complete + envelope-plan summary
+        // + corpus fingerprint; the translation phase records its
+        // CONFIGURATION gate (no translator in this slice); flag frozen.
         val record = runRecord(store).shouldNotBeNull()
-        record.state shouldBe ChapterRunState.ANALYSIS_CHUNKS
+        record.state shouldBe ChapterRunState.TRANSLATE
         record.runId shouldMatch Regex("run-\\d+-[0-9a-f]{8}")
         record.frozenConfig shouldBe frozenConfig()
         record.frozenRunConfigFingerprint shouldMatch Regex("[0-9a-f]{64}")
@@ -250,8 +250,8 @@ class OcrPreflightCoordinatorTest {
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 0
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_STOP] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_GAPS] shouldBe 0
-        // 3 pages fit ONE analysis chunk window.
-        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_TOTAL] shouldBe 1
+        // 3 pages fit ONE envelope; no analysis or synthesis call is made.
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_ENVELOPES_TOTAL] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_SKIPPED_NO_TRANSPORT] shouldBe 1
         val corpusFingerprint = record.ocrCorpusFingerprint.shouldNotBeNull()
         corpusFingerprint shouldBe StageFingerprints.ocrCorpusFingerprint(
@@ -303,11 +303,10 @@ class OcrPreflightCoordinatorTest {
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // Only the remainder was OCR'd: the checkpointed page was skipped by
-        // content identity, never re-decoded. The analysis
-        // phase then pauses at the no-transport gate again (no chunks were
-        // persisted because no analysis transport is configured).
+        // content identity, never re-decoded. The translation phase then
+        // pauses at the no-transport gate (the envelope plan is still durable).
         resumed.status shouldBe BatchPass1Status.PAUSED
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_NO_TRANSPORT_REASON
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         resumedWorker.ocrPages shouldContainExactly listOf("p2", "p3")
         resumedWorker.releasedHandoffs shouldContainExactly listOf("p2", "p3")
         resumedStore.pageLeaseOwner("p1").shouldBeNull()
@@ -316,7 +315,7 @@ class OcrPreflightCoordinatorTest {
         manifest.ocrCheckpoints.keys shouldBe setOf("p1", "p2", "p3")
         manifest.analysisChunks shouldBe emptyList()
         val record = runRecord(resumedStore).shouldNotBeNull()
-        record.state shouldBe ChapterRunState.ANALYSIS_CHUNKS
+        record.state shouldBe ChapterRunState.TRANSLATE
         // Same frozen configuration: the interrupted run is CONTINUED (same
         // run id), not silently restarted under a new snapshot (.1).
         record.runId shouldBe interruptedRecord.runId

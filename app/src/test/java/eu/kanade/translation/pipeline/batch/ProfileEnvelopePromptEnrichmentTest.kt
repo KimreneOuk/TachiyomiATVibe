@@ -12,8 +12,6 @@ import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.engines.translator.analysis.GlossaryEntry
-import eu.kanade.translation.engines.translator.analysis.GlossaryEntryKind
 import eu.kanade.translation.engines.translator.analysis.GlossarySynthesisOutcome
 import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
@@ -65,12 +63,9 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Covers profile-aware prompt enrichment in the serial envelope executor:
- * enriched chunk shape (profile subset sheet + scene fence + gap-free
- * rolling history with the pronoun-marking rule), execution-time token
- * recompute with WHOLE-PAGE splits, single-oversized-page rejection,
- * one-in-flight with enriched payloads, and the legacy-shape fallback when
- * no frozen profile is present.
+ * Covers rolling-history request assembly, execution-time token recompute
+ * with WHOLE-PAGE splits, single-oversized-page rejection, and one-in-flight
+ * envelope dispatch.
  */
 class ProfileEnvelopePromptEnrichmentTest {
 
@@ -329,79 +324,6 @@ class ProfileEnvelopePromptEnrichmentTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun `enriched prompt carries the frozen profile subset and the legacy counter stays zero`() = runTest {
-        val store = lazyStore()
-        val pageKeys = (1..3).map { "p$it" }
-        store.preRegisterPages(pageKeys)
-        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
-        val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
-        // The identity sheet comes from the one-shot synthesis (Director
-        // redesign): one CHARACTER entry whose source form matches the page
-        // text, so the subset matcher includes it in the sheet.
-        val synthesizer = GlossarySynthesizer { _, _, _ ->
-            GlossarySynthesisOutcome.Glossary(
-                listOf(GlossaryEntry(GlossaryEntryKind.CHARACTER, "source", "Source")),
-            )
-        }
-
-        val outcome = coordinator(store, pages, FakeAnalyzer(), translator, synthesizer = synthesizer)
-            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
-
-        outcome.status shouldBe BatchPass1Status.COMPLETED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
-        translator.requests.size shouldBe 1
-
-        val chunk = translator.requests.single()
-        // Glossary slot: synthesized fact id + matched source form + canonical
-        // target + the identity/gender decision rules + the range fence. (The
-        // frozen profile's fact ids are the synthesis-assigned `e001`/`t001`.)
-        chunk.glossary shouldContain "[e001]"
-        chunk.glossary shouldContain "source"
-        chunk.glossary shouldContain "Source"
-        chunk.glossary shouldContain "Resolve the referent first"
-        chunk.glossary shouldContain "never a global replacement rule"
-        // First envelope: gap-free frontier is empty, so the rolling slot is empty.
-        chunk.rollingContext shouldBe ""
-
-        // All pages committed; the pipeline outcome is unchanged.
-        pageKeys.forEach { key ->
-            store.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
-        }
-
-        val (_, counters) = runCounters(store)
-        counters["promptShapeEnriched"] shouldBe 1
-        counters["promptShapeLegacy"] shouldBe 0
-        counters["profileSubsetFactsMax"] shouldBe 1 // the one synthesized character fact
-        counters["envelopeSplits"] shouldBe 0
-        counters["pagesTranslated"] shouldBe 3
-    }
-
-    @Test
-    fun `enriched rolling history advances gap-free across planned envelopes with the pronoun-marking rule`() = runTest {
-        val store = lazyStore()
-        val pageKeys = (1..2).map { "p$it" }
-        store.preRegisterPages(pageKeys)
-        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
-        val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
-
-        coordinator(store, pages, FakeAnalyzer(), translator, maxPagesPerEnvelope = 1)
-            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
-
-        translator.requests.size shouldBe 2
-        translator.requests[0].rollingContext shouldBe ""
-        val rolling = translator.requests[1].rollingContext
-        // The committed page-1 pair carried forward through the frontier...
-        rolling shouldContain "Recent pairs"
-        rolling shouldContain "translated-p0_b1"
-        // ...with the pronoun-marking rule stated verbatim.
-        rolling shouldContain "NOT canonical gender evidence"
-
-        val (_, counters) = runCounters(store)
-        counters["promptShapeEnriched"] shouldBe 2
-        counters["rollingContextPagesMax"] shouldBe 1
-    }
-
-    @Test
     fun `execution-time recompute splits an oversized envelope at whole-page boundaries`() = runTest {
         val store = lazyStore()
         val pageKeys = (1..3).map { "p$it" }
@@ -411,9 +333,8 @@ class ProfileEnvelopePromptEnrichmentTest {
         // budget predicate estimates on raw chars while source LINES are
         // encoder-measured, and kana tokenization varies ~0.45-1.1
         // tokens/char, so token-based sizing is band-unstable). Sized so
-        // each page alone fits prompt+response+enriched-context (capped at
-        // the 1500-token rolling budget) in the window at ANY rate, while
-        // any pair exceeds it at ANY rate: the whole-page split must fire
+        // each page alone fits prompt+response in the window at ANY rate,
+        // while any pair exceeds it at ANY rate: the whole-page split must fire
         // deterministically. Plans well under the structural ceilings
         // (never a plan-time rejection).
         val bigText = "あ".repeat(1_300)
@@ -463,19 +384,11 @@ class ProfileEnvelopePromptEnrichmentTest {
         outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
 
         // ONE planned envelope became THREE whole-page provider requests —
-        // never a block split. Rolling history advances gap-free as the
-        // split sub-batches commit: the first request has no priors, each
-        // later request carries the prior page's accepted pairs (the
-        // frontier records through the global BatchContextFrontier).
+        // never a block split. The fixture has no durable natural-index
+        // metadata, so live completions cannot become request history.
         translator.requests.size shouldBe 3
         translator.requests.forEach { request -> request.pages.size shouldBe 1 }
-        translator.requests.first().rollingContext shouldBe ""
-        translator.requests.drop(1).forEachIndexed { index, request ->
-            // updateRollingContext keeps a bounded recent-pair window: each
-            // request carries the pair of the page committed just before it
-            // (its last block's stable wire id).
-            request.rollingContext shouldContain "translated-p${index}_b1"
-        }
+        translator.requests.forEach { request -> request.rollingContext shouldBe "" }
         translator.maxObservedInFlight shouldBe 1
 
         pageKeys.forEach { key ->
@@ -488,7 +401,6 @@ class ProfileEnvelopePromptEnrichmentTest {
         // envelopes; every PROVIDER request is exactly one whole page).
         counters["envelopeSplits"].shouldNotBeNull()
         ((counters["envelopeSplits"] ?: 0) >= 1) shouldBe true
-        counters["promptShapeEnriched"] shouldBe 3
         counters["pagesTranslated"] shouldBe 3
         counters["envelopeFailures"] shouldBe 0
     }
@@ -685,8 +597,6 @@ class ProfileEnvelopePromptEnrichmentTest {
         val (_, counters) = runCounters(store)
         counters["envelopeFailures"] shouldBe 1
         counters["pagesTranslated"] shouldBe 0
-        (counters["promptShapeEnriched"] ?: 0) shouldBe 0
-        (counters["promptShapeLegacy"] ?: 0) shouldBe 0
     }
 
     @Test
@@ -752,46 +662,15 @@ class ProfileEnvelopePromptEnrichmentTest {
             createdAtEpochMs = 1L,
         )
 
-        // Durable  anchors: a frozen profile pointer + the envelope-plan
-        // pointer, published through the STORE's own artifact store and
-        // pushed into the store's manifest view, exactly as the coordinator
-        // does in production.
+        // The envelope plan is the durable dispatch identity. No profile
+        // artifact is required to translate.
         val artifact = store.artifactEngine.shouldNotBeNull()
         if (artifact.readManifest() == null) {
             artifact.publishManifest(eu.kanade.translation.persistence.artifact.ChapterArtifactManifest(chapterKey = "Chapter 1"))
         }
-        val draft = eu.kanade.translation.persistence.artifact.ChapterTranslationProfile(
-            version = 1,
-            contentFingerprint = "",
-            profileInputFingerprint = hex64("fp04"),
-            sourceRunId = "run-1",
-            analyzerProvenance = eu.kanade.translation.persistence.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
-            entities = listOf(
-                eu.kanade.translation.persistence.artifact.ProfileFact(
-                    factId = "f-1",
-                    type = eu.kanade.translation.persistence.artifact.FactType.ENTITY_IDENTITY,
-                    canonicalSourceForm = "カイル",
-                    canonicalTargetForm = "Kyle",
-                    evidenceStrength = eu.kanade.translation.persistence.artifact.EvidenceStrength.STRONG_CONTEXTUAL,
-                    evidenceRefs = listOf(EvidenceRef("p1", "p1_b1", hex64("excerpt"))),
-                    scope = eu.kanade.translation.persistence.artifact.FactScope.CANONICAL_CHAPTER_WIDE,
-                    provenance = eu.kanade.translation.persistence.artifact.FactProvenance.CHAPTER_ANALYSIS,
-                    conflictState = eu.kanade.translation.persistence.artifact.FactConflictState.RESOLVED,
-                ),
-            ),
-            frozenAtEpochMs = 42L,
-        )
-        val profile = draft.copy(contentFingerprint = StageFingerprints.profileContentFingerprint(draft))
-        val profileCommit = ProfileFreezePublication.publish(
-            artifact,
-            artifact.readManifest().shouldNotBeNull(),
-            profile,
-            7L,
-        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
-        store.artifactManifest = profileCommit.manifest
         val planCommit = EnvelopePlanPublication.publish(
             artifact,
-            profileCommit.manifest,
+            artifact.readManifest().shouldNotBeNull(),
             plan,
             7L,
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
@@ -800,8 +679,6 @@ class ProfileEnvelopePromptEnrichmentTest {
         val executor = ProfileEnvelopeExecutor(
             store = store,
             textTranslator = translator,
-            profileContentFingerprint = profile.contentFingerprint,
-            frozenProfile = null, // unreadable sidecar simulation -> LEGACY shape
             replan = { ReplanResult.NothingPending },
             sublimitGate = BatchRequestSublimitGate(),
         )
@@ -817,14 +694,11 @@ class ProfileEnvelopePromptEnrichmentTest {
         val outcome = executor.run(work)
         outcome.shouldBeInstanceOf<ProfileEnvelopeExecutor.PhaseOutcome.Drained>()
 
-        // Without a frozen profile, no enriched sheet or rolling context is sent.
+        // With no earlier committed page, the shared builder emits no history.
         captured.size shouldBe 1
-        captured.single().glossary shouldBe ""
         captured.single().rollingContext shouldBe ""
         captured.single().estimatedPromptTokens shouldBe 64
 
-        outcome.counters.promptShapeLegacy shouldBe 1
-        outcome.counters.promptShapeEnriched shouldBe 0
         outcome.counters.envelopeSplits shouldBe 0
         outcome.counters.pagesTranslated shouldBe 1
         store.snapshot(pageKey).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY

@@ -7,9 +7,10 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * Owns chapter glossary state. Mutations go through the store mutex. The flat
- * file fallback in [loadGlossary] remains so chapters written by older app
- * versions can still be opened.
+ * Retains legacy chapter glossary state. Translation request context is built
+ * from committed page snapshots and does not read this store. Mutations go
+ * through the store mutex; the flat file fallback in [loadGlossary] remains so
+ * chapters written by older app versions can still be opened.
  */
 internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) {
 
@@ -27,18 +28,6 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
     internal val pageContributions = HashMap<String, List<Pair<String, String>>>()
 
     fun glossarySnapshot(): Map<String, String> = glossary.toMap()
-
-    /**
-     * Current glossary version for the reuse gate and provenance stamps.
-     * `null` means reuse gating is off because the manifest is not
-     * artifact-authoritative or no glossary has been published. This is an
-     * in-memory read; `artifactManifest` is volatile, so it is safe to call
-     * while the store mutex is already held.
-     */
-    internal fun currentGlossaryVersion(): Int? {
-        val manifest = store.artifactManifest
-        return manifest?.glossary?.version
-    }
 
     /**
      * All translated (source => target) pairs in the chapter so far — used to

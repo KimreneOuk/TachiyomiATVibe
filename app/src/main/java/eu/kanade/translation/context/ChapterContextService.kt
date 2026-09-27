@@ -1,11 +1,14 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.engines.translator.contextual.ProfileSubsetMatcher
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.engines.translator.contextual.TranslationPrompts
-import eu.kanade.translation.persistence.artifact.ChapterContextSnapshot
-import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.BatchContextFrontier
+import java.security.MessageDigest
 
 enum class LaneCapability {
     MANUAL,
@@ -14,351 +17,154 @@ enum class LaneCapability {
     STANDARD_BATCH,
 }
 
+/**
+ * The requested page keys define the current unit. Rolling history is always
+ * rebuilt from committed artifact snapshots before the earliest current page.
+ */
 data class ContextRequest(
     val pageKeys: List<String>,
     val targetLang: String,
     val sourceLang: String? = null,
-    val requestedOutputTokens: Int,
     val profile: TranslationContextChunkPlanner.Profile,
     val laneCapability: LaneCapability,
-    val predecessorRange: IntRange? = null,
-    val frozenProfile: ChapterTranslationProfile? = null,
-    val envelopeSources: List<ProfileSubsetMatcher.EnvelopeSource>? = null,
-    val rollingPairs: String? = null,
 )
 
+/** A finalized, prompt-ready rolling history selection. */
 data class PreparedContext(
-    val characterAndTermSheet: String,
     val rollingContext: String,
-    val selectedTerms: List<Pair<String, String>>,
     val selectedPairs: List<Pair<String, String>>,
     val estimatedContextTokens: Int,
-    val budgetDecision: String? = null,
-    val omissionReasons: List<String> = emptyList(),
 ) {
+    /**
+     * Stable identity of the finalized rolling-context section. Other former
+     * profile/glossary compatibility inputs are deliberately absent.
+     */
     fun computeRequestContextFingerprint(
-        targetLang: String = "",
-        sourceLang: String? = null,
-        reuseCompatibility: String = "v1",
-        glossaryFingerprint: String? = null,
-        profileInputFingerprint: String? = null,
+        targetLang: String,
+        sourceLang: String?,
+        finalizedRollingContext: String = rollingContext,
     ): String {
-        val md = java.security.MessageDigest.getInstance("SHA-256")
         val payload = buildString {
-            append("v:1\n")
-            append("tLang:").append(targetLang).append('\n')
-            append("sLang:").append(sourceLang.orEmpty()).append('\n')
-            append("compat:").append(reuseCompatibility).append('\n')
-            append("glossaryFp:").append(glossaryFingerprint.orEmpty()).append('\n')
-            append("profileFp:").append(profileInputFingerprint.orEmpty()).append('\n')
-            append("sheet:").append(characterAndTermSheet).append('\n')
-            append("rolling:").append(rollingContext).append('\n')
-            selectedTerms.forEach { (s, t) -> append("term:").append(s).append('=').append(t).append('\n') }
-            selectedPairs.forEach { (s, t) -> append("pair:").append(s).append('=').append(t).append('\n') }
+            append("rolling-history-context:v1\n")
+            append("target:").append(targetLang).append('\n')
+            append("source:").append(sourceLang.orEmpty()).append('\n')
+            append("history:\n").append(finalizedRollingContext.trim())
         }
-        val bytes = md.digest(payload.toByteArray(Charsets.UTF_8))
-        return bytes.joinToString("") { "%02x".format(it) }
+        return MessageDigest.getInstance("SHA-256")
+            .digest(payload.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
     }
 
     companion object {
         val EMPTY = PreparedContext(
-            characterAndTermSheet = "",
             rollingContext = "",
-            selectedTerms = emptyList(),
             selectedPairs = emptyList(),
             estimatedContextTokens = 0,
-            budgetDecision = null,
-            omissionReasons = emptyList(),
         )
     }
 }
 
+/**
+ * The single rolling-history builder shared by reader, auto, AI batch and
+ * standard batch. It reads manifest pointers and committed page snapshots;
+ * live page maps, glossary state, profiles and execution queues are not inputs.
+ */
 class ChapterContextService(
     val store: ChapterTranslationStore,
 ) {
 
     companion object {
-        const val TARGET_TERMS_TOKENS = 320
-        const val TARGET_SAFEGUARDS_TOKENS = 96
-        const val TARGET_PAIRS_TOKENS = 288
-        const val TARGET_SCENE_TOKENS = 96
-    }
-
-    data class BudgetAllocation(
-        val termsTarget: Int,
-        val safeguardsTarget: Int,
-        val pairsTarget: Int,
-        val sceneTarget: Int,
-        val termsBudget: Int,
-        val safeguardsBudget: Int,
-        val pairsBudget: Int,
-        val sceneBudget: Int,
-    )
-
-    fun computeBudgetAllocation(
-        maxBudget: Int,
-        termsUsed: Int,
-        safeguardsUsed: Int,
-        pairsUsed: Int,
-    ): BudgetAllocation {
-        val tTarget = TARGET_TERMS_TOKENS
-        val sTarget = TARGET_SAFEGUARDS_TOKENS
-        val pTarget = TARGET_PAIRS_TOKENS
-        val scTarget = TARGET_SCENE_TOKENS
-
-        val tBudget = minOf(maxBudget, tTarget)
-        val unusedTerms = maxOf(0, tBudget - termsUsed)
-
-        val sBudget = minOf(maxOf(0, maxBudget - termsUsed), sTarget + unusedTerms)
-        val unusedSafeguards = maxOf(0, sBudget - safeguardsUsed)
-
-        val pBudget = minOf(maxOf(0, maxBudget - termsUsed - safeguardsUsed), pTarget + unusedSafeguards)
-        val unusedPairs = maxOf(0, pBudget - pairsUsed)
-
-        val scBudget = minOf(maxOf(0, maxBudget - termsUsed - safeguardsUsed - pairsUsed), scTarget + unusedPairs)
-
-        return BudgetAllocation(
-            termsTarget = tTarget,
-            safeguardsTarget = sTarget,
-            pairsTarget = pTarget,
-            sceneTarget = scTarget,
-            termsBudget = tBudget,
-            safeguardsBudget = sBudget,
-            pairsBudget = pBudget,
-            sceneBudget = scBudget,
-        )
+        const val MAX_ROLLING_PAIRS = TranslationContextChunkPlanner.MAX_ROLLING_PAIRS
     }
 
     fun prepare(request: ContextRequest): PreparedContext {
-        if (request.laneCapability == LaneCapability.STANDARD_BATCH) {
-            return PreparedContext.EMPTY
-        }
+        val artifact = store.artifactEngine ?: return PreparedContext.EMPTY
+        val manifest = artifact.readManifest() ?: return PreparedContext.EMPTY
+        val indexedRecords = manifest.pages.values
+            .mapNotNull { record -> record.naturalPageIndex?.let { it to record } }
+            .sortedWith(compareBy<Pair<Int, PageArtifactRecord>> { it.first }.thenBy { it.second.pageKey })
+        val currentIndex = request.pageKeys
+            .mapNotNull { key -> manifest.pages[key]?.naturalPageIndex }
+            .minOrNull()
+            ?: return PreparedContext.EMPTY
+        val predecessorRecords = indexedRecords.filter { (index, _) -> index < currentIndex }
 
-        val profile = request.frozenProfile ?: readReusableProfileFromStore()
-        val foldedGlossary = store.glossarySnapshot()
-        val envelopeSources = request.envelopeSources ?: defaultEnvelopeSources(request.pageKeys)
-
-        var pairLines = request.rollingPairs ?: defaultRollingPairs()
-        var subset = if (profile != null) {
-            ProfileSubsetMatcher.match(profile, envelopeSources)
-        } else {
-            ProfileSubsetMatcher.ProfileSubset(emptyList(), emptyList(), false)
-        }
-
-        var resolvedLines = if (profile != null) {
-            ProfileSubsetMatcher.resolvedEntityLines(profile, pairLines)
-        } else {
-            emptyList()
-        }
-
-        var unresolvedLines = if (profile != null) {
-            ProfileSubsetMatcher.unresolvedReferenceLines(profile)
-        } else {
-            emptyList()
-        }
-
-        var includeScenes = profile != null && subset.scenes.isNotEmpty()
-
-        val constraints = TranslationContextChunkPlanner.constraintsFor(request.profile)
-        val maxBudget = constraints.maxRollingContextTokens
-
-        val omissions = mutableListOf<String>()
-
-        var sheet = ""
-        var rolling = ""
-
-        fun rebuild() {
-            if (profile != null) {
-                var s = TranslationPrompts.characterAndTermSheetPrefix(subset, includeScenes)
-                val additionalGlossary = foldedGlossary.filterKeys { k ->
-                    subset.entries.none { it.sourceForm.equals(k, ignoreCase = true) }
-                }
-                if (additionalGlossary.isNotEmpty()) {
-                    s = s.trimEnd() + "\nAdditional chapter terms:\n" + TranslationPrompts.formatGlossary(additionalGlossary) + "\n"
-                }
-                sheet = s
-                rolling = TranslationPrompts.profileAwareRollingPrefix(pairLines, resolvedLines, unresolvedLines)
+        val durablePages = linkedMapOf<String, PageTranslation>()
+        for ((_, record) in predecessorRecords) {
+            val committed = record.committed?.pageSnapshotFileName?.let(artifact::readPageSnapshot)
+            val page = committed ?: PageTranslation(sourceFileName = record.pageKey)
+            val failedTranslation = manifest.durableFailures.values.any { failure ->
+                failure.pageKey == record.pageKey &&
+                    failure.stage == ArtifactStage.TRANSLATION &&
+                    failure.status.isFailure()
+            }
+            durablePages[record.pageKey] = if (failedTranslation) {
+                page.copy(translationStatus = StageStatus.FAILED)
             } else {
-                sheet = TranslationPrompts.formatGlossary(foldedGlossary)
-                rolling = pairLines
+                page
             }
         }
 
-        rebuild()
+        val orderedPairs = when (request.laneCapability) {
+            LaneCapability.MANUAL, LaneCapability.AUTO ->
+                predecessorRecords
+                    .asSequence()
+                    .flatMap { (_, record) ->
+                        durablePages[record.pageKey].orEmptyPairs().asSequence()
+                    }
+                    .toList()
 
-        fun currentSheetTokens(): Int =
-            if (sheet.isBlank()) 0 else TranslationContextChunkPlanner.estimateTokens(sheet)
-
-        fun currentRollingTokens(): Int =
-            if (rolling.isBlank()) 0 else TranslationContextChunkPlanner.estimateTokens(rolling)
-
-        fun currentContextTokens(): Int = currentSheetTokens() + currentRollingTokens()
-
-        fun pairLineCount(): Int = pairLines.lineSequence().count { it.isNotBlank() }
-
-        // Trimming under budget constraint follows  reverse order:
-        // 1. Scene / style dropped first (includeScenes = false)
-        if (currentContextTokens() > maxBudget && includeScenes) {
-            includeScenes = false
-            omissions += "SCENE_DROPPED_FOR_BUDGET"
-            rebuild()
+            LaneCapability.PROFILE_BATCH, LaneCapability.STANDARD_BATCH ->
+                batchPredecessorPairs(indexedRecords, durablePages, currentIndex)
         }
 
-        // 2. Pairs dropped second (halve until 1 line, then empty)
-        while (currentContextTokens() > maxBudget && pairLineCount() > 1) {
-            val keep = (pairLineCount() + 1) / 2
-            pairLines = pairLines
-                .lineSequence()
-                .filter { it.isNotBlank() }
-                .toList()
-                .takeLast(keep)
-                .joinToString("\n")
-            omissions += "PAIRS_HALVED_FOR_BUDGET"
-            rebuild()
+        val boundedPairs = orderedPairs.takeLast(MAX_ROLLING_PAIRS)
+        val constraints = TranslationContextChunkPlanner.constraintsFor(request.profile)
+        val selectedPairs = boundedPairs.toMutableList()
+        while (selectedPairs.isNotEmpty() &&
+            TranslationContextChunkPlanner.estimateTokens(renderPairs(selectedPairs)) > constraints.maxRollingContextTokens
+        ) {
+            selectedPairs.removeAt(0)
         }
-        if (currentContextTokens() > maxBudget && pairLines.isNotBlank()) {
-            pairLines = ""
-            omissions += "PAIRS_DROPPED_FOR_BUDGET"
-            rebuild()
-        }
-
-        // 3. Safeguards dropped third (resolvedLines = emptyList(), unresolvedLines = emptyList())
-        if (currentContextTokens() > maxBudget && (resolvedLines.isNotEmpty() || unresolvedLines.isNotEmpty())) {
-            resolvedLines = emptyList()
-            unresolvedLines = emptyList()
-            omissions += "SAFEGUARDS_DROPPED_FOR_BUDGET"
-            rebuild()
-        }
-
-        // 4. Terms / character sheet kept last!
-        if (profile != null) {
-            while (currentContextTokens() > maxBudget && subset.entries.size > 1) {
-                subset = subset.copy(entries = subset.entries.take((subset.entries.size + 1) / 2))
-                omissions += "TERMS_HALVED_FOR_BUDGET"
-                rebuild()
-            }
-            if (currentContextTokens() > maxBudget && subset.entries.isNotEmpty()) {
-                subset = subset.copy(entries = emptyList())
-                omissions += "TERMS_DROPPED_FOR_BUDGET"
-                rebuild()
-            }
-        } else {
-            val entries = foldedGlossary.entries.toList()
-            var keepCount = entries.size
-            while (currentContextTokens() > maxBudget && keepCount > 1) {
-                keepCount = (keepCount + 1) / 2
-                sheet = TranslationPrompts.formatGlossary(entries.take(keepCount).associate { it.key to it.value })
-                omissions += "TERMS_HALVED_FOR_BUDGET"
-            }
-            if (currentContextTokens() > maxBudget) {
-                sheet = ""
-                omissions += "TERMS_DROPPED_FOR_BUDGET"
-            }
-        }
-
-        val selectedTerms = mutableListOf<Pair<String, String>>()
-        if (profile != null) {
-            for (entry in subset.entries) {
-                if (entry.kind == ProfileSubsetMatcher.EntryKind.TERM || entry.kind == ProfileSubsetMatcher.EntryKind.ENTITY) {
-                    selectedTerms += entry.sourceForm to entry.targetForm
-                }
-            }
-        }
-        for ((k, v) in foldedGlossary) {
-            if (selectedTerms.none { it.first.equals(k, ignoreCase = true) }) {
-                selectedTerms += k to v
-            }
-        }
-
-        val selectedPairs = pairLines.lineSequence()
-            .filter { it.isNotBlank() }
-            .mapNotNull { line ->
-                val parts = line.split("=>")
-                if (parts.size == 2) parts[0].trim() to parts[1].trim() else null
-            }
-            .toList()
-
-        val estimatedTokens = currentContextTokens()
-        val decision = if (omissions.isEmpty()) "FITS_BUDGET" else "TRIMMED: ${omissions.distinct().joinToString(",")}"
-
+        val rolling = renderPairs(selectedPairs)
         return PreparedContext(
-            characterAndTermSheet = sheet,
             rollingContext = rolling,
-            selectedTerms = selectedTerms,
             selectedPairs = selectedPairs,
-            estimatedContextTokens = estimatedTokens,
-            budgetDecision = decision,
-            omissionReasons = omissions.distinct(),
+            estimatedContextTokens = if (rolling.isBlank()) 0 else TranslationContextChunkPlanner.estimateTokens(rolling),
         )
     }
 
-    suspend fun submitCommittedOutput(pageKey: String, pairs: List<Pair<String, String>>) {
-        store.foldPageContribution(pageKey, pairs)
+    private fun batchPredecessorPairs(
+        indexedRecords: List<Pair<Int, PageArtifactRecord>>,
+        durablePages: Map<String, PageTranslation>,
+        currentIndex: Int,
+    ): List<Pair<String, String>> {
+        val indexes = indexedRecords.associate { (index, record) -> record.pageKey to index }
+        val frontier = BatchContextFrontier(indexes)
+        frontier.seed(
+            pages = durablePages,
+            eligible = { pageKey, _ -> (indexes[pageKey] ?: Int.MAX_VALUE) < currentIndex },
+            terminalFailure = { _, page -> page.translationStatus == StageStatus.FAILED },
+        )
+        return indexedRecords.asSequence()
+            .filter { (index, record) -> index < currentIndex && index <= frontier.frontierIndex && record.pageKey in durablePages }
+            .flatMap { (_, record) -> durablePages[record.pageKey].orEmptyPairs().asSequence() }
+            .toList()
     }
 
-    private fun readReusableProfileFromStore(): ChapterTranslationProfile? =
-        store.readReusableProfile()
-
-    private fun defaultRollingPairs(): String =
-        store.translatedPairs()
-            .mapNotNull { (src, tgt) ->
-                val t = tgt.trim()
-                if (t.isBlank() || t == src.trim()) null else "$src => $t"
-            }
-            .takeLast(TranslationContextChunkPlanner.MAX_ROLLING_PAIRS)
-            .joinToString("\n")
-
-    private fun defaultEnvelopeSources(pageKeys: List<String>): List<ProfileSubsetMatcher.EnvelopeSource> {
-        val manifestPages = store.artifactEngine?.readManifest()?.pages
-        return pageKeys.mapIndexed { index, pageKey ->
-            val page = store.pages[pageKey]
-            val naturalIndex = manifestPages?.get(pageKey)?.naturalPageIndex ?: index
-            val text = page?.blocks?.mapNotNull { it.text.trim().ifEmpty { null } }?.joinToString("\n").orEmpty()
-            ProfileSubsetMatcher.EnvelopeSource(
-                naturalPageIndex = naturalIndex,
-                sourceText = text,
-            )
+    private fun PageTranslation?.orEmptyPairs(): List<Pair<String, String>> =
+        this?.blocks.orEmpty().mapNotNull { block ->
+            val source = block.text.normalizedHistoryText()
+            val target = block.translation.normalizedHistoryText()
+            if (source.isBlank() || target.isBlank() || source == target) null else source to target
         }
-    }
 
-    fun snapshotForDurable(
-        targetLang: String,
-        sourceLang: String? = null,
-        revision: Long = 1L,
-    ): ChapterContextSnapshot {
-        val prepared = prepare(
-            ContextRequest(
-                pageKeys = emptyList(),
-                targetLang = targetLang,
-                sourceLang = sourceLang,
-                requestedOutputTokens = 2048,
-                profile = TranslationContextChunkPlanner.Profile.DEFAULT,
-                laneCapability = LaneCapability.MANUAL,
-            ),
-        )
-        val chapterKey = store.artifactEngine?.layout?.chapterKey ?: "chapter"
-        val contentFp = ChapterContextSnapshot.computeContentFingerprint(
-            chapterKey = chapterKey,
-            targetLang = targetLang,
-            sourceLang = sourceLang,
-            revision = revision,
-            sheet = prepared.characterAndTermSheet,
-            rolling = prepared.rollingContext,
-        )
-        return ChapterContextSnapshot(
-            chapterKey = chapterKey,
-            targetLang = targetLang,
-            sourceLang = sourceLang,
-            chapterContextRevision = revision,
-            contentFingerprint = contentFp,
-            characterAndTermSheet = prepared.characterAndTermSheet,
-            rollingContext = prepared.rollingContext,
-            selectedTerms = prepared.selectedTerms,
-            selectedPairs = prepared.selectedPairs,
-            estimatedContextTokens = prepared.estimatedContextTokens,
-            budgetDecision = prepared.budgetDecision,
-            omissionReasons = prepared.omissionReasons,
-            createdAtEpochMs = System.currentTimeMillis(),
-        )
-    }
+    private fun String.normalizedHistoryText(): String =
+        replace("\r\n", " ").replace('\r', ' ').replace('\n', ' ').trim()
+
+    private fun renderPairs(pairs: List<Pair<String, String>>): String =
+        pairs.joinToString("\n") { (source, target) -> "$source => $target" }
+
+    private fun ArtifactStageStatus.isFailure(): Boolean =
+        this == ArtifactStageStatus.FAILED_RETRYABLE || this == ArtifactStageStatus.FAILED_TERMINAL
 }

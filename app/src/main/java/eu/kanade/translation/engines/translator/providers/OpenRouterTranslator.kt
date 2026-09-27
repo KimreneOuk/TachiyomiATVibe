@@ -46,7 +46,6 @@ open class OpenRouterTranslator(
             pages = linkedPages,
             blockCount = blockCount,
             rollingContext = "",
-            glossary = "",
             estimatedPromptTokens = 0,
             maxOutputTokens = maxOutputToken,
             protocol = ContextualRequestProtocol.LEGACY,

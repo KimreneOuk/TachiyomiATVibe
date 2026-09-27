@@ -16,13 +16,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- * Covers nullable provenance fields on [TranslationStagePatch]:
+ * Covers the envelope-plan provenance field on [TranslationStagePatch]:
  *
  *  - a patch constructed WITHOUT the new fields keeps byte-identical legacy
  *    merge behavior (accepted, no manifest reads, no new rejection class);
- *  - a non-null `profileContentFingerprint` that does not match the
- *    manifest's currently frozen profile REJECTS the whole page patch
- *    (stale-profile protection) without mutating any block;
  *  - a non-null `envelopePlanFingerprint` that does not match the manifest's
  *    `envelopePlan` pointer REJECTS the same way.
  *
@@ -58,7 +55,6 @@ class TranslationProvenanceMergeTest {
         pageKey: String,
         snapshot: ChapterTranslationStore.PageSnapshot,
         translation: String = "ONE",
-        profileContentFingerprint: String? = null,
         envelopePlanFingerprint: String? = null,
     ): TranslationStagePatch {
         val page = snapshot.page!!
@@ -79,7 +75,6 @@ class TranslationProvenanceMergeTest {
             ),
             translationStatus = StageStatus.READY,
             expectedPageVersion = snapshot.pageVersion,
-            profileContentFingerprint = profileContentFingerprint,
             envelopePlanFingerprint = envelopePlanFingerprint,
         )
     }
@@ -115,25 +110,6 @@ class TranslationProvenanceMergeTest {
         result.shouldBeInstanceOf<StagePatchResult.Accepted>()
         store.state.value["p1"]!!.blocks[0].translation shouldBe "ONE"
         store.state.value["p1"]!!.translationStatus shouldBe StageStatus.READY
-    }
-
-    @Test
-    fun `stale profile fingerprint rejects the whole page patch`() = runTest {
-        val store = store()
-        store.updatePage("p1") { ocrPage("one", "two") }
-        val snapshot = store.snapshot("p1")
-
-        val result = store.mergeTranslation(
-            patch(
-                "p1",
-                snapshot,
-                profileContentFingerprint = "a".repeat(64),
-            ),
-        )
-        val rejected = result.shouldBeInstanceOf<StagePatchResult.Rejected>()
-        rejected.reason shouldContain "translation provenance rejected: frozen profile changed"
-        // Nothing committed: the translation never landed.
-        store.state.value["p1"]!!.blocks[0].translation shouldBe ""
     }
 
     @Test
