@@ -16,8 +16,8 @@ import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.OnnxModelStore
+import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
-import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTestConfiguration
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrSessionFactory
 import eu.kanade.translation.engines.vision.detection.OnnxPageTextDetector
 import eu.kanade.translation.engines.vision.detection.OnnxPanelDetector
@@ -234,7 +234,7 @@ class RoiPageRecognitionEngine(
                         )
                         paddleBatchGovernorReason = activation.reason
                         val providerConfiguration = if (activation.forceCpuB1EmergencyFallback) {
-                            PaddleOcrProviderTestConfiguration.cpuB1EmergencyFallback()
+                            PaddleOcrProviderOverride.cpuB1EmergencyFallback()
                         } else {
                             null
                         }

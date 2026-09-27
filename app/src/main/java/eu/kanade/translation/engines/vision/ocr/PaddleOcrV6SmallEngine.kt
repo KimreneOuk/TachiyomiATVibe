@@ -7,8 +7,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
-import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTestConfiguration
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrSessionFactory
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -65,7 +65,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         dictionaryFile: File,
         providerResolution: PaddleOcrProviderResolution? = null,
         strictProviderMode: Boolean = false,
-        providerConfiguration: PaddleOcrProviderTestConfiguration? = null,
+        providerConfiguration: PaddleOcrProviderOverride? = null,
     ) {
         requestedProviderLabel = providerResolution?.requestedWireLabel ?: "automatic"
         this.strictProviderMode = strictProviderMode || providerConfiguration?.strictNoCpuFallback == true
@@ -82,7 +82,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         try {
             val createdSession = when {
                 providerConfiguration != null -> {
-                    // Use the explicit provider test configuration.
+                    // Use the explicit provider override.
                     OnnxRuntimeProvider.createSessionForPaddleProvider(
                         modelPath = modelFile.absolutePath,
                         configuration = providerConfiguration,

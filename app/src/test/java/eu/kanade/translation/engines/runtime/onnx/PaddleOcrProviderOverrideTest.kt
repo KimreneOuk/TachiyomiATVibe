@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-class PaddleOcrProviderTestConfigurationTest {
+class PaddleOcrProviderOverrideTest {
 
     @Test
     fun `matrix contains all explicit accelerator and CPU targets`() {
@@ -15,12 +15,12 @@ class PaddleOcrProviderTestConfigurationTest {
                 PaddleOcrProviderTarget.QNN_HTP,
                 PaddleOcrProviderTarget.NNAPI,
             ),
-            PaddleOcrProviderTestConfiguration.matrixTargets,
+            PaddleOcrProviderOverride.matrixTargets,
         )
-        PaddleOcrProviderTestConfiguration.matrixTargets
+        PaddleOcrProviderOverride.matrixTargets
             .filter { it.isAccelerator }
             .forEach { target ->
-                assertTrue(PaddleOcrProviderTestConfiguration(target).strictNoCpuFallback)
+                assertTrue(PaddleOcrProviderOverride(target).strictNoCpuFallback)
             }
     }
 }

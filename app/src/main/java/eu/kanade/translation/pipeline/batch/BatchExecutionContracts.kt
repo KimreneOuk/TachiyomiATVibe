@@ -4,7 +4,7 @@ import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.engines.translator.ProviderFailure
 
 /**
- * testable batch coordinator interfaces.
+ * Shared worker, progress-listener, and result contracts for batch execution.
  */
 
 /** Natural-order page identity retained by the live sequential coordinator. */

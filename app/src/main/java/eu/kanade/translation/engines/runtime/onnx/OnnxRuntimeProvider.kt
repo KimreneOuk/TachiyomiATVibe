@@ -297,7 +297,7 @@ object OnnxRuntimeProvider {
      */
     fun createSessionForPaddleProvider(
         modelPath: String,
-        configuration: PaddleOcrProviderTestConfiguration,
+        configuration: PaddleOcrProviderOverride,
         providerSink: (String) -> Unit = {},
     ): OrtSession {
         val optionsWithRegistration = createSessionOptionsWithRegistration(
