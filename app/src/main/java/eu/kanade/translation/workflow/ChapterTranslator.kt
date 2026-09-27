@@ -44,7 +44,9 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.translation.TranslationPreferences
@@ -64,6 +66,19 @@ internal fun <T> mergeRestoredQueueEntries(
     // A live entry may have been requeued after the restore lookup. Prefer it
     // over the stale status captured before that mutation.
     liveById[chapterId] ?: restoredById[chapterId]
+}
+
+internal suspend fun resolveTranslationFromChapterId(
+    chapterId: Long,
+    getChapter: GetChapter = Injekt.get(),
+    getManga: GetManga = Injekt.get(),
+    sourceManager: SourceManager = Injekt.get(),
+): Translation? {
+    val chapter = getChapter.await(chapterId) ?: return null
+    val manga = getManga.await(chapter.mangaId) ?: return null
+    val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+
+    return Translation(source, manga, chapter)
 }
 
 class ChapterTranslator(
@@ -153,7 +168,7 @@ class ChapterTranslator(
 
     /**
      * Rehydrates the queue from disk on launch via
-     * [Translation.fromChapterId]. Deleted chapters self-heal (fromChapterId
+     * [resolveTranslationFromChapterId]. Deleted chapters self-heal (the resolver
      * returns null, so stale ids drop). Rehydrated entries get status QUEUE:
      * rehydrate but require Start — never auto-start background OCR/LLM work on
      * launch. Must run in a coroutine (suspend lookups).
@@ -163,7 +178,7 @@ class ChapterTranslator(
         if (ids.isEmpty()) return
         val restored = mutableListOf<Translation>()
         for (id in ids) {
-            val translation = Translation.fromChapterId(id) ?: continue
+            val translation = resolveTranslationFromChapterId(id) ?: continue
             val durable = durableQueueState(translation)
             translation.status = when (durable?.status) {
                 Translation.State.ERROR -> Translation.State.ERROR
