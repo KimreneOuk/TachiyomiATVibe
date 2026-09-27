@@ -1,6 +1,6 @@
 package eu.kanade.translation.persistence.artifact
 
-import eu.kanade.translation.util.ModelDeployment
+import eu.kanade.translation.util.Sha256
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -58,7 +58,7 @@ class ModelIdentityCache(
         if (cached != null && cached.stamp == stamp) {
             return ModelIdentity(asset.role, cached.versionMarker, cached.sha256, cached.lengthBytes)
         }
-        val sha256 = ModelDeployment.hashOfFile(asset.file) ?: return null
+        val sha256 = Sha256.digest(asset.file) ?: return null
         val identity = CachedModelIdentity(
             stamp = stamp,
             versionMarker = asset.versionMarker,

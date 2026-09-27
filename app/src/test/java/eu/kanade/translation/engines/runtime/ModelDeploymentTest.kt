@@ -1,4 +1,4 @@
-package eu.kanade.translation.util
+package eu.kanade.translation.engines.runtime
 
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe

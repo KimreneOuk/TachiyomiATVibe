@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.runtime.onnx
 
 import android.content.Context
-import eu.kanade.translation.util.ModelDeployment
+import eu.kanade.translation.engines.runtime.ModelDeployment
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.File

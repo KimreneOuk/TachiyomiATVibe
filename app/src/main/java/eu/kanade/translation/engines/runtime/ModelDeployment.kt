@@ -1,8 +1,8 @@
-package eu.kanade.translation.util
+package eu.kanade.translation.engines.runtime
 
+import eu.kanade.translation.util.Sha256
 import java.io.File
 import java.io.InputStream
-import java.security.MessageDigest
 
 /**
  * Pure, Android-free helpers for model deployment integrity. Keeping them free
@@ -40,14 +40,7 @@ object ModelDeployment {
      * closes the stream.
      */
     fun computeStamp(versionMarker: String, assetPath: String, assetBytes: InputStream): String {
-        val sha = MessageDigest.getInstance("SHA-256")
-        val buffer = ByteArray(64 * 1024)
-        while (true) {
-            val read = assetBytes.read(buffer)
-            if (read <= 0) break
-            sha.update(buffer, 0, read)
-        }
-        val hashHex = sha.digest().joinToString("") { "%02x".format(it) }
+        val hashHex = Sha256.digest(assetBytes)
         return "$versionMarker:$assetPath:$hashHex"
     }
 
@@ -90,21 +83,7 @@ object ModelDeployment {
      * cannot be read. Used by [cachedFileMatchesStamp] to detect corruption of
      * the cached bytes vs the hash recorded in the stamp.
      */
-    fun hashOfFile(file: File): String? {
-        if (!file.isFile) return null
-        return runCatching {
-            file.inputStream().use { stream ->
-                val sha = MessageDigest.getInstance("SHA-256")
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val read = stream.read(buffer)
-                    if (read <= 0) break
-                    sha.update(buffer, 0, read)
-                }
-                sha.digest().joinToString("") { "%02x".format(it) }
-            }
-        }.getOrNull()
-    }
+    private fun hashOfFile(file: File): String? = Sha256.digest(file)
 
     /**
      * True iff the cached file's current SHA-256 matches the hash embedded in
