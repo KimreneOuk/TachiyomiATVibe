@@ -1,8 +1,5 @@
 package eu.kanade.translation.persistence.artifact
 
-import eu.kanade.translation.diagnostics.BatchDiagnosticReason
-import eu.kanade.translation.diagnostics.BatchDiagnosticStage
-import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
@@ -792,9 +789,33 @@ class ChapterArtifactEngine(
             val generationId: String? = null,
             val deletedFiles: List<String> = emptyList(),
             val commitPoint: CommitPoint? = null,
+            val candidateOpenState: CandidateOpenState? = null,
         ) : TransactionOutcome
 
-        data class Rejected(val reason: String) : TransactionOutcome
+        data class Rejected(
+            val reason: String,
+            val candidateOpenState: CandidateOpenState? = null,
+        ) : TransactionOutcome
+    }
+
+    /** Neutral outcome details for opening an artifact candidate. */
+    sealed interface CandidateOpenState {
+        data class Reused(
+            val pageKey: String,
+            val dependencyFingerprint: String,
+        ) : CandidateOpenState
+
+        data class FingerprintMismatch(
+            val pageKey: String,
+            val expectedFingerprint: String,
+            val activeFingerprint: String?,
+        ) : CandidateOpenState
+
+        data class CandidateAlreadyActive(
+            val pageKey: String,
+            val requestedOrigin: ArtifactOrigin,
+            val activeOrigin: ArtifactOrigin,
+        ) : CandidateOpenState
     }
 
     /**
@@ -1554,24 +1575,38 @@ class ChapterArtifactEngine(
             )
         }
         val existing = page.candidate
+        var candidateOpenState: CandidateOpenState? = null
         val generationId = when {
             existing != null &&
                 existing.origin == origin &&
                 existing.origin != ArtifactOrigin.LEGACY &&
                 existing.dependencyFingerprint == dependencyFingerprint -> {
-                BatchTranslationDiagnostics.reuse(
-                    stage = BatchDiagnosticStage.ARTIFACT,
+                candidateOpenState = CandidateOpenState.Reused(
                     pageKey = pageKey,
-                    reason = BatchDiagnosticReason.CANDIDATE_ACTIVE,
-                    fingerprint = dependencyFingerprint,
+                    dependencyFingerprint = dependencyFingerprint,
                 )
                 existing.generationId
             }
             existing != null && existing.origin == ArtifactOrigin.LEGACY -> newGenerationId(pageKey, nowEpochMs)
-            existing != null ->
+            existing != null -> {
+                candidateOpenState = if (existing.origin == origin) {
+                    CandidateOpenState.FingerprintMismatch(
+                        pageKey = pageKey,
+                        expectedFingerprint = dependencyFingerprint,
+                        activeFingerprint = existing.dependencyFingerprint,
+                    )
+                } else {
+                    CandidateOpenState.CandidateAlreadyActive(
+                        pageKey = pageKey,
+                        requestedOrigin = origin,
+                        activeOrigin = existing.origin,
+                    )
+                }
                 return TransactionOutcome.Rejected(
                     "candidate already active with a different dependency fingerprint: pageKey=$pageKey",
+                    candidateOpenState = candidateOpenState,
                 )
+            }
             else -> newGenerationId(pageKey, nowEpochMs)
         }
         val candidate = CandidateGenerationMetadata(
@@ -1589,7 +1624,10 @@ class ChapterArtifactEngine(
             createdAtEpochMs = candidate.createdAtEpochMs,
         )
         if (!documents.publishJson(layout.generationFile(generationId), generationRecord)) {
-            return TransactionOutcome.Rejected("generation record publication failed: generationId=$generationId")
+            return TransactionOutcome.Rejected(
+                "generation record publication failed: generationId=$generationId",
+                candidateOpenState = candidateOpenState,
+            )
         }
         val updated = manifest.copy(
             pages = manifest.pages + (
@@ -1610,9 +1648,16 @@ class ChapterArtifactEngine(
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
+            return TransactionOutcome.Rejected(
+                "manifest publication failed; prior manifest remains authoritative",
+                candidateOpenState = candidateOpenState,
+            )
         }
-        return TransactionOutcome.Committed(updated, generationId)
+        return TransactionOutcome.Committed(
+            updated,
+            generationId,
+            candidateOpenState = candidateOpenState,
+        )
     }
 
     /**

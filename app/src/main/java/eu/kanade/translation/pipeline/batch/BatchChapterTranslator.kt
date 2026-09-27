@@ -3,6 +3,7 @@ import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
+import eu.kanade.translation.diagnostics.BatchDiagnosticReason
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
@@ -213,6 +214,14 @@ internal class BatchChapterTranslator(
             pages = orderedStreams.size.takeIf { it > 0 },
         )
         BatchTranslationDiagnostics.noteActiveSchedule(scheduleTrace)
+        val candidateReuseObservation = store.observeCandidateReuse { reused ->
+            BatchTranslationDiagnostics.reuse(
+                stage = BatchDiagnosticStage.ARTIFACT,
+                pageKey = reused.pageKey,
+                reason = BatchDiagnosticReason.CANDIDATE_ACTIVE,
+                fingerprint = reused.dependencyFingerprint,
+            )
+        }
         var scheduleOutcome = TranslationTraceOutcome.TEARDOWN_EXCEPTION
         try {
             if (orderedStreams.isEmpty()) {
@@ -247,6 +256,7 @@ internal class BatchChapterTranslator(
         } finally {
             // The terminal summary is idempotent and never throws, so teardown
             // exceptions cannot prevent it from being emitted.
+            candidateReuseObservation.close()
             scheduleTrace.end(scheduleOutcome)
             if (BatchTranslationDiagnostics.activeSchedule === scheduleTrace) {
                 BatchTranslationDiagnostics.noteActiveSchedule(null)

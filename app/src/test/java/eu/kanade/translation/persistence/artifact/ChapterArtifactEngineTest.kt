@@ -377,6 +377,50 @@ class ChapterArtifactEngineTest {
     }
 
     @Test
+    fun `openCandidate reports idempotent reuse as a neutral outcome`() {
+        val io = FakeChapterDocumentIo()
+        val store = artifactStore(io)
+        val manifest = store.loadArtifact(legacySnapshot()).manifest
+        val opened = store.openCandidate(
+            manifest = manifest,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps-v1",
+            nowEpochMs = 500L,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
+
+        val reused = store.openCandidate(
+            manifest = opened.manifest,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = opened.manifest.pages.getValue("page.jpg").pageVersion,
+            dependencyFingerprint = "deps-v1",
+            nowEpochMs = 501L,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
+
+        reused.generationId shouldBe opened.generationId
+        val reuseState = reused.candidateOpenState.shouldNotBeNull()
+            .shouldBeInstanceOf<ChapterArtifactEngine.CandidateOpenState.Reused>()
+        reuseState.pageKey shouldBe "page.jpg"
+        reuseState.dependencyFingerprint shouldBe "deps-v1"
+
+        val mismatch = store.openCandidate(
+            manifest = reused.manifest,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = reused.manifest.pages.getValue("page.jpg").pageVersion,
+            dependencyFingerprint = "deps-v2",
+            nowEpochMs = 502L,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
+        mismatch.reason shouldBe "candidate already active with a different dependency fingerprint: pageKey=page.jpg"
+        val mismatchState = mismatch.candidateOpenState.shouldNotBeNull()
+            .shouldBeInstanceOf<ChapterArtifactEngine.CandidateOpenState.FingerprintMismatch>()
+        mismatchState.expectedFingerprint shouldBe "deps-v2"
+        mismatchState.activeFingerprint shouldBe "deps-v1"
+    }
+
+    @Test
     fun `generation retention stays bounded across repeated reruns`() {
         val io = FakeChapterDocumentIo()
         val committed = layout.imageFile("page.jpg", "g20", "fp20", "jpg")

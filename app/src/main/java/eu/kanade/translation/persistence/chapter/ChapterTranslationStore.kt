@@ -71,6 +71,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
@@ -190,6 +191,26 @@ class ChapterTranslationStore(
         get() = (engineMode as? eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable)?.artifact
 
     internal val mutex = Mutex()
+
+    private val candidateReuseObservers = CopyOnWriteArrayList<
+        (ChapterArtifactEngine.CandidateOpenState.Reused) -> Unit,
+        >()
+
+    /** Observe typed artifact reuse outcomes without coupling storage to batch diagnostics. */
+    internal fun observeCandidateReuse(
+        observer: (ChapterArtifactEngine.CandidateOpenState.Reused) -> Unit,
+    ): AutoCloseable {
+        candidateReuseObservers.add(observer)
+        return AutoCloseable { candidateReuseObservers.remove(observer) }
+    }
+
+    private fun reportCandidateReuse(state: ChapterArtifactEngine.CandidateOpenState?) {
+        val reused = state as? ChapterArtifactEngine.CandidateOpenState.Reused ?: return
+        candidateReuseObservers.forEach { observer ->
+            // Diagnostics must not change whether an artifact transaction is accepted.
+            runCatching { observer(reused) }
+        }
+    }
 
     internal val chapterKey: String?
         get() = artifactEngine?.layout?.chapterKey ?: translationFile?.name?.substringBeforeLast('.')
@@ -2526,8 +2547,12 @@ class ChapterTranslationStore(
                 dependencyFingerprint = dependencyFingerprint,
             )
             manifest = when (opened) {
-                is ChapterArtifactEngine.TransactionOutcome.Committed -> opened.manifest
+                is ChapterArtifactEngine.TransactionOutcome.Committed -> {
+                    reportCandidateReuse(opened.candidateOpenState)
+                    opened.manifest
+                }
                 is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                    reportCandidateReuse(opened.candidateOpenState)
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate open rejected: pageKey=$pageKey reason=${opened.reason}"
                     }
