@@ -67,7 +67,7 @@ object EngineMemoryBudget {
     ): NeuralInpaintDecision {
         val boundedSessionCount = sessionCount.coerceAtLeast(0)
         val mode = when (boundedSessionCount) {
-            0 -> "push_pull"
+            0 -> "classical_fallback"
             1 -> "single_session"
             else -> "dual_session"
         }

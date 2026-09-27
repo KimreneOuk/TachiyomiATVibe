@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * Guards the pure mask-construction and morphology helpers extracted from
- * [SmartBubbleTextCleaner]. These byte-array algorithms were previously private
+ * the inpainting engines. These byte-array algorithms were previously private
  * and untestable; they are easy to get wrong (corner geometry, flood-fill edge
  * margins, multi-pass dilation compounding), so each behaviour is pinned here.
  */
