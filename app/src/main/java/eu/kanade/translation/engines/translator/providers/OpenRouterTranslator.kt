@@ -35,7 +35,7 @@ open class OpenRouterTranslator(
     override val providerModel: String get() = modelName
     override val providerCredentialScope: String? get() = ShortHash.hash(apiKey).ifEmpty { null }
 
-    //  wave-7c: structured-analysis endpoint.
+    //  structured-analysis endpoint.
     override fun analysisEndpointUrl(): String = "https://openrouter.ai/api/v1/chat/completions"
     override fun analysisHeaders(): Map<String, String> = mapOf("Authorization" to "Bearer $apiKey")
 

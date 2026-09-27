@@ -16,7 +16,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- *  Stage 1 Phase 2a: the `checkpointOcr` transaction fault-injection and
+ * The `checkpointOcr` transaction fault-injection and
  * CAS gate (contracts-state-transactions.md  §2). Every
  * crash boundary B1-B3 and every stale-identity rejection (BX) must leave the
  * prior manifest authoritative, at most an orphan sidecar, and never a

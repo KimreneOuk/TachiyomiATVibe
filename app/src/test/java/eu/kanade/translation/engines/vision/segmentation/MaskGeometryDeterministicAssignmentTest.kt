@@ -5,7 +5,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- *  repair (R3): DETERMINISTIC component assignment —
+ * Deterministic component assignment —
  * [MaskGeometry.componentForRectangleDeterministic]. A block whose OCR
  * rectangle ties across components (or overlaps none of them) must never go
  * cell-less in the  layout path. Resolution:

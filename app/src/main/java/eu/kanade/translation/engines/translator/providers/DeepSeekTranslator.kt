@@ -35,7 +35,7 @@ open class DeepSeekTranslator(
     override val providerModel: String get() = modelName.ifBlank { "deepseek-chat" }
     override val providerCredentialScope: String? get() = ShortHash.hash(apiKey).ifEmpty { null }
 
-    //  wave-7c: structured-analysis endpoint.
+    //  structured-analysis endpoint.
     override fun analysisEndpointUrl(): String = "https://api.deepseek.com/chat/completions"
     override fun analysisHeaders(): Map<String, String> = mapOf("Authorization" to "Bearer $apiKey")
 

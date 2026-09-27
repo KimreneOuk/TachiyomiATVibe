@@ -24,9 +24,8 @@ import org.junit.jupiter.api.Test
  *     snapshot must never offer Retry; the label/content description are
  *     truth-named ("Retry translation"), never optimistic.
  *
- * Reflection (P5CopyAndAccessibilityTest precedent) keeps this file compiling
- * at the RED checkpoint: the missing truth method IS the defect under test and
- * fails by a named assertion, never by compilation error.
+ * Reflection lets this test report a missing truth method as a named assertion
+ * instead of a compilation error.
  */
 class TranslationSheetRetryTruthTest {
 

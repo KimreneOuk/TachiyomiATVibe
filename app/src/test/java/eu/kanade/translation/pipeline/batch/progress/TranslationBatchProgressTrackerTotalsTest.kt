@@ -14,7 +14,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- *  slice 3 (contract item 1): the batch's ordered work keys define the
+ * The batch's ordered work keys define the
  * tracker total — even when store placeholder writes are rejected or delayed.
  * Completed counts still come only from the store intersection.
  */
@@ -155,7 +155,7 @@ class TranslationBatchProgressTrackerTotalsTest {
     }
 
     /**
-     *  zero-legacy: no lane renders in-pass, so without the shell's
+     *  : no lane renders in-pass, so without the shell's
      * COMPLETED-path settle the tracker's RENDER arm stays unprocessed forever
      * and the processed/total fraction tops out at 4/5 per display-ready page.
      * The shell emits [TranslationBatchProgressTracker.markRenderSkipped] per
@@ -171,7 +171,7 @@ class TranslationBatchProgressTrackerTotalsTest {
         )
         // The reader re-derived the display: a committed display bundle exists
         // (promoted from the render-ready update) while the live page keeps the
-        // zero-legacy translation-terminal shape (render PENDING) — flipping the
+        //  translation-terminal shape (render PENDING) — flipping the
         // live page back never demotes the committed display.
         store.updatePage("p0") { current -> current!!.apply { renderStatus = StageStatus.READY } }
         store.updatePage("p0") { current -> current!!.apply { renderStatus = StageStatus.PENDING } }
@@ -186,7 +186,7 @@ class TranslationBatchProgressTrackerTotalsTest {
         tracker.snapshot.value.totalStages shouldBe 5
         tracker.snapshot.value.fraction shouldBe 0.8f
 
-        // The zero-legacy COMPLETED-path sequence: markRenderSkipped per
+        // The  COMPLETED-path sequence: markRenderSkipped per
         // expected page, then the terminal finish.
         tracker.markRenderSkipped("p0")
         tracker.finish(
@@ -210,7 +210,7 @@ class TranslationBatchProgressTrackerTotalsTest {
         tracker.close()
     }
 
-    /** Zero-legacy terminal page: committed translation, NO in-pass render. */
+    /**  terminal page: committed translation, NO in-pass render. */
     private fun zeroLegacyTerminalPage(key: String) = PageTranslation(
         sourceFileName = key,
         ocrStatus = StageStatus.READY,

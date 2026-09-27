@@ -81,7 +81,7 @@ data class PageTranslation(
      */
     var originalImageFallback: Boolean = false,
     /**
-     * TachiyomiAT: SERIALIZABLE inpaint mask captured at OCR time.
+     * SERIALIZABLE inpaint mask captured at OCR time.
      *
      * This is the durable record of every region the inpainter must erase: the
      * bubble box + text box of every OCR'd block, the detector-only regions
@@ -125,7 +125,7 @@ data class PageTranslation(
     val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: errorMessage
 
     /**
-     * TachiyomiAT: number of DISTINCT page translation attempts that have ended
+     * number of DISTINCT page translation attempts that have ended
      * in a terminal failure for this page. NOT serialized — it is an in-memory
      * counter that resets to its default (0) on store reopen / process restart,
      * so a page that failed in a prior process is not permanently treated as
@@ -152,7 +152,7 @@ data class PageTranslation(
     var attemptCount: Int = 0
 
     /**
-     * TachiyomiAT: per-attempt idempotency flag for [recordAttemptFailure].
+     * per-attempt idempotency flag for [recordAttemptFailure].
      * Set true the first time an attempt's terminal failure charges
      * [attemptCount]; reset by [prepareForcedRetry] / [resetAttemptCharge] at
      * the start of a fresh attempt. NOT serialized. See
@@ -163,7 +163,7 @@ data class PageTranslation(
     var attemptCharged: Boolean = false
 
     /**
-     * TachiyomiAT: all text detections from the recognition stage, carried
+     * all text detections from the recognition stage, carried
      * per-page so they survive from analyze() into inpaint() without relying
      * on shared mutable state on the (singleton) recognition engine. This
      * removes a race where concurrent pages overwrote each other's detections.
@@ -228,7 +228,7 @@ data class PageTranslation(
 }
 
 /**
- * TachiyomiAT: a single serializable inpaint erase region.
+ * a single serializable inpaint erase region.
  *
  * Mirrors exactly what the inpainter consumes: an axis-aligned pixel box
  * `[x1, y1, x2, y2]` plus the label the AOT model expects (0 = bubble
@@ -262,7 +262,7 @@ object StageStatus {
     const val TEXTLESS = "TEXTLESS"
 
     /**
-     * TachiyomiAT: the translate stage produced SOME valid translations AND
+     * the translate stage produced SOME valid translations AND
      * some missing/rejected ones, but NOT zero. Distinct from READY (all
      * blocks translated) and FAILED (none translated). A PARTIAL page is
      * still RENDERED — valid blocks are drawn, the missing regions stay
@@ -273,7 +273,7 @@ object StageStatus {
     const val PARTIAL = "PARTIAL"
 
     /**
-     * TachiyomiAT: maximum number of DISTINCT page-translation attempts
+     * maximum number of DISTINCT page-translation attempts
      * auto-translate will make for a page before treating it as exhausted
      * ([PageTranslation.hasExhaustedRetries]). Counts attempts, not per-stage
      * failures: a single reader-path attempt that cascades OCR→inpaint→render
@@ -322,7 +322,7 @@ data class TranslationBlock(
     var strokeWidth: Float = 0f,
     val direction: String = "LTR",
     /**
-     * TachiyomiAT: reading-order index of the panel (comic frame) this block
+     * reading-order index of the panel (comic frame) this block
      * was assigned to, or null when the block is spanning / free-floating /
      * orphan / invalid (see PanelAssignment.Category). Only OWNED blocks get a
      * real index. The prompt layer renders page-level context for null, so a
@@ -332,7 +332,7 @@ data class TranslationBlock(
      */
     val panelIndex: Int? = null,
     /**
-     * TachiyomiAT: human-readable panel-assignment category
+     * human-readable panel-assignment category
      * (PanelAssignment.Category.asString(): "owned" / "spanning" /
      * "free_floating" / "orphan" / "invalid" / "none"). Default "none" matches
      * the pre-panel-detector behaviour where the prompt layer treats every
@@ -340,7 +340,7 @@ data class TranslationBlock(
      */
     val panelAssignment: String = "none",
     /**
-     * TachiyomiAT: containment fraction (0..1) of this block's box within its
+     * containment fraction (0..1) of this block's box within its
      * best-matching panel — how much of the block lives inside that panel.
      * Surfaced so the translator can down-weight context for ambiguous
      * (low-containment) assignments. Default 0f for serialized blocks without
@@ -348,7 +348,7 @@ data class TranslationBlock(
      */
     val panelContainment: Float = 0f,
     /**
-     * TachiyomiAT: stable index of the parent speech bubble this block belongs
+     * stable index of the parent speech bubble this block belongs
      * to, assigned by a parent-bubble grouping pass after panel assignment.
      * Blocks sharing the same (parentX, parentY, parentWidth, parentHeight)
      * get the same index, letting the translator group lines within a bubble
@@ -357,7 +357,7 @@ data class TranslationBlock(
      */
     val bubbleIndex: Int? = null,
     /**
-     * TachiyomiAT: precise YOLO11 segmentation mask for this block.
+     * precise YOLO11 segmentation mask for this block.
      * Encoded as RLE for compact persistence. Used by the inpainter
      * (Interior Median Solid Fill) and the layout planner (Symmetrical Growth).
      */

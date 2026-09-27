@@ -16,18 +16,10 @@ import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
-//  Phase 17b: the persistence scheduler moved from
-// `ChapterTranslationStore` (persistLocked + flush/close lifecycle + the
-// debounced persist job + the retention sweep, plus the persistence
-// constants). The scheduler owns `persistScope` and is constructed eagerly by
-// the store (its ctor resolves no store state), so the debounce scope and its
-// join/cancel semantics — including `markDefunct`'s bounded
-// `PERSIST_JOIN_TIMEOUT_MS` join, which stays store-side and reads the
-// constant through the scheduler companion — are unchanged. `dirty` and
-// `persistJob` remain store fields (non-moved mutation bodies read and write
-// them directly); the scheduler reaches them, the store mutex, the glossary
-// delegate, and the vestigial legacy-ctor probes through the same-name
-// accessors below.
+// This collaborator serializes durable writes and retention work. Its own
+// scope owns debounce jobs; page mutations and lifecycle transitions still
+// update store state under the store mutex. markDefunct uses the same bounded
+// join timeout when it drains an active persistence job.
 internal class StorePersistenceScheduler(private val store: ChapterTranslationStore) {
 
     val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -37,8 +29,7 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         private const val PERSIST_DEBOUNCE_MS = 250L
     }
 
-    // Same-name dependency reads the moved bodies use; resolved through the
-    // owning store at each call.
+    // State resolves through the owning store at each call.
     private val mutex get() = store.mutex
 
     /** Serializes scheduled and explicit barriers so no task can outrun flush(). */
@@ -136,7 +127,7 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
     }
 
     suspend fun closeAndFlush() {
-        //  hotfix: no retention sweep here either. closeAndFlush runs on
+        // Skip retention sweeps here as well. closeAndFlush runs on
         // the caller's coroutine — for probe stores that is the reader-entry
         // path itself (DurableChapterStatusResolver.withProbeStore's finally),
         // so the multi-second recursive SAF crawl stalled every first open of

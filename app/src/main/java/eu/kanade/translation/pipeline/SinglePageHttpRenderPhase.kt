@@ -2,6 +2,7 @@ package eu.kanade.translation.pipeline
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
 import eu.kanade.translation.diagnostics.BatchDiagnosticDecision
@@ -21,30 +22,31 @@ import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.TranslationBlockValidation
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.engines.translator.contextual.TranslationPrompts
 import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
 import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.engines.translator.retry.RequestRetryBudget
 import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.translator.retry.withRequestRetryBudget
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.persistence.chapter.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
-import eu.kanade.translation.pipeline.toArtifactOrigin
-import eu.kanade.translation.scheduling.TranslationStageEvent
-import eu.kanade.translation.scheduling.TranslationStageListener
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -57,23 +59,22 @@ import java.io.InputStream
 import kotlin.coroutines.coroutineContext
 
 /**
- * Single-page HTTP+render phase moved from `TranslationPipeline` ( Phase 12).
- * Runs OUTSIDE the native permit: HTTP translate (contextual or plain, with the
- * bounded PARTIAL retry loop), color recompute, Canvas render, and guarded commit.
- * `OnnxPhaseResult` crosses this phase's entry with the cleaned bitmap alive;
- * bitmap recycle/ownership points are unchanged from the pre-move pipeline body.
+ * Runs HTTP translation and rendering outside the native permit. It handles
+ * contextual or plain translation, bounded partial retries, color recompute,
+ * Canvas rendering, and guarded commit. The cleaned bitmap in
+ * [OnnxPhaseResult] remains owned by this stage until its commit or cleanup.
  */
 internal class SinglePageHttpRenderPhase(
     private val translationPreferences: TranslationPreferences,
-    private val provider: TranslationProvider,
-    private val streamRegistry: eu.kanade.translation.scheduling.TranslationStreamRegistry,
+    private val provider: TranslationFileProvider,
+    private val streamRegistry: eu.kanade.translation.pipeline.execution.TranslationStreamRegistry,
     private val engines: EngineLane,
     private val cleanedPublication: CleanedPublication,
     // Engine-cache reads (translator signature/model/mode change on rebuild),
     // resolved through the pipeline's own helper at each call.
     private val expectedBatchFingerprints: (TextRecognizerLanguage, TextTranslatorLanguage) -> BatchExpectedFingerprints,
-    // The downscaled-inpaint retry is an ONNX-phase collaborator ( Phase 14
-    // region); until then the pipeline injects its own implementation.
+    // The pipeline injects the downscaled-inpaint retry so this phase can
+    // request it without owning ONNX setup.
     private val retryInpaintDownscaledFn: suspend (
         Manga,
         Chapter,
@@ -85,8 +86,7 @@ internal class SinglePageHttpRenderPhase(
     ) -> PageTranslation,
 ) {
 
-    // Same-name engine reads the moved body uses; resolved through [engines]
-    // so rebuilds are observed exactly as the in-class getters did.
+    // Read live engine state so rebuilds are observed.
     private val textTranslator get() = engines.textTranslator
 
     private val recognitionEngine get() = engines.recognitionEngine
@@ -201,8 +201,8 @@ internal class SinglePageHttpRenderPhase(
         pageTranslation.translationFingerprint = batchFingerprints.translation
         pageTranslation.layoutFingerprint = batchFingerprints.layout
 
-        //  Phase 4 ( §1.2): the borrow + epoch capture. `activeTranslator`
-        // is the page's working reference; the epoch-guard retry re-captures it
+        // Borrow the translator and capture its epoch. `activeTranslator` is
+        // the page's working reference; an epoch-guard retry re-captures it
         // from the lane after a targeted rebuild.
         var activeTranslator = textTranslator
         val epochAtCapture = engines.currentEngineEpoch()
@@ -212,7 +212,7 @@ internal class SinglePageHttpRenderPhase(
         // transport retries and is shared by the contextual call plus any
         // bounded partial retries below.
         val retryBudget = RequestRetryBudget()
-        //  Phase 3: provider-governor wait — opened at phase entry (the
+        // Provider-governor wait opens at phase entry (the
         // translator borrow above is the admission gate) and settled by the
         // first translator invocation; when no translation runs, the outer
         // finally settles it. Queue-class stage: feeds schedule maxQueueMs.
@@ -278,7 +278,7 @@ internal class SinglePageHttpRenderPhase(
                 TranslationContextChunkPlanner.Profile.DEFAULT
             }
 
-        //  Phase 3 ( design §3.2): the manual paid call is wrapped by
+        // The manual paid call is wrapped by
         // the durable attempt ledger — entry written BEFORE the call, resolved
         // on any completed call (success or typed provider failure); only
         // cancellation (process death / scope kill) leaves the entry for the
@@ -312,7 +312,7 @@ internal class SinglePageHttpRenderPhase(
         // round, so an epoch retry naturally picks up a fresh glossary) or makes
         // the plain translatePage call.
         suspend fun translateOnce(targetPage: PageTranslation) {
-            //  Phase 3: the first translator invocation is the moment the
+            // The first translator invocation is the moment the
             // governor/admission wait ends.
             if (!governorSpanSettled) {
                 governorSpanSettled = true
@@ -346,8 +346,8 @@ internal class SinglePageHttpRenderPhase(
                     }
                     .takeLast(TranslationContextChunkPlanner.MAX_ROLLING_PAIRS)
                     .joinToString("\n")
-                val glossaryText = ChapterGlossaryBuilder.formatGlossary(store.glossarySnapshot())
-                val prepared = store.contextService.prepare(
+                val glossaryText = TranslationPrompts.formatGlossary(store.glossarySnapshot())
+                val prepared = ChapterContextService(store).prepare(
                     ContextRequest(
                         pageKeys = listOf(pageKey),
                         targetLang = targetLang,
@@ -373,7 +373,7 @@ internal class SinglePageHttpRenderPhase(
             }
         }
 
-        //  Phase 4 ( §1.2/§1.3): ONE ledger wrap covers the original call
+        // One ledger entry covers the original call
         // AND the epoch retry (a close that raced the call is not a second
         // attempt; `resolveAttempt` fires once on the final outcome). The retry
         // is gated on the engine epoch moving + at-most-once; a second mismatch
@@ -424,9 +424,9 @@ internal class SinglePageHttpRenderPhase(
                         "translator=${activeTranslator::class.simpleName} " +
                         "blocks=${pageTranslation.blocks.size} nonEmptyText=$nonEmptyBlocks"
                 }
-                //  Phase 3: correlated translate stage. `provider` is the
+                // Correlated translate stage. `provider` is the
                 // remote/local execution fact from the shared compute
-                // classification; model stays none (plan §4.2).
+                // classification; the model records no local execution.
                 val translateSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.TRANSLATE,
                     provider = if (
@@ -446,7 +446,7 @@ internal class SinglePageHttpRenderPhase(
                 )
                 try {
                     val readingOrder = translationPreferences.translationReadingOrder().get()
-                    pageTranslation.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(
+                    pageTranslation.blocks = eu.kanade.translation.engines.vision.ocr.TranslationBlockSorter.sort(
                         pageTranslation.blocks,
                         fromLang,
                         readingOrder,
@@ -602,9 +602,9 @@ internal class SinglePageHttpRenderPhase(
                 val hasCleanedOnDisk = pageTranslation.cleanedImageName != null && pageTranslation.inpaintStatus == StageStatus.READY
                 if (hasCleanedBitmap || hasCleanedOnDisk) {
                     val cleanedBitmap = pageTranslation.cleanedBitmap
-                    //  Phase 3: layout (color estimation) is a sub-interval
-                    // of the render attempt; the render stage sum therefore
-                    // includes it (noted in the phase report).
+                    // Layout (color estimation) is a sub-interval
+                    // of the render attempt, so its duration is included in
+                    // the render stage sum.
                     val layoutSpan = TranslationTrace.beginStage(
                         TranslationTraceStage.LAYOUT,
                         lane = TranslationTraceLane.RENDER,
@@ -680,7 +680,7 @@ internal class SinglePageHttpRenderPhase(
                         if (published != null) {
                             commitPrecondition = published.toPrecondition()
                         }
-                        //  Phase 3: spans hoisted above the try so every
+                        // Spans are hoisted above the try so every
                         // outcome (skip/failure/cancel/success) settles them.
                         val retryLayoutSpan = TranslationTrace.beginStage(
                             TranslationTraceStage.LAYOUT,
@@ -779,9 +779,8 @@ internal class SinglePageHttpRenderPhase(
                     )
                 }
             }
-            //  Phase 3: guarded commit boundary (storage lane).
-            //  Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
-            // including a throw from patchPage — no dangling stage_start.
+            // Guarded commit boundary. The span settles on every exit,
+            // including when patchPage throws, so no stage start is left open.
             val commitSpan = TranslationTrace.beginStage(
                 TranslationTraceStage.STORE_COMMIT,
                 lane = TranslationTraceLane.STORAGE,
@@ -820,7 +819,7 @@ internal class SinglePageHttpRenderPhase(
                 deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
             }
         } finally {
-            //  Phase 3: settle the governor wait when no translation ran,
+            // Settle the governor wait when no translation ran,
             // and measure the durable flush (storage lane). All non-suspending.
             if (!governorSpanSettled) {
                 governorSpanSettled = true
@@ -830,9 +829,8 @@ internal class SinglePageHttpRenderPhase(
                 TranslationTraceStage.STORE_FLUSH,
                 lane = TranslationTraceLane.STORAGE,
             )
-            //  Phase 4 (Phase 3 review F2): try/finally so the flush span
-            // settles even when store.flush() itself throws. The throw still
-            // propagates unchanged (pre-existing finally semantics).
+            // Settle the flush span even when store.flush() throws. The
+            // original exception still propagates.
             try {
                 store.flush()
             } finally {
@@ -861,7 +859,7 @@ internal class SinglePageHttpRenderPhase(
             try {
                 recognitionEngine.reclaimPooledMemory()
             } catch (_: Exception) {}
-            //  Phase 4 ( §1.2): the borrow ends here — this release is the
+            // The translator borrow ends here. This release is the
             // event a pending engine close DRAINS on before tearing the (snapshot
             // of the) engines down.
             engines.endTranslatorUse()

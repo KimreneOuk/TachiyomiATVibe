@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test
 import kotlin.math.ceil
 
 /**
- *  slice 5: the pure [AdaptiveBandPlanner] — width gain over the
+ * The pure [AdaptiveBandPlanner] uses width gain over the
  * conservative inscribed rectangle on thin/slanted components, hole rows
  * narrowing the line band, exact stroke-inset math, exact bounded candidate
  * counters, the 24-line block cap, non-consumable text, and the exact

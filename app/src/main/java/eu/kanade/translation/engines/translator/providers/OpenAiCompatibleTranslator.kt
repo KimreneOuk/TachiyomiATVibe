@@ -65,7 +65,7 @@ abstract class OpenAiCompatibleTranslator(
         .build()
 
     // ------------------------------------------------------------------
-    //  wave-7c: the typed structured-analysis transport (AiTranslator
+    //  the typed structured-analysis transport (AiTranslator
     // hooks). The OpenAI-compatible family shares ONE completion shape —
     // only the endpoint URL and auth headers differ per backend, so the
     // subclass supplies those two and the base builds the payload.
@@ -288,7 +288,7 @@ abstract class OpenAiCompatibleTranslator(
         private const val ANALYSIS_MIN_OUTPUT_TOKENS = 1_024
 
         /**
-         * Milestone M5 (Provider 3): Parses an SSE response body (data: lines).
+         * Parses an SSE response body (`data:` lines).
          * Extracts delta.content, text, or message.content from streaming chunks until [DONE].
          */
         fun parseSseResponse(body: String): String {

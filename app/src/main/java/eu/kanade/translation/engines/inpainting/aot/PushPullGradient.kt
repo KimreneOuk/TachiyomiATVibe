@@ -5,7 +5,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * TachiyomiAT: push-pull gradient inpainting for free text.
+ * push-pull gradient inpainting for free text.
  *
  * Pure-JVM port of the validated free-text path from the Python prototype:
  *  - [localRingMedian] — median of the annulus around the text (the LOCAL

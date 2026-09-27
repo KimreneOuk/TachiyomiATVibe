@@ -4,16 +4,13 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 
 /**
- *  Stage 1 (/SC-02): one durable record per Batch run attempt
- * over a chapter (schemas contract §1.1). Published at RUN_SNAPSHOT and
- * updated only at persisted phase transitions (transition semantics are owned
- * by the state/transactions contract, ). The record is identity and
- * provenance only — never a fingerprint input beyond its declared fingerprint
- * fields.
+ * Durable record for one Batch run over a chapter. It is published with the
+ * frozen run snapshot and updated only at persisted state transitions. The
+ * record carries identity and provenance; only its declared fingerprint
+ * fields participate in validity checks. Operational fields such as run ID,
+ * timestamps, and phase counters never contribute to fingerprints.
  *
- * Serialized only through the shared [ArtifactDocumentJson] instance
- *. Operational fields (runId, timestamps, phaseCounters) are
- * never fingerprint inputs.
+ * Documents are serialized through the shared [ArtifactDocumentJson] instance.
  */
 enum class ChapterRunState {
     RUN_SNAPSHOT,
@@ -34,9 +31,8 @@ enum class ChapterRunState {
 }
 
 /**
- * Complete frozen settings captured at RUN_SNAPSHOT (schemas contract §1.1).
- * Settings never mutate under a run (invalidation matrix row 13); a policy
- * change starts a new run with a new snapshot.
+ * Complete settings captured at RUN_SNAPSHOT. They stay fixed for the run; a
+ * policy change starts a new run with a new snapshot.
  */
 @Serializable
 data class RunConfigSnapshot(
@@ -60,7 +56,7 @@ data class RunConfigSnapshot(
     /**
      * 01d: historical A/B flag value, once read at dispatch and
      * frozen into the run snapshot. The flag completed its lifecycle
-     * (zero-legacy wave) and every new snapshot freezes `true`; the field
+     * ( wave) and every new snapshot freezes `true`; the field
      * stays in the schema — nullable so pre-field records (written with the
      * flag as a phaseCounters key only) decode unchanged — and it still
      * participates in frozenRunConfigFingerprint by construction, so
@@ -84,20 +80,17 @@ data class EnvelopePolicySnapshot(
      *  envelope packing caps. maxBlocks stays the structural budget; the
      * token budgets may still split dense chapters into SMALLER envelopes.
      *
-     * Director decision (2026-09-17, hard cap): maxPages is FIXED at 5 —
-     * "5 pages fixed, no matter what". On-device evidence 2026-09-17: an
-     * 8-page/64-block envelope of a dense chapter truncated at the output
-     * cap on every retry attempt and the whole envelope was discarded as
-     * ambiguous (protocol); 5-page envelopes bound the per-call output so
-     * the budget holds.
+     * The maximum envelope size is fixed at five pages. Larger envelopes
+     * exceeded provider output limits for dense chapters; smaller envelopes
+     * preserve whole-page boundaries while keeping requests within budget.
      */
     val maxBlocks: Int = 64,
     val maxPages: Int = 5,
 )
 
 /**
- * The durable per-run record (schemas contract §1.1). Field declaration order
- * is the canonical byte order; new optional fields are appended
+ * The durable per-run record. Field declaration order is the canonical byte
+ * order; new optional fields are appended
  * at the end only.
  */
 @Serializable
@@ -126,7 +119,7 @@ data class ChapterRunRecord(
     val createdAtEpochMs: Long,
     val updatedAtEpochMs: Long,
 ) {
-    /** 01/SC-02 semantic validation; null when the document is usable. */
+    /** Returns null when this document is semantically usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"

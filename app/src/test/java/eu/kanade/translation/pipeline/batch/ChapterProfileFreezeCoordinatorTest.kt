@@ -31,11 +31,12 @@ import eu.kanade.translation.persistence.artifact.EvidenceRef
 import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -48,13 +49,12 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
 /**
- *  Stage 5 slice B: coordinator freeze behavior ( +
- * profile freeze + the OCR_PLAN skip rule). Pins:
+ * Covers profile freeze and the OCR-plan skip rule:
  *
  *  - a full pass synthesizes the glossary from the durable chunk summaries,
  *    freezes the profile in one transaction and ends PAUSED (never COMPLETED);
  *  - resume after freeze SKIPS the entire run through analysis: zero re-OCR,
- *    zero chunk executions (the  fast-feedback core);
+ *    zero chunk executions;
  *  - an FP-04 input change (target language) invalidates reuse and re-freezes
  *    the NEXT version without re-OCR or re-sent chunks;
  *  - a pointer whose sidecar turned corrupt is treated as UNFROZEN and the
@@ -282,9 +282,8 @@ class ChapterProfileFreezeCoordinatorTest {
         val outcome = coordinator(store, worker, pages, analyzer, synthesizer = synthesizer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // Stage-6 slice A: freeze now CONTINUES into the envelope phase;
-        // without a wired text translator the run pauses at the typed
-        // TRANSLATE CONFIGURATION gate — never COMPLETED.
+        // Freeze continues into envelope work. Without a configured text
+        // translator, the run pauses at the typed configuration gate.
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         outcome.needsTranslation shouldBe emptyList()
@@ -347,8 +346,8 @@ class ChapterProfileFreezeCoordinatorTest {
         resumedWorker.ocrPages shouldBe emptyList()
         resumedAnalyzer.executedOrdinals shouldBe emptyList()
         resumed.status shouldBe BatchPass1Status.PAUSED
-        // Stage-6 slice A: the reuse path CONTINUES into the envelope phase
-        // (zero re-OCR, zero re-analysis still hold) and pauses at TRANSLATE.
+        // Reuse continues into envelope work with no OCR or analysis and
+        // pauses because no translator is configured.
         resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
 
         val record = runRecord(resumedStore)

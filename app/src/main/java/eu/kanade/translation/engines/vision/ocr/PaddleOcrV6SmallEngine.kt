@@ -22,7 +22,7 @@ import kotlin.math.ceil
 
 class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
-    // TachiyomiAT: PP-OCRv6 rec is a CNN+CTC head trained on horizontal text
+    // PP-OCRv6 rec is a CNN+CTC head trained on horizontal text
     // lines, so RoiPageRecognitionEngine rotates tall crops 90° for this engine
     // only. Native-vertical engines (ML Kit, MangaOcr) set this false.
     override val prefersHorizontalText: Boolean = true
@@ -51,7 +51,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     var requestedProviderLabel: String = "automatic"
         private set
 
-    // TachiyomiAT: pooled DIRECT buffer for the rec input. The rec width is bucketed
+    // pooled DIRECT buffer for the rec input. The rec width is bucketed
     // to fixed shapes (640 or 1600), so the pool is sized for MAX_RECOGNITION_WIDTH (1600);
     // each call exposes only [width x height x 3] floats via the buffer limit.
     // A heap-backed wrap() forces ORT to allocate a per-call native copy that leaks (ORT #16937).
@@ -82,7 +82,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         try {
             val createdSession = when {
                 providerConfiguration != null -> {
-                    // Ticket 06 staged-activation path: explicit provider test configuration.
+                    // Use the explicit provider test configuration.
                     OnnxRuntimeProvider.createSessionForPaddleProvider(
                         modelPath = modelFile.absolutePath,
                         configuration = providerConfiguration,
@@ -152,7 +152,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         var result: OrtSession.Result? = null
         val start = System.nanoTime()
         try {
-            // TachiyomiAT: preprocess writes NCHW straight into the pooled direct
+            // preprocess writes NCHW straight into the pooled direct
             // buffer; only the filled [width x height x 3] region is exposed via
             // the limit. See inputPixelPool for the leak rationale.
             pixelBuffer = inputPixelPool.acquire()
@@ -254,7 +254,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     private fun preprocess(crop: Bitmap, out: FloatBuffer, baseOffset: Int = 0): Int {
         val safeWidth = crop.width.coerceAtLeast(1)
         val safeHeight = crop.height.coerceAtLeast(1)
-        // TachiyomiAT: match the reference PP-OCR pipeline (comic-translate's
+        // match the reference PP-OCR pipeline (comic-translate's
         // ppocr module). Correcting the width/alignment here is a prerequisite
         // for vertical-column splitting (handled by RoiPageRecognitionEngine).
         val scaledWidth = ceil(safeWidth * (RECOGNITION_HEIGHT.toFloat() / safeHeight)).toInt()

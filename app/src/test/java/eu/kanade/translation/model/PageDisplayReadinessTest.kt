@@ -27,7 +27,6 @@ class PageDisplayReadinessTest {
         textless.isTextlessTerminal shouldBe true
         textless.lifecycle shouldBe PageLifecycle.Textless
         textless.displayImageName shouldBe null
-        textless.shouldSkipAutoScheduling shouldBe true
     }
 
     @Test

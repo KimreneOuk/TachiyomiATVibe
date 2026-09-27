@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
- *  Phase 4 Wave B — the STANDARD_PIPELINE lane through the REAL shell
+ * The STANDARD_PIPELINE lane through the real shell
  * (Director contract for the coexistence harness,  ON + STANDARD engine).
  *
  * [TranslationCoexistenceHarness.createStandard] drives

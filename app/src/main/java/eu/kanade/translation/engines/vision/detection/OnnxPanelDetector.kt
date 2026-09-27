@@ -15,7 +15,7 @@ import java.io.File
 import java.nio.FloatBuffer
 
 /**
- * TachiyomiAT: YOLO26-nano manga panel detector.
+ * YOLO26-nano manga panel detector.
  *
  * Loads `manga_panel_detector_int8.onnx` (exported from
  * `leoxs22/manga-panel-detector-yolo26n` for ONNX inference)
@@ -46,7 +46,7 @@ class OnnxPanelDetector {
     var executionProviderLabel: String = "uninitialized"
         private set
 
-    // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor. ORT
+    // pooled DIRECT buffer for the fixed 1x3x640x640 tensor. ORT
     // consumes it in place so it MUST outlive the tensor; maxPoolSize=2 bounds
     // native memory. Same contract as OnnxPageTextDetector.
     private val inputBufferPool = DirectBufferPool(

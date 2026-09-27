@@ -6,8 +6,7 @@ import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
 
 /**
- * 05 /  golden freeze fixture (Stage-5 slice B, gate
- * "golden freeze fixtures hash-stable across processes"). The fixture under
+ * The golden frozen-profile fixture under
  * `test/resources/t924/golden/` pins:
  *
  *  1. the FP-05 content fingerprint of a fully populated frozen profile is

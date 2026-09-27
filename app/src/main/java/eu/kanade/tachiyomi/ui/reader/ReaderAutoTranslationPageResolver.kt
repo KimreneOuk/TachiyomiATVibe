@@ -27,22 +27,6 @@ internal class ReaderAutoTranslationPageResolver(
     private val bindingLock = Any()
 
     /**
-     * Binds a page list to one reader Auto identity. A later bind or [invalidate] fences every
-     * resolver produced by an older reader generation or chapter/session identity. Same-identity
-     * anchor updates reuse the binding so stream handles already handed to in-flight work remain
-     * valid until the reader lifecycle invalidates the binding.
-     */
-    fun bind(
-        identity: AutoChapterIdentity,
-        pages: List<ReaderPage>,
-    ): (Int) -> RollingAutoCoordinator.PageWorkItem? = bind(
-        identity = identity,
-        pages = pages,
-        ownerVersion = null,
-        ownerToken = null,
-    )
-
-    /**
      * Binds a reader page list to the scheduler owner that produced its snapshot. The store
      * token is intentionally compared by identity: a same-key session may replace its store
      * instance while retaining the same chapter identity, and that replacement must invalidate
@@ -90,19 +74,6 @@ internal class ReaderAutoTranslationPageResolver(
             nextBinding.binding.resolve(index)
         }
     }
-
-    /** Positional convenience for tests and non-Reader callers that only have the owner version. */
-    fun bind(
-        identity: AutoChapterIdentity,
-        ownerVersion: Long,
-        pages: List<ReaderPage>,
-        ownerToken: Any? = null,
-    ): (Int) -> RollingAutoCoordinator.PageWorkItem? = bind(
-        identity = identity,
-        pages = pages,
-        ownerVersion = ownerVersion as Long?,
-        ownerToken = ownerToken,
-    )
 
     /** Records the owner version once the stable scheduler snapshot reaches the Reader. */
     fun bindOwnerVersion(

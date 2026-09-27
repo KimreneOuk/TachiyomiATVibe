@@ -4,7 +4,7 @@ import eu.kanade.translation.model.PageDisplayState
 import kotlinx.serialization.Serializable
 
 /**
- * TachiyomiAT: chapter artifact manifest (lifecycle contract §15).
+ * chapter artifact manifest (lifecycle contract §15).
  *
  * `chapter.translation.manifest.json`-equivalent sibling of the legacy flat
  * translation file. Holds schema version, page records with committed and
@@ -379,10 +379,6 @@ data class ChapterAttemptLedgerDocument(
         const val MAX_CONSECUTIVE_UNRESOLVED = 3
     }
 }
-
-// ---------------------------------------------------------------------------
-//  Stage 1 (schemas contract §1.8): generalized manifest pointers.
-// ---------------------------------------------------------------------------
 
 /**
  * 03: generalization of the [GlossaryPointer] pattern — a pointer to

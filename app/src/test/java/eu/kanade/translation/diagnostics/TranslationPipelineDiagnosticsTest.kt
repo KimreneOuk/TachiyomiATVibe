@@ -11,7 +11,7 @@ import java.io.IOException
 
 /**
  * JVM tests for the `translation_trace_v1` formatter, privacy sanitizer,
- * budgets, gate, and identity keys (plan §6.2, amendments §10.3–10.5).
+ * budgets, gate, and identity keys.
  *
  * No Robolectric: the sink is swapped for a capturing lambda, and the ID
  * generator / identity keys are pinned for deterministic exact-line
@@ -410,7 +410,7 @@ class TranslationPipelineDiagnosticsTest {
     }
 
     // ------------------------------------------------------------------
-    // F1 (Phase 2 review): reason= is pinned to a bounded token vocabulary
+    // The reason field is pinned to a bounded token vocabulary
     // ------------------------------------------------------------------
 
     @Test

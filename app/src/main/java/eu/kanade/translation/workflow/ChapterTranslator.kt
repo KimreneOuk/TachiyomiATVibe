@@ -12,12 +12,12 @@ import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,7 +68,7 @@ internal fun <T> mergeRestoredQueueEntries(
 
 class ChapterTranslator(
     private val context: Context,
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
@@ -84,7 +84,7 @@ class ChapterTranslator(
 ) {
 
     companion object {
-        // TachiyomiAT: bounded join for the batch translator job during delete.
+        // Bound the join during chapter deletion.
         // The batch worker can be mid-uncancellable native ONNX (OrtSession.run)
         // when cancel() is requested; coroutine cancellation only lands at the
         // next suspension point. Bounding the join prevents a delete from hanging
@@ -93,65 +93,8 @@ class ChapterTranslator(
         // (ChapterTranslationStore.markDefunct) neutralizes any late write.
         const val BATCH_JOIN_TIMEOUT_MS = 2_000L
 
-        //  hotfix: poll interval while a per-chapter batch coroutine waits
-        // for the chapter's previous batch to finish unwinding (see
-        // [inFlightChapterIds]).
+        // Retry the chapter claim while the previous job finishes unwinding.
         const val IN_FLIGHT_CLAIM_RETRY_MS = 100L
-
-        // TachiyomiAT: reader page streams now live in [TranslationStreamRegistry]
-        // (a dedicated DI singleton). These companions are thin delegates kept so
-        // existing static call sites compile during the incremental migration.
-        private val streamRegistry: TranslationStreamRegistry
-            get() = Injekt.get()
-
-        fun registerReaderPageStream(
-            manga: Manga,
-            chapter: Chapter,
-            source: HttpSource,
-            pageKey: String,
-            streamFn: () -> InputStream,
-        ) {
-            streamRegistry.register(manga, chapter, source, pageKey, streamFn)
-        }
-
-        /**
-         * Returns the registered reader stream for this page WITHOUT removing it.
-         * The stream is a `() -> InputStream` factory (one invocation per retry),
-         * so evicting on first use (the old `readerPageStreams.remove(...)` path)
-         * meant a failed translation could never be retried — it silently wrote a
-         * FAILED placeholder. The stream is dropped only on chapter cleanup via
-         * [clearReaderPageStreams].
-         */
-        private fun peekReaderPageStream(
-            manga: Manga,
-            chapter: Chapter,
-            source: HttpSource,
-            pageKey: String,
-        ): (() -> InputStream)? = streamRegistry.peek(manga, chapter, source, pageKey)
-
-        /**
-         * Evicts every reader page stream registered for [mangaId]/[sourceId] in
-         * [chapterId]. Each entry holds a `() -> InputStream` closure over a
-         * [eu.kanade.tachiyomi.ui.reader.model.ReaderPage] that can keep page
-         * bitmaps/sources alive, so this must run on chapter change to avoid
-         * leaking memory and stale streams across chapters.
-         */
-        fun clearReaderPageStreams(sourceId: Long, mangaId: Long, chapterId: Long) {
-            streamRegistry.clearChapter(sourceId, mangaId, chapterId)
-        }
-
-        /**
-         * TachiyomiAT: evicts EVERY registered reader page stream. Each entry
-         * holds a `() -> InputStream` closure over a
-         * [eu.kanade.tachiyomi.ui.reader.model.ReaderPage] (and, on the eager
-         * prefetch path, a captured downloaded [ByteArray]); leaving them in the
-         * process-lifetime map on reader background / "stop all translation"
-         * pins those bytes/pages until the process dies. Call on reader
-         * background / stop-all so memory is released.
-         */
-        fun clearAllReaderPageStreams() {
-            streamRegistry.clearAll()
-        }
     }
 
     private val _queueState = MutableStateFlow<List<Translation>>(emptyList())
@@ -170,9 +113,9 @@ class ChapterTranslator(
     }
 
     /**
-     * S7 / B1 (Milestone M2): Reader-position queue priority. Moves the specified
-     * queued chapter to the head of pending candidates (immediately following any
-     * actively translating chapter, or index 0) and persists the updated order.
+     * Reader-position queue priority. Moves the specified queued chapter to the
+     * head of pending candidates (immediately following any active chapter, or
+     * index 0) and persists the updated order.
      * Never interrupts or preempts an in-flight TRANSLATING chapter.
      */
     fun prioritizeChapter(chapterId: Long) {
@@ -198,7 +141,7 @@ class ChapterTranslator(
     }
 
     /**
-     * TachiyomiAT: persists the queue (ordered chapter ids) to disk after every
+     * Persists the queue (ordered chapter IDs) to disk after every
      * mutation so a crash mid-batch no longer loses it. One SharedPreferences
      * editor batch; idempotent.
      */
@@ -209,7 +152,7 @@ class ChapterTranslator(
     }
 
     /**
-     * TachiyomiAT: rehydrates the queue from disk on launch via
+     * Rehydrates the queue from disk on launch via
      * [Translation.fromChapterId]. Deleted chapters self-heal (fromChapterId
      * returns null, so stale ids drop). Rehydrated entries get status QUEUE:
      * rehydrate but require Start — never auto-start background OCR/LLM work on
@@ -320,16 +263,14 @@ class ChapterTranslator(
     @Volatile
     var isPaused: Boolean = false
 
-    //  hotfix: serializes the check-and-launch of the translator job so
-    // concurrent admissions cannot each observe isRunning == false and launch
-    // a second translator job over the same queue head.
+    // Serialize job admission so concurrent requests cannot both observe an
+    // idle translator and launch duplicate work for the queue head.
     private val translatorLaunchLock = Any()
 
-    //  hotfix: chapters whose batch is still in flight — launched, and
-    // possibly still unwinding uncancellable native work after a cancel. An
-    // admission for one of these chapters must be a no-op for the running
-    // work (no cancel, no restart, no second schedule): two live schedules
-    // for one chapter make each store generation advance cancel the prior run.
+    // Keep a claim while a chapter job is running or unwinding native work
+    // after cancellation. New admissions wait for that claim to release rather
+    // than starting a second run that would advance the store generation and
+    // fence the first run.
     private val inFlightChapterIds: MutableSet<Long> = ConcurrentHashMap.newKeySet()
     private val inFlightClaimReleasedSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
@@ -343,10 +284,9 @@ class ChapterTranslator(
                 return false
             }
 
-            //  hotfix: ERROR entries are excluded too — a generic queue
-            // start must not resurrect failed/restored work after a restart.
-            // An ERROR chapter re-enters work only via an explicit per-chapter
-            // request (translateChapter re-arms it) or requeueExisting.
+            // A generic queue start does not resurrect failed entries after a
+            // restart. An ERROR chapter re-enters work only through an explicit
+            // per-chapter request or requeueExisting.
             val pending = queueState.value.filter {
                 it.status != Translation.State.TRANSLATED &&
                     it.status != Translation.State.PAUSED &&
@@ -375,14 +315,9 @@ class ChapterTranslator(
             } catch (_: Exception) {}
         }
 
-        // TachiyomiAT: the historical `if (reason != null) return` skipped
-        // closeEngines() for EVERY non-null-reason stop — including the user's
-        // explicit "Stop all translation". That left the cached textTranslator /
-        // recognitionEngine alive (enginesClosed stayed false), so a later config
-        // change (engine, provider, API key, model, language, OCR model) was
-        // ignored on the next run: the rebuild gate never fired.
-        // closeEngines now tears down + rearms when a caller explicitly asks for
-        // it; background/memory-pressure stops leave it false to stay lightweight.
+        // Background and memory-pressure stops keep engines open. Callers that
+        // request engine closure tear them down so the next run can rebuild
+        // after a provider, model, language, or OCR configuration change.
         if (reason != null && !closeEngines) return
         isPaused = false
         pipeline.closeEngines()
@@ -394,10 +329,9 @@ class ChapterTranslator(
         try {
             pipeline.forceReleaseNativeBuffers()
         } catch (_: Exception) {}
-        // TachiyomiAT: Do NOT cancel the translator job even under Critical memory pressure.
-        // If we cancel the job, we prematurely drop the HTTP connection to the AI engine while
-        // it is still generating, causing the UI to "lag behind" (showing Aborted while the engine translates).
-        // If the OS truly needs memory, it will kill the process and we will resume via restoreQueue() on restart.
+        // Keep the translator job alive under memory pressure. Cancelling it
+        // can drop an active provider request and publish an aborted state while
+        // the model is still generating; process death resumes through restoreQueue().
     }
 
     fun pause() {
@@ -480,9 +414,9 @@ class ChapterTranslator(
                         val active = candidates.filter { it.status == Translation.State.TRANSLATING }
                         val activeSource = active.firstOrNull()?.source
                         val selected = if (active.isNotEmpty()) {
-                            // S11 wave lookahead (Milestone M4): allow chapter N (active translating)
-                            // + chapter N+1 (preflight queue) on the same source to pipeline native OCR/inpaint
-                            // while provider waits are in flight.
+                            // Allow the next queued chapter from the active
+                            // source to run native OCR/inpaint while provider
+                            // waits are in flight for the active chapter.
                             val nextQueue = candidates.firstOrNull {
                                 it.status == Translation.State.QUEUE &&
                                     it !in active &&
@@ -528,14 +462,11 @@ class ChapterTranslator(
         var claimed = false
         try {
             if (chapterId != null) {
-                //  hotfix: one live schedule per chapter. Set.add is the
-                // atomic check-and-claim; a previous batch for this chapter may
-                // still be unwinding uncancellable native work after a
-                // pause/stop cancel, so wait for it to release the chapter
-                // instead of scheduling a second concurrent batch whose store
-                // generation advance cancels the prior run. The claim is
-                // released only in the finally below, after this coroutine has
-                // fully unwound.
+                // Admit one live schedule per chapter. Set.add atomically claims
+                // ownership. A prior run can still be unwinding native work
+                // after cancellation, so wait for it rather than starting a
+                // second run that advances the store generation. The claim is
+                // released in finally after this coroutine fully unwinds.
                 while (!inFlightChapterIds.add(chapterId)) {
                     withTimeoutOrNull(IN_FLIGHT_CLAIM_RETRY_MS) {
                         inFlightClaimReleasedSignal.first()
@@ -570,9 +501,8 @@ class ChapterTranslator(
                 stop()
             }
         } finally {
-            //  hotfix: release the in-flight claim only once this batch
-            // coroutine has fully unwound (the claim held off overlapping
-            // admissions for the same chapter while it was still running).
+            // Release the claim only after the batch coroutine fully unwinds,
+            // so another admission cannot overlap its remaining work.
             if (claimed) {
                 inFlightChapterIds.remove(chapterId)
                 inFlightClaimReleasedSignal.tryEmit(Unit)
@@ -647,9 +577,9 @@ class ChapterTranslator(
     }
 
     /**
-     *  slice 2 (R10): mirrors [queueChapter]'s config preflight so callers
-     * can classify an admission rejection (config invalid vs source unsupported)
-     * without duplicating preference parsing. Add-only; queueChapter is untouched.
+     * Mirrors [queueChapter]'s config preflight so callers can classify an
+     * admission rejection (invalid config or unsupported source) without
+     * duplicating preference parsing. This check does not mutate the queue.
      */
     fun isQueueConfigValid(): Boolean = runCatching {
         if (
@@ -667,17 +597,16 @@ class ChapterTranslator(
     fun queueChapter(
         manga: Manga,
         chapter: Chapter,
-        //  Phase 4: the trigger's admission-probe cross-check; the
-        // defaults keep every legacy caller byte-identical.
+        // Optional source-count evidence from the trigger's admission probe.
+        // Defaults keep callers without that probe on the same path.
         probedSourcePageCount: Int? = null,
         sourceCountKnown: Boolean = false,
     ) {
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         if (queueState.value.any { it.chapter.id == chapter.id }) return
-        // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
-        // (corrupted/migrated pref). This runs on a UI action, so a thrown
-        // exception would crash the UI thread; catch it and surface as a toast
-        // instead of queuing a translation that fails every page with the same error.
+        // Invalid persisted configuration must not crash this UI action or
+        // queue a batch that would fail every page with the same error. Catch
+        // conversion failures and surface them as a toast.
         val fromLang: TextRecognizerLanguage
         val toLang: TextTranslatorLanguage
         try {
@@ -706,7 +635,7 @@ class ChapterTranslator(
         addToQueue(translation)
     }
 
-    //  slice 3: internal so focused unit tests can drive the exact
+    // Internal so focused tests can drive the exact
     // exceptional exits (missing files, unexpected exceptions) without the
     // async queue worker.
     internal suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
@@ -766,7 +695,7 @@ class ChapterTranslator(
                 logcat(LogPriority.ERROR) {
                     "TachiyomiAT chapter files not found for ${translation.chapter.name}"
                 }
-                //  slice 3: emit the typed terminal snapshot so the drawer
+                // Emit the typed terminal snapshot so the drawer
                 // shows the real reason instead of a bare/living 0/0.
                 failBeforePipeline(
                     translation,
@@ -778,11 +707,9 @@ class ChapterTranslator(
             }
             translation.status = Translation.State.TRANSLATING
 
-            // TachiyomiAT: for archive chapters, share one ArchiveReader across
-            // the whole batch instead of reopening + full decompression per page
-            // (the old getChapterPages closures did archiveReader().use {} on every
-            // streamFn() — O(pages) re-decompressions). Directory chapters use
-            // cheap direct file opens.
+            // Keep one ArchiveReader open for the batch. Its entry streams use
+            // seek-based reads, avoiding repeated decompression; directory chapters
+            // use cheap direct file opens.
             val streams: List<Pair<String, () -> InputStream>>
             val sharedArchive: mihon.core.archive.ArchiveReader?
             if (chapterPath.isFile) {
@@ -812,13 +739,13 @@ class ChapterTranslator(
                 // Reader viewport/last-read position is intentionally not a
                 // batch scheduling input; resume is decided per stage by the
                 // pipeline planner while pages remain 1..N.
-                val orderedStreams = eu.kanade.translation.util.ResumeOrdering.naturalOrder(streams)
+                val orderedStreams = eu.kanade.translation.pipeline.planning.ResumeOrdering.naturalOrder(streams)
                 batchOrderedPageKeys = orderedStreams.map { it.first }
-                //  slice 3: a rejected pre-registration is an explicit
+                // A rejected pre-registration is an explicit
                 // pipeline error. Fail the chapter with a typed terminal tracker
                 // snapshot instead of running a live tracker whose totals would
                 // silently stay zero.
-                //  Phase 4: the queued cross-check rides the
+                // The queued source-count cross-check is carried through
                 // pre-registration so the manifest's trusted total is the
                 // SOURCE total (or honestly unknown), never the found count.
                 val preRegistration = store.preRegisterPages(
@@ -882,7 +809,7 @@ class ChapterTranslator(
                 }
                 else -> {
                     val pageStates = store.state.value
-                    //  zero-legacy: both surviving batch lanes end
+                    //  : both surviving batch lanes end
                     // runs translation-terminal WITHOUT an in-pass render, so
                     // the post-batch queue-status projection must use the
                     // flagged COMPLETED projection — the legacy done-predicate
@@ -912,7 +839,7 @@ class ChapterTranslator(
             }
             BitmapPool.releaseAll()
             translation.status = Translation.State.ERROR
-            //  slice 3: an unexpected exception must leave a terminal
+            // An unexpected exception must leave a terminal
             // snapshot with the reason, never a live nonterminal tracker. Safe
             // when the batch already finished: a late event is ignored.
             tracker?.abort(
@@ -925,7 +852,7 @@ class ChapterTranslator(
     }
 
     /**
-     *  slice 3: typed terminal exit for a batch that failed before the
+     * Typed terminal exit for a batch that failed before the
      * pipeline could run (pre-registration rejected, chapter files missing).
      * Marks the queue entry ERROR and emits an aborted terminal tracker
      * snapshot carrying [reason] through the registry, so the UI shows the

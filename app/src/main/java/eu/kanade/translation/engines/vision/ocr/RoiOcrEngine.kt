@@ -21,7 +21,7 @@ interface RoiOcrEngine : Closeable {
         recognizeBatch(crops).map { it to 1f }
 
     /**
-     * TachiyomiAT: cooperative hint to release engine-owned off-heap/pooled memory
+     * cooperative hint to release engine-owned off-heap/pooled memory
      * that [close] would free but that can otherwise persist across calls.
      *
      * Unlike [close], this leaves the engine usable: the next [recognize]
@@ -38,7 +38,7 @@ interface RoiOcrEngine : Closeable {
     fun forceReleaseNativeBuffers() {}
 
     /**
-     * TachiyomiAT: whether this engine reads HORIZONTAL text lines only.
+     * whether this engine reads HORIZONTAL text lines only.
      *
      * Manga speech is often laid out VERTICALLY (top-to-bottom columns). Some
      * recognizers handle vertical layout natively (ML Kit's CJK recognizers,

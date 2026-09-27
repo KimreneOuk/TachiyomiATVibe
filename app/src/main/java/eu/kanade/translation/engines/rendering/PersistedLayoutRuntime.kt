@@ -5,18 +5,17 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- *  WP9: process-wide runtime seams for the persisted-layout
- * track, kept Android-free so the whole hydration/publication decision logic
- * stays JVM-unit-testable.
+ * Process-wide runtime support for persisted layouts. It stays Android-free
+ * so hydration and publication decisions can be tested on the JVM.
  *
- *  - [flagEnabled] is the single  read
- *    (`TranslationPreferences.translationBatchPersistedLayout`, domain :255,
+ *  - [flagEnabled] reads
+ *    [TranslationPreferences.translationBatchPersistedLayout],
  *    default OFF). Tests and JVM rigs pin it via [persistedLayoutFlagOverride];
  *    production resolves the registered preference lazily through DI. The read
  *    is guarded: a bare JVM context (unit tests without a registered preference
  *    store) observes the safe default OFF instead of crashing.
- *  - [productionFontSha256] is the pinned real SHA-256 of the bundled
- *    `res/font/animeace.ttf` (wave-2 review gap 6). The bytes are read ONCE at
+ *  - [productionFontSha256] is the SHA-256 of the bundled
+ *    `res/font/animeace.ttf`. The bytes are read once at
  *    an Android entry point (`TranslationOverlayView` init) through
  *    [fontSha256Loader]; the digest is then cached for the process so the
  *    Batch-side publisher and every reader-side hydration compare the same

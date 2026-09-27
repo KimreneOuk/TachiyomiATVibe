@@ -39,11 +39,12 @@ import eu.kanade.translation.persistence.artifact.EvidenceRef
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -55,14 +56,9 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- *  Stage 7: the drained TRANSLATE tail — FINALIZE (serial
- * inpaint drain through the overlap scheduler, stranded-page reconciliation,
- * flush, retention) and the run's FIRST/ONLY COMPLETE publication.
- *
- *  zero-legacy: the wave-2 F1 flag-off resume decision tests
- * (decideResume/resumeCompletedOutcome, OFF+COMPLETE ⇒ TreatAsFinished) were
- * deleted with the  flag; the  COMPLETE resume is covered by
- * Stage7FinalizeResumeCoordinatorTest and the dispatch-level wiring test.
+ * Pins chapter finalization: drain inpainting through the overlap scheduler,
+ * reconcile stranded pages, flush and apply retention, then publish COMPLETE
+ * exactly once. Resume behavior is covered by the companion resume test.
  */
 class Stage7FinalizeCoordinatorTest {
 

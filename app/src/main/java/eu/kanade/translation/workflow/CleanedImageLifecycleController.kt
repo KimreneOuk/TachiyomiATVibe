@@ -2,8 +2,8 @@ package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -21,7 +21,7 @@ internal fun isFreshOrphanedCleanedImage(lastModified: Long, nowEpochMs: Long): 
 internal class CleanedImageLifecycleController(
     private val applicationScopeProvider: () -> CoroutineScope,
     private val streamRegistryProvider: () -> TranslationStreamRegistry,
-    private val providerProvider: () -> TranslationProvider,
+    private val providerProvider: () -> TranslationFileProvider,
 ) {
 
     // Resolve lifecycle dependencies on demand so unused cleanup paths do not create scopes.

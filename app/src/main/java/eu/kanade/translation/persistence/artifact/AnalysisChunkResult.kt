@@ -3,29 +3,28 @@ package eu.kanade.translation.persistence.artifact
 import kotlinx.serialization.Serializable
 
 /**
- *  Stage 1 (schemas contract §1.3): one validated structured-extraction
- * response over a bounded page set. This is the persisted artifact only — the
- * response schema/prompt contract is owned by  and the stored record
- * fields are a subset of the validated response schema.
+ * One validated structured analysis result over a bounded page set. This is
+ * the persisted artifact; the response schema and prompt are owned by the
+ * analysis engine, and the stored fields are a subset of the validated
+ * response.
  *
- * Serialized only through the shared [ArtifactDocumentJson] instance
- *
+ * Documents are serialized through the shared [ArtifactDocumentJson] instance.
  */
 
-/** Persisted validation outcome of one chunk (schemas contract §1.3). */
+/** Persisted validation outcome of one chunk. */
 enum class AnalysisChunkStatus { VALID, INVALID }
 
 /**
- * Persisted DR-A coverage classification (wave-4 F-W4-3): a VALID chunk with
+ * Coverage classification for a validated chunk: a VALID chunk with
  * `MISSING_ONLY` coverage carries the independently complete subset (possibly
  * zero records) and stays PENDING at reconcile — never canon.
  */
 enum class AnalysisChunkCoverage { COMPLETE, MISSING_ONLY }
 
-/** Term kind of an extracted term (closed enum v1, ). */
+/** Term kind of an extracted term. */
 enum class ExtractedTermKind { NAME, PLACE, TERM, TITLE, ORG }
 
-/** Persisted validated term record (subset of the  response schema). */
+/** Persisted validated term record. */
 @Serializable
 data class ExtractedTerm(
     val termId: String,
@@ -35,7 +34,7 @@ data class ExtractedTerm(
     val kind: ExtractedTermKind = ExtractedTermKind.TERM,
 )
 
-/** Persisted validated entity record (subset of the  response schema). */
+/** Persisted validated entity record. */
 @Serializable
 data class ExtractedEntity(
     val entityId: String,
@@ -78,7 +77,7 @@ data class AnalysisChunkResult(
     val terms: List<ExtractedTerm> = emptyList(),
     val entities: List<ExtractedEntity> = emptyList(),
     val relationships: List<ExtractedRelationship> = emptyList(),
-    /** Scenes in this chunk (schemas contract §1.4 shape). */
+/** Scenes in this chunk. */
     val scenes: List<ProfileScene> = emptyList(),
     /** Range-scoped supporting context; never substitutes structured records. */
     val narrativeSummary: String? = null,
@@ -86,7 +85,7 @@ data class AnalysisChunkResult(
     /** Every ref must resolve to a core or overlap page and an existing stableBlockId. */
     val evidenceRefs: List<EvidenceRef>,
     val analyzerProvenance: AnalyzerProvenance,
-    /** DR-A coverage classification (wave-4 F-W4-3); additive default for pre-fix readers. */
+    /** Coverage classification; the default preserves reads of older records. */
     val coverage: AnalysisChunkCoverage = AnalysisChunkCoverage.COMPLETE,
     /** INVALID chunks carry [validationFailureReason] and are never consumed. */
     val status: AnalysisChunkStatus,
@@ -94,7 +93,7 @@ data class AnalysisChunkResult(
     /** Operational only. */
     val createdAtEpochMs: Long,
 ) {
-    /** 01/SC-02 semantic validation; null when the document is usable. */
+    /** Returns null when this document is semantically usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"

@@ -16,14 +16,14 @@ enum class TranslationRequestPhase {
     DOWNLOAD_FAILED,
 
     /**
-     *  slice 2: explicit terminal state for a request whose download was
+     * Explicit terminal state for a request whose download was
      * cancelled/removed/cleared on the downloader side. A late completion
      * callback can never revive it (the generation fence drops it).
      */
     CANCELLED,
 
     /**
-     *  slice 2 (R10): the chapter was ready but the translation queue
+     * The chapter was ready but the translation queue
      * refused admission (non-HTTP source, invalid config). Never labeled as a
      * download failure — the files are fine.
      */
@@ -31,7 +31,7 @@ enum class TranslationRequestPhase {
 }
 
 /**
- *  slice 2: typed last-failure classification for a pending request.
+ * Typed last-failure classification for a pending request.
  * Replaces free-text-only reasons where practical; [reason] keeps the human
  * detail alongside the kind.
  */
@@ -73,12 +73,12 @@ data class TranslationRequestState(
     val phase: TranslationRequestPhase,
     val reason: String? = null,
     /**
-     *  slice 2: monotonic per-chapter request generation. Bumped on every
+     * Monotonic per-chapter request generation. Bumped on every
      * new request and on cancel; used to fence late download callbacks and
-     * in-flight probe mutations (R7).
+     * in-flight probe mutations.
      */
     val generation: Long = 0,
-    /**  slice 2: typed last-failure kind (pairs with [reason]). */
+    /** Typed last-failure kind (pairs with [reason]). */
     val failureKind: TranslationRequestFailureKind = TranslationRequestFailureKind.NONE,
 ) {
     val isTerminal: Boolean
@@ -88,7 +88,7 @@ data class TranslationRequestState(
 }
 
 /**
- *  slice 2 (R10): classifies a translation-queue admission rejection.
+ * Classifies a translation-queue admission rejection.
  * The source check runs first (a non-HTTP source can never be queued); an
  * invalid configuration is its own kind so the UI never shows a false
  * "Download failed" for an already-downloaded chapter.

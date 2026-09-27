@@ -1,9 +1,8 @@
 package eu.kanade.translation.persistence.artifact
 
 /**
- * TachiyomiAT: bounded retention sweep moved verbatim from
- * `ChapterArtifactEngine` ( Phase 2b). Stateless over the chapter's
- * document IO and artifact layout; locking stays at the
+ * Performs bounded retention work over chapter documents and artifact paths.
+ * It is stateless; locking stays at the
  * [ChapterArtifactEngine.reconcileRetention] entry point.
  */
 internal class ArtifactRetention(
@@ -21,13 +20,11 @@ internal class ArtifactRetention(
     )
 
     /**
-     * Phase 1 of the split retention sweep: enumerate deletion CANDIDATES
-     * without mutating anything. Pure over its inputs — it takes NO store
-     * monitor — so the minutes-long SAF crawl can run OFF the store mutex.
-     * (JDB-proven 2026-09-15: the crawl held the store mutex for 20+ minutes
-     * on a 70-page chapter and froze every page lease in the pipeline.) The
-     * parent listing already proves a child exists, so no per-file `io.exists`
-     * probe is paid during the crawl; deletions re-verify in phase 2.
+     * Enumerates deletion candidates without mutating anything. It is pure
+     * over its inputs and takes no store monitor, so the potentially
+     * minutes-long SAF crawl does not block page leases behind the store mutex.
+     * The parent listing proves a child exists, so no per-file `io.exists`
+     * probe is paid during the crawl; deletion re-verifies each candidate.
      */
     internal fun collectOrphanCandidates(
         manifest: ChapterArtifactManifest,
@@ -87,7 +84,7 @@ internal class ArtifactRetention(
     }
 
     /**
-     * Phase 2: delete the collected candidates after re-verifying each against
+     * Deletes collected candidates after re-verifying each against
      * [manifest] — the LIVE manifest when called under the store mutex — so a
      * file a concurrent publish made reachable mid-crawl is spared (the sweep
      * ran off-lock by design). Deleting the candidates takes bounded IO: only
@@ -134,10 +131,10 @@ internal class ArtifactRetention(
     private fun pathIsDirectory(path: String): Boolean = io.list(path) != null
 
     /**
-     *  Slice A4 (Amendment D): event-driven known-orphan deletion.
+     * Event-driven deletion of known orphans.
      * Deletes explicitly known orphans (e.g. unlinked generation records or candidate
      * snapshots) without executing a full reachability crawl over the filesystem.
-     * Race register #6: orphan must be unreachable from BOTH durable and staged state.
+     * A file must be unreachable from both durable and staged state.
      *
      * When [durableManifest] is supplied (hot-path callers MUST supply it), every
      * candidate is additionally filtered through the full sweep's reachability
@@ -227,13 +224,12 @@ internal class ArtifactRetention(
             add(layout.generationFile(generationId))
         }
         manifest.glossary?.fileName?.let(::add)
-        //  Phase 3: the attempt-ledger sidecar is always reachable —
+        // The attempt-ledger sidecar is always reachable —
         // it is not manifest-pointed, so without this rule the retention sweep
         // would delete the crash-loop evidence it exists to preserve.
         add(layout.attemptLedgerFileName)
-        //  Stage 1: every new manifest pointer keeps its
-        // sidecar reachable; sidecars no pointer references remain orphans
-        // and are reclaimed here.
+        // Every manifest pointer keeps its sidecar reachable. Sidecars with no
+        // remaining pointer are orphans and are reclaimed here.
         manifest.activeRun?.fileName?.let(::add)
         manifest.ocrCheckpoints.values.forEach { pointer -> add(pointer.fileName) }
         manifest.analysisChunks.forEach { pointer -> add(pointer.fileName) }

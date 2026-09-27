@@ -8,14 +8,14 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * TachiyomiAT  slice 3: pure partitioner for ONE shared segmentation
- * component. Partitions the `(planGeometryId, componentId)` group's members
+ * Pure partitioner for one shared segmentation component. Partitions the
+ * `(planGeometryId, componentId)` group's members
  * into disjoint half-open cells so every shared-component pixel is owned by at
  * most one block and a deterministic dead zone separates neighbouring cells.
  *
  * Pure JVM: integer slab math + span intersection only — no `android`
  * imports, no dense page arrays, no measurement. The axis, cuts, dead zone,
- * and fit regions follow architecture revision 2 ("Slice 3"):
+ * and fit regions follow these rules:
  *
  *  1. Scan centers are rounded with `floor(value + 0.5)` and clamped to the
  *     integer component bounds.
@@ -45,7 +45,7 @@ import kotlin.math.min
  *     cells (same slabs, no span lists).
  *  8. At most [MAX_SHARED_BLOCKS_OPTIMIZED] members per component are
  *     optimized; members beyond the first 8 in stable order get no cell at all
- *     ([Cell.slab] == null, [Cell.optimized] == false).  repair (R4b):
+ *     ([Cell.slab] == null, [Cell.optimized] == false). These members also
  *     they additionally carry [Cell.overflowSlab] — a disjoint bounds-rect
  *     slab cut from the same partition sequence — so the integration can give
  *     them a hard `cellRect` (no component path) and the hard-cell exemption
@@ -126,7 +126,7 @@ internal object MaskTextRegionPlanner {
      * list (empty in bounds-rect mode); [empty] marks a cell with no usable
      * component pixels; [optimized] is false only for beyond-cap members.
      *
-     *  repair (R4b): beyond-cap members carry [overflowSlab] — a disjoint
+     * Beyond-cap members carry [overflowSlab] — a disjoint
      * BOUNDS-RECT slab cut from the SAME partition sequence (cuts span all
      * members), so the integration can give them a hard `cellRect` without a
      * component path. Null when their own slab would be degenerate.
@@ -142,7 +142,7 @@ internal object MaskTextRegionPlanner {
     )
 
     /**
-     * COLLISION_GAP per architecture revision 2:
+     * Collision gap:
      * `ceil(clamp(0.001 * pageShortSide, 2*scale, 4*scale))` — a small,
      * resolution-aware separation kept between neighbouring shared cells.
      */
@@ -180,7 +180,7 @@ internal object MaskTextRegionPlanner {
         )
         val optimizedCount = min(members.size, MAX_SHARED_BLOCKS_OPTIMIZED)
         val optimized = sorted.subList(0, optimizedCount)
-        //  repair (R4b): members beyond the cap keep a bounds-rect slab
+        // Members beyond the cap keep a bounds-rect slab
         // cut from the SAME partition sequence (see [Cell.overflowSlab]).
         val overflowInputs = HashSet<Int>(sorted.size - optimizedCount)
         for (i in optimizedCount until sorted.size) overflowInputs += sorted[i].member.inputIndex
@@ -273,7 +273,7 @@ internal object MaskTextRegionPlanner {
             val rect = slabRect(horizontal, slab, orthoLow, orthoHigh)
             val degenerate = slab.start >= slab.endExclusive
             if (member.inputIndex in overflowInputs) {
-                //  repair (R4b): beyond-cap member — no cell, but a
+                // Beyond-cap members have no optimized cell, but can use a
                 // disjoint bounds-rect slab from the same cut sequence when it
                 // has positive area.
                 cellsByInput[member.inputIndex] = Cell(

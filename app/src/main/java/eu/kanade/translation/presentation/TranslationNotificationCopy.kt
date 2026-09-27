@@ -4,7 +4,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 
 /**
- *  Phase 5 (spec §2, §3.3): the batch translation notification's text is
+ * The batch translation notification's text is
  * a pure projection of the progress snapshot, so truthful terminal,
  * unknown-total, not-saved, paused, and cancelled copy is unit-testable. The
  * foreground service renders this record and attaches intents only for the
@@ -24,7 +24,7 @@ data class TranslationNotificationRecord(
 object TranslationNotificationCopy {
 
     /**
-     * Precedence (spec §1.2, §5): explicit cancellation first, then the
+     * Precedence: explicit cancellation first, then the
      * persistence rejection, then pauses, then running progress (trusted
      * totals keep numeric progress; untrusted totals never look complete),
      * then durable terminal states.
@@ -50,7 +50,7 @@ object TranslationNotificationCopy {
             )
 
             // A guarded publication was rejected: no completion copy, retry is
-            // required (spec §4, condition C).   the typed rejection
+            // required. The typed rejection
             // reason rides along (bounded) — the bare "not saved" copy hid
             // which seam rejected the publication.
             snapshot.nonDurableFailure -> {
@@ -110,7 +110,7 @@ object TranslationNotificationCopy {
                     snapshot.expectedPageCountTrusted ->
                         "$successes of ${snapshot.totalPages} pages translated"
                     // Unknown source total: never render a fraction or percent
-                    // that implies the chapter is nearly complete (spec §2.1).
+                    // that implies the chapter is nearly complete.
                     else -> "${snapshot.totalPages} pages available · source total unknown"
                 }
                 TranslationNotificationRecord(

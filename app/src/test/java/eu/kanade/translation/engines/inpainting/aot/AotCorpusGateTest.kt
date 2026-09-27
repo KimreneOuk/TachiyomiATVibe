@@ -27,8 +27,8 @@ private const val OPTIONAL_CORPUS_SKIP_REASON =
  *   <page>/mask.bin          raw ARGB int32 (ALPHA8-style, 0xFF000000=erase)
  *   <page>/manifest.json     page metadata (category, expected_box_count)
  *
- * The .bin format is read with java.io.DataInputStream: Android unit tests stub
- * out java.awt, so javax.imageio is unavailable on the test classpath. The .bin
+ * The .bin format is read with java.io.DataInputStream because Android unit
+ * tests do not include java.awt, so javax.imageio is unavailable. The .bin
  * carries the exact ARGB IntArray prod feeds to AotOutputGuard, with no decoder.
  *
  * The current corpus contains 42 independent free-text groups from 14 real

@@ -16,8 +16,6 @@ import eu.kanade.translation.engines.rendering.LayoutPlanPublication
 import eu.kanade.translation.engines.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.engines.rendering.ProductionTextMeasurer
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isTextlessTerminal
@@ -31,12 +29,15 @@ import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.StageArtifactRecord
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.RenderBlockPatch
+import eu.kanade.translation.persistence.chapter.RenderStagePatch
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.LayoutFailureException
-import eu.kanade.translation.pipeline.RenderBlockPatch
-import eu.kanade.translation.pipeline.RenderStagePatch
-import eu.kanade.translation.pipeline.StagePatchResult
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchStage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -49,19 +50,12 @@ import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- *  Phase 20.4: the batch render join moved verbatim from
- * `TranslationPipeline.translateBatch` ( phase 20).
- *
- * Render join: per-page join of the translation result with its inpaint/render
+ * Joins each page's translation result with its inpaint/render
  * prerequisites. tryRender is idempotent (READY short-circuit) so it is safe to
  * call both at chunk-completion (AI) and here; the per-page render mutex keeps
- * it serialized. Bitmap recycle sites stay with tryRender.
- *
- *  zero-legacy: the legacy SBC render-join contract
- * (RenderJoinWorker: signal/await machinery, awaitAndRender, awaitAndSettle)
- * died with the sequential coordinator — only [tryRender] (the lane workers'
- * commit-time render) and [publishPersistedLayoutForCompletedPage] (the
- * flagged coordinator's per-page layout publication) survive.
+ * it serialized. Bitmap recycle sites stay with tryRender. Lane workers call
+ * it at commit boundaries, and the coordinator uses
+ * [publishPersistedLayoutForCompletedPage] for completed pages.
  */
 internal class BatchRenderJoin(
     private val store: ChapterTranslationStore,
@@ -80,8 +74,7 @@ internal class BatchRenderJoin(
 ) {
     private val renderMutexes = ConcurrentHashMap<String, Mutex>()
 
-    // Same-name wiring for the injected collaborators: the moved bodies call
-    // these as plain named functions / property-style reads.
+    // Keep resume and write decisions with their owning collaborators.
     private fun plannedRenderNeedsWork(pageKey: String): Boolean =
         resumePlanner.plannedRenderNeedsWork(pageKey)
 
@@ -210,7 +203,7 @@ internal class BatchRenderJoin(
                     )
                 }
                 val renderInput = store.snapshot(pageKey)
-                //  Phase 4: layout stage outcome for the page run. The
+                // The layout stage outcome for the page run. The
                 // span settles even when the estimator throws (layout failure
                 // path below keeps its existing handling).
                 val layoutSpan = TranslationTrace.beginStage(
@@ -260,8 +253,8 @@ internal class BatchRenderJoin(
                     )
                     throw t
                 }
-                //  Phase 4: store commit outcome for the render stage patch.
-                // Phase 4 review N3: the span settles in try/catch so a throw
+                // The store commit outcome for the render patch. The span
+                // settles in try/catch so a throw
                 // from mergeRender (cancellation while suspended, store error)
                 // cannot leave stage_start(store_commit) dangling.
                 val commitSpan = TranslationTrace.beginStage(
@@ -298,8 +291,8 @@ internal class BatchRenderJoin(
                     // A newer committed display bundle may have just
                     // promoted; the file it superseded is now deletable.
                     deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
-                    //  WP9: with  ON the color-only
-                    // render body becomes LAYOUT_PREPARE orchestration — the
+                    // When persisted layouts are enabled, the color-only
+                    // render body also prepares the page geometry draw plan — the
                     // color preparation above is joined by the page geometry
                     // draw plan, both published as separately invalidatable
                     // sub-results ( CAS set). Every failure here is
@@ -347,14 +340,14 @@ internal class BatchRenderJoin(
     }
 
     // ------------------------------------------------------------------
-    //  WP9: LAYOUT_PREPARE publication.  OFF keeps
-    // the legacy color-only render body byte-for-byte; ON adds the per-page
+    // Persisted layout publication. When disabled, rendering keeps the
+    // color-only path; when enabled, it adds the per-page
     // persisted draw plan + color preparation publication after the render
     // commit, through ChapterArtifactEngine.publishSidecarPointers with the
-    // full  CAS precondition set. Plans are late, per-page, and
+    // full CAS precondition set. Plans are late, per-page, and
     // additive: any precondition or publication failure keeps the committed
     // render authoritative and simply leaves "no plan" for the page
-    // ( — readers fall back to the async planner).
+    // so readers fall back to the async planner).
     // ------------------------------------------------------------------
 
     /** Lazily resolved Android context for the font asset read; null on JVM. */
@@ -590,8 +583,7 @@ internal class BatchRenderJoin(
      * One-time process install of the production font digest loader
      * (res/font/animeace.ttf read via the application context). The overlay
      * installs the same loader at its Android entry point; installation is
-     * idempotent and the digest itself is computed once and cached
-     * (wave-2 review gap 6).
+     * idempotent and the digest itself is computed once and cached.
      */
     private fun installFontDigestLoader(context: Context) {
         if (PersistedLayoutRuntime.fontSourceInstalled) return
@@ -605,15 +597,14 @@ internal class BatchRenderJoin(
     }
 
     // ------------------------------------------------------------------
-    //  Stage 7: per-page persisted-layout publication entry for the
-    // flagged coordinator's NATIVE/RENDER path. Called after a page reached
+    // Per-page persisted-layout publication for the coordinator's native and
+    // render path. Called after a page reaches
     // committed-translation + committed-inpaint state (via the OverlapScheduler's
     // commit hook and the FINALIZE sweep). Reuses the EXISTING
     // publication transaction above — same CAS fences, same sidecars, same
-    // fail-safe: any precondition/failure keeps the committed display and the
-    // async planner fallback authoritative ( reader display never
-    // breaks, no rasterized output ever — R041, the published artifacts are
-    // geometry/color DTOs only).
+    // fail-safe: any precondition or failure keeps the committed display and
+    // async planner fallback authoritative. Reader display never breaks; the
+    // published artifacts contain geometry and color data, not raster output.
     // ------------------------------------------------------------------
 
     /**

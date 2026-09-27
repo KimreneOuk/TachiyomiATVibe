@@ -8,7 +8,6 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestFailureKind
@@ -18,15 +17,17 @@ import eu.kanade.translation.model.translationQueueAdmissionFailureKind
 import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
 import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterResetPreflight
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStoreResolver
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -62,7 +63,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 class TranslationManager(
     private val context: Context,
-    private val provider: TranslationProvider = Injekt.get(),
+    private val provider: TranslationFileProvider = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
     // File truth for startup reconciliation (pending + valid files -> admit once).
@@ -184,7 +185,12 @@ class TranslationManager(
             activeStores.get(chapterId)
         },
         immediateStoreResolver = { chapterId -> activeStores.get(chapterId) },
-        sessionCoordinator = sessionCoordinator,
+        readerSessionRejectionReason = { chapterId ->
+            when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
+                is SessionAdmission.Rejected -> admission.reason.name
+                else -> null
+            }
+        },
     )
 
     init {
@@ -700,22 +706,9 @@ class TranslationManager(
         it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING
     }
 
-    fun isPageActive(chapterId: Long, pageKey: String): Boolean {
-        val store = activeStores.get(chapterId) ?: return false
-        val page = store.state.value[pageKey] ?: return false
-        return page.ocrStatus == StageStatus.RUNNING ||
-            page.translationStatus == StageStatus.RUNNING ||
-            page.inpaintStatus == StageStatus.RUNNING ||
-            page.renderStatus == StageStatus.RUNNING
-    }
-
     /** Canonical batch projection used by every UI surface and the notification. */
     fun getTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
         observeBatchProgress(chapterId)
-
-    fun isTranslationActive(chapterId: Long): Boolean {
-        return isBatchTranslationActive(chapterId)
-    }
 
     fun translatorStop(reason: String? = null, closeEngines: Boolean = false) = translator.stop(reason, closeEngines)
 
@@ -1085,18 +1078,6 @@ class TranslationManager(
         title,
         sourceId,
     )
-
-    /** True when persisted output is readable, including a retry/review-ready warning outcome. */
-    //  ANR fix: suspend for the same reason as [persistedChapterStatus]
-    // below (durable resolution performs I/O). Currently has no production
-    // callers; kept API-compatible.
-    suspend fun isChapterTranslated(
-        chapterName: String,
-        chapterScanlator: String?,
-        mangaTitle: String,
-        sourceId: Long,
-    ): Boolean = persistedChapterStatus(null, chapterName, chapterScanlator, mangaTitle, sourceId)
-        .let { it == Translation.State.TRANSLATED || it == Translation.State.READY_WITH_WARNINGS }
 
     // Durable status and document lookup share these manager-lifetime caches and invalidation rules.
     private val durableStatusResolver: DurableChapterStatusResolver

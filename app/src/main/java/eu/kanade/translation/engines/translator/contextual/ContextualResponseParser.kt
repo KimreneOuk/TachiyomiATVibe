@@ -121,7 +121,7 @@ object ContextualResponseParser {
     }
 
     /**
-     * Parses a complete Phase 1 batch response with resilient ID normalization.
+     * Parses a complete strict batch response with resilient ID normalization.
      */
     fun parseBatch(
         rawResponse: String,

@@ -6,10 +6,11 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactDeletionPlan
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterResetPreflight
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
@@ -37,7 +38,7 @@ internal class ChapterDataResetController(
     private val disposeBatchTrackerFn: (Long) -> Unit,
     private val unregisterActiveTranslationStoreFn: (Long) -> Unit,
     private val streamRegistryProvider: () -> TranslationStreamRegistry,
-    private val providerProvider: () -> TranslationProvider,
+    private val providerProvider: () -> TranslationFileProvider,
     private val retireChapterCompanionImagesFn: (Manga, Chapter, Source) -> Unit,
     private val retirePageCompanionImageFn: (Manga, Chapter, Source, String, String) -> Unit,
     private val durableStatusResolverProvider: () -> DurableChapterStatusResolver,

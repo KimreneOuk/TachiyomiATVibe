@@ -5,10 +5,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageDecision
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
@@ -21,7 +18,10 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.EngineLane
 import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.batch.BatchContextFrontier
-import eu.kanade.translation.pipeline.batch.BatchResumePlanner
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchStage
+import eu.kanade.translation.pipeline.planning.StageDecision
 import eu.kanade.translation.pipeline.toPrecondition
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -47,7 +47,7 @@ import java.io.ByteArrayInputStream
  * real [BatchResumePlanner] built exactly as `BatchChapterTranslator` builds
  * it. The batch re-run's planner decisions are the paid-call contract: RUN is
  * exactly one provider call for that page in the next pass, REUSE is zero
- * (transport-level exactly-once for RUN/REUSE lanes is pinned by the Phase-1/2
+ * (transport-level exactly-once for RUN/REUSE lanes is pinned by the
  * coexistence oracles; this suite pins the decision that bills or skips).
  *
  * Without a glossary-aware gate, the batch re-run REUSEs pages whose persisted
@@ -391,10 +391,10 @@ class GlossaryAwareZeroPaidReuseTest {
                 "pre-D5 (decision AND reason), with a matured glossary present in the store",
         ) {
             plan.getValue("p0").stages.first { it.stage == BatchStage.TRANSLATION } shouldBe
-                eu.kanade.translation.model.StageWorkDecision(
+                eu.kanade.translation.pipeline.planning.StageWorkDecision(
                     stage = BatchStage.TRANSLATION,
                     decision = StageDecision.REUSE,
-                    reason = eu.kanade.translation.model.StageReasonCode.VALID_ARTIFACT,
+                    reason = eu.kanade.translation.pipeline.planning.StageReasonCode.VALID_ARTIFACT,
                 )
         }
         withClue("D5 (d): the standard lane's textless page stays TERMINAL_COMPLETE") {

@@ -5,7 +5,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * TachiyomiAT: shared lazy cache for the `translation_diagnostics` preference,
+ * shared lazy cache for the `translation_diagnostics` preference,
  * consulted by the OCR engines' per-ROI timing logs ([MangaOcrEngine],
  * [PaddleOcrV6DetEngine], [PaddleOcrV6SmallEngine] — previously three
  * line-for-line identical copies of this read-once flag).

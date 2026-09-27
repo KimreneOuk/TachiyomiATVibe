@@ -7,10 +7,10 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
 import kotlinx.serialization.json.Json
 
 /**
- *  WP5 slice A ( DR-A): classifies one raw analysis
+ * Classifies a raw analysis
  * response against the request's evidence universe.
  *
- * Malformed-response taxonomy (design §9.2 + provider-analysis contract §6):
+ * Malformed-response handling:
  *  - [AnalysisResponseOutcome.Refusal] = TERMINAL_REFUSAL: typed, no
  *    auto-retry, nothing retained.
  *  - [AnalysisResponseOutcome.Malformed] = AMBIGUOUS_PROTOCOL (any V1..V9
@@ -19,10 +19,10 @@ import kotlinx.serialization.json.Json
  *    (cross-referential records would build a silently incoherent graph).
  *  - [AnalysisResponseOutcome.Validated] with coverage = the MISSING_ONLY
  *    / COMPLETE family: every validated element is independently complete;
- *    a MISSING_ONLY subset commits per DR-A Option 1 and the remainder is
- *    marked pending — it never blocks the chapter.
+ *    valid elements commit independently while missing elements remain
+ *    pending; a missing subset does not block the chapter.
  *
- * Chapter-only authority (provider-analysis contract §4): any response field
+ * Chapter-only authority: any response field
  * resembling user/series-level canon is DROPPED + reported
  * ([AnalysisResponseOutcome.Validated.droppedAuthorityKeys]), never
  * persisted, and never auto-promoted to series canon.
@@ -47,7 +47,7 @@ object AnalysisResponseValidator {
     /** Record id pattern, scoped per chunk. */
     private val RECORD_ID_REGEX = Regex("^[tesuc]\\d{3,4}$")
 
-    /** 05 wire form is `e:` + 16 hex, nothing else (wave-4 F-W4-4). */
+    /** Excerpt-hash wire form is `e:` followed by 16 lowercase hex digits. */
     private val EXCERPT_HASH_REGEX = Regex("^e:([0-9a-f]{16})$")
 
     private val GENDER_VALUES = setOf("MALE", "FEMALE", "UNKNOWN", "CONFLICTING")
@@ -187,7 +187,7 @@ object AnalysisResponseValidator {
                     violations += "V4 terms[$index] aliases exceed $MAX_ALIAS_ITEMS"
                 }
                 aliases.forEach { overlong(it, MAX_TEXT_FIELD_CHARS, violations, "terms[$index].alias item") }
-                // Wave-4 F-W4-4: `kind` is REQUIRED (V3) — previously only an
+                // `kind` is REQUIRED (V3) — previously only an
                 // invalid value was fatal; a missing one silently defaulted.
                 if (term.string("kind") == null) {
                     violations += "V3 terms[$index].kind required"
@@ -226,9 +226,8 @@ object AnalysisResponseValidator {
                 overlong(proposedTargetName, MAX_TEXT_FIELD_CHARS, violations, "entities[$index].proposedTargetName")
                 val titles = textList(entity, "titles", violations, "entities[$index].titles") ?: emptyList()
                 if (titles.size > MAX_ALIAS_ITEMS) violations += "V4 entities[$index] titles exceed $MAX_ALIAS_ITEMS"
-                // Wave-5 F-W5-1 (source side): per-item length caps — term
-                // aliases already had one; entity-side lists did not, letting
-                // an overlong string persist VALID into the chunk.
+                // Apply per-item source and title length caps. Without these,
+                // an overlong value could persist in a VALID chunk.
                 sourceNames.orEmpty().forEach {
                     overlong(it, MAX_TEXT_FIELD_CHARS, violations, "entities[$index].sourceNames item")
                 }
@@ -312,7 +311,7 @@ object AnalysisResponseValidator {
                             violations += "V3 entities[$index].relationships[$rIndex].type required"
                         }
                         val target = rel.string("targetEntityId")
-                        // Wave-4 F-W4-5: resolution is existing canon ids +
+                        // resolution is existing canon ids +
                         // pending entity ids of THIS response (forward
                         // references allowed) — never the type-prefixed
                         // knownIds set, whose keys can never match the bare

@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 /**
- *  Phase 5 (plan §3.4, §6.1, amendment §10.8): provider-label provenance
+ * Provider-label provenance
  * tests for the session-creation routing policy.
  *
  * Drives [OnnxRuntimeProvider.openSessionWithHonestLabel] — the pure core that

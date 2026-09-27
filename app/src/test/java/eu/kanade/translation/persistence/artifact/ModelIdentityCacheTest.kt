@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
+import java.security.MessageDigest
 
 class ModelIdentityCacheTest {
 
@@ -24,7 +25,7 @@ class ModelIdentityCacheTest {
         val identity = cache.identityFor(ModelAsset("detector", "v1", file)).shouldNotBeNull()
         identity.role shouldBe "detector"
         identity.versionMarker shouldBe "v1"
-        identity.sha256 shouldBe eu.kanade.translation.util.ModelDeployment.hashOfFile(file)
+        identity.sha256 shouldBe sha256(file)
         identity.lengthBytes shouldBe file.length()
     }
 
@@ -46,7 +47,7 @@ class ModelIdentityCacheTest {
         file.writeText("model-bytes-changed")
         val second = cache.identityFor(ModelAsset("detector", "v1", file)).shouldNotBeNull()
         second.sha256 shouldNotBe first.sha256
-        second.sha256 shouldBe eu.kanade.translation.util.ModelDeployment.hashOfFile(file)
+        second.sha256 shouldBe sha256(file)
     }
 
     @Test
@@ -82,4 +83,7 @@ class ModelIdentityCacheTest {
         cache.flush()
         Files.exists(File(tempDir, "identities.json.tmp").toPath()) shouldBe false
     }
+
+    private fun sha256(file: File): String =
+        MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
 }

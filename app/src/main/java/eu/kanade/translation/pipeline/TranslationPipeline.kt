@@ -17,7 +17,6 @@ import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.engines.translator.withProviderRequestPriority
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -25,12 +24,13 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.DeferredPagePublications
 import eu.kanade.translation.pipeline.EngineLane
-import eu.kanade.translation.pipeline.MemoryGovernance
 import eu.kanade.translation.pipeline.OnnxPhaseResult
 import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
@@ -40,18 +40,20 @@ import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
+import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.pipeline.execution.isPreparedPageTerminal
+import eu.kanade.translation.pipeline.execution.publishPreparedPageFromOcr
+import eu.kanade.translation.pipeline.memory.MemoryGovernance
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecision
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecisionKind
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.scheduling.NativeRunQuarantine
-import eu.kanade.translation.scheduling.PreparedPage
-import eu.kanade.translation.scheduling.SinglePageOutcome
-import eu.kanade.translation.scheduling.TranslationExecutor
-import eu.kanade.translation.scheduling.TranslationStageListener
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.isPreparedPageTerminal
-import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
-import eu.kanade.translation.util.TranslationMemoryBudget
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,7 +76,7 @@ private class NativePageAlreadyInFlightException : Exception()
 
 class TranslationPipeline(
     private val context: Context,
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
     private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
@@ -196,7 +198,7 @@ class TranslationPipeline(
     var onPageStuck: ((chapterId: Long?, pageKey: String) -> Unit)? = null
 
     /**
-     * TachiyomiAT: factory that creates a [TranslationBatchProgressTracker] for a
+     * factory that creates a [TranslationBatchProgressTracker] for a
      * batch and registers it in the manager's tracker map so the UI can observe
      * it. Mirrors the [activeStoreResolver] pattern. Set by [TranslationManager].
      */
@@ -978,7 +980,7 @@ class TranslationPipeline(
                     sampledBitmapBytes = 0L,
                     sourcePixels = 0L,
                     sampledPixels = 0L,
-                    snapshot = eu.kanade.translation.util.TranslationMemoryBudget.snapshot(),
+                    snapshot = eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.snapshot(),
                 ),
                 sourceBytesSize = 0L,
             )

@@ -42,18 +42,18 @@ import eu.kanade.translation.persistence.artifact.EvidenceRef
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatchWork
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
 import eu.kanade.translation.pipeline.batch.envelope.PageDispatchWork
 import eu.kanade.translation.pipeline.batch.envelope.PlannedBlock
 import eu.kanade.translation.pipeline.batch.envelope.ProfileEnvelopeExecutor
 import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
@@ -65,8 +65,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Stage-6 slice B (design §7 + §8 tail; gates 5.6/5.8 in-repo portion):
- * profile-aware PROMPT ENRICHMENT of the serial envelope executor —
+ * Covers profile-aware prompt enrichment in the serial envelope executor:
  * enriched chunk shape (profile subset sheet + scene fence + gap-free
  * rolling history with the pronoun-marking rule), execution-time token
  * recompute with WHOLE-PAGE splits, single-oversized-page rejection,
@@ -79,7 +78,7 @@ class ProfileEnvelopePromptEnrichmentTest {
     lateinit var mangaDir: File
 
     // ------------------------------------------------------------------
-    // Scaffolding (slice-A dispatch-test idioms).
+    // Shared dispatch-test fixtures.
     // ------------------------------------------------------------------
 
     private fun hex64(tag: String): String =
@@ -818,8 +817,7 @@ class ProfileEnvelopePromptEnrichmentTest {
         val outcome = executor.run(work)
         outcome.shouldBeInstanceOf<ProfileEnvelopeExecutor.PhaseOutcome.Drained>()
 
-        // Legacy shape: NO enriched sheet, and the slice-A rolling-context
-        // path (empty frontier -> empty rolling context).
+        // Without a frozen profile, no enriched sheet or rolling context is sent.
         captured.size shouldBe 1
         captured.single().glossary shouldBe ""
         captured.single().rollingContext shouldBe ""

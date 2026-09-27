@@ -13,7 +13,7 @@ import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 
 /**
- *  WP8 (schemas contract §1.6): pure, additive projection between the
+ * Pure, additive projection between the
  * runtime layout result ([PageLayoutPlan] / [BlockLayout] /
  * [PositionedLine]) and the landed durable DTO
  * [PageLayoutDrawPlan]. `BlockLayout` itself is deliberately NOT serializable
@@ -21,25 +21,24 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
  * planner occupancy/debug structures); this object is the ONLY serialization
  * boundary of the layout track.
  *
- * Round-trip contract (gate 7.1): project → serialize → deserialize →
+ * Round-trip contract: project → serialize → deserialize →
  * [rehydrate] preserves all geometry EXACTLY (floats keep their bits; the DTO
  * has no Int truncation anywhere; kotlinx emits round-trippable decimal float
- * literals). Excluded by contract (schemas contract §1.6) and NOT restored
+ * literals). Excluded from the durable format and NOT restored
  * bit-exactly here:
  *  - `TranslationBlock` payloads (colors, translation, masks) — rehydrated by
  *    reference from the caller-supplied input blocks, exactly like the
  *    planner received them;
  *  - planner occupancy structures (`PositionedLine.conservativeOccupancy`,
  *    `BlockLayout.conservativeOccupancy`) — planning-only; hydrated layouts
- *    are draw-terminal (WP9 hydrates straight to render), so rehydrate
+ *    are draw-terminal, so rehydrate
  *    restores the honest un-inflated line rect instead;
  *  - `MaskGeometry` objects and page-local `planGeometryId` — pixel paths
- *    rebuild at hydration (final-target §3); the durable
+ *    rebuild at hydration; the durable
  *    [DrawPlanMaskComponentRef] pins the geometry content via
  *    [maskGeometryContentHash] and carries the component id.
  *
- * No planning behavior is altered: [TextLayoutPlanner] is untouched and the
- * projection is a pure function of its output.
+ * The projection is a pure function of [TextLayoutPlanner] output.
  */
 object LayoutDrawPlanProjection {
 
@@ -132,7 +131,7 @@ object LayoutDrawPlanProjection {
      * lossy rehydration as an invalid plan and falls back to the async
      * planner.
      *
-     * `maskGeometryResolver` (WP9) rebuilds [MaskGeometry] from the page's OCR
+     * `maskGeometryResolver` rebuilds [MaskGeometry] from the page's OCR
      * snapshot for a durable ref; without it hydrated layouts keep
      * `maskGeometry = null` and the structural component clip is rebuilt
      * upstream, never re-planned.
@@ -157,7 +156,7 @@ object LayoutDrawPlanProjection {
         if (planBlock.stableBlockId.isEmpty()) return blocks.getOrNull(planBlock.inputIndex)
         // Index-validated id match first (duplicate-id safe), then the first id
         // match anywhere; an unmatched id means the inputs changed — skip and
-        // let the caller fall back (never mis-draw, ).
+        // let the caller fall back (never mis-draw).
         val byIndex = blocks.getOrNull(planBlock.inputIndex)
         if (byIndex?.blockId == planBlock.stableBlockId) return byIndex
         return blocks.firstOrNull { it.blockId == planBlock.stableBlockId }

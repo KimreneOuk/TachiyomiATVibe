@@ -6,7 +6,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
-import eu.kanade.translation.scheduling.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.workflow.ChapterTranslator
@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  slice 2 (R7): request generations fence downloader completion callbacks
+ * Request generations fence downloader completion callbacks
  * and in-flight probe mutations. A stale callback — cancelled, re-requested,
  * or cleared request — is dropped with a log line; it never admits work and
  * never recreates a request. The fixture mirrors

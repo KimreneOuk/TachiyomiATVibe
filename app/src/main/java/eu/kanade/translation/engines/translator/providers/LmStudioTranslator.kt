@@ -37,7 +37,7 @@ open class LmStudioTranslator(
     override val providerModel: String get() = modelName
     override val providerCredentialScope: String? get() = ShortHash.hash(normalizedBaseUrl).ifEmpty { null }
 
-    //  wave-7c: structured-analysis endpoint (local server, no auth).
+    //  structured-analysis endpoint (local server, no auth).
     override fun analysisEndpointUrl(): String = "$normalizedBaseUrl/chat/completions"
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {

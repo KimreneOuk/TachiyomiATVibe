@@ -11,23 +11,21 @@ import tachiyomi.core.common.util.system.logcat
 import java.io.IOException
 
 /**
- *  wave-7c: adapts an AI engine's raw text completion
- * ([AiTranslator.postStructuredAnalysisRaw]) to the
- * [AnalysisTextTransport] seam. ONE raw attempt per call — admission and
- * retry live in [AnalysisChunkExecutor] (shared 15-RPM Batch sub-limit gate +
- * shared provider bucket, ); this class only frames the prompt and
- * guarantees typed failures.
+ * Adapts an AI engine's raw text completion
+ * ([AiTranslator.postStructuredAnalysisRaw]) to [AnalysisTextTransport]. It
+ * performs one raw attempt per call; admission and retry live in
+ * [AnalysisChunkExecutor]. This class frames the prompt and guarantees typed
+ * failures.
  *
  * The identity triple (providerId/modelId/credentialSignature) comes from the
  * engine itself, so the durable analyzer provenance and the Batch admission
- * keys use the SAME governor backend spelling as the translation envelopes
- * (DR-C one allowance per credential; wave-6 F-W6-4 alignment).
+ * keys use the same governor backend spelling as translation envelopes.
  *
- * Director decision (summary-glossary redesign): the per-chunk stage asks for
- * a FREE-FORM bounded summary — no response schema, no id patterns, no
- * hash-echo discipline (the strict  contract failed against real
- * providers twice and paused every run). The structured glossary is produced
- * ONCE per chapter by [postGlossarySynthesis] over the stored summaries.
+ * Each chunk request asks for a free-form bounded summary. Provider responses
+ * do not have a response schema, block-id pattern, or hash-echo requirement;
+ * that strict contract repeatedly failed with real providers. One structured
+ * glossary is produced per chapter by [postGlossarySynthesis] over the stored
+ * summaries.
  */
 class AnalysisEngineTransport(
     private val engine: AiTranslator,

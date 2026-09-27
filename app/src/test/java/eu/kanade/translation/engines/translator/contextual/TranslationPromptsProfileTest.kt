@@ -6,11 +6,9 @@ import io.kotest.matchers.string.shouldContain
 import org.junit.jupiter.api.Test
 
 /**
- *  Stage-6 slice B (design §7.4): the ENRICHED prompt assembly —
- * identity-before-gender rule ordering pinned textually, entity-id and
- * scene rendering, and the pronoun-marking rule for the rolling history.
- * The legacy prompt functions are NOT touched (pinned by
- * `TranslationPromptsTest` staying green + byte-identical diff).
+ * Covers enriched prompt assembly: identity rules precede gender rules,
+ * entity ids and scene context are rendered, and rolling history marks
+ * pronouns. The legacy prompt functions retain their existing behavior.
  */
 class TranslationPromptsProfileTest {
 

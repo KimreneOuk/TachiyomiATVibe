@@ -11,7 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- *  Phase 1 deterministic interleaving barrier (design note §2).
+ * Deterministic interleaving barrier for concurrency tests.
  *
  * Gates are [CompletableDeferred]s hosted INSIDE the fakes (fake decode,
  * fake provider transport, fake render reload), so every wait/park in the
@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * COMMIT and RECONCILE have no fake injection point (the store and the batch
  * deferred are real); tests await them with `store.state.first { … }` /
- * the reconciliation [CompletableDeferred] per design note §2.
+ * the reconciliation [CompletableDeferred].
  */
 class CoexistenceBarrier {
 
@@ -99,7 +99,7 @@ class CoexistenceBarrier {
 
     /**
      * [awaitArrival] with a hard bound so a mis-wired choreography surfaces as
-     * a timeout failure instead of hanging the suite (design note §5.5).
+     * a timeout failure instead of hanging the suite.
      */
     suspend fun awaitArrivalWithin(
         point: BarrierPoint,

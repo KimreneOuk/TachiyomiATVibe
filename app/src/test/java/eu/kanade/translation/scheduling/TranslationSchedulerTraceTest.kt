@@ -3,8 +3,12 @@ package eu.kanade.translation.scheduling
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
 import eu.kanade.translation.diagnostics.TranslationTraceSink
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -21,7 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  Phase 3 (plan §6.3 case 1 + amendment §10.2): correlated trace wiring
+ * Correlated trace wiring
  * of the MANUAL scheduler path — exactly one schedule + one run per
  * [TranslationScheduler.translatePage] intent, the measured lease_wait
  * scheduler queue, and exactly-one-terminal ownership for success, mid-flight

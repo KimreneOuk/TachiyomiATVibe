@@ -127,10 +127,9 @@ class NextPageAdmittedDuringParkedPublicationTest {
                     store.snapshot("p0").page?.cleanedImageName.shouldBeNull()
                 }
 
-                // The second page taps NOW: GREEN admits it while p0's
-                // publication is still parked; RED holds it behind the first
-                // page's commit. The bound converts the RED hang into a NAMED
-                // defect (design note discipline: never a choreography timeout).
+                // The second page is tapped while p0's publication is still
+                // parked. It must be admitted without waiting for p0's commit;
+                // the bound reports a blocked admission as a named assertion.
                 harness.tapManual("p1")
                 try {
                     runBlocking {

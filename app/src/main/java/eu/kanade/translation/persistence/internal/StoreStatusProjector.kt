@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence.internal
 
-import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
@@ -15,8 +14,9 @@ import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.toArtifactDisplayProjection
+import eu.kanade.translation.persistence.chapter.ChapterPageReconciler
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -31,16 +31,11 @@ internal class StoreStatusInputs(
     val display: StateFlow<Map<String, PageTranslation>>,
 )
 
-//  Phase 15: durable status projection moved from `ChapterTranslationStore`
-// (artifactStatus + the durable-failure read API). The projector reads the
-// store's projection inputs through the same-name accessors below; the store
-// keeps same-signature delegating stubs at the old qualified names
-// (ChapterTranslator, DurableChapterStatusResolver, and the migration /
-// artifact-read tests resolve them there).
+// Durable status and failure views are projected from one store snapshot.
 internal class StoreStatusProjector(private val store: ChapterTranslationStore) {
 
-    // Same-name dependency reads the moved bodies use; resolved through the
-    // store's consistent-snapshot accessor at each call.
+    // Read the manifest/state/display inputs together through the store's
+    // consistent-snapshot accessor.
     private val artifactManifest get() = store.statusProjectionInputs().manifest
 
     private val state get() = store.statusProjectionInputs().state
@@ -60,21 +55,16 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
     /**
      * Derives durable artifact status without consulting the legacy summary sidecar.
      *
-     *   (durable half): when the manifest authority is ARTIFACTS and a
-     * durably COMPLETE run record owns the chapter ([ChapterArtifactManifest.activeRun]
-     * readable at [ChapterRunState.COMPLETE]), the MANIFEST PAGE RECORDS are the
-     * completion authority and the legacy live-page reconcile is skipped — that
-     * reconcile's done-predicate is the legacy display-committed shape, while a
-     * flagged-lane ( ON) run commits translations WITHOUT an in-pass
-     * render, so every healthy page misprojected as stranded → chapter ERROR.
-     * Done evidence per page: a committed display bundle, a TEXTLESS_COMPLETE
-     * display state, or an open candidate snapshot (the flagged lane keeps the
-     * translated page snapshot addressable through the candidate pointer —
-     * see [completedRunRecordStatus]); a partial translation stage demotes the
-     * chapter to READY_WITH_WARNINGS; any expected page without such evidence
-     * yields ERROR. A missing/unreadable record, a non-COMPLETE state, or an
-     * empty page record set falls through to the existing legacy projection
-     * unchanged (legacy chapters have no activeRun).
+     * When an artifact-authoritative run record is durably COMPLETE, its
+     * manifest page records are the completion authority. Live-page
+     * reconciliation checks the legacy committed-display shape, but some runs
+     * commit translations without rendering during that pass; those healthy
+     * pages must not be reported as stranded. Per-page evidence is a committed
+     * display bundle, a TEXTLESS_COMPLETE state, or an open candidate snapshot
+     * ([completedRunRecordStatus]). Partial translation evidence demotes the
+     * chapter to READY_WITH_WARNINGS, and an expected page without evidence
+     * yields ERROR. If the run record is missing, unreadable, non-COMPLETE, or
+     * has no page records, the legacy live-page projection remains in force.
      */
     fun artifactStatus(): Translation.State? {
         val manifest = artifactManifest ?: return null
@@ -138,13 +128,17 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
             expectedKeys += "__missing_expected_page_$index"
         }
         val activeGeneration = pagesSnapshot.values.maxOfOrNull { it.runGeneration } ?: 0L
-        val reconciliation = BatchProgressReconciler.reconcile(pagesSnapshot, expectedKeys, activeGeneration)
-        //  field fix (Chapter 21): the softener exists for stores whose
-        // trusted expected total exceeds the registered pages with no recorded
-        // failure (upgrade residue) — reconcile synthesizes placeholder keys
-        // for the shortfall. A REAL page stranded cancelled/non-terminal is
-        // not that case: softening it produced a "Ready (Warnings)" chapter
-        // with unrendered pages and no Retry affordance.
+        val unexpectedPageKeys = ChapterPageReconciler.findUnexpectedPageKeys(pagesSnapshot, expectedKeys)
+        val reconciliation = ChapterPageReconciler.reconcile(
+            pageMap = pagesSnapshot,
+            orderedKeys = expectedKeys,
+            activeGeneration = activeGeneration,
+            unexpectedPageKeys = unexpectedPageKeys,
+        )
+        // Expected totals can exceed registered pages after upgrade residue;
+        // reconciliation represents that shortfall with placeholder keys.
+        // Soften only that case. A real stranded page must remain an error so
+        // the reader retains its Retry affordance.
         val strandedRealPages =
             reconciliation.strandedPages.keys.any { !it.startsWith("__missing_expected_page_") }
         return if (
@@ -159,25 +153,14 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
     }
 
     /**
-     *   projects the chapter status from the MANIFEST PAGE RECORDS
-     * under a durably COMPLETE active run; null whenever the run-record
-     * authority is not provable (pointer missing/unreadable, non-COMPLETE
-     * state, or no page records to project) so the caller keeps the existing
-     * legacy projection. Expected pages beyond the registered records (trusted
-     * baseline shortfall) carry no per-page evidence and count as unevidenced —
-     * the run record claims completion the manifest cannot show.
-     *
-     * Done evidence per page: a committed display bundle
-     * ([eu.kanade.translation.model.PageDisplayProjection.from] displayReady),
-     * a TEXTLESS_COMPLETE display state, or an open candidate snapshot — the
-     * flagged lane keeps the translated page snapshot addressable through the
-     * candidate pointer (promotion to a committed bundle requires a rendered
-     * result and happens later, at reader adoption), so under a COMPLETE run
-     * record the candidate-addressable snapshot is the completed work product
-     * a re-opened chapter lazily loads
-     * ([ChapterTranslationStore.getOrLoadPageSnapshot]). Partial evidence (a
-     * PARTIAL translation stage record, or a live PARTIAL page) demotes the
-     * chapter to READY_WITH_WARNINGS.
+     * Uses manifest page records only when the active run record is durably
+     * COMPLETE. Returns null when that authority cannot be proven, allowing
+     * the caller to use the legacy projection. Trusted expected-page
+     * shortfalls count as unevidenced. A committed display bundle, a
+     * TEXTLESS_COMPLETE state, or an open candidate snapshot is completion
+     * evidence; the candidate remains the result until reader adoption
+     * publishes a rendered bundle. Partial translation evidence yields
+     * READY_WITH_WARNINGS.
      */
     private fun completedRunRecordStatus(manifest: ChapterArtifactManifest): Translation.State? {
         val record = store.readActiveRunRecord() ?: return null
@@ -189,7 +172,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
         var partialCount = 0
         var unevidencedCount = 0
         pageRecords.forEach { pageRecord ->
-            val projection = PageDisplayProjection.from(pageRecord)
+            val projection = pageRecord.toArtifactDisplayProjection()
             val livePartial = pagesSnapshot[pageRecord.pageKey]?.translationStatus ==
                 eu.kanade.translation.model.StageStatus.PARTIAL
             val done = projection.displayReady ||

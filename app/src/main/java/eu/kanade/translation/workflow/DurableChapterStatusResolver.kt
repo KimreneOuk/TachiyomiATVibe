@@ -6,7 +6,7 @@ import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import tachiyomi.domain.source.service.SourceManager
@@ -47,7 +47,7 @@ internal data class TranslationDocument(
 }
 
 internal class DurableChapterStatusResolver(
-    private val providerProvider: () -> TranslationProvider,
+    private val providerProvider: () -> TranslationFileProvider,
     private val sourceManagerProvider: () -> SourceManager,
     private val activeStoresProvider: () -> ActiveChapterStoreRegistry,
     private val durableStatusCacheProvider: () -> ConcurrentHashMap<DurableChapterKey, DurableStatus>,
@@ -199,7 +199,7 @@ internal class DurableChapterStatusResolver(
         val statusWriter = ActiveChapterStoreRegistry.registerWriter(
             chapterId = chapterId,
             chapterKey = document.registryKey,
-            origin = eu.kanade.translation.pipeline.WriterOrigin.STATUS_RESOLVER,
+            origin = eu.kanade.translation.persistence.chapter.WriterOrigin.STATUS_RESOLVER,
         )
         val probeStage = ReaderEntryTrace.begin("probe.status", chapterId)
         return try {

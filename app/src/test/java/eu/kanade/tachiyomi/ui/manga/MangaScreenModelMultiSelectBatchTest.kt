@@ -20,8 +20,8 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.model.TranslationSettingsSummary
-import eu.kanade.translation.model.snapshotTranslationSummary
+import eu.kanade.translation.presentation.TranslationSettingsSummary
+import eu.kanade.translation.presentation.snapshotTranslationSummary
 import eu.kanade.translation.workflow.ChapterQueuePreflight
 import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.matchers.collections.shouldContainExactly
@@ -220,7 +220,7 @@ class MangaScreenModelMultiSelectBatchTest {
         every { translationPreferences.translationConfirmPretranslate() } returns confirmPref
         // snapshotTranslationSummary is a top-level extension that reads real
         // preference values; static-mock it so the dialog test runs on the JVM.
-        mockkStatic("eu.kanade.translation.model.TranslationSettingsSummaryKt")
+        mockkStatic("eu.kanade.translation.presentation.TranslationSettingsSummaryKt")
         every { translationPreferences.snapshotTranslationSummary() } returns
             mockk<TranslationSettingsSummary>(relaxed = true)
 

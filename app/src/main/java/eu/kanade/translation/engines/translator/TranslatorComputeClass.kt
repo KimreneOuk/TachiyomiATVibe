@@ -9,7 +9,7 @@ import eu.kanade.translation.engines.translator.providers.OpenRouterTranslator
 import tachiyomi.domain.translation.TranslationEngineCategory
 
 /**
- * TachiyomiAT: coarse compute classification that drives batch lane routing.
+ * coarse compute classification that drives batch lane routing.
  *
  * REMOTE_IO translators (Gemini, OpenRouter, DeepSeek, LM Studio, DeepL,
  * Google Translate) wait on network round-trips, so the batch coordinator may

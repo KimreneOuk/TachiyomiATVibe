@@ -5,9 +5,9 @@
 ## Follow the main flow
 
 1. Start at `workflow/TranslationManager.kt` for the public façade, then follow `workflow/TranslationRequestCoordinator.kt` and `workflow/TranslationSessionCoordinator.kt` for request and reader/batch ownership.
-2. Open `pipeline/TranslationPipeline.kt` for shared page execution. `pipeline/SinglePageOnnxPhase.kt` and `pipeline/SinglePageHttpRenderPhase.kt` split its native and provider/render work. For chapter translation, continue through `workflow/ChapterTranslator.kt` into `pipeline/batch/BatchChapterTranslator.kt`. The AI profile envelope lifecycle is in `pipeline/batch/envelope`; progress events, tracking, and reconciliation are in `pipeline/batch/progress`.
-3. Follow engine calls into `engines/vision`, `engines/translator`, `engines/inpainting`, or `engines/rendering`. Those packages own the specialized recognition, provider, cleanup, and layout behavior.
-4. Follow page mutations and durable writes into `persistence/chapter` and `persistence/artifact`. `model` contains shared values and page state used along the way.
+2. Open `pipeline/TranslationPipeline.kt` for shared page execution. `pipeline/execution` owns the page executor contract, prepared-page boundary, native-run quarantine and image-stream registry. `pipeline/planning/PageWorkPlanner.kt` owns plans shared by single-page and batch paths, so the single-page path can use it without depending on a batch package; `ResumeOrdering.kt` in that package snapshots already ordered chapter pages. `pipeline/memory/TranslationMemoryBudget.kt` and `MemoryGovernance.kt` own page decode/preflight/prefetch decisions and reclamation. `engines/runtime/EngineMemoryBudget.kt` owns process heap/system snapshots, NNAPI snapshots, neural-inpaint reserves and engine memory diagnostics. `pipeline/SinglePageOnnxPhase.kt` and `pipeline/SinglePageHttpRenderPhase.kt` split native and provider/render work. For chapter translation, continue through `workflow/ChapterTranslator.kt` into `pipeline/batch/BatchChapterTranslator.kt`. Chapter-wide analysis and durable chunk publication are in `pipeline/batch/analysis`; AI profile envelope dispatch and plan publication are in `pipeline/batch/envelope`; progress events, tracking, and reconciliation are in `pipeline/batch/progress`; resume policy and recovery workers are in `pipeline/batch/recovery`.
+3. Follow engine calls into `engines/vision`, `engines/translator`, `engines/inpainting`, `engines/rendering`, or `engines/runtime`. Those packages own specialized recognition (`engines/vision/ocr/TranslationSafetyPrimitives.kt` guards native-buffer drains), provider, cleanup, layout, and model deployment (`engines/runtime/ModelDeployment.kt`) behavior.
+4. Follow page mutations and live chapter state into `persistence/chapter` (`ChapterTranslationStore` and `TranslationFileProvider`), and durable artifact writes into `persistence/artifact`. `model` contains shared values and page state used along the way.
 
 For a new provider, first read `engines/translator/TextTranslator.kt`, `engines/translator/TranslationEngineBuilder.kt`, and one implementation under `engines/translator/providers`. Keep provider request and response behavior with the provider implementation.
 
@@ -16,22 +16,22 @@ For a new provider, first read `engines/translator/TextTranslator.kt`, `engines/
 | Package | Responsibility |
 | --- | --- |
 | `workflow` | Request admission, reader and batch session ownership, chapter lifecycle, and the `TranslationManager` façade. |
-| `scheduling` | Which page jobs run and when: manual/auto reader windows, cancellation, native-run quarantine, and job coordination. It consumes workflow decisions; it does not define chapter or session intent. |
-| `pipeline` | Shared page execution and stage contracts; `pipeline/batch` contains chapter coordination and mode-specific work; `pipeline/batch/envelope` owns AI profile envelope dispatch and plan publication; `pipeline/batch/progress` owns progress events, tracking, and reconciliation. |
-| `engines/vision` | Text and panel detection, bubble segmentation, OCR, and webtoon image behavior. |
+| `scheduling` | Which page jobs run and when: manual/auto reader windows, cancellation, and job coordination. It consumes workflow decisions; it does not define chapter or session intent. |
+| `pipeline` | Shared page execution and stage contracts; `pipeline/execution` owns page executor contracts, prepared-page publication, native-run quarantine and stream registry; `pipeline/planning` owns shared page-stage planning and stable page-order snapshots; `pipeline/memory` owns page decode/preflight/prefetch decisions and reclamation policy; `pipeline/batch` contains chapter coordination and mode-specific work; `pipeline/batch/analysis` owns chapter-wide analysis and durable chunk publication; `pipeline/batch/envelope` owns AI profile envelope dispatch and plan publication; `pipeline/batch/progress` owns progress events, tracking, and reconciliation; `pipeline/batch/recovery` owns resume policy and recovery workers. |
+| `engines/vision` | Text and panel detection, bubble segmentation, OCR, the OCR native-buffer drain guard, and webtoon image behavior. |
 | `engines/translator` | Translator contracts, provider implementations, contextual/analysis requests, retries, and backend routing. |
 | `engines/inpainting` | Page cleanup and inpainting implementations, including AOT, bubble, and OpenCV paths. |
 | `engines/rendering` | Text layout, measurement, draw-plan construction, and persisted layout hydration. |
-| `engines/runtime/onnx` | ONNX runtime setup, model routing and storage, and device capabilities. |
-| `persistence/artifact` | Durable artifact documents, manifests, candidate/commit records, and recovery metadata. |
-| `persistence/chapter` | Live chapter/page state coordination, leases, cleaned-image publication, and chapter translation file locations. |
+| `engines/runtime` | Engine heap/system-memory snapshots, NNAPI snapshots, neural-inpaint reserves and memory diagnostics; model deployment stamps and integrity checks; `engines/runtime/onnx` owns ONNX runtime setup, model routing and storage, and device capabilities. |
+| `persistence/artifact` | Durable artifact documents, manifests, candidate/commit records, and recovery metadata. Candidate-open outcomes are neutral; `pipeline.batch` maps reuse outcomes to batch diagnostics. |
+| `persistence/chapter` | Live chapter/page state coordination, leases, cleaned-image publication, and `TranslationFileProvider` chapter file locations. |
 | `persistence/queue` | Durable queue membership and pending request records. |
-| `persistence/internal` | Concrete collaborators used by chapter-state and persistence owners; these are not a second public API. |
+| `persistence/internal` | Concrete collaborators used by chapter-state and persistence owners, including `ChapterGlossaryAccumulator`; these are not a second public API. |
 | `model` | Shared translation values, page state, and domain contracts. Keep feature policy and projections with their owning package. |
 | `context` | Chapter and series context used to prepare translation requests. |
-| `presentation` | Reader-facing translation truth, projections, and notification copy. |
-| `diagnostics` | Trace and diagnostic data shared across execution paths. |
-| `util` | Small general helpers. Keep translation policy with the subsystem that owns it. |
+| `presentation` | Reader and confirmation-dialog projections, including translation settings summaries and notification copy. |
+| `diagnostics` | Trace and diagnostic data shared across execution paths. `ReaderEntryTrace` also measures artifact backup recovery and retention. |
+| `util` | Small general helpers, including shared SHA-256 digesting. Keep translation policy with the subsystem that owns it. |
 
 ## State and durable records
 

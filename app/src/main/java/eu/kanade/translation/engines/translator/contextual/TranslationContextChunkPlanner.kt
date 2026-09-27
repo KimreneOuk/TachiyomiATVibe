@@ -22,7 +22,7 @@ object TranslationContextChunkPlanner {
     const val MIN_OUTPUT_TOKENS = 256
 
     // Accounts for the unified system prompt + few-shot examples (TranslationPrompts),
-    // including the Phase 6 batch semantic-role/mature-content/delta guidance.
+    // including batch semantic-role, mature-content, and delta guidance.
     const val PROMPT_OVERHEAD_TOKENS = 1_400
 
     // Deterministic reserve for the v1 response envelope. It covers the response header/footer,

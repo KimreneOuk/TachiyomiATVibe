@@ -4,7 +4,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 
 /**
- * TachiyomiAT: Base class for standard, non-LLM translation engines (Google, DeepL, MLKit, etc.).
+ * Base class for standard, non-LLM translation engines (Google, DeepL, MLKit, etc.).
  * Standard engines translate flat string lists directly without prompt template overhead,
  * few-shot formatting, or rolling context tokens.
  */

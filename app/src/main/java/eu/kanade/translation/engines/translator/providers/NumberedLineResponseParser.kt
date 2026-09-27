@@ -7,7 +7,7 @@ import java.util.regex.Pattern
  * that are prompted with `[index] translation`. Centralized (previously duplicated verbatim in
  * [DeepSeekTranslator] and [LmStudioTranslator]) so a fix propagates from one tested source of truth.
  *
- * TachiyomiAT: STRICT no-fallback contract. The old parser had a positional fallback that assigned
+ * STRICT no-fallback contract. The old parser had a positional fallback that assigned
  * unnumbered prose lines to block indices 0, 1, 2, ... when no `[index]` line matched. That silently
  * rescued malformed output, hiding the real failure mode (prose/refusal/partial response still
  * "parsed", leaving blocks with junk or blank and the page slipping through as READY). Now nothing is

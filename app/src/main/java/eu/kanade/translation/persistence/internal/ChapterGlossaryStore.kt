@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence.internal
 
-import eu.kanade.translation.engines.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.MutationAdmission
 import kotlinx.coroutines.sync.withLock
@@ -8,37 +7,33 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * Glossary collaborator moved from `ChapterTranslationStore` ( Phase 8).
- * Owns the chapter glossary state; all mutations are delegated by the store
- * under the store mutex (the collaborator receives the owning store and locks
- * through it). The LEGACY flat-file read fallback in [loadGlossary] is kept
- * deliberately; the flat-file accessors it uses remain store-side.
+ * Owns chapter glossary state. Mutations go through the store mutex. The flat
+ * file fallback in [loadGlossary] remains so chapters written by older app
+ * versions can still be opened.
  */
 internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) {
 
-    // TachiyomiAT: chapter-level term→target glossary for cross-chunk translator
-    // continuity. Persisted to sibling JSON (additive; failure degrades to empty).
+    // Keeps terms consistent across translated chunks. It is persisted as a
+    // sibling artifact; failure leaves translation usable without added context.
     @Volatile
     internal var glossary: Map<String, String> = emptyMap()
 
     internal var glossaryDirty = false
 
-    //  / Task 1.1: per-store accumulator and per-page contribution watermark.
-    // Owned under store.mutex.
-    internal val stats = ChapterGlossaryBuilder.Stats()
+    // One accumulator per store and a contribution watermark per page. Both
+    // are protected by store.mutex.
+    internal val stats = ChapterGlossaryAccumulator.Stats()
     private var statsSeeded = false
     internal val pageContributions = HashMap<String, List<Pair<String, String>>>()
 
     fun glossarySnapshot(): Map<String, String> = glossary.toMap()
 
     /**
-     * TachiyomiAT   the live glossary version for the reuse gate and
-     * provenance stamps. `null` means the gate is
-     * OFF — a legacy-authority manifest, or no glossary ever published — which
-     * keeps glossary-less chapters and the standard engine lane at REUSE with
-     * zero extra paid calls. Pure in-memory read (`artifactManifest` is
-     * volatile); safe to call with the store mutex already held, which is how
-     * the batch provenance stamp consumes it.
+     * Current glossary version for the reuse gate and provenance stamps.
+     * `null` means reuse gating is off because the manifest is not
+     * artifact-authoritative or no glossary has been published. This is an
+     * in-memory read; `artifactManifest` is volatile, so it is safe to call
+     * while the store mutex is already held.
      */
     internal fun currentGlossaryVersion(): Int? {
         val manifest = store.artifactManifest
@@ -137,7 +132,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
             if (artifact != null && manifest != null) {
                 val glossaryWriter = eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry.registerWriter(
                     chapterKey = store.chapterKey,
-                    origin = eu.kanade.translation.pipeline.WriterOrigin.GLOSSARY_LANE,
+                    origin = eu.kanade.translation.persistence.chapter.WriterOrigin.GLOSSARY_LANE,
                 )
                 try {
                     val pointer = artifact.publishGlossary(glossary)
@@ -166,11 +161,11 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
     }
 
     /**
-     * Labeled fallback per  memory contract: recomputes the glossary by streaming all
-     * translated pairs in the chapter rather than using the incremental accumulator.
+     * Rebuilds the glossary from current translated pairs when the incremental
+     * accumulator cannot be used.
      */
     internal fun streamedRecomputeFallback(): Map<String, String> =
-        ChapterGlossaryBuilder.streamedRecompute(translatedPairs())
+        ChapterGlossaryAccumulator.streamedRecompute(translatedPairs())
 
     internal fun loadGlossary() {
         val artifact = store.artifactEngine

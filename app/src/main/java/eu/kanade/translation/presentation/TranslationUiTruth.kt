@@ -10,15 +10,16 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.scheduling.AutoSlotState
-import eu.kanade.translation.scheduling.SinglePageOutcome
 import java.text.DateFormat
 import java.util.Date
 
 /**
- *  Phase 5 (spec §1.2, §2): bounded UI vocabulary projected FROM existing
+ * Bounded UI vocabulary projected from existing
  * typed outcomes, durable projections, and auto slot states. This is not a
  * new state machine and adds no scheduler state enum: every value here is a
  * presentation truth derived from store/scheduler facts, and every surface
@@ -51,7 +52,7 @@ enum class UiAction { RETRY, CANCEL, DETAILS, REVIEW }
 
 /**
  * Whether a state transition may be announced on an attention surface
- * (spec §3.1 visibility budget): SILENCE is reserved for self-healing
+ * Visibility limits reserve SILENCE for self-healing
  * scheduler maintenance and ordinary coalescing — never for a user
  * decision, pause, stall, durable failure, partial result, or the
  * cancellation of paid work.
@@ -84,7 +85,7 @@ data class PageUiTruth(
 
 /**
  * The single pure mapper owning the state→surface truth precedence
- * (spec §1.2). Precedence: explicit current typed outcome first (a live
+ * Precedence: explicit current typed outcome first (a live
  * request, pause, stall, or rejection is never replaced by an old disk
  * success), then current durable display, then silence for non-user-visible
  * transitions.
@@ -170,17 +171,13 @@ object TranslationUiTruth {
     // ------------------------------------------------------------------
 
     /**
-     *  Phase 5  (spec §3.2): timeout copy names the ACTUAL result timer
+     * Timeout copy names the actual result timer
      * that fired and omits unmeasured durations. The native lane and the
      * HTTP+render lane run DIFFERENT timers; a generic "Translation timed out"
      * tells the user nothing about which half of the pipeline stalled.
      */
     fun timeoutCopy(nativeTimer: Boolean): String =
-        if (nativeTimer) {
-            "ONNX/native result timer expired; translation failed."
-        } else {
-            "HTTP+render result timer expired; translation failed."
-        }
+        PageStoreWriter.timeoutFailureMessage(nativeTimer)
 
     /**
      * One chapter's partial-download admission facts ( /N2).
@@ -190,9 +187,8 @@ object TranslationUiTruth {
     data class PartialDecision(val downloaded: Int, val expectedSourceTotal: Int?)
 
     /**
-     *  Phase 5 N2 (spec §2, §3.3): the finish-first/translate-subset
-     * decision body must describe EVERY chapter in the group — the phase-4
-     * dialog showed only the first chapter's counts.
+     * The finish-first/translate-subset decision body describes every chapter
+     * in the group.
      */
     fun partialDownloadBody(decisions: Array<PartialDecision>): String {
         val choice = "Translate the pages that exist now, or finish the download first?"
@@ -208,7 +204,7 @@ object TranslationUiTruth {
     }
 
     /**
-     * Chapter-level indicator truth (spec §3.1): READY_WITH_WARNINGS must be
+     * Chapter-level indicator truth: READY_WITH_WARNINGS must be
      * conveyed by label, not by tint alone.
      */
     fun forChapterIndicator(
@@ -319,7 +315,7 @@ object TranslationUiTruth {
     }
 
     /**
-     * Drawer page-overview mini chip truth (spec §3.1): failed/partial/queued
+     * Drawer page-overview mini chip truth: failed/partial/queued
      * state is conveyed by a semantic label, never by icon or tint alone.
      */
     fun pageMiniChipLabel(page: TranslationProgressSnapshot.Page): String = when {
@@ -335,7 +331,7 @@ object TranslationUiTruth {
     }
 
     /**
-     *  Phase 5 (spec §1.2 rule 6, §3.1): the single chapter-level
+     * The single chapter-level
      * visibility gate. [previous] is the last surfaced snapshot for the same
      * chapter (may be null); [current] is the fresher durable state. The
      * CURRENT state is always the truth source — [previous] is used only to
@@ -394,7 +390,7 @@ object TranslationUiTruth {
                 val truth = if (current.displayReadyPages > 0) {
                     // Committed readable display + failed candidate refresh:
                     // "ready with warnings", never a red error over the
-                    // readable image (spec §3.1, PageTranslation
+                    // readable image (PageTranslation
                     // .shouldSurfaceError discipline).
                     failureTruth.copy(
                         severity = UiSeverity.WARNING,
@@ -887,7 +883,7 @@ object TranslationUiTruth {
         }
     }
 
-    /**  slice 1 (post-review) subtitle copy for unknown-total phases. */
+    /** Subtitle copy for unknown-total phases. */
     private fun heroPhaseSubtitle(hero: BatchHeroProjection.Phase): String {
         val percent = hero.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
         return when (hero.phase) {
@@ -989,7 +985,7 @@ object TranslationUiTruth {
         return "$value$suffix"
     }
 
-    /**  slice 2: truthful queue position, e.g. "Queued (2nd of 3) — ...". */
+    /** Queue position, e.g. "Queued (2nd of 3) — ...". */
     fun queuedPositionLabel(position: Int, total: Int): String =
         "Queued (${ordinalSuffixOf(position)} of $total) — waiting for earlier batches"
 }

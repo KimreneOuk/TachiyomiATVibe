@@ -8,7 +8,7 @@ import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
-import eu.kanade.translation.scheduling.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.workflow.ChapterTranslator
@@ -29,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- *  slice 2 (R10): a translation-queue admission rejection is never labeled
+ * A translation-queue admission rejection is never labeled
  * DOWNLOAD_FAILED. The durable phase is ADMISSION_FAILED with a typed kind
  * that distinguishes a non-HTTP source from an invalid translation
  * configuration from a generic admission rejection.

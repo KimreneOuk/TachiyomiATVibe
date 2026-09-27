@@ -1,8 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.pipeline.ActiveWriter
-import eu.kanade.translation.pipeline.WriterOrigin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -231,12 +229,12 @@ internal class ActiveChapterStoreRegistry {
         }
 
         /**
-         *  Slice A2: Registers an active writer process-wide.
+         * Registers an active writer process-wide.
          *
          * Observability-only while flag OFF: registers and returns an AutoCloseable
          * token to unregister, but excludes nothing.
          *
-         * Under Slice B (flag ON), second writers use this registry to identify
+         * With group commit enabled, second writers use this registry to identify
          * the active store and request a staged buffer force-flush before publication.
          */
         fun registerWriter(

@@ -1,12 +1,15 @@
 package eu.kanade.translation.scheduling
 
+import eu.kanade.translation.pipeline.execution.PreparedPage
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import kotlin.reflect.full.memberProperties
 
 /**
- * Ticket 02 — boundary data-contract coverage.
+ * Boundary data-contract coverage.
  *
  * These tests pin the shape of the production types ([PreparedPage],
  * [TranslationStageEvent], [TranslationStageListener]) via reflection and

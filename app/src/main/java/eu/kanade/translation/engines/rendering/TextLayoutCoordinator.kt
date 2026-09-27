@@ -54,10 +54,10 @@ internal class TextLayoutCoordinator<T : Any>(
     private val plan: (blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) -> T,
     private val onPrepared: (T) -> Unit,
     /**
-     *  WP9: optional persisted-layout hydration hook,
+     * Optional persisted-layout hydration hook,
      * consulted ON [backgroundExecutor] BEFORE [plan]. A non-null return is
      * delivered and cached exactly like a planned value with ZERO planner
-     * invocations (gate 7.6); null (or a throw) falls back to [plan] — the
+     * invocations; null (or a throw) falls back to [plan] — the
      * async planner stays the mandatory fallback for Manual/Auto, legacy data,
      * and missing/invalid/incompatible plans. The bind-generation
      * stale defense below applies to hydrated deliveries identically.
@@ -97,7 +97,7 @@ internal class TextLayoutCoordinator<T : Any>(
                 // Superseded before we even started: skip the planner entirely.
                 if (bindGeneration != generation) return@execute
                 val prepared = try {
-                    //  WP9: valid persisted plan first (zero planner work);
+                    // Use a valid persisted plan first (zero planner work);
                     // every other outcome — absent, corrupt, incompatible, lossy,
                     //  off — keeps the async planner fallback.
                     val hydrated = try {

@@ -3,7 +3,7 @@ package eu.kanade.translation.scheduling
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 
 /**
- * TachiyomiAT: resolves the live [ChapterTranslationStore] for a chapter id.
+ * resolves the live [ChapterTranslationStore] for a chapter id.
  *
  * [TranslationScheduler] needs to read/write the per-chapter store to reset
  * stranded RUNNING statuses on cancellation and to flip stages during auto

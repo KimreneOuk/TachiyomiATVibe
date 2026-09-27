@@ -161,10 +161,20 @@ class ReaderAutoTranslationLifecycleTest {
             originalStream = { ByteArrayInputStream(byteArrayOf(2)) },
         )
         val resolver = ReaderAutoTranslationPageResolver(chapterCache = null)
-        val oldResolver = resolver.bind(firstIdentity, listOf(oldPage))
+        val oldResolver = resolver.bind(
+            identity = firstIdentity,
+            pages = listOf(oldPage),
+            ownerVersion = null,
+            ownerToken = null,
+        )
         val oldItem = oldResolver(0)!!
 
-        val newResolver = resolver.bind(replacementIdentity, listOf(newPage))
+        val newResolver = resolver.bind(
+            identity = replacementIdentity,
+            pages = listOf(newPage),
+            ownerVersion = null,
+            ownerToken = null,
+        )
 
         oldResolver(0) shouldBe null
         assertThrows<IllegalStateException> { oldItem.streamFn!!.invoke() }
@@ -229,9 +239,19 @@ class ReaderAutoTranslationLifecycleTest {
         val resolver = ReaderAutoTranslationPageResolver(chapterCache = null)
         val oldStoreToken = Any()
         val newStoreToken = Any()
-        val oldResolver = resolver.bind(firstIdentity, listOf(oldPage), 8L, oldStoreToken)
+        val oldResolver = resolver.bind(
+            identity = firstIdentity,
+            pages = listOf(oldPage),
+            ownerVersion = 8L,
+            ownerToken = oldStoreToken,
+        )
         val oldItem = oldResolver(0)!!
-        val newResolver = resolver.bind(firstIdentity, listOf(replacementPage), 9L, newStoreToken)
+        val newResolver = resolver.bind(
+            identity = firstIdentity,
+            pages = listOf(replacementPage),
+            ownerVersion = 9L,
+            ownerToken = newStoreToken,
+        )
 
         oldResolver(0) shouldBe null
         assertThrows<IllegalStateException> { oldItem.streamFn!!.invoke() }
@@ -253,7 +273,12 @@ class ReaderAutoTranslationLifecycleTest {
             },
         )
         val resolver = ReaderAutoTranslationPageResolver(chapterCache = null)
-        val issuedItem = resolver.bind(firstIdentity, listOf(page))(0)!!
+        val issuedItem = resolver.bind(
+            identity = firstIdentity,
+            pages = listOf(page),
+            ownerVersion = null,
+            ownerToken = null,
+        )(0)!!
         // The reader invalidates the resolver before it asks the manager to stop; the old
         // Epub/HTTP-like factory must therefore be inert even while the stop is still pending.
         resolver.invalidate()

@@ -6,10 +6,9 @@ import kotlin.math.max
  * Pure mask-construction and morphology helpers used by [SmartBubbleTextCleaner]
  * to build the regions where original text is erased before inpainting.
  *
- * Extracted from the cleaner so these byte-array algorithms are unit-testable
- * in isolation (the cleaner's API operates on `android.graphics.Bitmap`, which
- * plain JVM tests can't load). Every function is pure; callers thread in the
- * tuning constants the cleaner used to read as fields.
+ * The algorithms operate on byte arrays so they can be tested on the JVM
+ * without loading `android.graphics.Bitmap`. Every function is pure; callers
+ * supply the tuning constants.
  */
 object BubbleMaskBuilder {
 
@@ -29,7 +28,7 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * TachiyomiAT: solid rectangular erase mask over the union of [boxes], each
+     * solid rectangular erase mask over the union of [boxes], each
      * padded by [pad] px and dilated by a disk SE of [dilateRadius]. Each box
      * becomes a solid rectangle (not sparse text pixels) then is padded/dilated
      * so anti-aliased stroke edges fall inside the hole. Port of the validated
@@ -116,7 +115,7 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * TachiyomiAT: disk (circular) structuring-element dilation.
+     * disk (circular) structuring-element dilation.
      *
      * Grows set pixels isotropically (a disk of radius [radius]) so rectangle
      * corners become genuinely rounded rather than chamfered — directly fixing
@@ -157,7 +156,7 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * TachiyomiAT: target the neural (AOT) crop so the text box is ~1/3 of the
+     * target the neural (AOT) crop so the text box is ~1/3 of the
      * ≤512 inference tensor (resolution floor) with ~2× its area as real page
      * context. A fixed *fraction* (vs the earlier margin heuristic) keeps both
      * bounded regardless of text size. The 512 ceiling bounds memory: it never
@@ -174,7 +173,7 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * TachiyomiAT: two-pass chamfer distance transform of [mask]. Returns, per
+     * two-pass chamfer distance transform of [mask]. Returns, per
      * pixel, the (approx Euclidean) distance to the nearest non-zero mask pixel
      * (0 inside, growing outward). The (3,4) chamfer weights are accurate to
      * ~8% of true Euclidean at O(n) cost. Replaces the O(n·featherRadius²)
@@ -261,7 +260,7 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * TachiyomiAT: distance-field feathered alpha (0..1) for [mask]. In-mask
+     * distance-field feathered alpha (0..1) for [mask]. In-mask
      * pixels are fully opaque (1.0); outside, alpha ramps down linearly from
      * 1.0 at the edge to 0.0 at [rampWidth] px. The single soft-edge routine
      * consumed by both the neural and classical inpaint paths.
@@ -292,7 +291,7 @@ object BubbleMaskBuilder {
      * Build a feathered alpha map (0..1) for [mask]: core pixels fully opaque,
      * pixels outside ramping down over [featherRadius] px.
      *
-     * TachiyomiAT: delegates to the distance-field [featherAlphaField] so the
+     * delegates to the distance-field [featherAlphaField] so the
      * classical paths share the identical smooth ramp as the neural path (the
      * old box-blurred average produced a thin cliff that exposed the erase rect).
      */
@@ -304,7 +303,7 @@ object BubbleMaskBuilder {
     ): FloatArray = featherAlphaField(mask, width, height, featherRadius)
 
     /**
-     * TachiyomiAT: DYNAMIC pill-shaped erase mask for bubble text boxes.
+     * DYNAMIC pill-shaped erase mask for bubble text boxes.
      *
      * Each box is padded by [pad] px, filled solid, then dilated with a disk SE
      * so corners are rounded into a capsule (matching speech-bubble interiors).
@@ -349,7 +348,7 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * TachiyomiAT: FIXED pill-shaped erase mask for free-text line boxes.
+     * FIXED pill-shaped erase mask for free-text line boxes.
      *
      * Unlike [buildDynamicPillMask], uses one fixed dilation radius for every
      * box — appropriate for PaddleOCR text-line boxes, uniformly narrow strips

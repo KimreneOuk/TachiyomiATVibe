@@ -37,9 +37,8 @@ internal data class AdaptiveResult(
 )
 
 /**
- * TachiyomiAT  slice 5: pure adaptive band fitter for horizontal text in a
- * span-mode shared cell (architecture revision 2, "Slice 5: adaptive bands and
- * the Android shaping contract").
+ * Fits horizontal text into a span-based shared cell with bounded deterministic
+ * search.
  *
  * Deterministic and bounded: at most [TextLayoutTuning.MAX_FONT_BINARY_STEPS]
  * font binary-search steps, [TextLayoutTuning.MAX_BAND_ALIGNMENTS] vertical
@@ -237,9 +236,8 @@ internal object AdaptiveBandPlanner {
             if (texts.size > TextLayoutTuning.MAX_POSITIONED_LINES_PER_BLOCK) return null
             val totalH = texts.size * lineH
             val firstTop = anchorY - totalH / 2f
-            // Local containment gate (documented in the implementation report):
-            // the whole stack must lie inside the hard slab, or the cell/slab
-            // clip would erase ink and the font is simply too large.
+            // The whole stack must fit inside the hard slab; otherwise its
+            // clip would erase ink and the font is too large.
             if (firstTop < slab.top - SLAB_EPSILON || firstTop + totalH > slab.bottom + SLAB_EPSILON) {
                 return null
             }

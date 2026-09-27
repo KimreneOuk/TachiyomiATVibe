@@ -19,8 +19,6 @@ import eu.kanade.translation.engines.translator.contextual.TranslationContextChu
 import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
-import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -29,15 +27,18 @@ import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.DecodedPage
-import eu.kanade.translation.pipeline.LeaseAcquisition
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
-import eu.kanade.translation.pipeline.PageWriteOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.scheduling.CrossOriginBitmapBudget
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumeGate
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
+import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -56,8 +57,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.coroutineContext
 
 /**
- * Native-lane admission runner: the workers' nested `withNativeLane` calls are
- * served by the pipeline's own `withNativeLane` through this seam ( phase 20).
+ * Runs work through the pipeline's native-lane admission boundary.
  */
 interface NativeLaneRunner {
     suspend fun <T> run(
@@ -71,25 +71,17 @@ interface NativeLaneRunner {
 }
 
 /**
- *  Phase 20.5: the batch lane workers moved verbatim from
- * `TranslationPipeline.translateBatch` ( phase 20): `nativeWorker`,
- * `translatorWorker`. The closure web became class state — every captured
- * registry/identity/frontier instance is injected here as the SAME instance
- * the batch shell holds; pipeline-provided collaborators (native lane,
- * OCR/inpaint/decode/persist helpers, abort) arrive as constructor lambdas
- * behind same-name private members.
- *
- *  zero-legacy: the legacy AI-chunk engine (`translateChunkAi`,
- * `completeChunklessPage`, the chunk-completion bridge) had no surviving
- * caller after the SequentialBatchCoordinator deletion — the PROFILE lane
- * translates through [eu.kanade.translation.pipeline.batch.envelope.ProfileEnvelopeExecutor] — and was removed.
+ * Runs native and translation workers for chapter batches. It shares the
+ * shell's registry, identity, and context state; native-lane admission and
+ * OCR, inpaint, decode, persistence, and abort operations are supplied by the
+ * pipeline or batch collaborators.
  */
 internal class BatchLaneWorkers(
     private val store: ChapterTranslationStore,
     private val manga: Manga,
     private val chapter: Chapter,
     private val source: HttpSource,
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val translationPreferences: TranslationPreferences,
     private val tracker: TranslationBatchProgressTracker?,
     private val batchGeneration: Long,
@@ -300,14 +292,10 @@ internal class BatchLaneWorkers(
         expectedPrecondition,
     )
 
-    // ---- TachiyomiAT Phase 5: consolidated sequential coordinator ----
-    // The batch schedule is driven by the coordinator pass (one serialized
-    // native lane and one ordered translation lane;  zero-legacy
-    // removed the SBC AI-chunk machinery). The pipeline supplies the adapter
-    // implementations of [NativeLaneWorker] / [TranslatorLaneWorker] that
-    // reuse the existing OCR/inpaint/persist/translate/render helpers above,
-    // so the heavy Android/ONNX/HTTP logic is unchanged — only the schedule
-    // is centralized.
+    // The coordinator pass owns the batch schedule: one serialized native
+    // lane and one ordered translation lane. The pipeline supplies
+    // [NativeLaneWorker] and [TranslatorLaneWorker] implementations that use
+    // the existing OCR, inpaint, persistence, translation, and render helpers.
     //
     // TranslatorComputeClass drives lane routing: ML Kit (LOCAL_COMPUTE) is kept
     // inline on the native lane so its on-device inference never overlaps native
@@ -456,7 +444,7 @@ internal class BatchLaneWorkers(
             }
             producedDecoded = decoded
 
-            //  Phase 4: page queueing on the pipeline native lane. The
+            // Page queueing on the pipeline native lane. The
             // span settles when admission grants (first statement inside the
             // lane) and is re-settled (idempotently) on timeout/failure.
             val nativeQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
@@ -537,7 +525,7 @@ internal class BatchLaneWorkers(
                 it.stage == BatchStage.INPAINT
             }
             val plannedCleanedPresent = if (
-                plannedInpaint?.decision == eu.kanade.translation.model.StageDecision.REUSE &&
+                plannedInpaint?.decision == eu.kanade.translation.pipeline.planning.StageDecision.REUSE &&
                 latest.cleanedImageName != null
             ) {
                 withContext(Dispatchers.IO) {
@@ -552,8 +540,8 @@ internal class BatchLaneWorkers(
             } else {
                 false
             }
-            if (plannedInpaint?.decision == eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE ||
-                plannedInpaint?.decision == eu.kanade.translation.model.StageDecision.REUSE &&
+            if (plannedInpaint?.decision == eu.kanade.translation.pipeline.planning.StageDecision.TERMINAL_COMPLETE ||
+                plannedInpaint?.decision == eu.kanade.translation.pipeline.planning.StageDecision.REUSE &&
                 plannedCleanedPresent
             ) {
                 target.cleanedImageName = latest.cleanedImageName
@@ -600,7 +588,7 @@ internal class BatchLaneWorkers(
                 return
             }
 
-            //  Phase 4: page queueing on the pipeline native lane for the
+            // Page queueing on the pipeline native lane for the
             // inpaint pass. The span settles on admission (first statement in
             // the lane) and is re-settled (idempotently) on timeout/failure.
             val inpaintQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
@@ -682,7 +670,7 @@ internal class BatchLaneWorkers(
             val cleaned = target.cleanedBitmap
             if (cleaned != null) {
                 val companionDir = ensureCompanionDir()
-                //  Phase 4: cleaned-image publication substage with typed
+                // Cleaned-image publication substage with typed
                 // outcome; settles even when the persist call throws.
                 val persistSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.CLEANED_PERSIST,
@@ -844,7 +832,7 @@ internal class BatchLaneWorkers(
 
     // The translator lane performs per-page translation (standard path) as a
     // SINGLE serialized lane so only one provider request is in flight at a
-    // time.  zero-legacy: the legacy SBC AI-chunk machinery (streaming
+    // time.  : the legacy SBC AI-chunk machinery (streaming
     // chunk completion, admission/probe buffering) had no surviving caller and
     // was deleted — the PROFILE lane translates through ProfileEnvelopeExecutor.
     val translatorWorker = object : TranslatorLaneWorker {
@@ -891,24 +879,24 @@ internal class BatchLaneWorkers(
             }
             val dependencyReadyAfterNative = p.ocrStatus == StageStatus.READY ||
                 p.ocrStatus == StageStatus.TEXTLESS
-            //  Phase 6: the plan's PRIOR_PAGE_INCOMPLETE marker is a
+            // The plan's PRIOR_PAGE_INCOMPLETE marker is a
             // batch-start snapshot; whether the predecessor is STILL incomplete
             // is a live question. On the ordered standard lane a predecessor
             // that has already reached a terminal translation outcome must not
             // keep blocking this page — the static block stranded every page
             // after the first on multi-page chapters.
             val priorPageBlocksStandardTranslation = !isAi &&
-                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
                 !naturalOrderPredecessorTerminal(pageKey)
             val completedAiPageAfterPriorGap = isAi &&
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
-                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
+                plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
                 p.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED) &&
                 (
                     expectedBatchFingerprints.translation == null ||
                         p.translationFingerprint == expectedBatchFingerprints.translation
                     )
-            //  Phase 6: standard-lane twin of the AI gap check. The plan
+            // The standard-lane counterpart to the AI gap check. The plan
             // snapshot cannot see commits that happen while the pass runs —
             // the batch's own unblocked pages, or a manual tap that finished
             // mid-pass ( manual output is authoritative and must never be
@@ -918,21 +906,21 @@ internal class BatchLaneWorkers(
             // re-translation of pre-pass state.
             val livePage = store.state.value[pageKey]
             val completedStandardPageAfterPriorGap = !isAi &&
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
-                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
+                plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
                 livePage?.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED)
             val retryableTranslation = plannedTranslation?.decision ==
-                eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE
+                eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE
             val shouldSkipTranslation = plannedTranslation?.decision ==
-                eu.kanade.translation.model.StageDecision.REUSE ||
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE ||
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.FAILED ||
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.FAILED_TERMINAL ||
+                eu.kanade.translation.pipeline.planning.StageDecision.REUSE ||
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.TERMINAL_COMPLETE ||
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.FAILED ||
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL ||
                 retryableTranslation &&
                 plannedTranslation?.retryEligible != true ||
                 completedAiPageAfterPriorGap ||
                 completedStandardPageAfterPriorGap ||
-                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
                 (
                     priorPageBlocksStandardTranslation ||
                         !dependencyReadyAfterNative
@@ -943,8 +931,8 @@ internal class BatchLaneWorkers(
                 // render join still receives its branch completion.
                 when {
                     plannedTranslation?.decision in setOf(
-                        eu.kanade.translation.model.StageDecision.FAILED,
-                        eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL,
                     ) ||
                         p.translationStatus == StageStatus.FAILED &&
                         store.durableFailure(pageKey)?.status != ArtifactStageStatus.FAILED_RETRYABLE -> tracker?.markAiFailed(
@@ -957,9 +945,9 @@ internal class BatchLaneWorkers(
                 }
                 if (isAi &&
                     plannedTranslation?.decision !in setOf(
-                        eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE,
-                        eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
-                        eu.kanade.translation.model.StageDecision.FAILED,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL,
+                        eu.kanade.translation.pipeline.planning.StageDecision.FAILED,
                     )
                 ) {
                     if (p.translationStatus != StageStatus.PARTIAL) {
@@ -976,7 +964,7 @@ internal class BatchLaneWorkers(
             // user-selected reading-order sort so RTL/LTR changes never rename a block.
             StableBlockIds.assign(p, ref.pageIndex)
             val readingOrder = translationPreferences.translationReadingOrder().get()
-            p.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(p.blocks, fromLang, readingOrder)
+            p.blocks = eu.kanade.translation.engines.vision.ocr.TranslationBlockSorter.sort(p.blocks, fromLang, readingOrder)
             translationRegistry[pageKey] = p
             val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
             if (sourceBlocks == 0) {
@@ -1029,7 +1017,7 @@ internal class BatchLaneWorkers(
                 // Standard (per-page) path: translate, validate, persist, render.
                 var succeeded = false
                 var failedOutcome: ChunkCompletionOutcome? = null
-                //  Phase 3 ( design §3.2): durable attempt entry BEFORE
+                // Persist the durable attempt entry before
                 // the paid call; resolved on any completed call (success or
                 // typed provider failure). Write failure is fail-open.
                 runCatching {

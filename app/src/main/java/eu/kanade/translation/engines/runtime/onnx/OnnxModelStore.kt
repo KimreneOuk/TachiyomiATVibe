@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.runtime.onnx
 
 import android.content.Context
-import eu.kanade.translation.util.ModelDeployment
+import eu.kanade.translation.engines.runtime.ModelDeployment
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
@@ -18,7 +18,7 @@ data class ModelPaths(
     /** Fixed-shape AOT variant; kept optional until its corpus gate is passed. */
     val inpaint512Model: File?,
     /**
-     * TachiyomiAT: optional YOLO26-nano manga panel detector model
+     * optional YOLO26-nano manga panel detector model
      * (`manga_panel_detector_int8.onnx`). Nullable because the panel detector
      * is best-effort context — when absent or corrupt, panel assignment is
      * skipped and translation proceeds panel-less. Copied from
@@ -27,7 +27,7 @@ data class ModelPaths(
      */
     val panelDetectorModel: File?,
     /**
-     * TachiyomiAT: YOLO11-seg manga bubble segmenter model (`manga_bubble_segmenter_int8.onnx`).
+     * YOLO11-seg manga bubble segmenter model (`manga_bubble_segmenter_int8.onnx`).
      */
     val bubbleSegmenterModel: File?,
 )
@@ -38,7 +38,7 @@ data class PaddleOcrV6SmallPaths(
 )
 
 /**
- * TachiyomiAT: resolved paths for the PP-OCRv6 small **detection** (det) model.
+ * resolved paths for the PP-OCRv6 small **detection** (det) model.
  * The det model runs inside each ROI crop from Stage-1 detection to find
  * individual text lines (polygons), replacing the ink-gap column heuristic for
  * the PaddleOCR rec path. See
@@ -163,7 +163,7 @@ class OnnxModelStore(private val context: Context) {
     }
 
     /**
-     * TachiyomiAT: PP-OCRv6 small **detection** model availability.
+     * PP-OCRv6 small **detection** model availability.
      *
      * The det model is an optional refinement of the PaddleOCR rec path: when
      * present it replaces the ink-gap vertical-column heuristic with a learned
@@ -283,7 +283,7 @@ class OnnxModelStore(private val context: Context) {
     }
 
     /**
-     * TachiyomiAT: lightweight structural validity check for a cached .onnx,
+     * lightweight structural validity check for a cached .onnx,
      * replacing the old single-byte `0x08` heuristic which any truncated file
      * could pass. A corrupt/garbage model that passes the old check either
      * throws an opaque OrtException at session creation (surfaces as a generic

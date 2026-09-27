@@ -6,7 +6,7 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
- * TachiyomiAT: a single text line detected by the PP-OCRv6 small **det** model
+ * a single text line detected by the PP-OCRv6 small **det** model
  * (DB — Differentiable Binarization). Coordinates are in the SAME space as the
  * bitmap passed to [PaddleOcrV6DetEngine.detectLines] (crop pixel coords), i.e.
  * already back-projected from the model's resized input space.
@@ -30,7 +30,7 @@ data class TextLine(
 }
 
 /**
- * TachiyomiAT: pure implementation of PaddleOCR's `DBPostProcess`, the
+ * pure implementation of PaddleOCR's `DBPostProcess`, the
  * postprocessor for the PP-OCRv6 small **det** ONNX model.
  *
  * The det model emits a probability (saliency) map over the resized input; this
@@ -76,7 +76,7 @@ object DbPostProcess {
     private const val MAX_COMPONENT_AREA_FRAC = 0.5f
     private const val MIN_AREA_PX = 16
 
-    // TachiyomiAT: line-merge thresholds for [mergeLineFragments]. Tuned in the
+    // line-merge thresholds for [mergeLineFragments]. Tuned in the
     // Python prototype to recover horizontal CJK lines (所因誤) the axis-aligned
     // connected-components step over-segments, without merging genuinely separate
     // lines. See det_merge_proto.py + DbPostProcessTest.

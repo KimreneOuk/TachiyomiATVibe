@@ -14,7 +14,7 @@ internal data class RecognizedBlock(
 )
 
 /**
- * TachiyomiAT: carrier for analyze()'s native critical-section output. The
+ * carrier for analyze()'s native critical-section output. The
  * detect + OCR loop runs under [nativeGuard] and returns this so the
  * post-lock dedupe/assembly (removePostOcrDuplicateBlocks, blocks.addAll)
  * runs outside the native lock — it is pure Kotlin and need not block close().
@@ -25,10 +25,9 @@ internal data class RecognizedAnalyzeResult(
 )
 
 /**
- * OCR block deduplication + parent-bubble geometry moved verbatim from
- * `RoiPageRecognitionEngine` ( Phase 5b). Pure over detection/bbox data;
- * also the shared geometry home for the duplicated logic in
- * `OnnxPageTextDetector` (see BoxGeometryTest's header).
+ * Deduplicates recognized blocks and resolves parent-bubble geometry from
+ * detection and bounding-box data. It is also shared by
+ * `OnnxPageTextDetector`.
  */
 internal object OcrBlockDeduplication {
 

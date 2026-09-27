@@ -39,11 +39,12 @@ import eu.kanade.translation.persistence.artifact.EvidenceRef
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.OcrStagePatch
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.OcrStagePatch
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -58,11 +59,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * 14 resume (wave-7c review F-2): a re-dispatch over a durable record
- * already past TRANSLATE never steps the run record BACKWARD to RUN_SNAPSHOT.
- * A FINALIZE record resumes the idempotent finalize drain (zero re-OCR,
- * re-analysis, re-translation); a COMPLETE record is an idempotent finished
- * outcome with zero work and no new record publication.
+ * Pins resume behavior for durable records past translation. A FINALIZE record
+ * resumes the idempotent finalize drain without repeating OCR, analysis, or
+ * translation; a COMPLETE record finishes without work or another publication.
+ * Resume never moves the run record backward to RUN_SNAPSHOT.
  */
 class Stage7FinalizeResumeCoordinatorTest {
 

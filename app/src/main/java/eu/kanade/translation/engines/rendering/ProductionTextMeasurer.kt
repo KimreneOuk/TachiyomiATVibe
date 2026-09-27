@@ -4,7 +4,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 
 /**
- *  WP9: the production [TextMeasurer] used by the Batch-side
+ * Production [TextMeasurer] used by batch
  * LAYOUT_PREPARE publication. Its measurement must be IDENTICAL to the
  * overlay's planning measurer (`TranslationOverlayView.planningMeasurer`):
  * same typeface (the bundled animeace forced to bold — see

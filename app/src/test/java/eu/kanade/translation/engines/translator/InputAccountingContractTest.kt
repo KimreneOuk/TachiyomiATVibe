@@ -19,7 +19,7 @@ import tachiyomi.domain.translation.GeminiThinkingMode
 import kotlin.math.ceil
 
 /**
- *  Task 1.2a: Test suite for InputAccountingContract audit and transport-layer enforcement.
+ * Tests for input accounting and transport-layer enforcement.
  *
  * Covers:
  * 1. Certified conservative bounds formulas for all 4 providers (LM Studio, DeepSeek, OpenRouter, Gemini).

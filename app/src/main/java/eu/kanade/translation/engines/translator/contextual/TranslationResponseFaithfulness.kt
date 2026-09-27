@@ -1,8 +1,8 @@
 package eu.kanade.translation.engines.translator.contextual
 
 /**
- * TachiyomiAT: best-effort, deterministic checks that classify obvious
- * provider unfaithfulness in strict batch responses (Phase 6 contract §8/§13).
+ * Best-effort deterministic checks for obvious provider unfaithfulness in
+ * strict batch responses.
  *
  * Honest scope: a structurally valid but sanitized paraphrase cannot be
  * detected perfectly by parsing. [isStructuralRefusal] catches outright

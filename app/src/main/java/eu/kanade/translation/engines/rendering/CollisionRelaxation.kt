@@ -15,9 +15,9 @@ private typealias FreeTextWideningPlan = TextLayoutPlanner.FreeTextWideningPlan
 private typealias SharedCellPlan = TextLayoutPlanner.SharedCellPlan
 
 /**
- * Pure collision-relaxation and free-space planning algorithms extracted from
- * [TextLayoutPlanner]. The planner remains the owner of orchestration and
- * delegates these side-effect-free spans through the same private seams.
+ * Pure collision-relaxation and free-space planning used by
+ * [TextLayoutPlanner]. The planner owns orchestration and delegates these
+ * side-effect-free operations through private seams.
  */
 internal object CollisionRelaxation {
 
@@ -250,14 +250,14 @@ internal object CollisionRelaxation {
      * rectangles around the current occupancy. Duplicates after clamping are
      * skipped without counting; the FIRST validating candidate wins.
      *
-     *  repair (R2): the ladder NEVER drops the block. When every candidate
+     * The ladder never drops the block. When every candidate
      * fails validation, a clipped draw is accepted (visibility override —
      * placement safety may never remove text from the page). Unmasked layouts
      * retain the original candidate-8 free-rect fallback.
      *
      *  contained-fit rescue (Director-validated model): on the masked
      * branch, candidate 1 — a known duplicate collision failure whenever the
-     * resolver was entered (slice-7 review NOTE 3) — is replaced by the
+     * resolver was entered — is replaced by the
      * OCR-box-first tiered [containedReflowRescue]. If that rescue is
      * collision-free it wins immediately; otherwise it is retained and, when
      * every capped candidate also fails, returned as the terminal result WITH
@@ -367,7 +367,7 @@ internal object CollisionRelaxation {
 
         // Candidate 1: the selected final geometry re-validated as-is (unmasked).
         // Masked: the entry layout is the known collision failure whenever the
-        // resolver was entered (slice-7 review NOTE 3) — the tiered contained
+        // resolver was entered — the tiered contained
         // reflow rescue takes this candidate slot instead. When the rescue
         // itself still collides, the ladder continues with it retained for the
         // tail (contained overlap beats exile/clipping).
@@ -414,7 +414,7 @@ internal object CollisionRelaxation {
         // Candidate 3: the original/cell baseline geometry.
         val baseline: BlockLayout? = if (layout.positionedLines != null) {
             // Adaptive: the conservative stroke-inset rectangular cell layout —
-            // the exact slice-5 fallback call.
+            // the fallback call.
             placeBlock(
                 block = block,
                 text = text,
@@ -607,7 +607,7 @@ internal object CollisionRelaxation {
             }
         }
 
-        //  repair (R2): ladder exhausted → accept a CLIPPED DRAW, never
+        // If the ladder is exhausted, accept a CLIPPED DRAW, never
         // `NonDraw(NO_DISJOINT_POST_ANCHOR_PLACEMENT)` (visibility override:
         // placement safety may never remove text from the page).
         // Unmasked layouts preserve the prior candidate-8 free-rect fallback.
@@ -1083,7 +1083,7 @@ internal object CollisionRelaxation {
     }
 
     /**
-     *  slice 6: widest symmetric box centered at [centerX] that stays on
+     * Widest symmetric box centered at [centerX] that stays on
      * the page and does not overlap any already-placed obstacle extent whose
      * vertical extent overlaps the candidate's band `[bandTop, bandBottom)`.
      * Extends the [freeSpaceLeft]/[freeSpaceRight] bound scan with that band

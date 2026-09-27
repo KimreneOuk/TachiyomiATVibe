@@ -15,12 +15,11 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- *  Slice A1: tests the CommitPoint contract codification.
+ * Tests the durable CommitPoint contract.
  *
  * Asserts:
- * 1. The mandatory commit points are codified. The  group-commit work
- *    (milestone commit 8010961, M6 targeted fsync) deliberately added a 7th
- *    boundary, BATCH_CHUNK — the MAX_STAGED_PAGES accumulation flush — and it
+ * 1. The mandatory commit points are codified. BATCH_CHUNK — the
+ *    MAX_STAGED_PAGES accumulation flush — is a commit boundary, and it
  *    is a REAL commit point: ChapterTranslationStore.flushStagedMutationsLocked
  *    commits staged candidates under it and both it and the artifact store
  *    force an fsync on it (syncToDisk), matching every other boundary's

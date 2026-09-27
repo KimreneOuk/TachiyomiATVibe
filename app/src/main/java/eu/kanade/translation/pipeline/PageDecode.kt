@@ -6,13 +6,14 @@ import android.graphics.BitmapFactory
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
-import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.StageFingerprints
-import eu.kanade.translation.util.TranslationMemoryBudget
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
+import eu.kanade.translation.pipeline.memory.MemoryGovernance
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecision
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecisionKind
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,10 +24,9 @@ import java.io.InputStream
 import java.security.MessageDigest
 
 /**
- * Page bitmap decode + source-fingerprint helpers moved from
- * `TranslationPipeline` ( Phase 1). Cross-helper memory reclaim and
- * decode logging are delegated to [MemoryGovernance]; the pipeline's engine
- * read is injected as a getter.
+ * Decodes source pages and computes their fingerprints. Memory reclaim and
+ * decode logging use [MemoryGovernance]; the recognition engine is supplied
+ * by the pipeline when needed.
  */
 internal object PageDecode {
 

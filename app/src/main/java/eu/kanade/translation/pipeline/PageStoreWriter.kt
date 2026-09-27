@@ -8,24 +8,31 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
-import eu.kanade.translation.presentation.TranslationUiTruth
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.util.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream
 
 /**
- * Store-patch/failure-writer helpers moved from `TranslationPipeline`
- * ( Phase 6). Stateless over the pipeline's store resolver (injected
- * as a getter, it is re-wired by [eu.kanade.translation.workflow.TranslationManager]),
- * the stream registry, and the pipeline's critical-OOM handler.
+ * Writes page-state patches and failures through the active store. The store
+ * resolver follows manager-owned reader sessions, and out-of-memory handling
+ * is delegated to the pipeline caller.
  */
 internal class PageStoreWriter(
     private val activeStoreResolver: () -> ((Translation) -> ChapterTranslationStore?)?,
     private val streamRegistry: TranslationStreamRegistry,
     private val handleCriticalTranslationOom: (stage: String, oom: OutOfMemoryError) -> Unit,
 ) {
+
+    companion object {
+        fun timeoutFailureMessage(nativeTimer: Boolean): String =
+            if (nativeTimer) {
+                "ONNX/native result timer expired; translation failed."
+            } else {
+                "HTTP+render result timer expired; translation failed."
+            }
+    }
 
     fun peekReaderPageStream(
         manga: Manga,
@@ -120,13 +127,13 @@ internal class PageStoreWriter(
         store.invalidateGeneration("timeout chapter=${chapter.name} pageKey=$pageKey")
         val snapshot = store.snapshot(pageKey)
         store.patchPage(pageKey, snapshot.toPrecondition(), "mark page timed out") { existing ->
-            val timeoutMessage = TranslationUiTruth.timeoutCopy(nativeTimer)
+            val timeoutMessage = timeoutFailureMessage(nativeTimer)
             when {
                 // Don't overwrite a page with no intermediate progress.
                 existing == null || existing.cleanedImageName == null -> {
                     createFailedPagePlaceholder(
                         pageKey,
-                        //  Phase 5  (spec §3.2): the placeholder names the
+                        // The placeholder names the
                         // ACTUAL result timer that fired — the native lane and the
                         // HTTP+render lane run DIFFERENT timers — and omits
                         // unmeasured durations entirely (supersedes the old
@@ -141,7 +148,7 @@ internal class PageStoreWriter(
                         attemptCount = (existing?.attemptCount ?: 0) + 1,
                     )
                 }
-                //  Phase 5  the page holds INTERMEDIATE durable
+                // The page holds intermediate durable
                 // artifacts (a cleaned image from the FAST-inpaint lane) but no
                 // rendered result — it is mid-pipeline. Keeping it silently
                 // RUNNING strands the reader in TRANSLATING forever; preserve
@@ -273,9 +280,8 @@ internal class PageStoreWriter(
 }
 
 /**
- * Writer-identity snapshot → fenced-write precondition. Top-level ( Phase 6)
- * so the [PageStoreWriter] bodies and the pipeline's own call sites resolve the
- * same declaration.
+ * Converts a writer-identity snapshot into a fenced-write precondition. The
+ * top-level extension is shared by [PageStoreWriter] and pipeline call sites.
  */
 internal fun ChapterTranslationStore.PageSnapshot.toPrecondition() =
     ChapterTranslationStore.PatchPrecondition(

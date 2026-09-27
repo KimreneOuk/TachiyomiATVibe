@@ -9,27 +9,19 @@ import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 
 /**
- *  WP9: pure assembly of the two separately invalidatable
- * LAYOUT_PREPARE sub-results — the geometry [PageLayoutDrawPlan] (schemas
- * contract §1.6) and the [ColorStylePreparation] (schemas contract §1.7) —
- * from the state the Batch render join already has when a page's translation
- * completes. The caller (BatchRenderJoin,  ON) owns the transaction; this
- * object owns NO store, NO Android types beyond the injected [TextMeasurer],
- * and never mutates the planner (TextLayoutPlanner stays byte-identical).
+ * Builds separately invalidatable geometry and color sidecars from the state
+ * available after a page's translation completes. The render join owns the
+ * artifact transaction; this object owns no store and does not mutate the
+ * planner.
  *
- * Content fingerprints  are SHA-256 over the canonical re-encoded
- * JSON of each DTO, through the same byte-level core the envelope plan uses
- * ([StageFingerprints.envelopePlanContentFingerprint]).
- *
- * The compatibility fingerprint (
- * [DrawPlanFingerprint.layoutCompatibilityFingerprint]) is stored by the caller
- * on the page's durable LAYOUT stage record; the hydrator recomputes it from
- * reader-side inputs via [compatibilityFingerprint] and rejects stale plans
- * (gates 7.3/7.5 invalidation rows 9/10/11).
+ * Content fingerprints are SHA-256 hashes of the canonical JSON for each DTO.
+ * The caller stores the compatibility fingerprint on the page's durable
+ * layout record; the reader recomputes it from current inputs and rejects a
+ * stale plan.
  */
 object LayoutPlanPublication {
 
-    /** Rendering engine identity input of the FP-07 fingerprint (stable constant). */
+/** Rendering engine identity included in the compatibility fingerprint. */
     const val LAYOUT_ENGINE_VERSION: String = "textLayoutPlanner"
 
     /**

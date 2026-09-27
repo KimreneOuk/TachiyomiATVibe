@@ -4,10 +4,10 @@ import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
-import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationScheduler
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
@@ -18,12 +18,11 @@ import org.junit.jupiter.api.Test
 import java.lang.reflect.Method
 
 /**
- *  Phase 5 (spec §5.1.1, §6.2 commit 3) — RED tests for the pure
+ * Tests for the pure
  * Appendix-A state → surface mapper and the bounded manual-outcome exposure.
  *
- * The production mapper does not exist yet, so every assertion resolves it
- * reflectively and names the missing contract when absent (the same named-RED
- * pattern the harness uses for missing injection seams). Inputs are ONLY
+ * Reflection keeps the assertions focused on the truth record and reports a
+ * missing contract clearly instead of failing at compile time. Inputs are only
  * existing typed values ([SinglePageOutcome], [PageDisplayProjection],
  * [AutoSlotState]); the output is read reflectively as a truth record with:
  *
@@ -35,7 +34,7 @@ import java.lang.reflect.Method
  *  - `terminalSuccess`     may count as terminal translated success
  *  - `contentDescription`  accessibility description
  *
- * Mapper contract pinned here (spec §1.2 truth precedence, Appendix A rows):
+ * Mapper behavior covered here:
  * manual — `TranslationUiTruth.forManualOutcome(outcome, durable, partial,
  * exhausted, cancelled)`; auto — `TranslationUiTruth.forAutoSlot(slot,
  * retryAtEpochMs)`. A stale/unconfirmable success may never project
@@ -44,7 +43,7 @@ import java.lang.reflect.Method
 class P5OutcomeProjectionTest {
 
     // ------------------------------------------------------------------
-    // Reflective seams (named-RED when the production contract is missing)
+    // Reflective access keeps the tests independent of mapper visibility.
     // ------------------------------------------------------------------
 
     private fun truth(): Any = try {
@@ -397,7 +396,7 @@ class P5OutcomeProjectionTest {
     }
 
     // ------------------------------------------------------------------
-    // Scheduler exposure (spec §5.2.2) — read-only, bounded, identity-keyed
+    // Scheduler exposure — read-only, bounded, identity-keyed
     // ------------------------------------------------------------------
 
     private fun schedulerAccessor(): Method {

@@ -6,8 +6,8 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
 import java.security.MessageDigest
 
 /**
- *  WP8: thin assembling wrapper over
- * [StageFingerprints.layoutCompatibilityFingerprint] for the rendering side of
+ * Assembles the rendering-side inputs for
+ * [StageFingerprints.layoutCompatibilityFingerprint]. It owns the
  * the persisted-layout track. It owns the single sources of truth for the
  * planner-side fingerprint inputs the renderer actually controls:
  *
@@ -21,13 +21,13 @@ import java.security.MessageDigest
  *    [TYPEFACE_STYLE], [PAINT_MEASUREMENT_FLAGS] — mirrors
  *    `TranslationOverlayView`: `R.font.animeace` forced to `Typeface.BOLD`,
  *    paints `ANTI_ALIAS|SUBPIXEL_TEXT`);
- *  - the conservative `platformShapingKey` ([platformShapingKey]) — Director
- *    decision 7.5 recommendation: the key includes the raw SDK int, so plans
- *    from any other platform value re-plan via the async fallback.
+ *  - the conservative `platformShapingKey` ([platformShapingKey]), which
+ *    includes the raw SDK version so plans from another platform re-plan via
+ *    the async fallback.
  *
  * Presentation transforms (SSIV zoom/pan/holder size/orientation) have NO
- * parameter in [StageFingerprints.layoutCompatibilityFingerprint] and none is
- * added here — they are structurally not fingerprint inputs (final-target §3).
+ * parameter in [StageFingerprints.layoutCompatibilityFingerprint] and are
+ * not fingerprint inputs.
  */
 object DrawPlanFingerprint {
 
@@ -61,7 +61,7 @@ object DrawPlanFingerprint {
     const val PAINT_MEASUREMENT_FLAGS: String = "ANTI_ALIAS|SUBPIXEL_TEXT"
 
     /**
-     * Conservative platform shaping key (Director decision 7.5): raw SDK int
+     * Conservative platform shaping key: raw SDK int
      * plus its [Build.VERSION_CODES] bucket name. Plans produced under a
      * different key are never accepted as compatible (async re-plan).
      */
@@ -112,10 +112,10 @@ object DrawPlanFingerprint {
     )
 
     /**
-     * 07 layout compatibility fingerprint. First seven parameters are
-     * the existing `StageFingerprints.layout` inputs (unchanged order); the
-     * remaining values are the FP-07 additions with the rendering-owned ones
-     * supplied from this object's constants. `platformShapingKey` defaults to
+     * Layout compatibility fingerprint. The first seven parameters are the
+     * existing `StageFingerprints.layout` inputs in their original order;
+     * additional rendering-owned values come from this object's constants.
+     * `platformShapingKey` defaults to
      * [platformShapingKey] (device build); tests pass explicit keys.
      */
     fun layoutCompatibilityFingerprint(

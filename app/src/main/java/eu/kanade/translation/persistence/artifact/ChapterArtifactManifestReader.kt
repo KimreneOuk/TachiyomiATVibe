@@ -9,10 +9,8 @@ internal data class ArtifactManifestProbe(
 )
 
 /**
- * Reads only the chapter artifact manifest header ( Phase 3b), moved
- * verbatim from the `ChapterTranslationStore` companion. The
- * `ChapterTranslationStore.probeArtifactManifest` seams stay in place for
- * callers and tests.
+ * Reads chapter artifact manifest metadata without opening page snapshots or
+ * referenced sidecars.
  */
 internal object ChapterArtifactManifestReader {
 

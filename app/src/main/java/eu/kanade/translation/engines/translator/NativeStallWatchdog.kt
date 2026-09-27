@@ -14,7 +14,7 @@ enum class NativeStallPhase {
 /**
  * Bounded, non-terminal observation of a native lane that outlived its result
  * timer. It is intentionally separate from page stage status: the invocation
- * remains alive in [eu.kanade.translation.scheduling.NativeRunQuarantine] until
+ * remains alive in [eu.kanade.translation.pipeline.execution.NativeRunQuarantine] until
  * its real exit, while this state refuses new interactive promises.
  */
 data class NativeStallState(

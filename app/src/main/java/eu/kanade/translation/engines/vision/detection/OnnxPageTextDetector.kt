@@ -20,7 +20,7 @@ class OnnxPageTextDetector {
     var executionProviderLabel: String = "uninitialized"
         private set
 
-    // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor (contract
+    // pooled DIRECT buffer for the fixed 1x3x640x640 tensor (contract
     // #12). Heap-backed buffers caused a per-call native-copy leak; maxPoolSize=2
     // bounds resident memory to two ~4.8 MiB buffers regardless of chapter length.
     private val inputBufferPool = DirectBufferPool(
@@ -66,7 +66,7 @@ class OnnxPageTextDetector {
         var inputBuffer: FloatBuffer? = null
 
         try {
-            // TachiyomiAT: ORT consumes the direct buffer in place (no native copy),
+            // ORT consumes the direct buffer in place (no native copy),
             // so it MUST outlive the tensor — keep referenced until the finally (#12).
             inputBuffer = inputBufferPool.acquire()
             inputTensor = preprocess(resized, inputBuffer)
@@ -118,7 +118,7 @@ class OnnxPageTextDetector {
         inputBufferPool.clear()
     }
 
-    // TachiyomiAT: frees the pooled direct buffer without tearing down the ONNX
+    // frees the pooled direct buffer without tearing down the ONNX
     // session; wired into per-page OOM relief (contracts #4/#10).
     fun reclaimPooledMemory() {
         inputBufferPool.clear()
@@ -128,7 +128,7 @@ class OnnxPageTextDetector {
         inputBufferPool.clear()
     }
 
-    // TachiyomiAT: NCHW [1,3,640,640] written channel-first into a pooled DIRECT
+    // NCHW [1,3,640,640] written channel-first into a pooled DIRECT
     // buffer (contract #12). Every position is overwritten each call, so the
     // pool's non-zeroed acquire is safe (contract #1).
     private fun preprocess(resized: Bitmap, floatBuf: FloatBuffer): OnnxTensor {

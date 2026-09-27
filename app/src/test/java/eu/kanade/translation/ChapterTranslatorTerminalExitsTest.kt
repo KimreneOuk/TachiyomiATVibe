@@ -5,12 +5,12 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.util.getChapterPages
 import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.shouldBe
@@ -38,11 +38,11 @@ import java.lang.reflect.Field
 import java.util.concurrent.TimeUnit
 
 /**
- *  slice 3 (contract items 1-2): exceptional exits of the chapter-level
+ * Exceptional exits of the chapter-level
  * batch runner produce a typed terminal tracker snapshot with the real reason
  * — never a live nonterminal `0/0` tracker, never a silent empty projection.
  *
- * Chapter page enumeration is stubbed at the [getChapterPages] top-level seam:
+ * Chapter page enumeration is replaced with a fake at the [getChapterPages] seam:
  * the real implementation filters through ImageUtil, whose class initializer
  * needs Android graphics and cannot load on the JVM.
  */
@@ -64,7 +64,7 @@ class ChapterTranslatorTerminalExitsTest {
     private val context = mockk<Context> {
         every { getSharedPreferences(any(), any()) } returns InMemorySharedPreferences()
     }
-    private val provider = mockk<TranslationProvider>(relaxed = true)
+    private val provider = mockk<TranslationFileProvider>(relaxed = true)
     private val downloadProvider = mockk<DownloadProvider>(relaxed = true)
     private val sourceManager = mockk<SourceManager>(relaxed = true)
     private val preferences = mockk<TranslationPreferences>(relaxed = true)

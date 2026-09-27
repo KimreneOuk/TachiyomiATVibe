@@ -18,12 +18,9 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 /**
- *  WP5 slice A: fake-analyzer coverage for the typed analysis client —
- * the V1..V9 hard-fail matrix ( all response-fatal), the
- * response taxonomy (MISSING_ONLY / AMBIGUOUS_PROTOCOL / TERMINAL_REFUSAL),
- * the summary-mode rule (Director redesign: any non-refusal body commits as
- * a free-form summary on the FIRST attempt — no reissue loop), and the
- * refusal no-auto-retry rule.
+ * Covers typed analysis validation: response-fatal fields, coverage
+ * classifications, summary handling on the first attempt, and the rule that
+ * terminal refusals are not retried.
  */
 class AnalysisChunkValidationTest {
 
@@ -394,8 +391,7 @@ class AnalysisChunkValidationTest {
     }
 
     // ------------------------------------------------------------------
-    // Wave-7c review F-1 regression: the transport makes the ONLY shared
-    // provider-bucket admission.
+    // The engine transport owns the single shared provider-bucket admission.
     // ------------------------------------------------------------------
 
     /**

@@ -39,7 +39,7 @@ class MangaOcrEngine : RoiOcrEngine {
     private val kCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
     private val vCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
 
-    // TachiyomiAT: pooled DIRECT buffer for the encoder input. FloatBuffer.wrap
+    // pooled DIRECT buffer for the encoder input. FloatBuffer.wrap
     // is heap-backed, forcing ORT to allocate a native copy per call that leaks
     // across recognize() calls (ORT #16937); a direct buffer is used in place.
     private val inputPixelPool = DirectBufferPool(3 * 224 * 224 * 4, maxPoolSize = 2)
@@ -56,7 +56,7 @@ class MangaOcrEngine : RoiOcrEngine {
                 "decoderStep=${decoderStepFile.absolutePath} (${decoderStepFile.length()}B exists=${decoderStepFile.exists()}), " +
                 "vocab=${vocabFile.absolutePath} (${vocabFile.length()}B exists=${vocabFile.exists()})"
         }
-        // TachiyomiAT: manga-ocr runs an autoregressive decoder loop on many
+        // manga-ocr runs an autoregressive decoder loop on many
         // tiny per-step graphlets. Keep it on the shared CPU-only ONNX runtime.
         val encoderOpts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = false)
         try {
@@ -108,12 +108,12 @@ class MangaOcrEngine : RoiOcrEngine {
 
         var inputTensor: OnnxTensor? = null
         var encResult: OrtSession.Result? = null
-        // TachiyomiAT: declared nullable outside try and assigned inside, so the
+        // declared nullable outside try and assigned inside, so the
         // pool acquire/release stays balanced even if a later line throws.
         var pixelBuffer: java.nio.FloatBuffer? = null
 
         try {
-            // TachiyomiAT: pooled DIRECT buffer avoids the per-call native copy
+            // pooled DIRECT buffer avoids the per-call native copy
             // (see inputPixelPool). The one-time 600 KiB memcpy is far cheaper
             // than the leak.
             pixelBuffer = inputPixelPool.acquire().apply {
@@ -274,7 +274,7 @@ class MangaOcrEngine : RoiOcrEngine {
             )
 
             for (stepIdx in 0 until MAX_GENERATION_LENGTH) {
-                // TachiyomiAT: bound pos by the 128-entry position-embedding
+                // bound pos by the 128-entry position-embedding
                 // table, NOT MAX_LEN (256, the KV-cache dim). pos==128 overflows
                 // node_embedding_1 -> native Gather throws -> chapter ERROR.
                 if (pos >= DECODER_POSITION_COUNT) break
@@ -298,7 +298,7 @@ class MangaOcrEngine : RoiOcrEngine {
                         }
                     }
 
-                    // N1-5: Graph convention writes KV slice at slot = pos - 1
+                    // The graph convention writes the KV slice at slot = pos - 1.
                     writeCacheAtSlot(stepResult[1] as OnnxTensor, selfKCacheBuf, pos - 1)
                     writeCacheAtSlot(stepResult[2] as OnnxTensor, selfVCacheBuf, pos - 1)
 
@@ -460,7 +460,7 @@ class MangaOcrEngine : RoiOcrEngine {
         private const val END_TOKEN = 3
         private const val MAX_LEN = 256
 
-        // TachiyomiAT: real decode ceiling. The gpt2 position-embedding Gather
+        // real decode ceiling. The gpt2 position-embedding Gather
         // (node_embedding_1) has 128 entries; pos==128 overflows it and crashes
         // the chapter. MAX_LEN (256) is only the KV-cache dim, not a safe bound.
         private const val DECODER_POSITION_COUNT = 128

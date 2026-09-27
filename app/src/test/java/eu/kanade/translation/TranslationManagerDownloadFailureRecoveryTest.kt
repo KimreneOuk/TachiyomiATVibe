@@ -8,7 +8,7 @@ import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestRecord
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
-import eu.kanade.translation.scheduling.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.workflow.ChapterTranslator
@@ -159,7 +159,7 @@ class TranslationManagerDownloadFailureRecoveryTest {
         mockkObject(TranslationForegroundService.Companion)
         every { TranslationForegroundService.start(any()) } just runs
         try {
-            //  slice 2: the completion callback is generation-fenced, so the
+            // The completion callback is generation-fenced, so the
             // recovery first re-attaches the request to the download (the same
             // WAITING write the retry path performs).
             manager.queueTranslationAfterDownload(manga, chapter)
@@ -229,7 +229,7 @@ class TranslationManagerDownloadFailureRecoveryTest {
         setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
         setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "pendingRequestMutationLock", Any())
-        //  slice 2: generation/attach/group state the coordinator resolves.
+        // Seed the request-generation and download-attachment state resolved by the coordinator.
         setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
         setField(manager, "pendingGroupIdSequence", AtomicLong(0))

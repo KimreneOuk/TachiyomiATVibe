@@ -12,12 +12,12 @@ import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
 import eu.kanade.translation.engines.inpainting.bubble.SmartBubbleTextCleaner
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
+import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.DeviceCapability
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.QnnContextCacheManager
-import eu.kanade.translation.util.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -38,7 +38,7 @@ class AOTInpainting(
         private const val MAX_INFERENCE_DIM = 768
         private const val MAX_TOTAL_PIXELS = MAX_INFERENCE_DIM * MAX_INFERENCE_DIM
 
-        // TachiyomiAT: PaddleOCR-v6 solid-box erase-mask tunables. Defaults match
+        // PaddleOCR-v6 solid-box erase-mask tunables. Defaults match
         // the validated prototype; kept
         // internal (no settings surface).
         private const val PADDLE_CROP_PAD = 12
@@ -53,7 +53,7 @@ class AOTInpainting(
         private const val REPORT_PUSH_PULL_CONTEXT = 64
         internal const val BUBBLE_SEG_MASK_EROSION = 5
 
-        // TachiyomiAT: distance-field feather ramp (px) blending the neural
+        // distance-field feather ramp (px) blending the neural
         // output with the page. Replaces the earlier 2–6px box-blur cliff that
         // exposed the erase-box rectangle. See [BubbleMaskBuilder.featherAlphaField].
         private const val FEATHER_RAMP_PX = 12
@@ -61,7 +61,7 @@ class AOTInpainting(
 
     private val scratchLock = Any()
 
-    // TachiyomiAT: pooled DIRECT buffers for the variable-shape inpaint tensors
+    // pooled DIRECT buffers for the variable-shape inpaint tensors
     // (memory: maxPoolSize=2 bounds resident native memory; the active infer
     // region is exposed via the buffer limit).
     private val imgInputPool = DirectBufferPool(
@@ -219,7 +219,7 @@ class AOTInpainting(
     }
 
     private fun initializeStrictNnapiSession(modelFile: File?): OrtSession? {
-        val memory = TranslationMemoryBudget.nnapiMemorySnapshot()
+        val memory = EngineMemoryBudget.nnapiMemorySnapshot()
         val providers = try {
             OrtEnvironment.getAvailableProviders()
         } catch (error: Throwable) {
@@ -686,7 +686,7 @@ class AOTInpainting(
             ?: return image
         val side = crop[2] - crop[0]
         if (side <= 0 || crop[3] - crop[1] != side) return image
-        val memoryDecision = TranslationMemoryBudget.neuralInpaintDecision(
+        val memoryDecision = EngineMemoryBudget.neuralInpaintDecision(
             pageWidth = image.width,
             pageHeight = image.height,
             cropWidth = side,
@@ -694,7 +694,7 @@ class AOTInpainting(
             sessionCount = neuralSessionCount(),
         )
         if (!memoryDecision.canRun) {
-            TranslationMemoryBudget.logSnapshot(
+            EngineMemoryBudget.logSnapshot(
                 tag = "skip_report_aot",
                 width = image.width,
                 height = image.height,
@@ -706,7 +706,7 @@ class AOTInpainting(
             )
             return inpaintReportFreeTextFast(image, boxes)
         }
-        TranslationMemoryBudget.logSnapshot(
+        EngineMemoryBudget.logSnapshot(
             tag = "run_report_aot",
             width = image.width,
             height = image.height,
@@ -790,7 +790,7 @@ class AOTInpainting(
         side: Int,
     ): AotFallbackCoordinator.CandidateResult {
         val nnapiSession = fixedNnapiSession
-        val memory = TranslationMemoryBudget.nnapiMemorySnapshot()
+        val memory = EngineMemoryBudget.nnapiMemorySnapshot()
         val useNnapi = nnapiSession != null &&
             NnapiCapabilityGate.decide(
                 NnapiCapabilityGate.Snapshot(
@@ -1405,7 +1405,7 @@ class AOTInpainting(
             val candidate = scaled
             val guardStats = isSuspiciousUniformOutput(candidate, maskBitmap, maskAlreadyCropped, xMin, yMin, cropWidth, cropHeight)
             if (guardStats != null) {
-                // TachiyomiAT: rejection covers near-BLACK too (a uniform black
+                // rejection covers near-BLACK too (a uniform black
                 // block is the documented failure for oversized/long masks where
                 // cropMargin→0 and the model collapses to ~0). Route to cleanRegions
                 // so the page degrades visibly rather than showing a solid rectangle.
@@ -1442,7 +1442,7 @@ class AOTInpainting(
             imgBuffer?.let { imgInputPool.release(it) }
             maskBuffer?.let { maskInputPool.release(it) }
             if (blended != null) BitmapPool.putARGB8888(blended)
-            // TachiyomiAT: scaled is a fresh bitmap (not an alias of resultBitmap)
+            // scaled is a fresh bitmap (not an alias of resultBitmap)
             // after the normalization step above, so it is released separately.
             if (scaled != null) BitmapPool.putARGB8888(scaled)
             if (resultBitmap != null) BitmapPool.putARGB8888(resultBitmap)
@@ -1465,7 +1465,7 @@ class AOTInpainting(
         width: Int,
         height: Int,
     ): AotOutputGuard.GuardStats? {
-        // TachiyomiAT: clamp the read region to the actual bitmap bounds as a
+        // clamp the read region to the actual bitmap bounds as a
         // safety net (a delegate shape mismatch / OOM partial fill could produce
         // a smaller bitmap; the guard result on the visible region is still valid).
         val inpW = min(width, inpainted.width)
@@ -1475,7 +1475,7 @@ class AOTInpainting(
         val safeW = min(inpW, mskW)
         val safeH = min(inpH, mskH)
 
-        // TachiyomiAT: size buffers to the ACTUAL read region, not the pooled
+        // size buffers to the ACTUAL read region, not the pooled
         // MAX_TOTAL_PIXELS. width/height are unbounded CROP dims (cropMargin can
         // exceed MAX_INFERENCE_DIM); reading them into the pooled buffer overflows
         // → ArrayIndexOutOfBoundsException that crashed inpaint on large text
@@ -1505,7 +1505,7 @@ class AOTInpainting(
         rampWidth: Int = FEATHER_RAMP_PX,
     ): Bitmap {
         val result = BitmapPool.getARGB8888(width, height)
-        // TachiyomiAT: size buffers to the ACTUAL crop dims, not the pooled
+        // size buffers to the ACTUAL crop dims, not the pooled
         // MAX_TOTAL_PIXELS — cropMargin can push the crop past the pool cap and
         // overflow (the page-24 inpaint crash). Transient alloc above the cap.
         val blendSize = width * height
@@ -1515,7 +1515,7 @@ class AOTInpainting(
 
         original.getPixels(origPixels, 0, width, xMin, yMin, width, height)
 
-        // TachiyomiAT: clamp the inpainted bitmap read to its actual size.
+        // clamp the inpainted bitmap read to its actual size.
         // The unconditional normalization in inpaint() makes the inpainted
         // bitmap cropW × cropH, but this clamp is a last-resort safety net.
         val inpW = min(width, inpainted.width)
@@ -1540,7 +1540,7 @@ class AOTInpainting(
             mask.getPixels(maskPixels, 0, width, xMin, yMin, width, height)
         }
 
-        // TachiyomiAT: distance-field feather. The old box-average alpha was a
+        // distance-field feather. The old box-average alpha was a
         // thin cliff that exposed the box rectangle; the chamfer transform gives
         // a smooth monotonic alpha ramp over FEATHER_RAMP_PX from the mask edge.
         val maskBytes = ByteArray(blendSize)
@@ -1595,7 +1595,7 @@ class AOTInpainting(
     }
 
     /**
-     * TachiyomiAT: drop cross-call working buffers while staying usable.
+     * drop cross-call working buffers while staying usable.
      * [SmartBubbleTextCleaner] retains its largest-seen IntArray pair for the
      * session, pinning large heap arrays after a dense early page; on OOM
      * recovery the next inpaint reallocates a buffer sized to the page it sees.

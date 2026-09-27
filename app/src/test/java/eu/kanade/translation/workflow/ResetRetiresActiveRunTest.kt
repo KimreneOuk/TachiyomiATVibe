@@ -16,9 +16,9 @@ import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -141,7 +141,7 @@ class ResetRetiresActiveRunTest {
             disposeBatchTrackerFn = {},
             unregisterActiveTranslationStoreFn = {},
             streamRegistryProvider = { mockk<TranslationStreamRegistry>(relaxed = true) },
-            providerProvider = { mockk<TranslationProvider>(relaxed = true) },
+            providerProvider = { mockk<TranslationFileProvider>(relaxed = true) },
             retireChapterCompanionImagesFn = { _, _, _ -> },
             retirePageCompanionImageFn = { _, _, _, _, _ -> },
             durableStatusResolverProvider = { mockk<DurableChapterStatusResolver>(relaxed = true) },

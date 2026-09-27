@@ -31,8 +31,8 @@ object OnnxRuntimeProvider {
     }
 
     /**
-     *  Phase 5 (plan §3.4): typed execution-provider registration result.
-     * Reported by [createSessionOptionsWithRegistration] from what actually
+     * Typed execution-provider registration result, reported by
+     * [createSessionOptionsWithRegistration] from what actually
      * registered on the built options — never from
      * [HardwareDiscoveryEngine.activeRoute], which is device preference only.
      * The wire label (`providerSink` value) is the lowercase [wireLabel].
@@ -52,7 +52,7 @@ object OnnxRuntimeProvider {
     /**
      * Session options together with the execution provider that actually
      * registered on them. [registered] is a registration fact only — it is
-     * NOT execution proof (plan amendment §10.8); provenance requires
+     * NOT execution proof; provenance requires
      * [ModelRoutingEngine.recordSuccessfulInference] after a real run.
      */
     class SessionOptionsWithRegistration(
@@ -61,8 +61,8 @@ object OnnxRuntimeProvider {
     )
 
     /**
-     *  Phase 5 (plan §3.4): a STRICT accelerator execution provider failed
-     * to register while building session options. The options are already
+     * A strict accelerator execution provider failed to register while
+     * building session options. The options are already
      * closed by the builder when this is thrown; [OnnxRuntimeProvider.createSessionWithFallback]
      * owns the CPU retry so a default-CPU session can never masquerade as the
      * requested accelerator.
@@ -100,9 +100,8 @@ object OnnxRuntimeProvider {
     ): Map<String, String> = buildGenericHtpOptions(socModel = socModel, htpArch = htpArch)
 
     /**
-     *  Phase 5 (plan §3.4): typed options build used by the generic
-     * orchestration core; [OnnxRuntimeProvider.SessionOptionsWithRegistration]
-     * is its native-typed form.
+     * Generic typed options build. [OnnxRuntimeProvider.SessionOptionsWithRegistration]
+     * is its ONNX Runtime-specific form.
      */
     internal class ProviderOptionsBuild<O>(
         val options: O,
@@ -110,7 +109,7 @@ object OnnxRuntimeProvider {
     )
 
     /**
-     *  Phase 5 (plan §3.4): pure, ORT-free core of the
+     * Pure, ONNX Runtime-free core of the
      * [createSessionWithFallback] main path, generic over the concrete
      * option/session types so JVM provenance tests can drive it with inert
      * tokens (ai.onnxruntime classes refuse to initialize off-device — their
@@ -205,14 +204,14 @@ object OnnxRuntimeProvider {
      *
      * [providerSink] receives the provider that actually served the session
      * ("qnn_htp", "qnn_gpu", "nnapi", "xnnpack", or "cpu") for honest
-     * per-engine route logging.  Phase 5 (plan §3.4): the label is the
+     * per-engine route logging. The label is the
      * TYPED registration result of the options actually used — it NEVER
      * derives from [HardwareDiscoveryEngine.activeRoute] alone — and it is
      * emitted only after `createSession` succeeds. A strict accelerator
      * registration failure is owned here: the retry session is created on the
      * default CPU EP and labelled `cpu`, never the requested accelerator.
-     * Session creation proves SESSION_CREATED, not execution (plan §3.3):
-     * routing support is marked only by
+     * Session creation does not prove inference succeeded. Routing support is
+     * marked only by
      * [ModelRoutingEngine.recordSuccessfulInference] after a real run.
      */
     fun createSessionWithFallback(
@@ -234,9 +233,8 @@ object OnnxRuntimeProvider {
         } else {
             HardwareDiscoveryEngine.activeRoute
         }
-        //  Phase 5 (plan §3.3): the attempt gate is the coherent
-        // accelerator gate — TEMPORARY_FAILURE still owns its one documented
-        // recreation attempt (bounded by the SSR retry counter).
+        // The accelerator attempt gate also allows the bounded recreation
+        // attempt for TEMPORARY_FAILURE.
         val canUseAccelerator = useAccelerator &&
             route != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK &&
             ModelRoutingEngine.isAcceleratorAttemptAllowed(modelName, route)
@@ -455,18 +453,13 @@ object OnnxRuntimeProvider {
         }
 
     /**
-     *  Phase 5 (plan §3.4): [createSessionOptions] plus a TYPED
-     * registration result describing what actually registered on the built
-     * options. Behavior is otherwise byte-identical to the pre-Phase-5
-     * builder — same logs, same option code — except:
-     * - a STRICT accelerator registration failure (QNN HTP / QNN GPU /
-     *   NNAPI) now PROPAGATES as [AcceleratorRegistrationException] (options
-     *   closed first) instead of being swallowed into a default-CPU session
-     *   that would masquerade as the accelerator — the caller
-     *   ([createSessionWithFallback]) owns the CPU retry;
-     * - an XNNPACK registration failure explicitly resolves to
-     *   [RegisteredExecutionProvider.CPU] (the default CPU EP stays in use)
-     *   instead of only being logged.
+     * Builds session options and returns the typed registration result for
+     * the provider that was added. A strict accelerator registration failure
+     * propagates as [AcceleratorRegistrationException] (options are closed
+     * first) so the caller ([createSessionWithFallback]) owns the CPU retry.
+     * An XNNPACK registration failure resolves to
+     * [RegisteredExecutionProvider.CPU] because the default CPU provider
+     * remains in use.
      */
     fun createSessionOptionsWithRegistration(
         useAccelerator: Boolean = false,
@@ -500,8 +493,8 @@ object OnnxRuntimeProvider {
                 logcat(LogPriority.INFO) { "ONNX session options using CPU execution provider" }
         }
 
-        //  Phase 5 (plan §3.4): strict registration failures propagate to
-        // the session creator; XNNPACK failures resolve to CPU.
+        // Strict accelerator registration failures propagate to the session
+        // creator; XNNPACK failures resolve to CPU.
         var strictRegistrationFailure: Pair<HardwareDiscoveryEngine.HardwareRoute, Throwable>? = null
         var xnnpackRegistrationFailed = false
 
@@ -586,8 +579,7 @@ object OnnxRuntimeProvider {
                         addXnnpack(java.util.HashMap<String, String>())
                         logcat(LogPriority.INFO) { "Successfully added XNNPACK EP" }
                     }.onFailure { e ->
-                        //  Phase 5 (plan §3.4): the failure no longer stops
-                        // at logging — the options keep the default CPU EP and
+                        // The options keep the default CPU provider and
                         // the reported registration resolves to CPU so the
                         // session is labelled honestly.
                         xnnpackRegistrationFailed = true

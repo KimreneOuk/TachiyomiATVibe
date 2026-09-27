@@ -6,11 +6,8 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 
 /**
- * One durable pending-request record ( slice 2).
- *
- * Backward compatible with the legacy format (phase + free-text reason only):
- * entries written before slice 2 parse with [generation] 0, no group, no
- * timestamps and failure kind [TranslationRequestFailureKind.NONE].
+ * One durable pending-request record. Older phase-and-reason entries read with
+ * generation 0, no group or timestamps, and failure kind [TranslationRequestFailureKind.NONE].
  */
 data class TranslationPendingRequestRecord(
     val chapterId: Long,
@@ -101,28 +98,6 @@ class TranslationPendingRequestStore(
                 putLong(updatedAtKey(record.chapterId), record.updatedAtEpochMs)
             }
         }
-    }
-
-    /**
-     * Legacy phase/reason write kept for compatibility: preserves the
-     * record's generation/group and refreshes its timestamps.
-     */
-    @Synchronized
-    fun add(chapterId: Long, phase: TranslationRequestPhase, reason: String?) {
-        val existing = record(chapterId)
-        val now = System.currentTimeMillis()
-        add(
-            TranslationPendingRequestRecord(
-                chapterId = chapterId,
-                phase = phase,
-                reason = reason,
-                generation = existing?.generation ?: generation(chapterId),
-                groupId = existing?.groupId,
-                failureKind = existing?.failureKind ?: TranslationRequestFailureKind.NONE,
-                createdAtEpochMs = existing?.createdAtEpochMs ?: now,
-                updatedAtEpochMs = now,
-            ),
-        )
     }
 
     @Synchronized

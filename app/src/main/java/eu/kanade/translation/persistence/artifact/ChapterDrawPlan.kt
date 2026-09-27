@@ -3,13 +3,11 @@ package eu.kanade.translation.persistence.artifact
 import kotlinx.serialization.Serializable
 
 /**
- *  Stage 1 (schemas contract §1.6/§1.7): the versioned, immutable
- * per-page persisted draw-plan DTO and the separately invalidatable
- * color/style sub-result (WP8 prototype data; fingerprint functions are Phase
- * 2). These DTOs deliberately do NOT serialize `BlockLayout`,
- * `TranslationBlock`, or mask objects (final-target-migration §1) — paint-only
- * values live exclusively in [ColorStylePreparation], and all coordinates
- * stay in source-image space.
+ * Versioned, immutable per-page draw-plan DTO and its separately
+ * invalidatable color/style sub-result. These DTOs deliberately do not
+ * serialize `BlockLayout`, `TranslationBlock`, or mask objects. Paint-only
+ * values live in [ColorStylePreparation], and all coordinates stay in
+ * source-image space.
  *
  * Serialized only through the shared [ArtifactDocumentJson] instance
  *
@@ -73,7 +71,7 @@ data class DrawPlanPositionedLine(
 /** Horizontal alignment of the drawn block. */
 enum class DrawPlanAlign { CENTER, LEFT, RIGHT }
 
-/** One persisted draw-plan block (schemas contract §1.6). */
+/** One persisted draw-plan block. */
 @Serializable
 data class DrawPlanBlock(
     /** OCR canonical block id. */
@@ -136,7 +134,7 @@ data class PageLayoutDrawPlan(
     val strokeColorPolicyVersion: Int,
     val blocks: List<DrawPlanBlock>,
 ) {
-    /** 01/SC-02 semantic validation; null when the document is usable. */
+    /** Returns null when this document is semantically usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"
@@ -217,7 +215,7 @@ data class ColorStylePreparation(
     val pageHeight: Float,
     val blocks: List<ColorStyleEntry>,
 ) {
-    /** 01/SC-02 semantic validation; null when the document is usable. */
+    /** Returns null when this document is semantically usable. */
     fun validationError(): String? {
         if (schemaVersion != SCHEMA_VERSION) return "unsupported schemaVersion: $schemaVersion"
         if (kind != KIND) return "wrong kind: $kind"

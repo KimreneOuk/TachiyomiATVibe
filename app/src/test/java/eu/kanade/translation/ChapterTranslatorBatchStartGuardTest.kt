@@ -4,10 +4,10 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -23,7 +23,7 @@ import java.lang.reflect.Field
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- *  hotfix regression guards for the batch start admission path:
+ * Regression guards for batch start admission:
  * - a generic queue start must not resurrect an ERROR-restored queue entry
  *   (restore work resumes only through an explicit per-chapter request);
  * - an admission for a chapter whose batch is still in flight must be a no-op
@@ -50,7 +50,7 @@ class ChapterTranslatorBatchStartGuardTest {
     private val context = mockk<Context> {
         every { getSharedPreferences(any(), any()) } returns InMemorySharedPreferences()
     }
-    private val provider = mockk<TranslationProvider>(relaxed = true)
+    private val provider = mockk<TranslationFileProvider>(relaxed = true)
     private val downloadProvider = mockk<DownloadProvider>(relaxed = true)
     private val sourceManager = mockk<SourceManager>(relaxed = true)
     private val preferences = mockk<TranslationPreferences>(relaxed = true)

@@ -7,8 +7,7 @@ import eu.kanade.translation.persistence.artifact.PlannedEnvelope
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 
 /**
- *  WP3 (pure planner, S4): global multi-budget whole-page envelope
- * planning (design §8, schemas contract §1.5).
+ * Global multi-budget whole-page envelope planning.
  *
  * Deterministic, native-free and provider-free. Operates on lightweight
  * per-page OCR planning data and produces the durable [EnvelopePlan] before
@@ -20,8 +19,7 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
  *   (product invariant);
  * - budgets: structural caps of [EnvelopePlannerPolicy.maxBlocksPerEnvelope]
  *   blocks and [EnvelopePlannerPolicy.maxContributingPages] contributing
- *   pages per envelope (design §8 "approximately 32 blocks and 8 contributing
- *   pages as a starting experiment"), with token checks stricter;
+ *   pages per envelope, with token checks applied as an additional limit;
  * - scene preference: a frozen-profile scene start closes the current
  *   envelope when preferred (design §8: scene boundary is a preference, not
  *   a correctness fence);
@@ -30,20 +28,18 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
  * - deterministic tie-breaks: pages in proven natural order (else sorted
  *   pageKey), blocks in reading order — input iteration order never matters.
  *
- * No IO, no coroutines; serialization is touched only to compute the content
- * fingerprint  and the bounded-size sanity check.
+ * No IO or coroutines; serialization is used only to compute the content
+ * fingerprint and check the bounded plan size.
  */
 
 /**
- * Envelope policy constants (design §8). All numbers are MEASURED-EXPERIMENT
- * constants (PROPOSED-GATE), never product constants and never feature flags
- * ( split; invalidation matrix row 7: envelope-policy-only changes
- * must not invalidate compatible translations).
+ * Envelope packing limits. Policy changes affect future grouping and do not
+ * invalidate compatible page translations.
  */
 data class EnvelopePlannerPolicy(
-    /** Structural block budget per envelope (design §8 experiment: 12). */
+    /** Structural block budget per envelope. */
     val maxBlocksPerEnvelope: Int = 12,
-    /** Contributing-page budget per envelope (design §8 experiment: 3). */
+    /** Contributing-page budget per envelope. */
     val maxContributingPages: Int = 3,
     /** Estimated source-token input budget (always stricter than context ceiling). */
     val maxEstimatedInputTokens: Int = 4_096,
@@ -53,7 +49,7 @@ data class EnvelopePlannerPolicy(
      * the safety margin, so envelopes pack adaptively to what one response
      * can carry. Estimator v2's honest per-block output makes this ceiling
      * split text-heavy groups at PLAN time instead of shipping a request
-     * whose response cannot fit (device fix 2026-09-17).
+     * whose response cannot fit.
      */
     val maxEstimatedOutputTokens: Int = 3_584,
     /**
@@ -370,10 +366,9 @@ object GlobalEnvelopePlanner {
     }
 
     /**
-     * 08 composite input fingerprint: corpus slice + pending-block
-     * set + envelope policy. Encoding lives in the single consolidated
-     * [StageFingerprints] core (wave-2 review F2 — the former planner-local
-     * `PlannerFingerprints` hasher was byte-identical and is retired).
+     * Composite input fingerprint over the corpus, pending-block set, and
+     * envelope policy. [StageFingerprints] owns the canonical encoding used
+     * by all persisted fingerprints.
      */
     private fun planInputFingerprint(
         ordered: List<EnvelopePlannerPage>,

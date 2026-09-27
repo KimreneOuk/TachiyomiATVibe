@@ -26,13 +26,10 @@ import org.junit.jupiter.api.Test
  * 7.3/7.4 JVM-testable substance): the FULL persisted-layout round trip
  * THROUGH THE STORE — plan + color preparation assembly
  * ([LayoutPlanPublication.prepare]), sidecar-then-pointer publication
- * ([ChapterArtifactEngine.publishSidecarPointers], exactly the transaction
- * BatchRenderJoin performs behind ), store-backed hydration through the
- * `readOcrCheckpoint`-idiom generic reader, and
- * [LayoutDrawPlanProjection.rehydrate] — reproduces the planner geometry
- * EXACTLY (floats bit-for-bit via `toRawBits`), or reports a typed loss
- * (wave-2 review F5) that the caller must fall back on. Never a silent
- * partial draw.
+ * ([ChapterArtifactEngine.publishSidecarPointers]), store-backed hydration,
+ * and [LayoutDrawPlanProjection.rehydrate]. Rehydration reproduces planner
+ * geometry exactly (floats bit-for-bit via `toRawBits`) or reports typed loss
+ * so the caller can fall back; it never silently draws partial output.
  */
 class DrawPlanDtoRoundTripTest {
 

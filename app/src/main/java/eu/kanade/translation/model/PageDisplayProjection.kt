@@ -1,8 +1,5 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.PageArtifactRecord
-
 /**
  * The single readiness projection shared by batch progress and the reader.
  *
@@ -21,57 +18,6 @@ data class PageDisplayProjection(
 
     /** A textless terminal page is processed but is not translated-ready. */
     val isTextless: Boolean get() = state == PageDisplayState.TEXTLESS_COMPLETE
-
-    companion object {
-        fun from(page: PageTranslation): PageDisplayProjection = page.singlePageProjection()
-
-        fun from(
-            candidate: PageTranslation,
-            committed: PageTranslation?,
-        ): PageDisplayProjection = candidate.toPageDisplayProjection(committed)
-
-        /**
-         * Project the durable manifest record when a caller has no live-page
-         * snapshot. The committed pointer and validated display base are both
-         * required before a page can count as translated-ready.
-         */
-        fun from(record: PageArtifactRecord): PageDisplayProjection {
-            val committed = record.committed
-            val committedBaseValid = committed?.displayBase?.validated == true
-            val committedDisplayState = record.displayState
-            val committedStagesValid =
-                record.inpaint?.status in
-                    setOf(
-                        ArtifactStageStatus.READY,
-                        ArtifactStageStatus.SKIPPED,
-                    ) &&
-                    record.translation?.status in
-                    setOf(
-                        ArtifactStageStatus.READY,
-                        ArtifactStageStatus.PARTIAL,
-                    ) &&
-                    record.layout?.status == ArtifactStageStatus.READY
-            val hasCommittedDisplay =
-                committed != null &&
-                    committedBaseValid &&
-                    (committedDisplayState != PageDisplayState.DISPLAY_READY || committedStagesValid) &&
-                    committedDisplayState.hasCommittedDisplay
-            val processed =
-                committedDisplayState in
-                    setOf(
-                        PageDisplayState.DISPLAY_READY,
-                        PageDisplayState.FAILED_WITH_COMMITTED_RESULT,
-                        PageDisplayState.FAILED_NO_RESULT,
-                        PageDisplayState.TEXTLESS_COMPLETE,
-                    )
-
-            return PageDisplayProjection(
-                state = committedDisplayState,
-                displayReady = hasCommittedDisplay,
-                processed = processed,
-            )
-        }
-    }
 }
 
 /**

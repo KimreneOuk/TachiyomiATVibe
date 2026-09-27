@@ -76,7 +76,7 @@ data class ProviderQuotaPolicy(
     val quotaCooldownMs: Long = 60_000L,
     val windowMs: Long = 60_000L,
     /**
-     *  Phase 3 ( §2.1): fraction of the token window held back for
+     * Fraction of the token window held back for
      * INTERACTIVE (reader) requests while one waits. While the bucket holds a
      * waiting INTERACTIVE request, a BACKGROUND request's effective token
      * limit shrinks to `tokensPerMinute * (1 - fraction)` and its request
@@ -449,7 +449,7 @@ class ProviderRequestGovernor(
         }
 
         val tokenCost = waiter.metadata.estimatedTokens
-        //  Phase 3 ( §2.1): while the bucket holds at least one waiting
+        // While the bucket holds at least one waiting
         // INTERACTIVE request, a BACKGROUND request sees reduced limits so a
         // draining batch cannot consume the reader's headroom. Interactive
         // requests always ride the full window, and the reduced token limit
@@ -698,9 +698,9 @@ object SharedProviderRequestGovernor {
 }
 
 /**
- *  DR-C/DR-D (Stage 5): the Batch aggregate sub-limit. ONE allowance per
- * credential, shared by ALL Batch traffic (analysis chunks and, from Stage 6,
- * Batch translation envelopes) — never two pools of 15. A measured constant,
+ * The Batch aggregate sub-limit allows one request per credential, shared by
+ * all Batch traffic (analysis chunks and translation envelopes) — never two
+ * separate pools. A measured constant,
  * not a flag; Manual/Auto/reader INTERACTIVE requests never enter this bucket.
  *
  * Mechanism (DR-D, accepted recommendation): a SECOND rolling-window
@@ -757,10 +757,9 @@ object BatchProviderSublimit {
  * structurally unaffected; the bucket-1 interactive reserve and starvation
  * guard are untouched.
  */
-//  Stage 7: `open` ONLY so the coordinator can wrap the gate with the
-// OverlapScheduler's remote-window signalling subclass (gate 6.5 evidence).
-// Admission semantics are untouched; the default construction behaves
-// byte-identically.
+// `open` so the coordinator can wrap the gate with the overlap scheduler's
+// remote-window signalling subclass. Admission semantics remain unchanged;
+// default construction uses this implementation directly.
 open class BatchRequestSublimitGate(
     private val clock: ProviderRequestClock = SystemProviderRequestClock,
 ) {
@@ -798,7 +797,7 @@ open class BatchRequestSublimitGate(
 }
 
 /**
- *  wave-4 F-W4-2: the process-wide Batch sub-limit gate. The sub-limit is
+ *  the process-wide Batch sub-limit gate. The sub-limit is
  * ONE allowance per credential (DR-C) — every production Batch executor must
  * share THIS gate exactly like [SharedProviderRequestGovernor]; a per-instance
  * default would create independent 15-RPM pools ("two pools of 15"). Test

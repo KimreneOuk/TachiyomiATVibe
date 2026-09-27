@@ -21,7 +21,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * TachiyomiAT: PP-OCRv6 small **detection** ONNX engine.
+ * PP-OCRv6 small **detection** ONNX engine.
  *
  * Runs the DB (Differentiable Binarization) text-line detector on a single
  * bitmap crop and returns the text-line boxes in **crop pixel coords**. The det
@@ -65,7 +65,7 @@ class PaddleOcrV6DetEngine : Closeable {
     @Volatile
     private var closed: Boolean = false
 
-    // TachiyomiAT: pooled DIRECT buffer for the det input. A heap-backed wrap()
+    // pooled DIRECT buffer for the det input. A heap-backed wrap()
     // forces ORT to allocate a per-call native copy that leaks across det calls
     // (ORT #16937). Mirrors MangaOcrEngine.inputPixelPool.
     private val inputPixelPool = DirectBufferPool(3 * TARGET * TARGET * 4, maxPoolSize = 2)
@@ -142,7 +142,7 @@ class PaddleOcrV6DetEngine : Closeable {
         var inputTensor: OnnxTensor? = null
         var result: OrtSession.Result? = null
         try {
-            // TachiyomiAT: preprocess writes NCHW straight into the pooled direct
+            // preprocess writes NCHW straight into the pooled direct
             // buffer. See inputPixelPool for the leak rationale.
             pixelBuffer = inputPixelPool.acquire()
             pixelBuffer.clear()

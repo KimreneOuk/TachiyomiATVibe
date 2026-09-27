@@ -59,10 +59,9 @@ class ProviderRequestGovernorReservationTest {
     }
 
     /**
-     * Builds the §2.1 policy. The reserve fraction is the LAST constructor
-     * parameter; at RED the parameter does not exist and this bridge fails
-     * with an assertion naming the missing seam (never a compile-time
-     * dependency on commit 4).
+     * Builds the policy with the configurable interactive-token reserve.
+     * Reflection keeps the test focused on this constructor seam without
+     * coupling the other quota-contract tests to it.
      */
     internal fun d6PolicyWithReserve(
         requestsPerMinute: Int = 8,
@@ -116,9 +115,8 @@ class ProviderRequestGovernorReservationTest {
     )
 
     /**
-     * The CURRENT 9-parameter policy for the non-regression guards (2–4):
-     * they pin governor shapes the reserve must not change, so they must NOT
-     * depend on the §2.1 seam and stay green at RED.
+     * Builds the policy without a reserve override for tests that pin the
+     * existing quota behavior independently of the new reserve seam.
      */
     internal fun plainD6Policy(
         requestsPerMinute: Int = 8,

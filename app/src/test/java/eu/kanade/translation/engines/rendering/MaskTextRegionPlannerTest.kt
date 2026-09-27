@@ -8,7 +8,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- *  slice 3: pure [MaskTextRegionPlanner] partitioning contract — disjoint
+ * Pure [MaskTextRegionPlanner] partitioning contract — disjoint
  * half-open cells, exact dead zones, parent-bias rules, equal-width fallback,
  * per-component independence, explicit empty cells, the 8-block optimization
  * cap, the page cell-span budget fallback, and [collisionGapPx] clamping.
@@ -324,7 +324,7 @@ class MaskTextRegionPlannerTest {
 
     @Test
     fun `vertical partition of two stacked members yields exact slabs and dead rows`() {
-        // Slice-3 review NOTE 1 ride-along: the vertical branch (Y spread >
+        // The vertical branch (Y spread >
         // X spread, cuts on y, dead ROWS between slabs). Centers 30/70 → cut
         // 50; gap 2 → slabs [0,49) and [51,100) × full x, dead rows {49,50}.
         val component = region(0, 0, 100, 100, fullRowSpans(0, 100, 0, 100))

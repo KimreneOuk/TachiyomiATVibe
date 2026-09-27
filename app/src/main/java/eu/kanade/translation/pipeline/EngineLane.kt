@@ -10,7 +10,7 @@ import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.scheduling.NativeRunQuarantine
+import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -27,20 +27,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Native lane + engine cache moved from `TranslationPipeline` ( Phase 10).
- * Owns the sole native-permit admission wrapper, the 8 cached engine fields,
- * the full config signature, the engine factories, and the defensive `init`
- * (invalid config at construction must not crash the eagerly built pipeline).
- * The native run scope/quarantine, the in-flight page-key set, and the
- * [onPageStuck] callback stay pipeline-owned and are injected here.
- *
- *  The lane also owns the engine EPOCH
- * (bumped only by [closeEngines]) and the translator BORROW registry
- * ([beginTranslatorUse]/[endTranslatorUse]) that make in-flight reader work
- * observable to the stop path, plus the bounded NON-BLOCKING borrow drain:
- * [closeEngines] snapshots the exact engine references and closes THOSE under
- * the permit — after a bounded grace, or immediately when the lane is idle.
- * A rebuild must never observe the drain close its NEW engines.
+ * Owns native-engine creation, cached instances, native-permit admission, and
+ * engine lifecycle. Translator borrow tracking lets the stop path observe
+ * in-flight reader work. [closeEngines] snapshots exact engine references and
+ * closes those under the permit after a bounded grace period; a rebuild must
+ * never observe the drain closing its new engines. The pipeline owns the
+ * native run scope, quarantine, in-flight page set, and [onPageStuck] callback.
  */
 internal class EngineLane(
     private val context: Context,
@@ -48,8 +40,7 @@ internal class EngineLane(
     private val nativeRunQuarantine: NativeRunQuarantine,
     private val inFlightPageKeys: MutableSet<String>,
     private val onPageStuck: () -> ((chapterId: Long?, pageKey: String) -> Unit)?,
-    //  Phase 4: the borrow drain bounds. Defaults keep every existing
-    // construction site compiling; production wires drainScope = nativeRunScope.
+    // Bounds the translator borrow drain; production uses the native run scope.
     private val drainGraceMs: Long = ENGINE_DRAIN_GRACE_MS,
     private val drainScope: CoroutineScope? = null,
     private val translatorFactory: (TextRecognizerLanguage, TextTranslatorLanguage) -> TextTranslator =
@@ -58,14 +49,12 @@ internal class EngineLane(
 
     internal companion object {
         /**
-         *  Phase 4 ( §1.6): the ENGINE drain grace stays deliberately SHORT —
-         * its expiry neither fails nor bills anything; the epoch guard transparently
-         * retries the racing page against the rebuilt translator exactly once. Holding
-         * engines open for the full chain budget after an explicit Stop would delay
-         * native-memory release (recognition engine teardown) — bounded memory
-         * outranks the rare extra paid call. This asymmetry with the PROVIDER drain
-         * grace (RollingAutoCoordinator.PROVIDER_DRAIN_GRACE_MS, aligned to
-         * the provider's own chain budget) is a decision, not an oversight. `[TARGET]` per.
+         * Engine teardown uses a short drain grace. If it expires, the epoch
+         * guard retries the racing page against a rebuilt translator exactly
+         * once. Waiting for the full provider-call budget after Stop would delay
+         * native-memory release, so bounded memory takes priority over the rare
+         * extra paid call. Provider draining uses a longer budget aligned with
+         * its call chain.
          */
         const val ENGINE_DRAIN_GRACE_MS = 5_000L
     }
@@ -76,7 +65,7 @@ internal class EngineLane(
     private var permitHolder: PermitHolder? = null
 
     // ------------------------------------------------------------------
-    //  Phase 4 ( §1.2): engine epoch + translator borrow registry.
+    // Engine epoch and translator borrow registry.
     // ------------------------------------------------------------------
 
     /**
@@ -299,7 +288,7 @@ internal class EngineLane(
     }
 
     /**
-     * S3 (Milestone M2): Warmed-up engine sessions outside the critical path.
+     * Warms up the recognition engine before it enters page processing.
      */
     internal suspend fun warmUp() {
         (recognitionEngine as? RoiPageRecognitionEngine)?.warmUp()
@@ -312,8 +301,8 @@ internal class EngineLane(
         inFlightPageKeys.clear()
         enginesClosed = true
         engineEpoch.incrementAndGet()
-        //  Phase 4 ( §1.5 row 1) HIGH-RISK GUARD: snapshot the EXACT engine
-        // references at close time and close THOSE objects — a one-shot drain that
+        // Snapshot the engine references at close time and close those objects —
+        // a one-shot drain that
         // fires after a rebuild must never kill the NEW engines. The [enginesClosed]
         // flag stays the rebuild authority.
         val recognitionToClose = recognitionEngine
@@ -373,12 +362,12 @@ internal class EngineLane(
     }
 
     /**
-     *  Phase 4 ( §1.2): targeted TRANSLATOR-ONLY rebuild for the epoch
-     * guard's exactly-one retry. The HTTP translate phase runs OUTSIDE the permit
-     * and has no native needs of its own, so it repairs only the closed translator
-     * (the rebuild gate's full recognition+translator rebuild stays the authority
-     * for the next admitted invocation — [enginesClosed] is intentionally NOT
-     * reset here). The replacement comes from [translatorFactory] (production:
+     * Rebuilds only the translator for the epoch guard's single retry. The HTTP
+     * translate phase runs outside the native permit and has no native needs,
+     * so this repairs only the closed translator. The full recognition and
+     * translator rebuild remains the authority for the next admitted invocation;
+     * [enginesClosed] is intentionally not reset here. The replacement comes
+     * from [translatorFactory] (production:
      * the same `TranslationEngineBuilder` the rebuild gate uses), so the retry
      * never re-uses the closed instance.
      */
@@ -404,7 +393,7 @@ internal class EngineLane(
     private var enginesClosed = false
 
     /**
-     * TachiyomiAT: rebuild the recognition engine + text translator when the
+     * rebuild the recognition engine + text translator when the
      * current configuration (languages, OCR model, engine signature, or a prior
      * closeEngines()) differs from the cached instances. Shared by the per-page
      * path and the staged batch path so both honor the same rebuild gate without

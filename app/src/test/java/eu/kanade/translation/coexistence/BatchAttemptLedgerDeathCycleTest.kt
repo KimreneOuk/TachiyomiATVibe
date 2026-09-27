@@ -38,16 +38,15 @@ import kotlin.coroutines.EmptyCoroutineContext
  *
  * Ledger-side assertions read `attempts/ledger.json` directly from the fake
  * document IO through test-local kotlinx-serialization mirrors, pinning the
- * layout + record schema from the design note independently of the store
+ * serialized layout and record schema independently of the store
  * collaborator.
  *
  * Before the attempt ledger existed, a death mid-call left no durable trace;
  * startup reconciliation had nothing
  * to consume, and the crash-loop cap never binds. Where a test must call a
- * commit-2 production seam that cannot exist yet (the startup reconcile pass,
- * the store-level attempt recording/clearing), it goes through the reflection
- * bridge below, which raises an assertion naming the missing defect — never a
- * timeout and never a compile-time dependency on commit 2.
+ * internal reconcile or ledger seam, it goes through the reflection bridge
+ * below, which raises a named assertion rather than a timeout or compile-time
+ * dependency on internal method signatures.
  */
 class BatchAttemptLedgerDeathCycleTest {
 
@@ -119,7 +118,7 @@ class BatchAttemptLedgerDeathCycleTest {
     }
 
     // ------------------------------------------------------------------
-    // ledger-file observation (schema pinned from the design note)
+    // Ledger-file observation and serialized schema mirror.
     // ------------------------------------------------------------------
 
     @Serializable

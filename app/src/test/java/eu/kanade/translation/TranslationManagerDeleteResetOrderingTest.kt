@@ -5,10 +5,10 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.workflow.ChapterTranslator
 import eu.kanade.translation.workflow.DurableChapterKey
 import eu.kanade.translation.workflow.DurableStatus
@@ -115,7 +115,7 @@ class TranslationManagerDeleteResetOrderingTest {
         every { translator.removeFromQueue(any<Chapter>()) } answers { log("removeFromQueue") }
         coEvery { translator.cancelTranslatorJobAndJoin() } answers { log("cancelTranslatorJobAndJoin") }
 
-        val provider = mockk<TranslationProvider>(relaxed = true)
+        val provider = mockk<TranslationFileProvider>(relaxed = true)
         every { provider.findMangaDir(any(), any()) } returns null
         every {
             provider.findTranslationFile(any(), any(), any(), any())

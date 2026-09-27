@@ -6,8 +6,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- *  Slice A4 (Amendment D): event-driven retention tests.
- * Verifies known-orphan deletion, staged-reachable protection (Race register #6),
+ * Verifies known-orphan deletion, staged-reachable protection,
  * and trigger parity (close() sweeps, closeAndFlush() remains sweep-free).
  */
 class ChapterArtifactRetentionEventDrivenTest {

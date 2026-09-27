@@ -127,7 +127,7 @@ class ChapterContextCrossFeedProbeTest {
             ),
         )
 
-        val prepared = store.contextService.prepare(request)
+        val prepared = ChapterContextService(store).prepare(request)
 
         prepared.characterAndTermSheet shouldContain "CHARACTER & TERM SHEET"
         prepared.characterAndTermSheet shouldContain "[f-1]"
@@ -180,7 +180,7 @@ class ChapterContextCrossFeedProbeTest {
             rollingPairs = "勇者 => Hero",
         )
 
-        val prepared = store.contextService.prepare(batchRequest)
+        val prepared = ChapterContextService(store).prepare(batchRequest)
 
         prepared.characterAndTermSheet shouldContain "魔王"
         prepared.characterAndTermSheet shouldContain "Lord"
@@ -261,22 +261,22 @@ class ChapterContextCrossFeedProbeTest {
             laneCapability = LaneCapability.STANDARD_BATCH,
         )
 
-        val prepared = store.contextService.prepare(request)
+        val prepared = ChapterContextService(store).prepare(request)
         prepared shouldBe PreparedContext.EMPTY
         prepared.estimatedContextTokens shouldBe 0
         prepared.characterAndTermSheet shouldBe ""
         prepared.rollingContext shouldBe ""
 
         // Standard batch commits translated output to term producer across 3 pages
-        store.contextService.submitCommittedOutput(
+        ChapterContextService(store).submitCommittedOutput(
             pageKey = "p1",
             pairs = listOf("黒崎" to "Kurosaki", "戦士" to "Warrior"),
         )
-        store.contextService.submitCommittedOutput(
+        ChapterContextService(store).submitCommittedOutput(
             pageKey = "p2",
             pairs = listOf("黒崎" to "Kurosaki", "戦士" to "Warrior"),
         )
-        store.contextService.submitCommittedOutput(
+        ChapterContextService(store).submitCommittedOutput(
             pageKey = "p3",
             pairs = listOf("黒崎" to "Kurosaki", "戦士" to "Warrior"),
         )

@@ -12,26 +12,24 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- *  Stage-6 slice A — envelope plan publication ( SC-20).
+ * Publishes an immutable envelope plan and advances the manifest pointer.
  *
  * ONE atomic publication: the immutable [EnvelopePlan] sidecar is published
  * into the content-addressed `envelopes/` directory FIRST, then the manifest
  * `envelopePlan` pointer ([SidecarPointer]) moves in ONE
- * `publishSidecarPointers` transaction (the ProfileFreezePublication
- * discipline). The  rules hold by construction:
+ * `publishSidecarPointers` transaction, following the same pattern as
+ * [ProfileFreezePublication]. These guarantees hold by construction:
  *
- *  - the plan sidecar is content-addressed by its
- *    `planFingerprint`; a byte-identical re-publication ( crash case
- *    "before pointer") maps to the SAME name and is idempotent;
- *  - a SUPERSEDING plan (deterministic suffix re-plan,.4) is a NEW
- *    content-addressed file + a NEW pointer; the prior file stays untouched
- *    until retention reachability sweeps it ( GC);
+ *  - the plan sidecar is content-addressed by `planFingerprint`; publishing
+ *    identical bytes again uses the same name and is idempotent;
+ *  - a replacement plan gets a new content-addressed file and pointer; the
+ *    prior file remains until retention finds it unreachable;
  *  - any rejection leaves the PRIOR manifest authoritative — never a
  *    partially published plan;
- *  - resume treats a pointer without a valid sidecar as ABSENT (
- *    the caller re-plans and heals).
+ *  - resume treats a pointer without a valid sidecar as absent, so the caller
+ *    can re-plan and publish a valid sidecar.
  *
- * Before any byte is written the SC-10 content fingerprint is RECOMPUTED
+ * Before any byte is written the plan fingerprint is recomputed
  * from the DTO (canonical re-encode with the operational fields zeroed) and
  * verified equal to the DTO's own `planFingerprint` — a mismatched plan is
  * rejected, never published.
@@ -39,27 +37,17 @@ import tachiyomi.core.common.util.system.logcat
 internal object EnvelopePlanPublication {
 
     /**
-     * Publishes the envelope plan + its manifest pointer in ONE transaction.
-     * The caller supplies the freshly re-planned [EnvelopePlan]; the
-     * publication verifies the SC-10 fingerprint before writing.
+     * Publishes the envelope plan and its manifest pointer in one transaction.
+     * The caller supplies the freshly planned [EnvelopePlan]; publication
+     * verifies its fingerprint before writing.
      *
-     *  LI-x: the resume path rebuilds dispatch work (adopting durable
-     * checkpoints page by page, each adoption republishing the manifest)
-     * BEFORE publishing the plan, and the caller's manifest snapshot can also
-     * be invalidated by the >8-page open path's background health verify — a
-     * guaranteed `stale manifest snapshot` CAS rejection that aborted the
-     * whole batch with PERSISTENCE_REJECTED. On a stale-manifest rejection
-     * ONLY ([ChapterArtifactEngine.isStaleManifestRejection]), the publication
-     * re-reads the durable manifest ONCE and re-runs the SAME pointer move
-     * against THAT fresh manifest (the pointer move is a pure
-     * `envelopePlan`-pointer set, so every fresh durable field is carried
-     * forward by construction; the plan sidecar itself is content-addressed
-     * and idempotent). The retry is one-shot with the store's
-     * `retryOnStaleManifest` semantics replicated locally (the mutation
-     * lambda lives outside the store): a retry that does not commit — or a
-     * durable manifest that vanished — returns the ORIGINAL Rejected
-     * unchanged, and every non-stale rejection keeps failing exactly as
-     * before.
+     * Checkpoint adoption or background validation can update the manifest
+     * after the caller reads it. On a stale-manifest rejection only
+     * ([ChapterArtifactEngine.isStaleManifestRejection]), this method reads
+     * the durable manifest once and retries the same pointer update against
+     * that fresh snapshot. This preserves concurrent fields. The retry is
+     * one-shot; if it does not commit or the manifest is missing, the original
+     * rejection is returned. Other rejection types are not retried.
      */
     suspend fun publish(
         store: ChapterTranslationStore,

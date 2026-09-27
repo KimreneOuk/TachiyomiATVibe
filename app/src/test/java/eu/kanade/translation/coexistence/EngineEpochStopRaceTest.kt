@@ -108,16 +108,13 @@ class EngineEpochStopRaceTest {
     // fixtures
     // ------------------------------------------------------------------
 
-    /** Production fresh-chapter recipe over the shared IO (/ precedent), empty-start. */
+    /** Production fresh-chapter recipe over the shared IO, starting empty. */
     private fun freshStore(): ChapterTranslationStore {
-        // The AUTO prepared page names "$pageKey.cleaned.jpg" but the harness's
-        // publish shim (note §1.2.3) performs the guarded store write WITHOUT
-        // Bitmap.compress, so the companion image file has no bytes on the fake
-        // IO. Seed the one display-base file the promotion validates and give
-        // the directly-constructed artifact store the bounded decode probe stub
-        // (JVM has no BitmapFactory; the fixture builds the ChapterArtifactEngine
-        // itself, so the companion-object seam does not apply) answering the
-        // decoded page's 100x100 — TranslationManagerArtifactReadTest precedent.
+        // The AUTO prepared page names "$pageKey.cleaned.jpg", but publication
+        // writes the guarded store record without Bitmap.compress. Seed the
+        // display-base file that promotion validates and provide a bounded
+        // decode probe because this fixture constructs ChapterArtifactEngine
+        // directly and JVM tests cannot use BitmapFactory.
         val layout = ChapterArtifactLayout(CHAPTER_DIR)
         val imageProbe = CleanedImageProbe { ProbedImage(100, 100) }
         val artifactStore = ChapterArtifactEngine(
@@ -227,7 +224,7 @@ class EngineEpochStopRaceTest {
     private fun readLedger(): LedgerMirror? =
         io.read(LEDGER_FILE)?.let { bytes -> json.decodeFromString<LedgerMirror>(bytes.decodeToString()) }
 
-    /** Latent epoch probe: no-op until EngineLane exposes the accessor (GREEN commit). */
+    /** Reads the current engine epoch reflectively without depending on accessor visibility. */
     private fun currentEngineEpochOrNull(): Long? = try {
         val method = Class.forName("eu.kanade.translation.pipeline.EngineLane")
             .getDeclaredMethod("currentEngineEpoch")
@@ -571,8 +568,7 @@ class EngineEpochStopRaceTest {
                 h.fakeTransport.closeCalls.get() shouldBe 0
                 h.fakeRecognition.closeCalls.get() shouldBe 0
             }
-            // Latent epoch probe: closeEngines always moves the epoch, even when the
-            // close itself is deferred (no-op until the GREEN commit lands the accessor).
+            // closeEngines advances the epoch even when resource close is deferred.
             currentEngineEpochOrNull()?.let { epoch ->
                 withClue("T917 D7 §1.2: the engine epoch moves on every closeEngines, deferred or not") {
                     epoch shouldBe 1L

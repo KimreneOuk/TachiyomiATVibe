@@ -2,7 +2,6 @@ package eu.kanade.translation.coexistence
 
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.model.Page
-import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
@@ -14,6 +13,7 @@ import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.PageDecode
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -49,13 +49,10 @@ import java.io.ByteArrayInputStream
  * the planner has no static dependency block).
  *
  * The original defect: the trigger stamped `expectedPageCount` from its
- * own directory enumeration as TRUSTED — a half-downloaded
- * chapter silently "succeeds" at 100%. The probe, the manifest
- * `partialBatchInfo`, and the unknown-total honesty do not exist yet. Where an
- * assertion targets a GREEN seam that cannot exist yet (the probe, the
- * routing), it goes through the reflection bridge below, which raises an
- * assertion naming the missing defect — never a timeout and never a
- * compile-time dependency on the GREEN commit.
+ * own directory enumeration as complete. A half-downloaded chapter must keep
+ * an unknown total instead of appearing complete. The test reads the probe and
+ * routing seams reflectively so missing internal contracts fail with a named
+ * assertion rather than a compile error.
  */
 class PartialDownloadAdmissionTest {
 
@@ -202,7 +199,7 @@ class PartialDownloadAdmissionTest {
     }
 
     // ------------------------------------------------------------------
-    // durable-document observation (schema pinned from the design note)
+    // Durable-document observation and serialized schema mirror.
     // ------------------------------------------------------------------
 
     @Serializable
@@ -525,7 +522,7 @@ class PartialDownloadAdmissionTest {
                 }
                 withClue("D10: the reopened terminal p0 counts done; the run strands and fails nothing") {
                     val reconciliation = secondRun.reconciliation.await().shouldNotBeNull()
-                    //  zero-legacy: the flagged COMPLETED projection
+                    //  : the flagged COMPLETED projection
                     // counts EVERY expected page done — the reopened terminal
                     // p0 (its run coverage) and the freshly worked p1 alike.
                     reconciliation.doneCount shouldBe 2

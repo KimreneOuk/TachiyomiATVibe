@@ -2,28 +2,21 @@ package eu.kanade.translation.persistence.internal
 
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageStageLease
-import eu.kanade.translation.pipeline.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageStageLease
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
-//  Phase 17a: the page-stage lease table moved from
-// `ChapterTranslationStore` (record + backing map + the five lease members).
-// The DUAL locking discipline is load-bearing and moved verbatim: the store
-// mutex guards lease/patch paths (via [store]'s `mutex`) while
-// `synchronized(pageLeases)` guards the lock-free readers (`markDefunct`,
-// `pageLeaseOwner`, `clearTransientQueuePages`); the `NonCancellable` wrappers
-// on release/cancel/releaseAll preserve cancellation behavior. The map is
-// shared with the store through [pageLeases] — never copied — and the store keeps
-// same-signature delegating stubs at the old qualified names (the pipeline,
-// ReaderViewModel, and the lease tests resolve them there).
+// The store mutex guards lease mutations and patch paths. Synchronized reads
+// protect inspection that does not take that mutex; release/cancel paths stay
+// NonCancellable so coroutine cancellation cannot strand an owned lease. The
+// backing map is shared with the store and must never be copied.
 internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
 
-    // Same-name dependency reads the moved bodies use; resolved through the
-    // owning store at each call.
+    // State resolves through the owning store at each call.
     private val mutex get() = store.mutex
 
     private val defunct get() = store.isDefunct
@@ -50,13 +43,13 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
          *   same-origin attach re-grants since this record was minted
          * (the overlap inpaint riding the envelope's token). Read ONLY by
          * [releasePageStageLeaseIfUnattached]; the plain release keeps its
-         * Phase-3 contract — any matching release removes the record.
+         * The plain release removes the record after any matching release.
          */
         val attaches: Int = 0,
     )
 
     // ------------------------------------------------------------------
-    // Phase 3 page/stage leases (lifecycle contract §12): one origin owns a
+    // Page/stage lease: one origin owns a
     // page at a time. A reader request on a batch-owned page attaches to the
     // batch result (observes store emissions) instead of opening a competing
     // writer, and vice versa. The lease binds the store generation and page

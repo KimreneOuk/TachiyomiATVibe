@@ -15,11 +15,11 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.math.max
 
 /*
- *  Phase 2 trace foundation: schedule/run identities, immutable coroutine
- * trace element, fixed-size stage timers, online overlap accumulator, and an
- * injectable monotonic clock.
+ * Schedule/run identities, an immutable coroutine trace element, fixed-size
+ * stage timers, an online overlap accumulator, and an injectable monotonic
+ * clock.
  *
- * Bounded-memory contract (plan §4.1, §10.5): no type in this file retains an
+ * Bounded-memory contract: no type in this file retains an
  * event list, an interval list, or any chapter-length structure. A schedule is
  * O(1) state; a run owns exactly one fixed EnumMap keyed by stage. All
  * emission is synchronous, non-suspending, and fail-open (see
@@ -33,8 +33,8 @@ internal interface TraceToken {
 }
 
 /**
- * Trace mode and origin. `mode` is the pipeline that owns the schedule,
- * `origin` records which surface requested it (plan §4.2 identity fields).
+ * Trace mode and origin. `mode` is the pipeline that owns the schedule;
+ * `origin` records which surface requested it.
  */
 enum class TranslationTraceMode : TraceToken {
     MANUAL,
@@ -45,7 +45,7 @@ enum class TranslationTraceMode : TraceToken {
     override val token: String get() = name.lowercase(Locale.ROOT)
 }
 
-/** Canonical lane of a stage event (plan §4.2). */
+/** Canonical lane of a stage event. */
 enum class TranslationTraceLane : TraceToken {
     SCHEDULER,
     NATIVE,
@@ -58,7 +58,7 @@ enum class TranslationTraceLane : TraceToken {
 }
 
 /**
- * Canonical stages (plan §4.2). Exact tokens are part of the log contract;
+ * Canonical stages. Exact tokens are part of the log contract;
  * do not rename.
  */
 enum class TranslationTraceStage : TraceToken {
@@ -68,7 +68,7 @@ enum class TranslationTraceStage : TraceToken {
     SOURCE_DECODE,
 
     /**
-     *  Phase 4 (batch): source-fingerprint preflight — the I/O-only hash of
+     * Batch source-fingerprint preflight — the I/O-only hash of
      * the downloaded page bytes before resume planning. Batch schedule scope.
      */
     SOURCE_FINGERPRINT,
@@ -91,7 +91,7 @@ enum class TranslationTraceStage : TraceToken {
 }
 
 /**
- * Execution-fact provider labels (plan §4.2): what actually executed, not
+ * Execution-fact provider labels: what actually executed, not
  * what the device prefers.
  */
 enum class TranslationTraceProvider : TraceToken {
@@ -109,7 +109,7 @@ enum class TranslationTraceProvider : TraceToken {
     override val token: String get() = name.lowercase(Locale.ROOT)
 }
 
-/** Bounded model identifiers (plan §4.2). */
+/** Bounded model identifiers. */
 enum class TranslationTraceModel : TraceToken {
     BUBBLE_SEGMENTER,
     PAGE_DETECTOR,
@@ -123,7 +123,7 @@ enum class TranslationTraceModel : TraceToken {
 }
 
 /**
- * Bounded terminal outcome tokens (amendment §10.2). Every started run or
+ * Bounded terminal outcome tokens. Every started run or
  * schedule must be closed with exactly one of these; closing is idempotent.
  */
 enum class TranslationTraceOutcome(val token: String) {
@@ -155,7 +155,7 @@ enum class TranslationScheduleState : TraceToken {
     CANCELLED,
 
     /**
-     *  Phase 4 (batch): the scheduled unit contributes no work — an OCR
+     * The scheduled unit contributes no work — an OCR
      * skip (no reference / fully durable page) or an artifact reuse decision.
      */
     SKIP,
@@ -166,10 +166,10 @@ enum class TranslationScheduleState : TraceToken {
 
 /**
  * Bounded reason-token vocabulary for the `reason=` field of `schedule_state`
- * and `route_change` events (plan §4.2, amendment §10.3).
+ * and `route_change` events.
  *
- * Free-form reason strings are not accepted anywhere in the schema. Phase 3+
- * callers MUST pass one of these tokens (via [token]); the formatter collapses
+ * Free-form reason strings are not accepted anywhere in the schema. Callers
+ * must pass one of these tokens (via [token]); the formatter collapses
  * anything else — including hostile or accidentally-user-derived strings — to
  * the fixed `invalid` token through
  * [TranslationPipelineDiagnostics.resolveReason]. Fail-open: resolution never
@@ -253,7 +253,7 @@ fun interface TranslationTraceClock {
 
 /**
  * Process-local opaque trace identifiers: one random prefix per process plus
- * monotonic counters (plan §4.1, amendment §10.3). Identifiers carry no
+ * monotonic counters. Identifiers carry no
  * content: they correlate events within one process only and are never
  * stable across launches.
  */
@@ -283,7 +283,7 @@ class TranslationTraceIdGenerator(
 }
 
 /**
- * Per-process random-keyed digest for chapter/page tokens (amendment §10.3).
+ * Per-process random-keyed digest for chapter/page tokens.
  *
  * The deterministic `eu.kanade.translation.util.ShortHash` (unsalted FNV-1a)
  * is deliberately NOT used here: enumerable page/chapter names could be
@@ -342,7 +342,7 @@ class TranslationIdentityKeys(
 }
 
 /**
- * Immutable identity attached to every emitted event (plan §4.2). `rid`,
+ * Immutable identity attached to every emitted event. `rid`,
  * `page`, and `pageIndex` are `none` for schedule-scoped events.
  */
 class TranslationRunIdentity(
@@ -356,7 +356,7 @@ class TranslationRunIdentity(
 )
 
 /**
- * Online, O(1) cross-lane overlap accumulator (plan §4.3, amendment §10.6).
+ * Online, O(1) cross-lane overlap accumulator.
  *
  * Tracks active counts for the NATIVE, PROVIDER, and RENDER lanes only. On
  * every count transition the elapsed time since the previous transition is
@@ -460,7 +460,7 @@ class TranslationLaneOverlapAccumulator(
 }
 
 /**
- * Balanced lane-enter token (amendment §10.2). Created by
+ * Balanced lane-enter token. Created by
  * [TranslationScheduleTrace.enterLane]; must be closed exactly once.
  * Double-close is a no-op; closing never throws, so `use { }` and `finally`
  * are always safe.
@@ -480,11 +480,11 @@ class TranslationLaneToken internal constructor(
 }
 
 /**
- * One manual intent / rolling-Auto generation / batch invocation (plan §4.1).
+ * One manual intent / rolling-Auto generation / batch invocation.
  *
  * Constant-size state: an overlap accumulator, a max queue wait, the slowest
  * page token, and the last emitted schedule_state key for coalescing.
- * [end] is idempotent (amendment §10.2): the first call emits the terminal
+ * [end] is idempotent: the first call emits the terminal
  * `schedule_end` summary, every later call is a no-op. Safe from `finally`
  * blocks and cancellation paths; never suspends.
  */
@@ -517,7 +517,7 @@ class TranslationScheduleTrace internal constructor(
     private var slowestRunMs: Long = 0
     private var lastStateKey: String? = null
 
-    //  Phase 3: runs that terminated with a non-success outcome under this
+    // Runs that terminated with a non-success outcome under this
     // schedule. Lets a natural shutdown after a fully successful window emit
     // schedule_end success instead of a misleading cancelled.
     private val nonSuccessRuns = AtomicInteger(0)
@@ -540,7 +540,7 @@ class TranslationScheduleTrace internal constructor(
     }
 
     /** Records a bounded scheduling decision. Identical consecutive
-     * (state, reason) pairs are coalesced (amendment §10.5). */
+     * (state, reason) pairs are coalesced. */
     fun reportState(
         state: TranslationScheduleState,
         reason: String,
@@ -566,7 +566,7 @@ class TranslationScheduleTrace internal constructor(
 
     /**
      * Emits a bounded scheduling decision that bypasses the identical-key
-     * coalescer ( Phase 4 batch facade): envelope lifecycle and stage
+     * coalescer: envelope lifecycle and stage
      * decisions repeat legitimately and must not be collapsed. Detailed-gated
      * and fail-open like [reportState].
      */
@@ -597,12 +597,12 @@ class TranslationScheduleTrace internal constructor(
         (nowNanos - startNanos).coerceAtLeast(0) / 1_000_000
 
     /**
-     *  Phase 4: starts a SCHEDULE-scoped stage interval — batch work that
+     * Starts a SCHEDULE-scoped stage interval — batch work that
      * belongs to the whole invocation rather than one page (source-fingerprint
      * preflight, engine setup, one provider translation envelope). Emits
      * `stage_start` with the schedule identity (rid=none, page=none) and
      * records into no per-run map, so envelope time can never be multiplied
-     * into page runs (plan §9). The returned span must be ended exactly once.
+     * into page runs. The returned span must be ended exactly once.
      */
     fun beginStage(
         stage: TranslationTraceStage,
@@ -651,7 +651,7 @@ class TranslationScheduleTrace internal constructor(
     }
 
     /**
-     *  Phase 3: records a run terminal outcome so the schedule sweep can
+     * Records a run terminal outcome so the schedule sweep can
      * distinguish a fully-successful window's teardown from a cancellation
      * that cut runs short. Bounded: one counter.
      */
@@ -668,8 +668,8 @@ class TranslationScheduleTrace internal constructor(
     internal fun hasNoFailedRuns(): Boolean = nonSuccessRuns.get() == 0
 
     /**
-     * Emits the terminal `schedule_end` exactly once (idempotent, amendment
-     * §10.2). Returns true on the first call, false afterwards.
+     * Emits the terminal `schedule_end` exactly once and is idempotent.
+     * Returns true on the first call, false afterwards.
      */
     fun end(outcome: TranslationTraceOutcome): Boolean {
         if (!closed.compareAndSet(false, true)) return false
@@ -695,9 +695,9 @@ class TranslationScheduleTrace internal constructor(
 }
 
 /**
- * One SCHEDULE-scoped stage interval ( Phase 4): batch work owned by the
+ * One SCHEDULE-scoped stage interval: batch work owned by the
  * whole invocation — source-fingerprint preflight, engine setup, and one
- * provider translation envelope (plan §4.4 batch, §9). Emits
+ * provider translation envelope. Emits
  * `stage_start`/`stage_end` with the schedule identity (rid=none, page=none)
  * and records into no per-run stage map. Ended exactly once; double-end is a
  * no-op; never throws, never suspends.
@@ -758,10 +758,10 @@ class TranslationScheduleStageSpan internal constructor(
 }
 
 /**
- * One concrete page attempt (plan §4.1). Owns exactly one fixed
+ * One concrete page attempt. Owns exactly one fixed
  * EnumMap&lt;Stage, Long&gt; of summed stage durations — repeated intervals for
  * the same stage (retries, re-entrant substages) accumulate, never overwrite
- * (amendment §10.6). [end] is idempotent (amendment §10.2) and never
+ * [end] is idempotent and never
  * suspends.
  */
 class TranslationRunTrace internal constructor(
@@ -776,10 +776,9 @@ class TranslationRunTrace internal constructor(
     private val stageNanos = EnumMap<TranslationTraceStage, Long>(TranslationTraceStage::class.java)
     private val retries = AtomicInteger(0)
 
-    //  Phase 3 deviation (documented): run_start is emitted before the
-    // resume plan is known (the scheduler/coordinator creates the run before
-    // the onnx phase resolves PageWorkPlanner.plan). The resolved plan is
-    // installed here and surfaces on the terminal run_end summary.
+    // The scheduler starts the run before the resume plan is known. The ONNX
+    // phase resolves PageWorkPlanner.plan and installs it here for the
+    // terminal run_end summary.
     private val planRef = AtomicReference(plan)
 
     val isClosed: Boolean get() = closed.get()
@@ -840,7 +839,7 @@ class TranslationRunTrace internal constructor(
     /**
      * Settles one stage interval (called exactly once by the span). Repeated
      * intervals for the same stage sum in the stage map. Stage ends after the
-     * run terminal are dropped (fail-open, amendment §10.2): the terminal
+     * run terminal are dropped: the terminal
      * summary already fired.
      */
     internal fun finishStage(
@@ -884,10 +883,10 @@ class TranslationRunTrace internal constructor(
     internal fun totalMsAt(nowNanos: Long): Long = elapsedMsLocked(startNanos, nowNanos)
 
     /**
-     * Emits the terminal `run_end` exactly once (idempotent, amendment
-     * §10.2). `errorType`/`errorCode` come from the whitelisted classifier
+     * Emits the terminal `run_end` exactly once and is idempotent.
+     * `errorType`/`errorCode` come from the whitelisted classifier
      * unless explicitly overridden. Queue waits are eligible bottlenecks and
-     * can dominate (amendment §10.6). Returns true on the first call.
+     * can dominate. Returns true on the first call.
      */
     fun end(
         outcome: TranslationTraceOutcome,
@@ -976,7 +975,7 @@ class TranslationStageSpan internal constructor(
      * `stage_end` (detailed gate, or always when lagged/failed). Returns
      * true on the first call. Never throws, never suspends.
      *
-     * Provider provenance (plan §4.2, amendment §10.8): the span's `provider`
+     * Provider provenance: the span's `provider`
      * field is the best execution label the caller held at stage start;
      * [registeredProvider] (session-creation fact) and [provenProvider]
      * (post-inference proof) are appended as explicit trailing fields when
@@ -1051,7 +1050,7 @@ class TranslationStageSpan internal constructor(
 
 /**
  * Process-wide access to the current run identity for deep synchronous code
- * (plan §4.1). Deep detector/segmenter/OCR/inpaint code calls
+ * Deep detector/segmenter/OCR/inpaint code calls
  * [currentRun]/[beginStage] without new parameters; the identity crosses
  * dispatcher hops via [TranslationTraceElement].
  */
@@ -1098,7 +1097,7 @@ object TranslationTrace {
 }
 
 /**
- * Immutable ThreadContextElement (plan §4.1): carries the current
+ * Immutable ThreadContextElement: carries the current
  * [TranslationRunTrace] across dispatcher hops so synchronous deep code can
  * emit correlated events without new parameters. Nesting is supported: the
  * previous thread value is restored on exit.

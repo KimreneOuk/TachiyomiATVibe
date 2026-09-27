@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 
 /**
- *  slice 2: the compact `(planGeometryId, componentId)` clip cache.
+ * The compact `(planGeometryId, componentId)` clip cache.
  *
  * Pure-JVM: [ComponentClipCache] has no `android.graphics` dependency, so a fake
  * clip type stands in for `Path`. Pins hit/miss, instance-identity verification,

@@ -37,14 +37,14 @@ import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.PlannedEnvelope
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.LeaseAcquisition
-import eu.kanade.translation.pipeline.PageWriteOrigin
-import eu.kanade.translation.pipeline.StagePatchResult
-import eu.kanade.translation.pipeline.TranslationBlockPatch
-import eu.kanade.translation.pipeline.TranslationStagePatch
+import eu.kanade.translation.persistence.chapter.LeaseAcquisition
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.TranslationBlockPatch
+import eu.kanade.translation.persistence.chapter.TranslationStagePatch
+import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchContextFrontier
-import eu.kanade.translation.pipeline.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.ocrFingerprint
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -54,45 +54,23 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- *  Stage-6 slice A (WP6,  + / + DR-A Option 1):
- * the serial per-envelope translation executor of the AI profile lane.
+ * Executes contextual translation envelopes serially for one chapter.
  *
- * Invariants enforced here (gates 5.1-5.8 basis):
- *  - ONE provider envelope in flight, chapter-wide (hard serial loop — there
- *    is no concurrency construct anywhere in this class);
- *  -  BEFORE each envelope dispatch every affected page is revalidated
- *    under a freshly reacquired BATCH lease (BATCH attaches/never preempts a
- *    MANUAL owner) against the plan-time inputs: page version, candidate
- *    generation, dependency fingerprint, artifact page version, live OCR
- *    block identity, checkpoint content fingerprint, and the currently
- *    frozen profile. User-edited blocks and manual-authoritative pages are
- *    skipped, never overwritten ( `userEditedAt` fence holds at the
- *    merge regardless);
- *  - any identity drift triggers a DETERMINISTIC suffix re-plan through the
- *    injected [replan] callback (same pure planner over fresh store state);
- *    re-planning never mutates committed history, only the not-yet-dispatched
- *    remainder;
- *  - dispatch rides the EXISTING legacy typed machinery
- *    (`translateAiChunkWithAdaptiveRetry` — split/backoff included) under the
- *    shared [BatchRequestSublimitGate] (DR-C/DR-D: one Batch allowance per
- *    credential) and the shared provider governor inside the translator;
- *  - DR-A Option 1 retention: per-page COMPLETE subsets of a paused response
- *    commit and advance (page atomicity — a page commits only when EVERY
- *    planned block of that page was accepted); REFUSAL discards and pauses
- *    terminal.  (Director decision 2026-09-17): a PROTOCOL-class verdict
- *    (blocks still missing after the controller's retry budget) no longer
- *    discards the whole response — its fully-covered pages COMMIT, its
- *    stubborn pages are PARKED as durable retryable TRANSLATION failures
- *    (omitted block ids + per-block source char lengths recorded) and the
- *    batch CONTINUES with the next envelope, guarded by a
- *    consecutive-zero-commit circuit breaker ([MAX_CONSECUTIVE_ZERO_COMMIT_ENVELOPES]);
- *  -  every commit carries `profileContentFingerprint` +
- *    `envelopePlanFingerprint` and the full M4 CAS ladder; a rejected commit
- *    never advances the rolling-context frontier and never counts as
- *    progress;
- *  - durable progress lives in the STORE (per-page translation state), never
- *    in this loop: a fresh process resumes by re-entering the envelope phase
- *    and re-planning over the remaining pending pages.
+ * Before dispatch, every affected page is revalidated under a newly acquired
+ * BATCH lease against its page version, candidate generation, dependency
+ * fingerprint, artifact version, OCR identity, checkpoint, and frozen
+ * profile. User edits and manual-authoritative pages are preserved. Identity
+ * drift triggers a deterministic re-plan of the undispatched suffix from fresh
+ * store state; committed history is left intact.
+ *
+ * Requests use the shared retry machinery, batch sublimit, and provider
+ * governor. Commits are page-atomic: a page advances only when every planned
+ * block is accepted. Refusals discard the response and pause; protocol
+ * failures keep complete pages, record missing pages as durable retryable
+ * failures, and continue until the zero-commit breaker trips. Every commit
+ * carries profile and envelope fingerprints plus the full compare-and-set
+ * checks. A rejected commit does not advance the rolling-context frontier or
+ * progress. Durable page state allows a later process to re-plan pending work.
  */
 internal class ProfileEnvelopeExecutor(
     private val store: ChapterTranslationStore,
@@ -100,12 +78,10 @@ internal class ProfileEnvelopeExecutor(
     /** The frozen profile content fingerprint this run dispatches under (FP-05). */
     private val profileContentFingerprint: String,
     /**
-     *  Stage-6 slice B (design §7): the LOADED frozen profile DTO. When
-     * present, every envelope prompt is ENRICHED with the profile subset
-     * matcher's capped subset, range-safe scene context, and the gap-free
-     * rolling history (pronoun-marking rule), and the execution-time token
-     * recompute + whole-page split applies. `null` — no usable frozen profile
-     * — keeps the slice-A LEGACY prompt shape unchanged (degraded-but-correct).
+     * Loaded frozen profile used to enrich envelope prompts with a capped
+     * matching subset, scene context, and gap-free rolling history. The
+     * executor recomputes token limits and splits only between pages. `null`
+     * keeps the existing prompt shape when no usable profile is available.
      */
     private val frozenProfile: ChapterTranslationProfile? = null,
     /**
@@ -151,15 +127,15 @@ internal class ProfileEnvelopeExecutor(
         /**  protocol parking: pages durably FAILED for omitted blocks. */
         var pagesParked: Int = 0,
         var replans: Int = 0,
-        /** Slice B: whole-page execution-time splits actually dispatched. */
+        /** Whole-page execution-time splits actually dispatched. */
         var envelopeSplits: Int = 0,
-        /** Slice B: envelopes sent in the ENRICHED prompt shape. */
+        /** Envelopes sent in the enriched prompt shape. */
         var promptShapeEnriched: Int = 0,
-        /** Slice B: envelopes sent in the LEGACY prompt shape. */
+        /** Envelopes sent in the legacy prompt shape. */
         var promptShapeLegacy: Int = 0,
-        /** Slice B: largest profile-subset fact count sent in ONE envelope. */
+        /** Largest profile-subset fact count sent in one envelope. */
         var profileSubsetFactsMax: Int = 0,
-        /** Slice B: largest gap-free rolling-context page count carried. */
+        /** Largest gap-free rolling-context page count carried. */
         var rollingContextPagesMax: Int = 0,
     ) {
         fun toMap(): Map<String, Int> = mapOf(
@@ -398,7 +374,7 @@ internal class ProfileEnvelopeExecutor(
                 val snapshot = store.snapshot(pageKey)
                 val live = snapshot.page
                 if (live == null) {
-                    // Wave-6 F-W6-1: the page is not yet in `held`, so the
+                    // the page is not yet in `held`, so the
                     // just-acquired lease must be released before the early
                     // return — otherwise a MANUAL attempt on this page is
                     // denied for the whole replan window.
@@ -414,7 +390,7 @@ internal class ProfileEnvelopeExecutor(
                 // .2 live-revalidate the plan-time identities.
                 val drift = revalidationDrift(pageWork, snapshot, live)
                 if (drift != null) {
-                    // Wave-6 F-W6-1: same release-before-early-return as the
+                    // same release-before-early-return as the
                     // lost-page path above.
                     store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     return EnvelopeDispatchResult.ReplanNeeded(
@@ -446,14 +422,14 @@ internal class ProfileEnvelopeExecutor(
                 return EnvelopeDispatchResult.Skipped
             }
 
-            //  the gap-free rolling-context page count carried into prompts
+            // The gap-free rolling-context page count carried into prompts
             // (contiguous committed prefix only — the frontier never moves on
             // a rejected commit).
             counters.rollingContextPagesMax =
                 maxOf(counters.rollingContextPagesMax, frontier.frontierIndex + 1)
 
-            // ---- Slice B  (design §8 tail): execution-time token ----
-            // ---- recompute; split at WHOLE-PAGE boundaries before sending.
+            // Recompute token fit at dispatch time and split only at whole-page
+            // boundaries.
             val batches = splitForTokenFit(held, frontier.rollingContext)
             counters.envelopeSplits += (batches.fitted.size - 1).coerceAtLeast(0)
 
@@ -468,8 +444,7 @@ internal class ProfileEnvelopeExecutor(
             }
 
             // A single token-oversized page is REJECTED, never sent (page
-            // atomicity invariant): typed pause AFTER any fitted pages
-            // committed (the slice-A commit-then-pause idiom).
+            // atomicity invariant): pause after any fitted pages have committed.
             if (batches.oversized.isNotEmpty()) {
                 return EnvelopeDispatchResult.Paused(
                     reason = "T924 envelope ${envelope.envelopeId} paused: " +
@@ -500,30 +475,27 @@ internal class ProfileEnvelopeExecutor(
     }
 
     /**
-     * Slice B  splits the held pages into deterministic whole-page
+     * Splits held pages into deterministic whole-page
      * sub-batches whose ACTUAL enriched payload (source lines + profile
      * subset + scene context + rolling history) AND estimated translation
      * response fit the provider context window. Greedy prefix packing in
      * plan order — the same planner discipline as the global planner, never
      * a page split. Pages that alone exceed the window are returned as
      * [SplitPlan.oversized] (rejected, not sent). Without a frozen profile
-     * (legacy shape) this is the identity split: ONE batch, slice-A behavior
-     * unchanged. The context reserve is re-derived per CANDIDATE batch
-     * (wave-7a F-W7-1) — a full-range estimate is not a strict upper bound
+     * (legacy prompt shape) this is the identity split: one batch, with no
+     * split. The context reserve is re-derived per candidate batch because a
+     * full-range estimate is not a strict upper bound:
      * because AVAILABLE_FROM facts gate on the sub-batch's own first page
      * and the subset cap can pick different entries on a narrower range.
      *
-     * Device fix 2026-09-17: the candidate predicate previously reserved
-     * only minOutputTokens for the response, so a 64-block envelope shipped
-     * with a maxOutput that its own JSON reserve nearly exhausted — every
-     * response truncated mid-JSON and the retry budget burned down to the
-     * "ambiguous (protocol)" discard. The translation output is now part of
-     * the reservation (planner estimator v2, per-block framing + expansion).
+     * Include estimated translation output in the reservation. Reserving
+     * only the minimum output let dense envelopes exhaust the JSON response
+     * budget and truncate responses despite retries.
      */
     private fun splitForTokenFit(held: List<HeldPage>, rollingContext: String): SplitPlan {
         val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
 
-        // Wave-7a F-W7-1: the context reserve is re-derived per CANDIDATE
+        // the context reserve is re-derived per CANDIDATE
         // batch. A single full-range estimate is not a strict upper bound:
         // AVAILABLE_FROM facts become usable at later sub-batch starts, and
         // the 24-entry cap can select different entries on a narrower range.
@@ -634,8 +606,8 @@ internal class ProfileEnvelopeExecutor(
     /**
      * Dispatches ONE provider request over ONE (sub-)batch of held pages —
      * the hard one-envelope-in-flight unit. Chunk assembly enriches per
-     * [frozenProfile] (slice B) or keeps the slice-A legacy shape; DR-A
-     * Option 1 classification and  provenance commits are unchanged.
+     * [frozenProfile] when present or keeps the legacy shape otherwise.
+     * Classification and provenance commits follow the same batch contract.
      * Page leases stay held; [dispatchEnvelope]'s `finally` releases them.
      */
     private suspend fun dispatchSingleHeldBatch(
@@ -753,8 +725,8 @@ internal class ProfileEnvelopeExecutor(
                     reason = "T924 envelope ${envelope.envelopeId} refused; response discarded",
                 )
 
-            // AMBIGUOUS_PROTOCOL ( Director decision 2026-09-17): the
-            // PROGRESS policy is relaxed under the unchanged COMMIT policy —
+            // For AMBIGUOUS_PROTOCOL, progress policy allows independently
+            // complete pages to commit under the unchanged COMMIT policy —
             // independently complete pages still commit (page atomicity),
             // stubborn pages are parked as durable retryable failures with
             // their omitted-block evidence, and the batch CONTINUES. The
@@ -815,8 +787,8 @@ internal class ProfileEnvelopeExecutor(
     )
 
     /**
-     *  (Director decision 2026-09-17): relaxed PROGRESS policy for a
-     * PROTOCOL-class verdict (blocks still missing after the controller's
+     * Allows partial progress for a PROTOCOL-class verdict when blocks remain
+     * missing after the controller's
      * whole → whole → missing-only → missing-only retry budget — the exact
      * on-device shape where a model silently omits specific blocks regardless
      * of envelope size). The old behavior discarded the ENTIRE response and
@@ -1108,13 +1080,12 @@ internal class ProfileEnvelopeExecutor(
      * ids matching the plan, strict BATCH_V1 protocol, rolling context from
      * the gap-free frontier.
      *
-     * Slice B (design §7): with a frozen profile the chunk is ENRICHED — the
+     * With a frozen profile the chunk is enriched — the
      * capped profile-subset sheet + range-safe scene context ride the
      * glossary slot, the gap-free rolling history (recent source/target
      * pairs, resolved entity ids, compact unresolved state, pronoun-marking
-     * rule) rides the rolling slot, and the prompt tokens are recomputed over
-     * the ACTUAL payload. Without a profile the legacy slice-A shape is kept
-     * unchanged (degraded-but-correct).
+     * rule) rides the rolling slot, and prompt tokens are recomputed over the
+     * actual payload. Without a profile the existing prompt shape is kept.
      */
     private fun buildEnvelopeChunk(
         envelope: PlannedEnvelope,
@@ -1158,7 +1129,7 @@ internal class ProfileEnvelopeExecutor(
                 estimatedInputTokens = envelope.estimatedInputTokens,
             ).also { counters.promptShapeLegacy++ }
 
-        // ---- Slice B enriched assembly (design §7.1-7.3). ----
+        // Assemble the profile-aware prompt.
         val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
         var subset = ProfileSubsetMatcher.match(profile, envelopeSourcesOf(held))
         var includeScenes = true
@@ -1170,7 +1141,7 @@ internal class ProfileEnvelopeExecutor(
         var contextTokens = TranslationContextChunkPlanner.estimateTokens(glossary) +
             TranslationContextChunkPlanner.estimateTokens(rolling)
 
-        // Deterministic bounded trim per  allocator order (terms 320 ->
+        // Deterministic bounded trim follows the prompt allocator order (terms 320 ->
         // safeguards 96 -> pairs 288 -> scene/style 96):
         // 1. Drop scene narratives
         // 2. Halve recent pairs, then drop pairs entirely
