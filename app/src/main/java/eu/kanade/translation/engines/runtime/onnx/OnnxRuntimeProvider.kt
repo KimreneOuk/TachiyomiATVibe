@@ -325,13 +325,11 @@ object OnnxRuntimeProvider {
     }
 
     /**
-     * Dedicated strict QNN HTP session options. CPU fallback is disabled so a
-     * broken HTP backend or an unpartitionable graph throws at session
-     * creation instead of silently degrading to the CPU EP — with these
-     * options, a created session truly executes on the NPU. When
-     * [contextCacheFile] is provided, ORT persists the compiled HTP context
-     * binary there and reloads it on later runs, so the multi-second graph
-     * finalization is paid once per install.
+     * Dedicated strict QNN session options. HTP is the default backend; callers
+     * can supply `backend_type=gpu` for a strict Adreno session. CPU fallback
+     * is disabled so backend or partition failures surface during creation
+     * instead of silently degrading to the CPU EP. When [contextCacheFile] is
+     * provided, ORT persists the compiled HTP context binary there.
      *
      * A failed QNN registration propagates to the caller (options are closed
      * first) so a CPU session can never be created here and masquerade as QNN;
@@ -343,7 +341,8 @@ object OnnxRuntimeProvider {
         qnnOptions: Map<String, String> = buildGenericHtpOptions(),
         configure: (OrtSession.SessionOptions) -> Unit = {},
     ): OrtSession.SessionOptions {
-        logcat(LogPriority.INFO) { "ONNX session options using Qualcomm QNN HTP NPU provider (contextCacheFile=$contextCacheFile, options=$qnnOptions)" }
+        val backendName = if (qnnOptions["backend_type"] == "gpu") "QNN Adreno GPU" else "QNN HTP NPU"
+        logcat(LogPriority.INFO) { "ONNX session options using Qualcomm $backendName provider (contextCacheFile=$contextCacheFile, options=$qnnOptions)" }
         val options = OrtSession.SessionOptions()
         try {
             options.apply {
@@ -371,7 +370,7 @@ object OnnxRuntimeProvider {
                     addConfigEntry("ep.context_file_path", contextCacheFile.absolutePath)
                 }
                 logcat(LogPriority.INFO) {
-                    "Successfully added QNN HTP EP with options: $qnnOptions " +
+                    "Successfully added $backendName EP with options: $qnnOptions " +
                         "strictCpuFallbackDisabled=$strictCpuFallbackDisabled contextCacheFile=$contextCacheFile"
                 }
                 configure(this)

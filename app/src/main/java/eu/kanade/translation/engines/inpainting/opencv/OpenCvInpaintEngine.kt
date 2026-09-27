@@ -27,6 +27,15 @@ object OpenCvInpaintEngine {
     const val INPAINT_TELEA = Photo.INPAINT_TELEA
     const val INPAINT_NS = Photo.INPAINT_NS
 
+    /** Backend diagnostics for the standard Telea path and the no-native emergency fill. */
+    enum class Backend(val routeLabel: String) {
+        TELEA("telea"),
+        OPENCV_NS("opencv_ns"),
+        OPENCV_OTHER("opencv_other"),
+        PUSH_PULL_EMERGENCY("push_pull_emergency"),
+        UNCHANGED("unchanged"),
+    }
+
     val isAvailable: Boolean by lazy {
         try {
             val loaded = OpenCVLoader.initLocal()
@@ -85,16 +94,34 @@ object OpenCvInpaintEngine {
         radius: Double = 3.0,
         method: Int = INPAINT_TELEA,
     ) {
+        inpaintPixelsWithBackend(pixels, mask, width, height, radius, method)
+    }
+
+    /** Runs the selected classical implementation and reports the one actually used. */
+    fun inpaintPixelsWithBackend(
+        pixels: IntArray,
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        radius: Double = 3.0,
+        method: Int = INPAINT_TELEA,
+    ): Backend {
         val total = width * height
-        if (width <= 0 || height <= 0 || pixels.size < total || mask.size < total) return
-        if (mask.none { it != 0.toByte() }) return
+        if (width <= 0 || height <= 0 || pixels.size < total || mask.size < total) return Backend.UNCHANGED
+        if (mask.none { it != 0.toByte() }) return Backend.UNCHANGED
 
         if (isAvailable) {
             inpaintNative(pixels, mask, width, height, radius, method)
+            return when (method) {
+                INPAINT_TELEA -> Backend.TELEA
+                INPAINT_NS -> Backend.OPENCV_NS
+                else -> Backend.OPENCV_OTHER
+            }
         } else {
-            // Pure-JVM fallback for host unit tests
+            // Emergency path for host tests and environments missing OpenCV.
             val bg = PushPullGradient.localRingMedian(pixels, width, height, mask, PushPullGradient.DEFAULT_RING)
             PushPullGradient.pushPullFill(pixels, width, height, mask, bg)
+            return Backend.PUSH_PULL_EMERGENCY
         }
     }
 

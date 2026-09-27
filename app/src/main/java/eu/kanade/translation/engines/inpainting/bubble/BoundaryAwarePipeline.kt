@@ -29,8 +29,7 @@ object BoundaryAwarePipeline {
          * marks a degenerate result (empty mask/seed) where every other field
          * is a synthetic default — notably [medianColor] defaults to pure white.
          * Callers MUST NOT trust a degenerate result's median for a flat fill,
-         * since painting with it produces a solid white block. See
-         * `SmartBubbleTextCleaner.fillContained`.
+         * since painting with it produces a solid white block.
          */
         val sampleCount: Int,
     )
