@@ -53,10 +53,9 @@ data class AiTranslationRetryPolicy(
  * Typed result of one AI semantic envelope.
  *
  * The controller returns detached block translations keyed by stable IDs. It
- * never mutates the [TranslationContextChunk] supplied by the caller, and it
- * only produces a rolling-context delta for [Complete]. [Paused] retains a
- * non-authoritative partial candidate for a later pipeline phase; it must not
- * be fed into ordered rolling context.
+ * never mutates the [TranslationContextChunk] supplied by the caller.
+ * [Paused] retains a non-authoritative partial candidate for a later pipeline
+ * phase; committed page snapshots remain the only source of rolling history.
  */
 sealed interface AiChunkOutcome {
     val acceptedBlockIds: Set<String>
@@ -72,7 +71,6 @@ sealed interface AiChunkOutcome {
         override val acceptedBlockIds: Set<String>,
         override val completedPageKeys: Set<String>,
         override val blockTranslations: Map<String, String>,
-        val rollingContextDelta: String,
         override val envelopeId: String,
         override val attemptsUsed: Int,
         override val wholeEnvelopeRetries: Int,
@@ -777,24 +775,10 @@ private fun completeOutcome(
     missingRequests: Int,
 ): AiChunkOutcome.Complete {
     val completedPages = completedNaturalPrefix(envelope, accumulator.translations)
-    val contextPages = linkedMapOf<String, PageTranslation>()
-    completedPages.forEach { pageKey ->
-        val source = envelope.pages[pageKey] ?: return@forEach
-        val detached = source.detachedCopy()
-        detached.blocks.forEach { block ->
-            val id = block.blockId?.let(ContextualResponseParser::normalizeBatchId)
-            id?.let { stableId ->
-                accumulator.translations[stableId]?.let { block.translation = it }
-            }
-        }
-        contextPages[pageKey] = detached
-    }
-    val rollingDelta = TranslationContextChunkPlanner.updateRollingContext("", contextPages)
     return AiChunkOutcome.Complete(
         acceptedBlockIds = accumulator.translations.keys.toSet(),
         completedPageKeys = completedPages,
         blockTranslations = accumulator.translations.toMap(),
-        rollingContextDelta = rollingDelta,
         envelopeId = envelope.identity,
         attemptsUsed = budget.attemptsUsed,
         wholeEnvelopeRetries = wholeRetries,

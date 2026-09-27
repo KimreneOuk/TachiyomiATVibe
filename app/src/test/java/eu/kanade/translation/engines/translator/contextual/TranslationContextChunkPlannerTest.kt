@@ -141,6 +141,31 @@ class TranslationContextChunkPlannerTest {
     }
 
     @Test
+    fun `T11 rolling budget evicts oldest pairs before dropping history and preserves request floor`() {
+        val currentPages = linkedMapOf("current.jpg" to page("CURRENT REQUEST CONTENT"))
+        val base = TranslationContextChunkPlanner.plan(
+            currentPages,
+            requestedOutputTokens = 1024,
+        ).chunks.single()
+        val history = (0 until TranslationContextChunkPlanner.MAX_ROLLING_PAIRS).joinToString("\n") { index ->
+            "source-$index => " + "日".repeat(72)
+        }
+
+        val enriched = TranslationContextChunkPlanner.withRollingContext(
+            chunk = base,
+            rollingContext = history,
+            requestedOutputTokens = 1024,
+        )
+
+        enriched.rollingContext shouldContain "source-31 =>"
+        enriched.rollingContext.contains("source-0 =>") shouldBe false
+        val keptLines = enriched.rollingContext.lineSequence().filter { it.isNotBlank() }.count()
+        (keptLines in 1 until TranslationContextChunkPlanner.MAX_ROLLING_PAIRS) shouldBe true
+        enriched.pages["current.jpg"]!!.blocks.single().text shouldBe "CURRENT REQUEST CONTENT"
+        (enriched.maxOutputTokens >= TranslationContextChunkPlanner.MIN_OUTPUT_TOKENS) shouldBe true
+    }
+
+    @Test
     fun `lm studio profile retains complete pages while respecting the token budget`() {
         val pages = linkedMapOf(
             "001.jpg" to PageTranslation(blocks = MutableList(10) { block("p1-$it") }),
@@ -309,39 +334,34 @@ class TranslationContextChunkPlannerTest {
     }
 
     @Test
-    fun `glossary is attached when it fits, dropped before pairs when over cap`() {
+    fun `rolling context stays an independent history section`() {
         val pages = linkedMapOf("001.jpg" to page("hello"))
         val chunk = TranslationContextChunkPlanner.plan(pages, requestedOutputTokens = 8192).chunks.single()
 
-        val withGlossary = TranslationContextChunkPlanner.withRollingContext(
+        val withHistory = TranslationContextChunkPlanner.withRollingContext(
             chunk = chunk,
             rollingContext = "源 => source",
             requestedOutputTokens = 8192,
-            glossary = "太郎 => Taro",
         )
-        withGlossary.glossary shouldBe "太郎 => Taro"
-        withGlossary.rollingContext shouldBe "源 => source"
+        withHistory.rollingContext shouldBe "源 => source"
 
-        // Combined over the rolling cap, but the pairs alone fit: glossary is
-        // dropped first so the (more recent) pairs survive.
-        val dropGlossary = TranslationContextChunkPlanner.withRollingContext(
+        // The tokenizer keeps this below the section cap, so the complete
+        // current history remains intact.
+        val retainedHistory = TranslationContextChunkPlanner.withRollingContext(
             chunk = chunk,
             rollingContext = "x".repeat(2_000),
             requestedOutputTokens = 8192,
-            glossary = "y".repeat(6_000),
         )
-        dropGlossary.rollingContext shouldBe "x".repeat(2_000)
-        dropGlossary.glossary shouldBe ""
+        retainedHistory.rollingContext shouldBe "x".repeat(2_000)
 
-        // A runaway pairs string drops both (no silent output-cap shrinkage).
-        val huge = TranslationContextChunkPlanner.withRollingContext(
+        // A runaway history section is dropped as a whole, without silent
+        // output-cap shrinkage.
+        val hugeHistory = TranslationContextChunkPlanner.withRollingContext(
             chunk = chunk,
             rollingContext = "x".repeat(50_000),
             requestedOutputTokens = 8192,
-            glossary = "太郎 => Taro",
         )
-        huge.glossary shouldBe ""
-        huge.rollingContext shouldBe ""
+        hugeHistory.rollingContext shouldBe ""
     }
 
     @Test

@@ -19,7 +19,6 @@ import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.EnvelopeWorkBuild
 import eu.kanade.translation.pipeline.batch.OverlapScheduler
 import eu.kanade.translation.pipeline.batch.PageKey
-import eu.kanade.translation.pipeline.batch.ProfileFreezePublication
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -49,7 +48,6 @@ internal class EnvelopeDispatcherContext(
         String?,
         ProfilePointer?,
     ) -> ChapterRunRecord,
-    val profileInputFingerprintOf: (String) -> String,
     val buildEnvelopeDispatchWork: suspend (
         ChapterArtifactEngine,
         List<PageKey>,
@@ -123,9 +121,6 @@ internal class EnvelopeDispatcher(
         profilePointer,
     )
 
-    private fun profileInputFingerprintOf(corpusFingerprint: String): String =
-        context.profileInputFingerprintOf(corpusFingerprint)
-
     private suspend fun buildEnvelopeDispatchWork(
         artifact: ChapterArtifactEngine,
         orderedPages: List<PageKey>,
@@ -191,7 +186,6 @@ internal class EnvelopeDispatcher(
                 sourceDigest,
                 counters,
                 ocrCorpusFingerprint = corpusFingerprint,
-                profilePointer = store.artifactManifest?.profile,
             )
 
         //  entry: phase record, then plan (pure re-derivation).
@@ -205,43 +199,8 @@ internal class EnvelopeDispatcher(
             status = BatchPass1Status.PERSISTENCE_REJECTED,
             reason = "T924 envelope plan deferred: manifest unavailable",
         )
-        val frozenProfilePointer = manifest.profile ?: return BatchPass1Outcome(
-            needsTranslation = emptyList(),
-            status = BatchPass1Status.PAUSED,
-            completedPageKeys = allPageKeys,
-            reason = "T924 envelope plan deferred: frozen profile pointer absent",
-        )
-
-        // Load the frozen profile for prompt enrichment. The same reuse
-        // discipline applies: a
-        // sidecar that does not read back fully valid and identity-matched is
-        // treated as ABSENT and the executor keeps the LEGACY prompt shape
-        // (degraded-but-correct, never partially trusted).
-        val frozenProfile = when (
-            val profileRead = ProfileFreezePublication.readReusableFrozenProfile(
-                store = store,
-                manifest = manifest,
-                expectedInputFingerprint = profileInputFingerprintOf(corpusFingerprint),
-            )
-        ) {
-            is ProfileFreezePublication.FrozenProfileRead.Reusable -> {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT t924 envelope prompt shape=enriched " +
-                        "(frozen profile v${profileRead.profile.version} loaded)"
-                }
-                profileRead.profile
-            }
-            ProfileFreezePublication.FrozenProfileRead.NotReusable -> {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT t924 envelope prompt shape=legacy " +
-                        "(frozen profile sidecar unreadable — degraded-but-correct)"
-                }
-                null
-            }
-        }
-
         //  entry needs a typed AI transport; the plan still publishes so
-        // a later wired run resumes directly into TRANSLATE. For AI profiles, the
+        // a later wired run resumes directly into TRANSLATE. For AI translation, the
         // constructor widened to TextTranslator for the standard lane, so the
         // envelope path re-narrows here — a non-contextual translator on the
         // AI lane takes the SAME typed CONFIGURATION pause as a missing one
@@ -401,8 +360,6 @@ internal class EnvelopeDispatcher(
                 val executor = ProfileEnvelopeExecutor(
                     store = store,
                     textTranslator = translator,
-                    profileContentFingerprint = frozenProfilePointer.contentFingerprint,
-                    frozenProfile = frozenProfile,
                     replan = { reason ->
                         rebuildDispatchWork(artifact, orderedPages, corpusFingerprint, reason)
                     },

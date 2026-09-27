@@ -299,8 +299,6 @@ class EightKilobyteComplianceTest {
         val executor = ProfileEnvelopeExecutor(
             store = store,
             textTranslator = translator,
-            profileContentFingerprint = hex64("profile"),
-            frozenProfile = null, // Legacy envelope shape!
             replan = { ReplanResult.NothingPending },
             sublimitGate = BatchRequestSublimitGate(),
             providerProfile = TranslationContextChunkPlanner.Profile.LM_STUDIO,
@@ -391,8 +389,6 @@ class EightKilobyteComplianceTest {
         val executor = ProfileEnvelopeExecutor(
             store = store,
             textTranslator = translator,
-            profileContentFingerprint = hex64("profile"),
-            frozenProfile = null,
             replan = { ReplanResult.NothingPending },
             sublimitGate = BatchRequestSublimitGate(),
             providerProfile = TranslationContextChunkPlanner.Profile.LM_STUDIO,

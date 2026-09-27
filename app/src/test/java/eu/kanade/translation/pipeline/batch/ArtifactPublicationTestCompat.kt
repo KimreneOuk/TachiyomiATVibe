@@ -3,7 +3,6 @@ package eu.kanade.translation.pipeline.batch
 import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
-import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
 import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.analysis.AnalysisChunkPublication
@@ -64,39 +63,5 @@ internal fun EnvelopePlanPublication.readValidatedPlan(
             artifactStore = artifact,
         ),
         manifest = manifest,
-    )
-}
-
-internal fun ProfileFreezePublication.publish(
-    artifact: ChapterArtifactEngine,
-    manifest: ChapterArtifactManifest,
-    profile: ChapterTranslationProfile,
-    nowEpochMs: Long,
-): ChapterArtifactEngine.TransactionOutcome = runBlocking {
-    ProfileFreezePublication.publish(
-        store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
-            artifactStore = artifact,
-        ),
-        manifest = manifest,
-        profile = profile,
-        nowEpochMs = nowEpochMs,
-    )
-}
-
-internal fun ProfileFreezePublication.readReusableFrozenProfile(
-    artifact: ChapterArtifactEngine,
-    manifest: ChapterArtifactManifest,
-    expectedInputFingerprint: String,
-): ProfileFreezePublication.FrozenProfileRead = runBlocking {
-    ProfileFreezePublication.readReusableFrozenProfile(
-        store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
-            artifactStore = artifact,
-        ),
-        manifest = manifest,
-        expectedInputFingerprint = expectedInputFingerprint,
     )
 }

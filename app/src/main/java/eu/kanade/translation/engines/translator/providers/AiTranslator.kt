@@ -61,7 +61,6 @@ abstract class AiTranslator : BaseTranslator(), ContextualTextTranslator {
             pages = linkedPages,
             blockCount = blockCount,
             rollingContext = "",
-            glossary = "",
             estimatedPromptTokens = 0,
             maxOutputTokens = 8192,
             protocol = ContextualRequestProtocol.LEGACY,

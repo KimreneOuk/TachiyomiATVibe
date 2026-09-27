@@ -134,7 +134,6 @@ internal class FinalizeWorker(
                         } ?: emptyMap()
                         ),
                 ocrCorpusFingerprint = corpusFingerprint,
-                profilePointer = store.artifactManifest?.profile,
             ),
         )
         return drainFinalizeAndComplete(
@@ -286,7 +285,6 @@ internal class FinalizeWorker(
                     ChapterProfileBatchCoordinator.COUNTER_DISPLAY_TAIL_FAILED to displayTail.failed.size,
                 ),
             ocrCorpusFingerprint = corpusFingerprint,
-            profilePointer = store.artifactManifest?.profile,
         )
         var closure = publishRecord(artifact, completeRecord())
         if (closure !is ChapterArtifactEngine.TransactionOutcome.Committed) {
@@ -331,8 +329,7 @@ internal class FinalizeWorker(
      * complete corpus. It shares chapter completion semantics with the AI
      * lane but does not use glossary, analysis, profile, or envelope work.
      *
-     * The run record carries the OCR corpus fingerprint and omits
-     * analysis/profile/envelope pointers. Translation proceeds in page order
+     * The run record carries the OCR corpus fingerprint. Translation proceeds in page order
      * through [standardTranslateOutcome]. Already terminal pages are not
      * translated again. Every call is bracketed by the overlap window so
      * native inpaint never overlaps translation.

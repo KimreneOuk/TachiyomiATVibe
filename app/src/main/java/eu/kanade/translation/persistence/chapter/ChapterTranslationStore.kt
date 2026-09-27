@@ -711,6 +711,11 @@ class ChapterTranslationStore(
         attemptLedger.recordStartLocked(pageKey, providerKeyHash, origin, generation, requestContextFingerprint)
     }
 
+    /** Checks the auto retry cap before dispatch; the request boundary writes the fingerprinted ledger entry. */
+    suspend fun autoAttemptAllowed(pageKey: String): Boolean = mutex.withLock {
+        attemptLedger.autoAttemptAllowedLocked(pageKey)
+    }
+
     /**
      * A completed call for [pageKey] — commit success OR typed provider
      * failure. Resolves the page's pending entries and resets its consecutive

@@ -66,7 +66,6 @@ enum class StageReasonCode {
      * recorded on the page's persisted translation, so its REUSE was
      * downgraded to RUN for a one-time terminology repair.
      */
-    GLOSSARY_MATURED,
 }
 
 data class StageWorkDecision(
@@ -110,7 +109,6 @@ data class BatchPlannerInput(
      * ever published. Absence keeps REUSE unchanged, so
      * glossary-less and standard-lane chapters stay cost-flat).
      */
-    val currentGlossaryVersion: Int? = null,
 )
 
 data class BatchPageWorkPlan(

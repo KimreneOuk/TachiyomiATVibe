@@ -1,6 +1,5 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.context.SeriesProfileRegistry
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -33,7 +32,6 @@ internal class PreflightWorkerContext(
     val nowEpochMs: () -> Long,
     val failureRecorder: suspend (PreflightStageFailure) -> Unit,
     val standardLane: Boolean,
-    val seriesKey: String?,
     val publishRecord: suspend (
         ChapterArtifactEngine,
         ChapterRunRecord,
@@ -70,20 +68,12 @@ internal class PreflightWorkerContext(
         String?,
         Map<String, Int>,
     ) -> BatchPass1Outcome,
-    val runAnalysisPhase: suspend (
-        ChapterArtifactEngine,
-        String,
-        List<PageKey>,
-        String,
-        Map<String, Int>,
-    ) -> BatchPass1Outcome,
     val adoptCheckpointSnapshot: suspend (
         ChapterArtifactEngine,
         String,
         ChapterTranslationStore.PageSnapshot,
     ) -> CheckpointAdoption,
     val stampAdoptedRenderTerminal: suspend (String) -> Unit,
-    val profileInputFingerprintOf: (String) -> String,
 )
 
 internal class PreflightWorker(
@@ -105,9 +95,6 @@ internal class PreflightWorker(
         get() = context.nowEpochMs
     private val standardLane: Boolean
         get() = context.standardLane
-    private val seriesKey: String?
-        get() = context.seriesKey
-
     private suspend fun publishRecord(
         artifact: ChapterArtifactEngine,
         record: ChapterRunRecord,
@@ -174,20 +161,6 @@ internal class PreflightWorker(
         baseCounters,
     )
 
-    private suspend fun runAnalysisPhase(
-        artifact: ChapterArtifactEngine,
-        runId: String,
-        orderedPages: List<PageKey>,
-        corpusFingerprint: String,
-        baseCounters: Map<String, Int>,
-    ): BatchPass1Outcome = context.runAnalysisPhase(
-        artifact,
-        runId,
-        orderedPages,
-        corpusFingerprint,
-        baseCounters,
-    )
-
     private suspend fun adoptCheckpointSnapshot(
         artifact: ChapterArtifactEngine,
         pageKey: String,
@@ -196,11 +169,6 @@ internal class PreflightWorker(
 
     private suspend fun stampAdoptedRenderTerminal(pageKey: String) =
         context.stampAdoptedRenderTerminal(pageKey)
-
-    private data class FrozenProfileReuse(
-        val pointer: ProfilePointer,
-        val corpusFingerprint: String,
-    )
 
     private suspend fun existingActiveRecord(
         artifact: ChapterArtifactEngine,
@@ -305,52 +273,8 @@ internal class PreflightWorker(
         return (read as? ChapterArtifactEngine.OcrCheckpointRead.Usable)?.checkpoint?.ocrContentFingerprint
     }
 
-    private suspend fun frozenProfileReuse(
-        artifact: ChapterArtifactEngine,
-        orderedPages: List<PageKey>,
-        expectedPageCount: Int,
-    ): FrozenProfileReuse? {
-        val manifest = store.artifactManifest ?: return null
-        val pointer = manifest.profile ?: return null
-        if (!pointer.isWellFormed()) return null
-        // The FP-04 corpus identity must come from checkpoints whose source
-        // identity STILL matches the current source ( resume: identities
-        // are revalidated against current files). A changed/missing page
-        // makes the frozen profile NOT reusable — the normal path re-OCRs it
-        // and downstream corpus validation rejects the stale profile.
-        val corpusPairs = mutableListOf<Pair<String, String>>()
-        for ((pageKey, _) in orderedPages) {
-            val reusable = checkpointReuse(artifact, pageKey)
-            val fingerprint = (reusable as? CheckpointReuse.Reusable)?.ocrContentFingerprint ?: return null
-            corpusPairs += pageKey to fingerprint
-        }
-        val naturalOrderProven =
-            orderedPages.map { it.second }.toSet() == (0 until expectedPageCount).toSet()
-        val corpusFingerprint = StageFingerprints.ocrCorpusFingerprint(
-            pages = corpusPairs,
-            expectedPageCount = expectedPageCount,
-            expectedPageCountTrusted = true,
-            naturalOrderProven = naturalOrderProven,
-        )
-        val inputFingerprint = profileInputFingerprintOf(corpusFingerprint)
-        return when (
-            val read = ProfileFreezePublication.readReusableFrozenProfile(
-                store = store,
-                manifest = manifest,
-                expectedInputFingerprint = inputFingerprint,
-            )
-        ) {
-            is ProfileFreezePublication.FrozenProfileRead.Reusable ->
-                FrozenProfileReuse(pointer, corpusFingerprint)
-            is ProfileFreezePublication.FrozenProfileRead.NotReusable -> null
-        }
-    }
-
     private suspend fun recordPageFailure(failure: PreflightStageFailure) =
         context.failureRecorder(failure)
-
-    private fun profileInputFingerprintOf(corpusFingerprint: String): String =
-        context.profileInputFingerprintOf(corpusFingerprint)
 
     private fun runConfigFingerprint(config: RunConfigSnapshot): String =
         ChapterProfileBatchCoordinator.runConfigFingerprint(config)
@@ -365,7 +289,6 @@ internal class PreflightWorker(
         orderedPages: List<PageKey>,
         computeClass: TranslatorComputeClass,
     ): BatchPass1Outcome {
-        val seriesKey = context.seriesKey
         if (orderedPages.isEmpty()) {
             return BatchPass1Outcome(needsTranslation = emptyList())
         }
@@ -434,11 +357,8 @@ internal class PreflightWorker(
             ChapterProfileBatchCoordinator.COUNTER_TOTAL to total,
             ChapterProfileBatchCoordinator.COUNTER_DONE to (reusedPages + checkpointedPages),
             ChapterProfileBatchCoordinator.COUNTER_REUSED to reusedPages,
-            // Kept for pre-field record compatibility; the authoritative
-            // freeze is frozenConfig.flagProfilePipeline (participates in the
-            // run-config fingerprint; counters never do, per FP-01). The
-            //  A/B flag completed its lifecycle — the profile pipeline
-            // is the only pipeline — so the frozen state is always ON.
+            // Kept for pre-field run-record compatibility. Translation no
+            // longer depends on the former profile pipeline flag.
             ChapterProfileBatchCoordinator.COUNTER_FLAG to 1,
         ) + buildMap {
             // Appended AFTER the fixed keys so the publishRecord over-bound
@@ -450,60 +370,12 @@ internal class PreflightWorker(
             }
         }
 
-        // ---- OCR_PLAN skip rule (contracts-state-transactions :114): ----
-        // when a compatible frozen profile already exists (its sidecar reads
-        // back valid, the pointer identities match, and the current run's
-        // FP-04 input fingerprint equals the pointer's), the plan records
-        // skip-to-phase PROFILE_FROZEN reuse and the ENTIRE run through
-        // analysis is skipped: zero OCR, zero provider calls (the
-        // fast-feedback core). The probe is LOCAL reads only (durable
-        // checkpoints + profile sidecar), never decode/native work.
-        // AI-only — the standard lane produces no frozen profile, so
-        // the probe is fenced off (it would short-circuit into the envelope
-        // phase, which requires one).
-        val reusableProfile = if (standardLane) {
-            null
-        } else {
-            frozenProfileReuse(artifact, orderedPages, total)
-        }
-
-        //  run start — RUN_SNAPSHOT record with the frozen configuration,
-        // the ordered source digest, and the frozen flag state.
+        // run start — RUN_SNAPSHOT record with the frozen configuration and
+        // ordered source digest.
         publishRecord(
             artifact,
             record(runId, ChapterRunState.RUN_SNAPSHOT, frozenFingerprint, sourceDigest, counters()),
         )
-        if (reusableProfile != null) {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT t924 profile reuse: compatible frozen profile, " +
-                    "skipping OCR+analysis (skip-to-phase PROFILE_FROZEN)"
-            }
-            publishRecord(
-                artifact,
-                record(
-                    runId,
-                    ChapterRunState.PROFILE_FROZEN,
-                    frozenFingerprint,
-                    sourceDigest,
-                    counters() + mapOf(
-                        ChapterProfileBatchCoordinator.COUNTER_STOP to 1,
-                        ChapterProfileBatchCoordinator.COUNTER_PROFILE_REUSED to 1,
-                    ),
-                    ocrCorpusFingerprint = reusableProfile.corpusFingerprint,
-                    profilePointer = reusableProfile.pointer,
-                ),
-            )
-            // A reusable frozen profile lets this run continue directly to
-            // envelope planning without repeating OCR or provider analysis.
-            return runEnvelopePlanAndTranslate(
-                artifact = artifact,
-                runId = runId,
-                orderedPages = orderedPages,
-                corpusFingerprint = reusableProfile.corpusFingerprint,
-                baseCounters = counters() + mapOf(ChapterProfileBatchCoordinator.COUNTER_PROFILE_REUSED to 1),
-            )
-        }
-
         //  the OCR plan is recomputed in-memory (pure function of the
         // ordered pages + store state); only the phase transition persists.
         publishRecord(
@@ -716,8 +588,8 @@ internal class PreflightWorker(
             }
         }
 
-        // ---- OCR_PREFLIGHT complete durably; continue into the analysis ----
-        // ---- phase when the corpus is complete.        ----
+        // OCR_PREFLIGHT is committed durably. The AI lane needs a complete
+        // OCR corpus before it can publish the deterministic envelope plan.
         store.flush()
         val corpusGaps = total - corpusFingerprints.size
         val corpusFingerprint = if (corpusGaps == 0 && corpusFingerprints.isNotEmpty()) {
@@ -747,11 +619,11 @@ internal class PreflightWorker(
             ),
         )
         if (corpusFingerprint == null) {
-            // Incomplete corpus (reused/unresolved gaps): analysis needs the
-            // whole OCR corpus — stop exactly like the S3 shell did.
+            // Incomplete corpus (reused/unresolved gaps): envelope planning
+            // needs the whole OCR corpus, so defer translation until resume.
             logcat(LogPriority.INFO) {
                 "TachiyomiAT t924 preflight stopped-not-finished: ocr=$total reused=$reusedPages gaps=$corpusGaps " +
-                    "analysis deferred until the corpus is complete"
+                    "envelope planning deferred until the corpus is complete"
             }
             return BatchPass1Outcome(
                 needsTranslation = emptyList(),
@@ -761,8 +633,8 @@ internal class PreflightWorker(
             )
         }
 
-        // The standard lane translates pages directly; the AI lane continues
-        // through analysis. Both use the shared FINALIZE/COMPLETE path.
+        // Both lanes use the shared FINALIZE/COMPLETE path. Standard translates
+        // pages directly; the AI lane plans and dispatches envelopes.
         if (standardLane) {
             return runStandardTranslateAndFinalize(
                 artifact = artifact,
@@ -773,62 +645,10 @@ internal class PreflightWorker(
             )
         }
 
-        // Reuse a registered series profile when it passes drift checks; this
-        // skips chapter analysis and profile reconciliation.
-        if (seriesKey != null) {
-            val carried = SeriesProfileRegistry.get(seriesKey)
-            if (carried != null && SeriesProfileRegistry.isDriftSafe(carried, frozenConfig)) {
-                val adopted = SeriesProfileRegistry.adoptForChapter(
-                    carried = carried,
-                    runId = runId,
-                    profileInputFingerprint = profileInputFingerprintOf(corpusFingerprint),
-                    nowEpochMs = nowEpochMs(),
-                )
-                val manifestForPublish = store.artifactManifest
-                if (manifestForPublish != null) {
-                    val publication = ProfileFreezePublication.publish(
-                        store = store,
-                        manifest = manifestForPublish,
-                        profile = adopted,
-                        nowEpochMs = nowEpochMs(),
-                    )
-                    if (publication is ChapterArtifactEngine.TransactionOutcome.Committed) {
-                        store.artifactManifest = publication.manifest
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT M5 series profile carry-over adopted: version=${adopted.version} " +
-                                "entities=${adopted.entities.size} terms=${adopted.terms.size}"
-                        }
-                        publishRecord(
-                            artifact,
-                            record(
-                                runId,
-                                ChapterRunState.PROFILE_FROZEN,
-                                frozenFingerprint,
-                                sourceDigest,
-                                finalCounters + mapOf(
-                                    ChapterProfileBatchCoordinator.COUNTER_PROFILE_FROZEN to 1,
-                                    ChapterProfileBatchCoordinator.COUNTER_SERIES_PROFILE_CARRIED_OVER to 1,
-                                    ChapterProfileBatchCoordinator.COUNTER_STOP to 1,
-                                ),
-                                ocrCorpusFingerprint = corpusFingerprint,
-                                profilePointer = publication.manifest.profile,
-                            ),
-                        )
-                        return runEnvelopePlanAndTranslate(
-                            artifact = artifact,
-                            runId = runId,
-                            orderedPages = orderedPages,
-                            corpusFingerprint = corpusFingerprint,
-                            baseCounters = finalCounters + mapOf(ChapterProfileBatchCoordinator.COUNTER_SERIES_PROFILE_CARRIED_OVER to 1),
-                        )
-                    }
-                }
-            }
-        }
-
-        // Build the analysis corpus, reconcile the profile, and freeze it
-        // before continuing into envelope planning and translation.
-        return runAnalysisPhase(
+        // Normal AI runs go from durable OCR checkpoints directly to the
+        // envelope plan. Analysis, synthesis, profile freeze, and registry
+        // carry-over are not translation prerequisites.
+        return runEnvelopePlanAndTranslate(
             artifact = artifact,
             runId = runId,
             orderedPages = orderedPages,

@@ -1,5 +1,8 @@
 package eu.kanade.translation.pipeline.batch.envelope
 
+import eu.kanade.translation.context.ChapterContextService
+import eu.kanade.translation.context.ContextRequest
+import eu.kanade.translation.context.LaneCapability
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.ProviderFailure
@@ -14,11 +17,8 @@ import eu.kanade.translation.engines.translator.SystemProviderRequestClock
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.engines.translator.contextual.GlobalEnvelopePlanner
-import eu.kanade.translation.engines.translator.contextual.ProfileSubsetMatcher
-import eu.kanade.translation.engines.translator.contextual.StreamingChunkPlanner
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.engines.translator.contextual.TranslationPrompts
 import eu.kanade.translation.engines.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.engines.translator.retry.AiChunkOutcome
 import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPolicy
@@ -31,7 +31,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
+import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FailureCategory
@@ -58,8 +58,8 @@ import tachiyomi.core.common.util.system.logcat
  *
  * Before dispatch, every affected page is revalidated under a newly acquired
  * BATCH lease against its page version, candidate generation, dependency
- * fingerprint, artifact version, OCR identity, checkpoint, and frozen
- * profile. User edits and manual-authoritative pages are preserved. Identity
+ * fingerprint, artifact version, OCR identity, and checkpoint. User edits
+ * and manual-authoritative pages are preserved. Identity
  * drift triggers a deterministic re-plan of the undispatched suffix from fresh
  * store state; committed history is left intact.
  *
@@ -68,22 +68,13 @@ import tachiyomi.core.common.util.system.logcat
  * block is accepted. Refusals discard the response and pause; protocol
  * failures keep complete pages, record missing pages as durable retryable
  * failures, and continue until the zero-commit breaker trips. Every commit
- * carries profile and envelope fingerprints plus the full compare-and-set
- * checks. A rejected commit does not advance the rolling-context frontier or
+ * carries the envelope-plan fingerprint and full compare-and-set checks. A
+ * rejected commit does not advance the rolling-context frontier or
  * progress. Durable page state allows a later process to re-plan pending work.
  */
 internal class ProfileEnvelopeExecutor(
     private val store: ChapterTranslationStore,
     private val textTranslator: ContextualTextTranslator,
-    /** The frozen profile content fingerprint this run dispatches under (FP-05). */
-    private val profileContentFingerprint: String,
-    /**
-     * Loaded frozen profile used to enrich envelope prompts with a capped
-     * matching subset, scene context, and gap-free rolling history. The
-     * executor recomputes token limits and splits only between pages. `null`
-     * keeps the existing prompt shape when no usable profile is available.
-     */
-    private val frozenProfile: ChapterTranslationProfile? = null,
     /**
      * Deterministic suffix re-plan callback: rebuilds the pending set from
      * fresh store state, re-plans with the SAME pure planner, publishes the
@@ -129,12 +120,6 @@ internal class ProfileEnvelopeExecutor(
         var replans: Int = 0,
         /** Whole-page execution-time splits actually dispatched. */
         var envelopeSplits: Int = 0,
-        /** Envelopes sent in the enriched prompt shape. */
-        var promptShapeEnriched: Int = 0,
-        /** Envelopes sent in the legacy prompt shape. */
-        var promptShapeLegacy: Int = 0,
-        /** Largest profile-subset fact count sent in one envelope. */
-        var profileSubsetFactsMax: Int = 0,
         /** Largest gap-free rolling-context page count carried. */
         var rollingContextPagesMax: Int = 0,
     ) {
@@ -148,9 +133,6 @@ internal class ProfileEnvelopeExecutor(
             "pagesParked" to pagesParked,
             "envelopeReplans" to replans,
             "envelopeSplits" to envelopeSplits,
-            "promptShapeEnriched" to promptShapeEnriched,
-            "promptShapeLegacy" to promptShapeLegacy,
-            "profileSubsetFactsMax" to profileSubsetFactsMax,
             "rollingContextPagesMax" to rollingContextPagesMax,
         )
     }
@@ -430,7 +412,8 @@ internal class ProfileEnvelopeExecutor(
 
             // Recompute token fit at dispatch time and split only at whole-page
             // boundaries.
-            val batches = splitForTokenFit(held, frontier.rollingContext)
+            val initialHistory = prepareRollingHistory(held)
+            val batches = splitForTokenFit(held, initialHistory.rollingContext)
             counters.envelopeSplits += (batches.fitted.size - 1).coerceAtLeast(0)
 
             // ---- Dispatch the fitted sub-batches SEQUENTIALLY ----
@@ -475,34 +458,19 @@ internal class ProfileEnvelopeExecutor(
     }
 
     /**
-     * Splits held pages into deterministic whole-page
-     * sub-batches whose ACTUAL enriched payload (source lines + profile
-     * subset + scene context + rolling history) AND estimated translation
-     * response fit the provider context window. Greedy prefix packing in
-     * plan order — the same planner discipline as the global planner, never
-     * a page split. Pages that alone exceed the window are returned as
-     * [SplitPlan.oversized] (rejected, not sent). Without a frozen profile
-     * (legacy prompt shape) this is the identity split: one batch, with no
-     * split. The context reserve is re-derived per candidate batch because a
-     * full-range estimate is not a strict upper bound:
-     * because AVAILABLE_FROM facts gate on the sub-batch's own first page
-     * and the subset cap can pick different entries on a narrower range.
-     *
-     * Include estimated translation output in the reservation. Reserving
-     * only the minimum output let dense envelopes exhaust the JSON response
-     * budget and truncate responses despite retries.
+     * Splits held pages into deterministic whole-page sub-batches whose
+     * source lines, rolling history and estimated response fit the provider
+     * window. History is always the shared durable-state construction; pages
+     * are never split. Include estimated translation output in the reserve.
      */
     private fun splitForTokenFit(held: List<HeldPage>, rollingContext: String): SplitPlan {
         val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
 
-        // the context reserve is re-derived per CANDIDATE
-        // batch. A single full-range estimate is not a strict upper bound:
-        // AVAILABLE_FROM facts become usable at later sub-batch starts, and
-        // the 24-entry cap can select different entries on a narrower range.
-        // The matcher is pure and dispatch is sequential — the recompute is
-        // cheap and closes both exceptions.
+        // The same finalized history is shared by all candidates in this
+        // pre-dispatch fit pass. Each actual sub-batch rebuilds it after
+        // earlier commits, so newly committed predecessors can then join.
         fun contextTokensFor(pages: List<HeldPage>): Int =
-            estimateEnrichedContextTokens(pages, rollingContext)
+            if (rollingContext.isBlank()) 0 else TranslationContextChunkPlanner.estimateTokens(rollingContext)
 
         // Estimated provider output for the candidate batch's translations
         // (JSON block framing + target-text expansion, planner estimator).
@@ -576,38 +544,22 @@ internal class ProfileEnvelopeExecutor(
             stableBlockId + "|" + sourceText.replace("\r\n", " ").replace('\r', ' ').replace('\n', ' '),
         )
 
-    /**
-     * Upper-bound context estimate for [held]: the FULL-range profile subset
-     * + scene context + rolling history, exactly as the enriched chunk
-     * builder renders them.
-     */
-    private fun estimateEnrichedContextTokens(held: List<HeldPage>, rollingContext: String): Int {
-        val profile = frozenProfile
-            ?: return if (rollingContext.isBlank()) 0 else TranslationContextChunkPlanner.estimateTokens(rollingContext.trim())
-        val subset = ProfileSubsetMatcher.match(profile, envelopeSourcesOf(held))
-        val glossary = TranslationPrompts.characterAndTermSheetPrefix(subset)
-        val rolling = TranslationPrompts.profileAwareRollingPrefix(
-            rollingPairs = rollingContext,
-            resolvedEntityLines = ProfileSubsetMatcher.resolvedEntityLines(profile, rollingContext),
-            unresolvedLines = ProfileSubsetMatcher.unresolvedReferenceLines(profile),
-        )
-        return TranslationContextChunkPlanner.estimateTokens(glossary) +
-            TranslationContextChunkPlanner.estimateTokens(rolling)
-    }
-
-    private fun envelopeSourcesOf(held: List<HeldPage>): List<ProfileSubsetMatcher.EnvelopeSource> =
-        held.map { page ->
-            ProfileSubsetMatcher.EnvelopeSource(
-                naturalPageIndex = page.work.naturalPageIndex,
-                sourceText = page.dispatchBlocks.joinToString("\n") { it.sourceText },
-            )
-        }
+    private fun prepareRollingHistory(held: List<HeldPage>) = ChapterContextService(store).prepare(
+        ContextRequest(
+            pageKeys = held.map { it.pageKey },
+            targetLang = textTranslator.toLang.code,
+            sourceLang = textTranslator.fromLang.code,
+            requestedOutputTokens = TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS,
+            profile = providerProfile,
+            laneCapability = LaneCapability.PROFILE_BATCH,
+        ),
+    )
 
     /**
      * Dispatches ONE provider request over ONE (sub-)batch of held pages —
-     * the hard one-envelope-in-flight unit. Chunk assembly enriches per
-     * [frozenProfile] when present or keeps the legacy shape otherwise.
-     * Classification and provenance commits follow the same batch contract.
+     * the hard one-envelope-in-flight unit. Chunk assembly uses committed
+     * rolling history only. Classification and plan provenance commits follow
+     * the existing batch contract.
      * Page leases stay held; [dispatchEnvelope]'s `finally` releases them.
      */
     private suspend fun dispatchSingleHeldBatch(
@@ -619,7 +571,7 @@ internal class ProfileEnvelopeExecutor(
     ): EnvelopeDispatchResult {
         val held = batch // DR-A classification operates over exactly this batch
         // ---- Dispatch ONE provider envelope (hard one-in-flight invariant). ----
-        val prepared = buildEnvelopeChunk(envelope, held, frontier.rollingContext)
+        val prepared = buildEnvelopeChunk(envelope, held)
         val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
         val protocolReserve = TranslationContextChunkPlanner.batchResponseOverheadTokens(
             prepared.chunk.blockCount,
@@ -656,16 +608,41 @@ internal class ProfileEnvelopeExecutor(
         )
         val outcome = try {
             sublimitGate.executeBatch(metadata) {
-                translateAiChunkWithAdaptiveRetry(
-                    translator = textTranslator,
-                    chunk = prepared.chunk,
-                    requestedOutputTokens = prepared.chunk.maxOutputTokens,
-                    profile = providerProfile,
-                    label = "t924-${envelope.envelopeId}#$batchIndex",
-                    retryDepth = 0,
-                    retryPolicy = retryPolicy,
-                    clock = clock,
-                )
+                held.forEach { page ->
+                    runCatching {
+                        store.recordAttemptStart(
+                            pageKey = page.pageKey,
+                            providerKeyHash = ShortHash.hash(textTranslator.javaClass.name),
+                            origin = AttemptOrigin.BATCH,
+                            generation = store.currentGeneration,
+                            requestContextFingerprint = prepared.contextFingerprint,
+                        )
+                    }.onFailure {
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT D9: batch attempt-ledger record failed (fail-open): " +
+                                "pageHash=${ShortHash.hash(page.pageKey)}"
+                        }
+                    }
+                }
+                try {
+                    val result = translateAiChunkWithAdaptiveRetry(
+                        translator = textTranslator,
+                        chunk = prepared.chunk,
+                        requestedOutputTokens = prepared.chunk.maxOutputTokens,
+                        profile = providerProfile,
+                        label = "t924-${envelope.envelopeId}#$batchIndex",
+                        retryDepth = 0,
+                        retryPolicy = retryPolicy,
+                        clock = clock,
+                    )
+                    held.forEach { page -> runCatching { store.resolveAttempt(page.pageKey) } }
+                    result
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    held.forEach { page -> runCatching { store.resolveAttempt(page.pageKey) } }
+                    throw t
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -985,7 +962,7 @@ internal class ProfileEnvelopeExecutor(
 
     /**
      *  provenance commit for one page: the full M4 CAS ladder captured
-     * at revalidation time + `profileContentFingerprint`/`envelopePlanFingerprint`.
+     * at revalidation time + `envelopePlanFingerprint`.
      * A rejected commit never advances the frontier (the frontier records
      * ONLY accepted snapshots) and pauses the phase.
      */
@@ -1023,10 +1000,9 @@ internal class ProfileEnvelopeExecutor(
                 expectedCandidateGenerationId = page.snapshot.candidateGenerationId,
                 expectedDependencyFingerprint = page.snapshot.dependencyFingerprint,
                 expectedArtifactPageVersion = page.snapshot.artifactPageVersion,
-                profileContentFingerprint = profileContentFingerprint,
                 envelopePlanFingerprint = work.planFingerprint,
             )
-            when (val result = store.mergeTranslation(patch, description = "t924 profile envelope commit")) {
+            when (val result = store.mergeTranslation(patch, description = "t924 translation envelope commit")) {
                 is StagePatchResult.Accepted -> {
                     counters.pagesTranslated++
                     committedAnyPage = true
@@ -1072,25 +1048,19 @@ internal class ProfileEnvelopeExecutor(
     private class PreparedChunk(
         val chunk: TranslationContextChunk,
         val estimatedInputTokens: Int,
+        val contextFingerprint: String,
     )
 
     /**
      * Builds the ONE in-flight context chunk from the revalidated live pages:
      * detached copies only (never the live store objects), wire stable block
-     * ids matching the plan, strict BATCH_V1 protocol, rolling context from
-     * the gap-free frontier.
-     *
-     * With a frozen profile the chunk is enriched — the
-     * capped profile-subset sheet + range-safe scene context ride the
-     * glossary slot, the gap-free rolling history (recent source/target
-     * pairs, resolved entity ids, compact unresolved state, pronoun-marking
-     * rule) rides the rolling slot, and prompt tokens are recomputed over the
-     * actual payload. Without a profile the existing prompt shape is kept.
+     * ids matching the plan, strict BATCH_V1 protocol, and the shared
+     * committed rolling history. The fingerprint is computed after token
+     * trimming, from the exact history emitted with this chunk.
      */
     private fun buildEnvelopeChunk(
         envelope: PlannedEnvelope,
         held: List<HeldPage>,
-        rollingContext: String,
     ): PreparedChunk {
         val pages = linkedMapOf<String, PageTranslation>()
         val pageIndexes = linkedMapOf<String, Int>()
@@ -1109,124 +1079,32 @@ internal class ProfileEnvelopeExecutor(
             pages[page.pageKey] = page.livePage.detachedCopy().apply { this.blocks = blocks.toMutableList() }
             pageIndexes[page.pageKey] = page.work.naturalPageIndex
         }
-        val profile = frozenProfile
-            ?: return PreparedChunk(
-                chunk = TranslationContextChunkPlanner.withRollingContext(
-                    chunk = TranslationContextChunk(
-                        pages = pages,
-                        blockCount = blockCount,
-                        rollingContext = "",
-                        estimatedPromptTokens = envelope.estimatedInputTokens,
-                        maxOutputTokens = envelope.estimatedOutputTokens,
-                        protocol = ContextualRequestProtocol.BATCH_V1,
-                        pageIndexes = pageIndexes,
-                    ),
-                    rollingContext = rollingContext,
-                    requestedOutputTokens = envelope.estimatedOutputTokens,
-                    profile = providerProfile,
-                    glossary = "",
-                ),
-                estimatedInputTokens = envelope.estimatedInputTokens,
-            ).also { counters.promptShapeLegacy++ }
-
-        // Assemble the profile-aware prompt.
-        val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
-        var subset = ProfileSubsetMatcher.match(profile, envelopeSourcesOf(held))
-        var includeScenes = true
-        var resolvedLines = ProfileSubsetMatcher.resolvedEntityLines(profile, rollingContext)
-        var unresolvedLines = ProfileSubsetMatcher.unresolvedReferenceLines(profile)
-        var pairLines = rollingContext
-        var glossary = TranslationPrompts.characterAndTermSheetPrefix(subset, includeScenes)
-        var rolling = TranslationPrompts.profileAwareRollingPrefix(pairLines, resolvedLines, unresolvedLines)
-        var contextTokens = TranslationContextChunkPlanner.estimateTokens(glossary) +
-            TranslationContextChunkPlanner.estimateTokens(rolling)
-
-        // Deterministic bounded trim follows the prompt allocator order (terms 320 ->
-        // safeguards 96 -> pairs 288 -> scene/style 96):
-        // 1. Drop scene narratives
-        // 2. Halve recent pairs, then drop pairs entirely
-        // 3. Drop safeguards (unresolved and resolved entity lines)
-        // 4. Halve terms subset tail, then drop terms subset
-        fun rebuild() {
-            glossary = TranslationPrompts.characterAndTermSheetPrefix(subset, includeScenes)
-            rolling = TranslationPrompts.profileAwareRollingPrefix(pairLines, resolvedLines, unresolvedLines)
-            contextTokens = TranslationContextChunkPlanner.estimateTokens(glossary) +
-                TranslationContextChunkPlanner.estimateTokens(rolling)
-        }
-        fun pairLineCount(): Int = pairLines.lineSequence().count { it.isNotBlank() }
-        // 1. Scene / style
-        if (contextTokens > constraints.maxRollingContextTokens) {
-            includeScenes = false
-            rebuild()
-        }
-        // 2. Predecessor pairs (halve, then drop)
-        while (contextTokens > constraints.maxRollingContextTokens && pairLineCount() > 1) {
-            val keep = (pairLineCount() + 1) / 2
-            pairLines = pairLines
-                .lineSequence()
-                .filter { it.isNotBlank() }
-                .toList()
-                .takeLast(keep)
-                .joinToString("\n")
-            rebuild()
-        }
-        if (contextTokens > constraints.maxRollingContextTokens && pairLines.isNotBlank()) {
-            pairLines = ""
-            rebuild()
-        }
-        // 3. Safeguards (unresolved reference & resolved entity lines)
-        if (contextTokens > constraints.maxRollingContextTokens) {
-            unresolvedLines = emptyList()
-            rebuild()
-        }
-        if (contextTokens > constraints.maxRollingContextTokens) {
-            resolvedLines = emptyList()
-            rebuild()
-        }
-        // 4. Terms / sheet entries kept last
-        while (contextTokens > constraints.maxRollingContextTokens && subset.entries.size > 1) {
-            subset = subset.copy(entries = subset.entries.take((subset.entries.size + 1) / 2))
-            rebuild()
-        }
-        if (contextTokens > constraints.maxRollingContextTokens && subset.entries.isNotEmpty()) {
-            subset = subset.copy(entries = emptyList())
-            rebuild()
-        }
-
-        val linesEstimate = held.sumOf { page -> pageLineEstimate(page) }
-        val promptTokens = linesEstimate + contextTokens
-        counters.promptShapeEnriched++
-        counters.profileSubsetFactsMax = maxOf(counters.profileSubsetFactsMax, subset.entries.size)
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT t924 envelope prompt shape=enriched facts=${subset.entries.size} " +
-                "scenes=${if (includeScenes) subset.scenes.size else 0} " +
-                "rollingPairs=${pairLineCountIf(pairLines)} rollingPages=${counters.rollingContextPagesMax} " +
-                "contextTokens=$contextTokens envelopeId=${envelope.envelopeId}"
-        }
-        return PreparedChunk(
+        val preparedContext = prepareRollingHistory(held)
+        val finalized = TranslationContextChunkPlanner.withRollingContext(
             chunk = TranslationContextChunk(
                 pages = pages,
                 blockCount = blockCount,
-                rollingContext = rolling,
-                glossary = glossary,
-                estimatedPromptTokens = promptTokens,
-                maxOutputTokens = StreamingChunkPlanner.effectiveOutputCap(
-                    promptTokens,
-                    envelope.estimatedOutputTokens,
-                    constraints,
-                    protocol = ContextualRequestProtocol.BATCH_V1,
-                    blockCount = blockCount,
-                    pageCount = pages.size,
-                ),
+                rollingContext = "",
+                estimatedPromptTokens = envelope.estimatedInputTokens,
+                maxOutputTokens = envelope.estimatedOutputTokens,
                 protocol = ContextualRequestProtocol.BATCH_V1,
                 pageIndexes = pageIndexes,
             ),
-            estimatedInputTokens = promptTokens,
+            rollingContext = preparedContext.rollingContext,
+            requestedOutputTokens = envelope.estimatedOutputTokens,
+            profile = providerProfile,
+        )
+        val fingerprint = preparedContext.computeRequestContextFingerprint(
+            targetLang = textTranslator.toLang.code,
+            sourceLang = textTranslator.fromLang.code,
+            finalizedRollingContext = finalized.rollingContext,
+        )
+        return PreparedChunk(
+            chunk = finalized,
+            estimatedInputTokens = finalized.estimatedPromptTokens,
+            contextFingerprint = fingerprint,
         )
     }
-
-    private fun pairLineCountIf(pairLines: String): Int =
-        pairLines.lineSequence().count { it.isNotBlank() }
 
     /** Whole-page authoritativeness re-check ( fresh reads). */
     private fun pageAuthoritativelyDone(pageKey: String, live: PageTranslation): Boolean {

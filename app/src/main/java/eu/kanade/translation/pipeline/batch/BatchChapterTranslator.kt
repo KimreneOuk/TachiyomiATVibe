@@ -17,9 +17,6 @@ import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkExecutor
-import eu.kanade.translation.engines.translator.analysis.AnalysisEngineGlossarySynthesizer
-import eu.kanade.translation.engines.translator.analysis.AnalysisEngineTransport
 import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.providers.AiTranslator
@@ -604,9 +601,9 @@ internal class BatchChapterTranslator(
                         scheduleListener = batchScheduleListener,
                     )
 
-                    /** The engine category selects the chapter's batch lane.
-                     * Standard translators use the per-page standard tail;
-                     * AI translators use profile analysis and envelopes.
+                    /** The engine category selects the batch translation lane.
+                     * Standard translators use per-page requests; AI
+                     * translators use deterministic contextual envelopes.
                      * Both lanes share coordinator resume and completion.
                      */
                     suspend fun runBatchPass1(
@@ -710,23 +707,6 @@ internal class BatchChapterTranslator(
                                 } else {
                                     translationPreferences.translationAiApiKey(aiEnginePref).get()
                                 }
-                                // Share the translator instance with analysis
-                                // transport. Engines without raw completion keep
-                                // the typed CONFIGURATION pause.
-                                val analysisRunner = aiEngine
-                                    ?.takeIf { it.analysisBackendId != null }
-                                    ?.let { engine ->
-                                        AnalysisChunkExecutor(
-                                            transport = AnalysisEngineTransport(engine),
-                                        ).runner()
-                                    }
-                                // The same engine builds the chapter glossary
-                                // from durable chunk summaries.
-                                val glossarySynthesizer = aiEngine
-                                    ?.takeIf { it.analysisBackendId != null }
-                                    ?.let { engine ->
-                                        AnalysisEngineGlossarySynthesizer(engine)
-                                    }
                                 // The overlap scheduler runs the existing
                                 // native inpaint lane during provider requests,
                                 // and the render join publishes persisted layouts
@@ -757,18 +737,10 @@ internal class BatchChapterTranslator(
                                         pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
                                     },
                                     releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
-                                    // The profile lane owns AI translation. A
-                                    // non-contextual translator produces a typed
-                                    // CONFIGURATION pause in the coordinator.
+                                    // AI translation requires contextual support.
                                     textTranslator = contextualTranslator,
-                                    // The profile chunk runner uses this
-                                    // engine-backed transport; null keeps the
-                                    // typed CONFIGURATION pause.
-                                    analysisChunkRunner = analysisRunner,
-                                    glossarySynthesizer = glossarySynthesizer,
                                     overlapScheduler = overlapScheduler,
                                     renderJoin = renderJoin,
-                                    seriesKey = manga.id.toString(),
                                 ).runPass1(orderedPages, computeClass)
                             }
                             ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
@@ -777,8 +749,8 @@ internal class BatchChapterTranslator(
                                 // `standard:<engine>`; DeepL is the only credentialed
                                 // standard engine (one-way signature, never a raw
                                 // key). NO AnalysisChunkExecutor and NO contextual
-                                // translator on this lane — analysis/profile/
-                                // envelope/glossary work never runs here.
+                                // translator on this lane — AI envelope,
+                                // analysis, and glossary work never runs here.
                                 val standardEngine = translationPreferences.translationStandardEngine().get()
                                 val credentialSecret = if (standardEngine == StandardEngine.DEEPL) {
                                     translationPreferences.translationDeeplApiKey().get()
@@ -818,7 +790,6 @@ internal class BatchChapterTranslator(
                                     renderJoin = renderJoin,
                                     standardLane = true,
                                     standardTranslateOutcome = { ref -> standardTranslateOutcome(ref) },
-                                    seriesKey = manga.id.toString(),
                                 ).runPass1(orderedPages, computeClass)
                             }
                         }

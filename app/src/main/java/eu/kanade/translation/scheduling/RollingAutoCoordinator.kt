@@ -18,7 +18,6 @@ import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
-import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
@@ -26,7 +25,6 @@ import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
-import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -451,22 +449,10 @@ class RollingAutoCoordinator(
         }
     }
 
-    /**
-     * Persists the attempt before the auto
-     * paid call. Returns a typed Paused outcome when the crash-loop cap
-     * refuses the AUTO entry — no provider call is billed in that case, so
-     * the ledger and the bill stay consistent. Returns null when the entry
-     * was written and the caller must run the call via [runAutoAttempt].
-     * Write failures are fail-open (entry skipped, call proceeds).
-     */
-    private suspend fun recordAutoAttemptStart(work: PreparedWork): TranslationCompletionOutcome? {
+    /** Checks the retry cap; the page boundary records the attempt with its finalized context identity. */
+    private suspend fun checkAutoAttemptAllowed(work: PreparedWork): TranslationCompletionOutcome? {
         val admitted = runCatching {
-            work.session.store.recordAttemptStart(
-                pageKey = work.prepared.pageKey,
-                providerKeyHash = ShortHash.hash(work.session.key),
-                origin = AttemptOrigin.AUTO,
-                generation = work.session.store.currentGeneration,
-            )
+            work.session.store.autoAttemptAllowed(work.prepared.pageKey)
         }.onFailure {
             logcat(LogPriority.WARN) {
                 // Page keys may contain source identifiers; log only the
@@ -569,14 +555,14 @@ class RollingAutoCoordinator(
                                 if (!isWorkCurrent(work)) {
                                     null
                                 } else {
-                                    recordAutoAttemptStart(work) ?: runAutoAttempt(work)
+                                    checkAutoAttemptAllowed(work) ?: runAutoAttempt(work)
                                 }
                             }
                         } else {
                             if (!isWorkCurrent(work)) {
                                 null
                             } else {
-                                recordAutoAttemptStart(work) ?: runAutoAttempt(work)
+                                checkAutoAttemptAllowed(work) ?: runAutoAttempt(work)
                             }
                         }
                     }
