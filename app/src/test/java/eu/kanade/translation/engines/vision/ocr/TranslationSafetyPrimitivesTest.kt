@@ -1,4 +1,4 @@
-package eu.kanade.translation.util
+package eu.kanade.translation.engines.vision.ocr
 
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -6,21 +6,18 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Regression guards for a race-condition invariant, encoded as a
- * pure helper in [TranslationSafetyPrimitives] so it can be driven without the
- * singleton pipeline or an ONNX engine.
+ * Regression guards for a race-condition invariant, encoded as a pure helper
+ * so it can be driven without constructing the OCR engine or loading ONNX.
  *
  * Each test RED-firsts the bug: if the helper regressed to the buggy behavior,
  * the assertion would fail.
  */
 class TranslationSafetyPrimitivesTest {
 
-    // ---- P0-1: SIGSEGV guard ----
-
     @Test
-    fun `P0-1 drain skipped when native lock is held`() {
-        // The bug: draining child pools while native inference owns them is a
-        // use-after-free. The guard: skip the whole drain when lockHeld.
+    fun `native buffer drain is skipped while inference lock is held`() {
+        // Draining child pools while native inference owns them is a
+        // use-after-free, so skip the whole drain when lockHeld.
         val drained = AtomicInteger(0)
         val engines = listOf<TranslationSafetyPrimitives.ForceReleasable>(
             TranslationSafetyPrimitives.ForceReleasable { drained.incrementAndGet() },
@@ -34,7 +31,7 @@ class TranslationSafetyPrimitivesTest {
     }
 
     @Test
-    fun `P0-1 drain runs every child when native lock is free`() {
+    fun `native buffer drain visits every child when inference lock is free`() {
         val drained = AtomicInteger(0)
         val engines = List(4) {
             TranslationSafetyPrimitives.ForceReleasable { drained.incrementAndGet() }
@@ -49,7 +46,7 @@ class TranslationSafetyPrimitivesTest {
     }
 
     @Test
-    fun `P0-1 one child throwing does not abort the drain of the others`() {
+    fun `one child throwing does not abort the native buffer drain`() {
         // Production wraps each in try/catch so a single broken child cannot
         // leave the rest holding native buffers.
         val drained = AtomicInteger(0)

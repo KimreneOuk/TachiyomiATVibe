@@ -24,9 +24,8 @@ import java.security.MessageDigest
  * hash (a Gradle task writing the asset hash into BuildConfig); that is a
  * documented follow-up, not in scope here.
  *
- * Style mirrors [ShortHash] and [TranslationSafetyPrimitives]: a small `object`
- * of pure functions in `eu.kanade.translation.util`, tested in-package under
- * `app/src/test`.
+ * This helper owns integrity stamps and file checks for installed translation
+ * models; its stream and file behavior is covered by JVM tests.
  */
 object ModelDeployment {
 

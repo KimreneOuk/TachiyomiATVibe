@@ -1,16 +1,16 @@
-package eu.kanade.translation.util
+package eu.kanade.translation.engines.vision.ocr
 
 /**
- * Pure, Android-free concurrency-safety primitives used by the pipeline and
- * OCR engine. Their race-sensitive behavior can be tested without constructing
- * the singleton pipeline or an ONNX recognition engine.
+ * Pure, Android-free concurrency-safety primitives used by the OCR engine's
+ * native-buffer cleanup path. Their race-sensitive behavior can be tested
+ * without constructing the recognition engine or native dependencies.
  *
  * Each helper encodes ONE invariant. The production call sites forward to these
  * so a future edit that reintroduces the bug fails the test here, not just on a
  * device SIGSEGV.
  *
- * Naming and style mirror [ShortHash]: a small `object` of pure functions in
- * `eu.kanade.translation.util`, tested in the same package under `app/src/test`.
+ * The helpers stay beside the engine that owns this lock-sensitive cleanup
+ * path and are tested in the same package under `app/src/test`.
  */
 object TranslationSafetyPrimitives {
 

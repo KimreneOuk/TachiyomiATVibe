@@ -40,7 +40,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
-import eu.kanade.translation.util.TranslationSafetyPrimitives
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
