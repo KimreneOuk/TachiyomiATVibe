@@ -65,3 +65,22 @@ Keep candidate output separate from committed display output until the artifact 
 - Add no package cycle, process-global state, or general-purpose abstraction without a real boundary. Prefer an existing concrete owner and a focused test seam.
 
 Changes to leases, cancellation, generation fencing, store commits, artifact publication, recovery, or session coexistence need tests that exercise the relevant state transition and race—not only a happy-path output assertion.
+
+## Naming vocabulary
+
+Use a suffix when it describes a type's primary responsibility, not as a generic decoration. Each suffix below appears in the translation subsystem; the role should remain distinct from nearby owners.
+
+| Suffix | Intended role |
+| --- | --- |
+| `Engine` | Executes a focused processing capability such as recognition, translation, inpainting, or rendering. |
+| `Coordinator` | Coordinates admission, lifecycle, or collaboration across distinct components. |
+| `Planner` | Computes a plan, ordering, or layout; it does not execute the resulting work. |
+| `Store` | Owns live or durable state and its guarded mutation boundary. |
+| `Registry` | Tracks keyed or active objects for lookup; it is not the durable source of truth. |
+| `Provider` | Supplies or adapts a backing implementation/resource behind a contract. |
+| `Projection` | Builds a read-facing view of state; it does not own authoritative mutations. |
+| `Policy` | Encapsulates a focused decision rule without taking over lifecycle coordination. |
+| `Resolver` | Maps current input or state to a concrete target, reference, or status. |
+| `Worker` | Performs a bounded asynchronous job; admission and durable ownership remain elsewhere. |
+
+When a responsibility does not fit one of these roles, prefer a precise domain name over adding a suffix by analogy.

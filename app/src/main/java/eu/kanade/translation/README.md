@@ -2,6 +2,40 @@
 
 `eu.kanade.translation` owns the reader's manga translation workflow, its page and chapter execution paths, and the engines and durable records those paths use. This guide is a short route into the code; the fuller flow and concurrency notes are in [`docs/translation-architecture.md`](../../../../../../../docs/translation-architecture.md).
 
+## Architecture at a glance
+
+Requests move from the reader through ownership and scheduling into execution; state and results flow back through projections.
+
+```text
+Reader / chapter UI
+        │ request
+        ▼
+     workflow ── owns admission and reader/batch lifecycle
+       ├── scheduling ── selects and times manual/auto page jobs
+       └── pipeline ── executes page and chapter work
+             ├── engines ── vision → translator → inpainting/rendering
+             └── persistence ── live page state, artifacts, and queue
+                    │ state and results
+                    ▼
+             presentation projections → reader UI
+```
+
+## Where do I make this change?
+
+| Concern | Start here |
+| --- | --- |
+| Translator/provider implementation | `engines/translator/providers/`; shared contracts and routing are under `engines/translator/`. |
+| OCR | `engines/vision/ocr/`. |
+| Text or panel detection | `engines/vision/detection/`; bubble segmentation is under `engines/vision/segmentation/`. |
+| Inpainting | `engines/inpainting/`. |
+| Text rendering and layout | `engines/rendering/`. |
+| Manual/auto scheduling | `scheduling/`; use `workflow/` when changing request intent or ownership. |
+| Reader/batch ownership | `workflow/`; chapter-specific execution is under `pipeline/batch/`. |
+| Batch recovery | `pipeline/batch/recovery/`. |
+| Durable artifact behavior | `persistence/artifact/`. |
+| Live page state and leases | `persistence/chapter/`. |
+| UI and projection behavior | `presentation/` for translation projections; `app/src/main/java/eu/kanade/presentation/` for Compose UI surfaces. |
+
 ## Follow the main flow
 
 1. Start at `workflow/TranslationManager.kt` for the public façade, then follow `workflow/TranslationRequestCoordinator.kt` and `workflow/TranslationSessionCoordinator.kt` for request and reader/batch ownership.

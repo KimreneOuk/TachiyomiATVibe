@@ -6,6 +6,21 @@ This independent fork is not affiliated with or endorsed by those projects or th
 
 Most of the fork-specific development (translation pipeline, tests, tooling) was produced with AI coding assistants under human direction and review.
 
+## Project status
+
+- **Development:** An active community fork; the translation subsystem is still evolving and is not presented as a stable or production release.
+- **Public releases:** No [GitHub Releases](https://github.com/KimreneOuk/TachiyomiATVibe/releases) are published. The [main CI workflow](https://github.com/KimreneOuk/TachiyomiATVibe/actions/workflows/build_push.yml) builds and uploads unsigned arm64 APK artifacts to successful workflow runs; these are per-run artifacts, not releases.
+- **Translation maturity:** Manual page, automatic reader, and chapter batch workflows are implemented, but their behavior continues to evolve.
+- **Test stability:** Tests tagged `quarantined-flaky` are excluded from default Gradle test runs; `-PincludeQuarantinedTests` opts them in.
+- **Third-party binaries:** Model assets are fetched or converted before a build and packaged in APKs, but are not tracked in Git. Their licenses are individual upstream terms, including an AGPL-3.0 panel-detector derivative; Manga109 dataset terms and bundled-font redistribution permission remain unresolved. See [model sources](docs/MODEL_SOURCES.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Repository map
+
+- `app/` is the Android application; the translation subsystem is under `app/src/main/java/eu/kanade/translation/`.
+- Shared Gradle modules include `core/`, `core-metadata/`, `data/`, `domain/`, `repo/`, `source-api/`, and `source-local/`.
+- `presentation-core/`, `presentation-widget/`, `i18n/`, and `i18n-at/` hold shared presentation and localization modules.
+- `docs/` and `scripts/` contain developer guides and model-fetch/conversion tooling.
+
 ## Features
 
 - Browse manga sources through extensions, organize your library with categories, download chapters, and sync reading progress with trackers.
