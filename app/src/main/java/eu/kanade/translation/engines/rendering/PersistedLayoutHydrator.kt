@@ -229,17 +229,12 @@ sealed interface HydratedLayout {
 /**
  * The reader-side hydration seam. The overlay's
  * [TextLayoutCoordinator] consults [hydrate] BEFORE the async planner; a null
- * return (feature flag OFF, nothing installed, or any non-Resolved outcome) is the
- * mandatory fallback path. The production source is installed by the reader
- * chapter wiring with the chapter's artifact context; no installation means
- * byte-for-byte legacy behavior (planner path, ).
+ * return (feature flag OFF, no chapter source installed, or any non-Resolved
+ * outcome) is the mandatory fallback path. The production chapter source is
+ * installed by the reader chapter wiring with the chapter's artifact context;
+ * no installation means byte-for-byte legacy behavior (planner path).
  */
 object PersistedLayoutReaderBridge {
-
-    /** Returns hydrated draw layouts for the bind inputs, or null to fall back. */
-    fun interface Source {
-        fun hydrate(blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int): List<BlockLayout>?
-    }
 
     /**
      * The chapter-keyed production source. Receives the
@@ -257,17 +252,9 @@ object PersistedLayoutReaderBridge {
         ): List<BlockLayout>?
     }
 
-    @Volatile
-    internal var source: Source? = null
-
     /** The per-chapter production source. */
     @Volatile
     internal var chapterSource: PageKeyedSource? = null
-
-    /** Installs the per-reader hydration source (reader chapter wiring). */
-    fun install(source: Source?) {
-        this.source = source
-    }
 
     /**
      * Installs (or uninstalls with null) the chapter
@@ -277,13 +264,6 @@ object PersistedLayoutReaderBridge {
     fun installChapterSource(source: PageKeyedSource?) {
         this.chapterSource = source
     }
-
-    /**
-     * Never throws to the caller: a source failure degrades to the planner
-     * fallback exactly like an absent plan.
-     */
-    fun hydrate(blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int): List<BlockLayout>? =
-        runCatching { source?.hydrate(blocks, pageWidth, pageHeight) }.getOrNull()
 
     /**
      * Resolves persisted layout by page key. The chapter source is preferred;

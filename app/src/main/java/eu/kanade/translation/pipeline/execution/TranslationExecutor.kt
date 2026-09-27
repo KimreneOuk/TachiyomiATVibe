@@ -11,11 +11,11 @@ import java.io.InputStream
  * The per-page translation contract used by the scheduler, decoupled from the
  * concrete executor.
  *
- * Today this is satisfied by [eu.kanade.translation.workflow.ChapterTranslator], which
- * delegates to [eu.kanade.translation.pipeline.TranslationPipeline]'s
- * decode → OCR → translate → inpaint → render pipeline. The scheduler only
- * cares that the executor runs one page to completion (or failure) under its
- * own single permit, with stage-resume + native-run quarantine already handled.
+ * Today this is satisfied by [eu.kanade.translation.pipeline.TranslationPipeline],
+ * which owns the decode → OCR → translate → inpaint → render stages. The
+ * scheduler only cares that the executor runs one page to completion (or
+ * failure) under its own single permit, with stage-resume + native-run
+ * quarantine already handled.
  *
  * The `force` flag: `false` resumes from the latest persisted stage (no
  * re-OCR when valid blocks exist, no re-translate when blocks are translated,

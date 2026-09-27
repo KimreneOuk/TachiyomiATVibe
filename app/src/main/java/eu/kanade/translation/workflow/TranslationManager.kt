@@ -1615,8 +1615,6 @@ class TranslationManager(
         batchTrackerRegistry.dispose(chapterId)
     }
 
-    internal fun terminalSnapshotCacheSize(): Int = batchTrackerRegistry.terminalSnapshotCacheSize()
-
     fun observeBatchProgress(
         chapterId: Long,
         durableStateHint: Translation.State? = null,

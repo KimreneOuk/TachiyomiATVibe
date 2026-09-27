@@ -12,7 +12,14 @@ Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Larger changes are easi
 
 ## Build and test
 
-Build the Standard debug app with:
+The translation model assets are not committed to Git. Before building or testing translation features, fetch them once (~159 MB, hash-verified):
+
+```sh
+python3 -m pip install -r scripts/converters/requirements.txt
+python3 scripts/fetch_models.py
+```
+
+JVM unit tests do not require the model assets. Build the Standard debug app with:
 
 ```sh
 ./gradlew :app:assembleStandardDebug
