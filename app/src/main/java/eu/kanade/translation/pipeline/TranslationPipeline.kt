@@ -31,7 +31,6 @@ import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.DeferredPagePublications
 import eu.kanade.translation.pipeline.EngineLane
-import eu.kanade.translation.pipeline.MemoryGovernance
 import eu.kanade.translation.pipeline.OnnxPhaseResult
 import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
@@ -49,11 +48,12 @@ import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.pipeline.execution.isPreparedPageTerminal
 import eu.kanade.translation.pipeline.execution.publishPreparedPageFromOcr
+import eu.kanade.translation.pipeline.memory.MemoryGovernance
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecision
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecisionKind
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.util.TranslationMemoryBudget
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -980,7 +980,7 @@ class TranslationPipeline(
                     sampledBitmapBytes = 0L,
                     sourcePixels = 0L,
                     sampledPixels = 0L,
-                    snapshot = eu.kanade.translation.util.TranslationMemoryBudget.snapshot(),
+                    snapshot = eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.snapshot(),
                 ),
                 sourceBytesSize = 0L,
             )

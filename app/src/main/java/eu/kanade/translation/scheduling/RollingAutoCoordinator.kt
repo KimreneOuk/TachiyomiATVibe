@@ -25,8 +25,8 @@ import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import eu.kanade.translation.util.ShortHash
-import eu.kanade.translation.util.TranslationMemoryBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -423,7 +423,7 @@ class RollingAutoCoordinator(
             currentSpec?.takeIf { it.generation == activeGeneration }?.generation
         } ?: return@coroutineScope
         val computeGate = if (computeClass.mayOverlapNative) null else Semaphore(1)
-        val channelCapacity = eu.kanade.translation.util.TranslationMemoryBudget.recommendedPrefetchCapacity()
+        val channelCapacity = eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.recommendedPrefetchCapacity()
         val preparedChannel = Channel<PreparedWork>(capacity = channelCapacity)
 
         // Translate/render consumer. Launched as a child of this coroutine so

@@ -32,6 +32,7 @@ import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.pipeline.finalizePostOcrStage
+import eu.kanade.translation.pipeline.memory.MemoryGovernance
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
@@ -379,14 +380,14 @@ internal class SinglePageOnnxPhase(
                             sampleSize = adjustedResume.decodeSampleSize,
                             originalWidth = adjustedResume.originalImgWidth.toInt(),
                             originalHeight = adjustedResume.originalImgHeight.toInt(),
-                            decodeDecision = eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision(
-                                kind = eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind.FULL,
+                            decodeDecision = eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecision(
+                                kind = eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecisionKind.FULL,
                                 sampleSize = adjustedResume.decodeSampleSize,
                                 rawBitmapBytes = 0L,
                                 sampledBitmapBytes = 0L,
                                 sourcePixels = 0L,
                                 sampledPixels = 0L,
-                                snapshot = eu.kanade.translation.util.TranslationMemoryBudget.snapshot(),
+                                snapshot = eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.snapshot(),
                             ),
                             sourceBytesSize = 0L,
                         )

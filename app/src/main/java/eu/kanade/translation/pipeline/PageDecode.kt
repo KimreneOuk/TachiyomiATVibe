@@ -9,10 +9,11 @@ import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.pipeline.memory.MemoryGovernance
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecision
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecisionKind
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
-import eu.kanade.translation.util.TranslationMemoryBudget
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

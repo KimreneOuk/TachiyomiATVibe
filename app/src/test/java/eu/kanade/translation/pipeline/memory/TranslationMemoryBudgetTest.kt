@@ -1,6 +1,6 @@
-package eu.kanade.translation.util
+package eu.kanade.translation.pipeline.memory
 
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecisionKind
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

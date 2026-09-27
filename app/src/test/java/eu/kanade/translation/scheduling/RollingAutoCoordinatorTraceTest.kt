@@ -13,7 +13,7 @@ import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
-import eu.kanade.translation.util.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.every

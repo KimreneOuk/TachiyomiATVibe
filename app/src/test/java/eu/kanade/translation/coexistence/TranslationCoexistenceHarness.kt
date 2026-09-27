@@ -34,7 +34,6 @@ import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.EngineLane
-import eu.kanade.translation.pipeline.MemoryGovernance
 import eu.kanade.translation.pipeline.OnnxPhaseResult
 import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
@@ -47,6 +46,7 @@ import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.pipeline.memory.MemoryGovernance
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.TranslationScheduler

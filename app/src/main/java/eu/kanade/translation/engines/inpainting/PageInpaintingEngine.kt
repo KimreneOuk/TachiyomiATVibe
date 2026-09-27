@@ -4,7 +4,7 @@ import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.util.TranslationMemoryBudget
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.TranslationPreferences

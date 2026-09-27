@@ -1,12 +1,12 @@
-package eu.kanade.translation.pipeline
+package eu.kanade.translation.pipeline.memory
 
 import android.content.Context
 import android.graphics.Bitmap
 import coil3.imageLoader
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
-import eu.kanade.translation.util.TranslationMemoryBudget
-import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
+import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
+import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecision
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool

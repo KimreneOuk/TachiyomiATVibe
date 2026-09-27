@@ -1,4 +1,4 @@
-package eu.kanade.translation.util
+package eu.kanade.translation.pipeline.memory
 
 import android.app.ActivityManager
 import android.app.Application
