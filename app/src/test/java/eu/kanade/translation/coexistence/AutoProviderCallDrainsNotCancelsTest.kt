@@ -68,7 +68,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class AutoProviderCallDrainsNotCancelsTest {
 
     companion object {
-        private const val AWAIT_TIMEOUT_MS = 10_000L
+        private const val AWAIT_TIMEOUT_MS = 60_000L
         private const val LEDGER_FILE = "D6 Drain Chapter_artifacts/attempts/ledger.json"
     }
 

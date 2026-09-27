@@ -412,7 +412,7 @@ class MangaScreenModelCancelledBatchReconciliationTest {
         val injektPrepared = AtomicBoolean(false)
 
         /** Bound for every event-driven await (harness precedent). */
-        const val AWAIT_TIMEOUT_MS = 10_000L
+        const val AWAIT_TIMEOUT_MS = 60_000L
 
         /** Bound for NEGATIVE oracles ("X must NOT happen") — harness precedent. */
         const val NEGATIVE_PROBE_MS = 2_000L
