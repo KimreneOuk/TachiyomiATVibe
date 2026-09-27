@@ -64,7 +64,7 @@ Run the JVM unit tests with:
 ./gradlew test
 ```
 
-A small number of integration tests in the batch-translation coexistence suite — plus one screen-model fixture whose boot await can starve on 2-core CI runners — are load-ordering sensitive under full-suite JVM churn and are temporarily tagged `quarantined-flaky` and excluded from CI. They remain part of the tree and can be run explicitly with:
+A small number of integration tests in the batch-translation coexistence suite — plus two screen-model fixtures whose boot await can starve on 2-core CI runners — are load-ordering sensitive under full-suite JVM churn and are temporarily tagged `quarantined-flaky` and excluded from CI. They remain part of the tree and can be run explicitly with:
 
 ```
 ./gradlew :app:testDevReleaseUnitTest -PincludeQuarantinedTests

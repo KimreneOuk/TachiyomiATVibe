@@ -110,7 +110,6 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         // the byte-identical legacy behavior.
         hydrate = { blocks, width, height ->
             val hydrated = PersistedLayoutReaderBridge.hydrate(boundPageKey, blocks, width, height)
-                ?: PersistedLayoutReaderBridge.hydrate(blocks, width, height)
             hydrated?.let { buildPreparedLayouts(it, width, height) }
         },
     )

@@ -86,7 +86,7 @@ class PersistedLayoutHydrationTest {
     @AfterEach
     fun resetRuntimeSeams() {
         PersistedLayoutRuntime.resetForTest()
-        PersistedLayoutReaderBridge.install(null)
+        PersistedLayoutReaderBridge.installChapterSource(null)
     }
 
     // ------------------------------------------------------------------
@@ -179,7 +179,7 @@ class PersistedLayoutHydrationTest {
 
     @Test
     fun `fallback green - bridge hydrate returning null falls back to the planner (gate 7-7)`() {
-        PersistedLayoutReaderBridge.install { _, _, _ -> null }
+        PersistedLayoutReaderBridge.installChapterSource { _, _, _, _ -> null }
         var planCalls = 0
         val coordinator = TextLayoutCoordinator(
             cache = ReaderTextLayoutCache(8),
@@ -191,7 +191,7 @@ class PersistedLayoutHydrationTest {
             },
             onPrepared = { },
             hydrate = { blocks, width, height ->
-                PersistedLayoutReaderBridge.hydrate(blocks, width, height)
+                PersistedLayoutReaderBridge.hydrate("test-page", blocks, width, height)
             },
         )
         coordinator.bind(listOf(block("MANUAL_PAGE")), 1000, 1400)
@@ -200,8 +200,8 @@ class PersistedLayoutHydrationTest {
 
     @Test
     fun `fallback green - throwing hydration source degrades to the planner (gate 7-7)`() {
-        PersistedLayoutReaderBridge.install { _, _, _ -> throw IllegalStateException("io exploded") }
-        PersistedLayoutReaderBridge.hydrate(listOf(block("X")), 10, 10) shouldBe null
+        PersistedLayoutReaderBridge.installChapterSource { _, _, _, _ -> throw IllegalStateException("io exploded") }
+        PersistedLayoutReaderBridge.hydrate("any", listOf(block("X")), 10, 10) shouldBe null
     }
 
     @Test
