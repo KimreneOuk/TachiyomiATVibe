@@ -38,6 +38,20 @@ class AotPixelOpsTest {
     }
 
     @Test
+    fun `composite leaves pixels outside mask and feather exactly unchanged`() {
+        val original = intArrayOf(0x12345678, argb(10, 20, 30), argb(40, 50, 60))
+        val neural = intArrayOf(argb(200, 210, 220), argb(210, 220, 230), argb(220, 230, 240))
+        val alpha = floatArrayOf(0.0f, 0.25f, 1.0f)
+
+        val result = IntArray(original.size)
+        AotPixelOps.compositeInto(original, neural, alpha, result)
+
+        result[0] shouldBe original[0]
+        result[1] shouldBe AotPixelOps.blendPixel(original[1], neural[1], 0.25f)
+        result[2] shouldBe neural[2]
+    }
+
+    @Test
     fun `maskValue returns source alpha when alpha is non-zero and above blue`() {
         val pixel = (0x80 shl 24) or (10 shl 16) or (20 shl 8) or 30
 

@@ -13,6 +13,27 @@ internal object AotPixelOps {
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
+    /** Supports [destination] aliasing [original] so pooled page buffers can be reused. */
+    internal fun compositeInto(
+        original: IntArray,
+        inpainted: IntArray,
+        alpha: FloatArray,
+        destination: IntArray,
+    ) {
+        require(original.size == inpainted.size && original.size == alpha.size && original.size == destination.size) {
+            "composite inputs must have matching pixel counts"
+        }
+        for (index in original.indices) {
+            val coverage = alpha[index]
+            val originalPixel = original[index]
+            destination[index] = if (coverage > 0.0f) {
+                blendPixel(originalPixel, inpainted[index], coverage)
+            } else {
+                originalPixel
+            }
+        }
+    }
+
     internal fun maskValue(pixel: Int): Int = max(pixel and 0xFF, pixel ushr 24)
 
     /**

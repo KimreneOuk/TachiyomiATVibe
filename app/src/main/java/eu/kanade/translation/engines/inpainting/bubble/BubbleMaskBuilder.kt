@@ -3,8 +3,8 @@ package eu.kanade.translation.engines.inpainting.bubble
 import kotlin.math.max
 
 /**
- * Pure mask-construction and morphology helpers used by [SmartBubbleTextCleaner]
- * to build the regions where original text is erased before inpainting.
+ * Pure mask-construction and morphology helpers used by inpainting engines to
+ * build the regions where original text is erased.
  *
  * The algorithms operate on byte arrays so they can be tested on the JVM
  * without loading `android.graphics.Bitmap`. Every function is pure; callers

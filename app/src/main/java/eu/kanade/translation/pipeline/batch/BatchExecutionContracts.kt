@@ -77,7 +77,7 @@ interface TranslatorLaneWorker {
         }
 }
 
-/** Result of the only live batch coordinator's first pass. */
+/** Result of the chapter batch coordinator's first pass. */
 enum class BatchPass1Status {
     COMPLETED,
     PAUSED,
@@ -91,7 +91,7 @@ enum class BatchPass1Status {
     PERSISTENCE_REJECTED,
 }
 
-/** Result of the only live batch coordinator's first pass. */
+/** Result of the chapter batch coordinator's first pass. */
 data class BatchPass1Outcome(
     val needsTranslation: List<String>,
     val status: BatchPass1Status = BatchPass1Status.COMPLETED,

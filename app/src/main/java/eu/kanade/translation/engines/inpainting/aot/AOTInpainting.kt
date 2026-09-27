@@ -10,7 +10,6 @@ import android.graphics.RectF
 import android.os.Build
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
-import eu.kanade.translation.engines.inpainting.bubble.SmartBubbleTextCleaner
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.DeviceCapability
@@ -50,7 +49,7 @@ class AOTInpainting(
         private const val REPORT_AOT_CONTEXT = 512
         private const val REPORT_FREE_TEXT_FEATHER = 3
         private const val REPORT_BUBBLE_SMOOTH_PASSES = 12
-        private const val REPORT_PUSH_PULL_CONTEXT = 64
+        private const val REPORT_INPAINT_CONTEXT = 64
         internal const val BUBBLE_SEG_MASK_EROSION = 5
 
         // distance-field feather ramp (px) blending the neural
@@ -96,17 +95,20 @@ class AOTInpainting(
     }
 
     private var fixedSession: OrtSession? = null
+    private var fixedSessionRoute = "fixed_cpu"
     private var fixedNnapiSession: OrtSession? = null
     private var fixedQnnSession: OrtSession? = null
+    private var fixedQnnBackend: AotExecutionCoordinator.Backend? = null
     private var dynamicSession: OrtSession? = null
+    private var dynamicSessionRoute = "dynamic_cpu"
     private val nnapiHealth = NnapiHealthMonitor()
-    private val bubbleCleaner = SmartBubbleTextCleaner()
     var paddleDetector: eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine? = null
 
     /**
      * Route tag of the most recently accepted neural candidate
-     * (fixed_qnn_htp / fixed_nnapi / fixed / dynamic), for honest page-level
-     * perf logging. Null before the first acceptance.
+     * (fixed_qnn_htp / fixed_qnn_gpu / fixed_nnapi / fixed_xnnpack / fixed_cpu /
+     * dynamic_xnnpack / dynamic_cpu), for honest page-level perf logging.
+     * Null before the first acceptance.
      */
     @Volatile
     var lastAcceptedRoute: String? = null
@@ -115,23 +117,39 @@ class AOTInpainting(
     fun initialize(fixedModelFile: File?, dynamicModelFile: File?) {
         fixedSession = initializeSession(fixedModelFile, AotModelContract.Kind.FIXED_512, "fixed")
         dynamicSession = initializeSession(dynamicModelFile, AotModelContract.Kind.DYNAMIC, "dynamic")
-        if (HardwareDiscoveryEngine.resolveRoute() == HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP &&
-            fixedModelFile != null &&
-            fixedModelFile.exists()
-        ) {
-            fixedQnnSession = initializeQnnSession(fixedModelFile)
+        val selectedAccelerator = AotExecutionCoordinator.preferredAccelerator(HardwareDiscoveryEngine.resolveRoute())
+        when (selectedAccelerator) {
+            AotExecutionCoordinator.Backend.QNN_HTP,
+            AotExecutionCoordinator.Backend.QNN_GPU,
+            -> if (fixedModelFile != null && fixedModelFile.exists()) {
+                fixedQnnSession = initializeQnnSession(fixedModelFile, selectedAccelerator)
+                if (fixedQnnSession != null) fixedQnnBackend = selectedAccelerator
+            }
+            AotExecutionCoordinator.Backend.NNAPI -> {
+                nnapiHealth.resetForNewSession()
+                fixedNnapiSession = initializeStrictNnapiSession(fixedModelFile)
+            }
+            null -> Unit
+            else -> error("Unexpected AOT accelerator candidate $selectedAccelerator")
         }
-        fixedNnapiSession = initializeStrictNnapiSession(fixedModelFile)
         logcat(LogPriority.INFO) {
-            "[inpaint] init fixedXnnpack=${fixedSession != null} fixedQnn=${fixedQnnSession != null} fixedNnapi=${fixedNnapiSession != null} " +
-                "dynamic=${dynamicSession != null} strictCpuFallbackDisabled=true ${DeviceCapability.describe()}"
+            "[inpaint] init fixedSession=${fixedSession != null} fixedRoute=$fixedSessionRoute " +
+                "fixedQnn=${fixedQnnSession != null} fixedNnapi=${fixedNnapiSession != null} " +
+                "dynamic=${dynamicSession != null} dynamicRoute=$dynamicSessionRoute " +
+                DeviceCapability.describe()
         }
     }
 
-    private fun initializeQnnSession(modelFile: File): OrtSession? {
+    private fun initializeQnnSession(modelFile: File, backend: AotExecutionCoordinator.Backend): OrtSession? {
+        val route = when (backend) {
+            AotExecutionCoordinator.Backend.QNN_HTP -> HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP
+            AotExecutionCoordinator.Backend.QNN_GPU -> HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU
+            else -> error("Not a QNN backend: $backend")
+        }
+        val routeLabel = if (backend == AotExecutionCoordinator.Backend.QNN_GPU) "qnn_gpu" else "qnn_htp"
         val modelId = ModelRoutingEngine.resolveModelId(modelFile.absolutePath)
-        if (!ModelRoutingEngine.isSupported(modelId, HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP)) {
-            logcat(LogPriority.INFO) { "[inpaint] route=qnn_htp model=$modelId is marked UNSUPPORTED; skipping" }
+        if (!ModelRoutingEngine.isSupported(modelId, route)) {
+            logcat(LogPriority.INFO) { "[inpaint] route=$routeLabel model=$modelId is marked UNSUPPORTED; skipping" }
             return null
         }
 
@@ -140,31 +158,34 @@ class AOTInpainting(
         } catch (_: Throwable) {
             null
         }
-        val htpOptions = OnnxRuntimeProvider.buildGenericHtpOptions(performanceMode = performanceMode)
-
+        val qnnOptions = when (backend) {
+            AotExecutionCoordinator.Backend.QNN_HTP -> OnnxRuntimeProvider.buildGenericHtpOptions(performanceMode = performanceMode)
+            AotExecutionCoordinator.Backend.QNN_GPU -> mapOf("backend_type" to "gpu")
+            else -> error("Not a QNN backend: $backend")
+        }
         // 1. Warm load from precompiled context cache if valid (~300ms)
-        if (app != null) {
-            val validCachedModel = QnnContextCacheManager.getValidCachedModel(app, modelFile, htpOptions)
+        if (app != null && backend == AotExecutionCoordinator.Backend.QNN_HTP) {
+            val validCachedModel = QnnContextCacheManager.getValidCachedModel(app, modelFile, qnnOptions)
             if (validCachedModel != null) {
                 var loadOpts: OrtSession.SessionOptions? = null
                 try {
                     loadOpts = OnnxRuntimeProvider.createQnnHtpSessionOptions(
                         contextCacheFile = null,
                         strictCpuFallbackDisabled = true,
-                        qnnOptions = htpOptions,
+                        qnnOptions = qnnOptions,
                     )
                     val session = OnnxRuntimeProvider.environment.createSession(validCachedModel.absolutePath, loadOpts)
                     AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(session))
-                    ModelRoutingEngine.markSupported(modelId, HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP)
+                    ModelRoutingEngine.markSupported(modelId, route)
                     logcat(LogPriority.INFO) {
-                        "[inpaint] route=qnn_htp init=ok cached=true model=$modelId ${DeviceCapability.describe()}"
+                        "[inpaint] route=$routeLabel init=ok cached=true model=$modelId ${DeviceCapability.describe()}"
                     }
                     return session
                 } catch (t: Throwable) {
                     logcat(LogPriority.WARN, t) {
-                        "[inpaint] route=qnn_htp cached context load failed; invalidating cache and compiling fresh"
+                        "[inpaint] route=$routeLabel cached context load failed; invalidating cache and compiling fresh"
                     }
-                    QnnContextCacheManager.invalidate(app, modelFile, htpOptions)
+                    QnnContextCacheManager.invalidate(app, modelFile, qnnOptions)
                 } finally {
                     try {
                         loadOpts?.close()
@@ -174,28 +195,31 @@ class AOTInpainting(
         }
 
         // 2. Cold compilation and atomic staging
-        val stagingCtxFile = if (app != null) {
-            QnnContextCacheManager.prepareStaging(app, modelFile, htpOptions)
+        val stagingCtxFile = if (app != null && backend == AotExecutionCoordinator.Backend.QNN_HTP) {
+            QnnContextCacheManager.prepareStaging(app, modelFile, qnnOptions)
         } else {
             null
         }
 
         var opts: OrtSession.SessionOptions? = null
         var created: OrtSession? = null
+        var qnnSessionCreationFailure = false
         return try {
+            qnnSessionCreationFailure = true
             opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(
                 contextCacheFile = stagingCtxFile,
                 strictCpuFallbackDisabled = true,
-                qnnOptions = htpOptions,
+                qnnOptions = qnnOptions,
             )
             created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
+            qnnSessionCreationFailure = false
             AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(created))
-            if (app != null) {
-                QnnContextCacheManager.commitStaging(app, modelFile, htpOptions)
+            if (app != null && stagingCtxFile != null) {
+                QnnContextCacheManager.commitStaging(app, modelFile, qnnOptions)
             }
-            ModelRoutingEngine.markSupported(modelId, HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP)
+            ModelRoutingEngine.markSupported(modelId, route)
             logcat(LogPriority.INFO) {
-                "[inpaint] route=qnn_htp init=ok cached=false generated=true model=$modelId ${DeviceCapability.describe()}"
+                "[inpaint] route=$routeLabel init=ok cached=false generated=${stagingCtxFile != null} model=$modelId ${DeviceCapability.describe()}"
             }
             created
         } catch (error: Throwable) {
@@ -204,16 +228,19 @@ class AOTInpainting(
             } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
             }
-            val canRetry = ModelRoutingEngine.recordFailure(modelId, HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP, error)
+            if (qnnSessionCreationFailure && error !is OutOfMemoryError) {
+                HardwareDiscoveryEngine.tripCircuitBreaker("qnn_session_creation_failed", error)
+            }
+            val canRetry = ModelRoutingEngine.recordFailure(modelId, route, error)
             logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=qnn_htp init=failed canRetry=$canRetry model=$modelId ${DeviceCapability.describe()}"
+                "[inpaint] route=$routeLabel init=failed canRetry=$canRetry model=$modelId ${DeviceCapability.describe()}"
             }
             null
         } finally {
             try {
                 opts?.close()
             } catch (error: Throwable) {
-                logcat(LogPriority.WARN, error) { "[inpaint] route=qnn_htp optionsClose=failed" }
+                logcat(LogPriority.WARN, error) { "[inpaint] route=$routeLabel optionsClose=failed" }
             }
         }
     }
@@ -240,7 +267,7 @@ class AOTInpainting(
         )
         if (!decision.eligible || modelFile == null || !modelFile.exists()) {
             logcat(LogPriority.INFO) {
-                "[inpaint] route=xnnpack nnapiCandidate=skipped reason=${if (modelFile?.exists() != true) "model_missing" else decision.reason} " +
+                "[inpaint] route=nnapi nnapiCandidate=skipped reason=${if (modelFile?.exists() != true) "model_missing" else decision.reason} " +
                     "strictCpuFallbackDisabled=true heapAvail=${memory.availableHeapBytes / (1024L * 1024L)}MiB " +
                     "sysHeadroom=${memory.systemHeadroomBytes?.div(1024L * 1024L)}MiB lowMemory=${memory.lowMemory} ${DeviceCapability.describe()}"
             }
@@ -249,11 +276,14 @@ class AOTInpainting(
 
         var opts: OrtSession.SessionOptions? = null
         var created: OrtSession? = null
+        var nnapiSessionCreationFailure = false
         return try {
             // No runCatching around strict config, addNnapi, or createSession: a
             // failed strict candidate must be visible and must never become CPU.
+            nnapiSessionCreationFailure = true
             opts = OnnxRuntimeProvider.createStrictNnapiSessionOptions()
             created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
+            nnapiSessionCreationFailure = false
             AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(created))
             logcat(LogPriority.INFO) {
                 "[inpaint] route=nnapi init=ok strictCpuFallbackDisabled=true model=${modelFile.name} ${DeviceCapability.describe()}"
@@ -265,9 +295,12 @@ class AOTInpainting(
             } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
             }
-            nnapiHealth.disableForNativeException()
+            if (nnapiSessionCreationFailure && error !is OutOfMemoryError) {
+                nnapiHealth.disableForNativeException()
+            }
             logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=xnnpack nnapiCandidate=init_failed strictCpuFallbackDisabled=true health=disabled ${DeviceCapability.describe()}"
+                "[inpaint] route=nnapi init_failed strictCpuFallbackDisabled=true " +
+                    "health=${if (nnapiHealth.isHealthy()) "unchanged" else "disabled_native_exception"} ${DeviceCapability.describe()}"
             }
             null
         } finally {
@@ -290,24 +323,25 @@ class AOTInpainting(
             }
             return null
         }
-        var xnnpackRegistered = false
-        val opts = try {
-            OnnxRuntimeProvider.createRequiredXnnpackSessionOptions { registered ->
-                xnnpackRegistered = registered
-            }
-        } catch (error: Throwable) {
-            logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=$route init=failed provider=XNNPACK required=true model=${modelFile.name}"
-            }
-            return null
-        }
+        var provider = "cpu"
         var created: OrtSession? = null
         return try {
-            created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
+            created = OnnxRuntimeProvider.createSessionWithFallback(
+                modelPath = modelFile.absolutePath,
+                useXnnpack = true,
+                disableIntraOpSpinning = true,
+                providerSink = { registeredProvider -> provider = registeredProvider },
+            )
             val contract = readContract(created)
             AotModelContract.validate(kind, contract)
+            val executionRoute = "${route}_$provider"
+            if (kind == AotModelContract.Kind.FIXED_512) {
+                fixedSessionRoute = executionRoute
+            } else {
+                dynamicSessionRoute = executionRoute
+            }
             logcat(LogPriority.INFO) {
-                "[inpaint] route=$route init=ok provider=${if (xnnpackRegistered) "XNNPACK" else "CPU"} model=${modelFile.name} " +
+                "[inpaint] route=$route init=ok provider=${provider.uppercase()} model=${modelFile.name} " +
                     "image=${contract.imageShape.contentToString()} mask=${contract.maskShape.contentToString()} " +
                     "output=${contract.outputShape.contentToString()}"
             }
@@ -315,13 +349,13 @@ class AOTInpainting(
         } catch (error: Throwable) {
             try {
                 created?.close()
-            } catch (_: Throwable) {}
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
             logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=$route init=failed provider=${if (xnnpackRegistered) "XNNPACK" else "CPU"} model=${modelFile.name}"
+                "[inpaint] route=$route init=failed provider=${provider.uppercase()} model=${modelFile.name}"
             }
             null
-        } finally {
-            opts.close()
         }
     }
 
@@ -340,7 +374,8 @@ class AOTInpainting(
         )
     }
 
-    fun isInitialized(): Boolean = fixedSession != null || dynamicSession != null || fixedQnnSession != null
+    fun isInitialized(): Boolean =
+        fixedSession != null || dynamicSession != null || fixedQnnSession != null || fixedNnapiSession != null
 
     private fun neuralSessionCount(): Int =
         (if (fixedSession != null) 1 else 0) +
@@ -413,7 +448,8 @@ class AOTInpainting(
         logcat(LogPriority.INFO) {
             "[inpaint] pipeline=investigation_report bubbleText=${bubbleTextBoxes.size} " +
                 "freeDets=${freeTextDetectorBoxes.size} rawGroups=${rawFreeTextGroups.size} clusteredGroups=${freeTextGroups.size} " +
-                "mode=$mode fixed=${fixedSess != null} dynamic=${dynamicSess != null}"
+                "mode=$mode fixed=${fixedSess != null} qnn=${fixedQnnSession != null} nnapi=${fixedNnapiSession != null} " +
+                "dynamic=${dynamicSess != null}"
         }
         if (paddleDetector != null && freeTextDetectorBoxes.isNotEmpty()) {
             logcat(LogPriority.INFO) {
@@ -427,13 +463,16 @@ class AOTInpainting(
 
         for (group in freeTextGroups) {
             if (group.isEmpty()) continue
-            if (mode == InpaintingMode.QUALITY && (fixedSess != null || dynamicSess != null)) {
+            if (mode == InpaintingMode.QUALITY &&
+                (fixedSess != null || fixedQnnSession != null || fixedNnapiSession != null || dynamicSess != null)
+            ) {
                 result = inpaintReportFreeTextNeural(fixedSess, dynamicSess, result, group)
             } else {
-                logcat(LogPriority.INFO) {
-                    "[inpaint] route=push_pull reason=${if (mode != InpaintingMode.QUALITY) "fast_mode" else "no_neural_session"} boxes=${group.size}"
-                }
-                result = inpaintReportFreeTextFast(result, group)
+                result = inpaintReportFreeTextFast(
+                    result,
+                    group,
+                    reason = if (mode != InpaintingMode.QUALITY) "fast_mode" else "no_neural_session",
+                )
             }
         }
 
@@ -655,8 +694,12 @@ class AOTInpainting(
         return eroded
     }
 
-    private fun inpaintReportFreeTextFast(image: Bitmap, boxes: List<IntArray>): Bitmap {
-        val bounds = AotBoxGeometry.paddedUnionBounds(boxes, image.width, image.height, REPORT_PUSH_PULL_CONTEXT) ?: return image
+    private fun inpaintReportFreeTextFast(
+        image: Bitmap,
+        boxes: List<IntArray>,
+        reason: String = "neural_exhausted",
+    ): Bitmap {
+        val bounds = AotBoxGeometry.paddedUnionBounds(boxes, image.width, image.height, REPORT_INPAINT_CONTEXT) ?: return image
         val cropW = bounds[2] - bounds[0]
         val cropH = bounds[3] - bounds[1]
         if (cropW <= 0 || cropH <= 0) return image
@@ -666,13 +709,13 @@ class AOTInpainting(
         val original = IntArray(cropW * cropH)
         image.getPixels(original, 0, cropW, bounds[0], bounds[1], cropW, cropH)
         val work = original.copyOf()
-        OpenCvInpaintEngine.inpaintPixels(work, mask, cropW, cropH)
+        val classicalBackend = OpenCvInpaintEngine.inpaintPixelsWithBackend(work, mask, cropW, cropH)
         val alpha = BubbleMaskBuilder.featherAlphaField(mask, cropW, cropH, REPORT_FREE_TEXT_FEATHER)
-        for (i in work.indices) {
-            val a = alpha[i]
-            if (a > 0.0f) work[i] = AotPixelOps.blendPixel(original[i], work[i], a)
-        }
+        AotPixelOps.compositeInto(original, work, alpha, work)
         image.setPixels(work, 0, cropW, bounds[0], bounds[1], cropW, cropH)
+        logcat(LogPriority.INFO) {
+            "[inpaint] route=${classicalBackend.routeLabel} reason=$reason crop=${cropW}x$cropH boxes=${boxes.size}"
+        }
         return image
     }
 
@@ -698,13 +741,13 @@ class AOTInpainting(
                 tag = "skip_report_aot",
                 width = image.width,
                 height = image.height,
-                extra = "route=push_pull neuralMode=${memoryDecision.mode} " +
+                extra = "neuralMode=${memoryDecision.mode} " +
                     "sessions=${memoryDecision.sessionCount} " +
                     "nativeSystemReserve=${memoryDecision.nativeSystemReserveBytes / (1024L * 1024L)}MiB " +
                     "sysHeadroom=${memoryDecision.systemHeadroomBytes?.div(1024L * 1024L)}MiB " +
                     "reason=${memoryDecision.reason} crop=${side}x$side boxes=${boxes.size}",
             )
-            return inpaintReportFreeTextFast(image, boxes)
+            return inpaintReportFreeTextFast(image, boxes, reason = "memory_${memoryDecision.reason}")
         }
         EngineMemoryBudget.logSnapshot(
             tag = "run_report_aot",
@@ -718,33 +761,140 @@ class AOTInpainting(
         val maskBytes = BubbleMaskBuilder.buildFixedPillMask(localBoxes, side, side, REPORT_FREE_TEXT_PAD, REPORT_FREE_TEXT_DILATE)
         if (maskBytes.none { it != 0.toByte() }) return image
         val maskBitmap = BitmapPool.getALPHA8(side, side)
-        try {
+        var prepared: PreparedFixedInput? = null
+        var preparationError: Throwable? = null
+        var neuralOom = false
+        return try {
             setAlphaMaskPixels(maskBitmap, maskBytes, side, side)
-            var fixedOom = false
-            val result = AotFallbackCoordinator.run(
-                primary = {
-                    if (fixedSess == null) {
-                        loggedFailure("fixed_xnnpack", "session_unavailable", crop, side, null)
-                        AotFallbackCoordinator.CandidateResult.Failed(IllegalStateException("fixed XNNPACK session unavailable"))
-                    } else {
-                        tryStrictFixedCandidate(fixedSess, image, maskBitmap, crop, side)
-                            .also { if (it is AotFallbackCoordinator.CandidateResult.Failed && it.error is OutOfMemoryError) fixedOom = true }
+            val nnapiSession = fixedNnapiSession
+            val memory = EngineMemoryBudget.nnapiMemorySnapshot()
+            val useNnapi = nnapiSession != null &&
+                NnapiCapabilityGate.decide(
+                    NnapiCapabilityGate.Snapshot(
+                        sdk = Build.VERSION.SDK_INT,
+                        supportedAbis = Build.SUPPORTED_ABIS.toList(),
+                        emulator = DeviceCapability.isProbablyEmulator,
+                        nnapiProviderCompiled = true,
+                        availableHeapBytes = memory.availableHeapBytes,
+                        systemHeadroomBytes = memory.systemHeadroomBytes,
+                        lowMemory = memory.lowMemory,
+                        healthy = nnapiHealth.isHealthy(),
+                    ),
+                ).eligible
+            if (fixedSess != null || fixedQnnSession != null || useNnapi) {
+                try {
+                    prepared = prepareFixedInput(image, maskBitmap, crop, side)
+                } catch (error: Throwable) {
+                    preparationError = error
+                    loggedFailure("fixed_prepare", "exception", crop, side, error)
+                }
+            }
+            fun closePreparedInput() {
+                val current = prepared ?: return
+                prepared = null
+                try {
+                    current.close()
+                } catch (error: Throwable) {
+                    logcat(LogPriority.WARN, error) { "[inpaint] fixed_input close=failed before classical fallback" }
+                }
+            }
+
+            val selectedAccelerator = when {
+                fixedQnnSession != null -> fixedQnnBackend
+                useNnapi -> AotExecutionCoordinator.Backend.NNAPI
+                else -> null
+            }
+            val preferredAccelerator = selectedAccelerator.takeIf { prepared != null }
+            val cpuBackend = if (fixedSessionRoute.endsWith("_xnnpack")) {
+                AotExecutionCoordinator.Backend.XNNPACK
+            } else {
+                AotExecutionCoordinator.Backend.CPU
+            }
+            val result = AotExecutionCoordinator.run(
+                request = prepared,
+                preferredAccelerator = preferredAccelerator,
+                cpuBackend = cpuBackend,
+                dynamicBackend = AotExecutionCoordinator.Backend.DYNAMIC.takeIf { dynamicSess != null },
+                attempt = { request, backend ->
+                    when (backend) {
+                        AotExecutionCoordinator.Backend.QNN_HTP,
+                        AotExecutionCoordinator.Backend.QNN_GPU,
+                        -> fixedBackendAttempt(
+                            backend = backend,
+                            session = fixedQnnSession.takeIf { fixedQnnBackend == backend },
+                            prepared = request,
+                            preparationError = preparationError,
+                            crop = crop,
+                            side = side,
+                        ).also { if (it is AotExecutionCoordinator.Attempt.Failed && it.error is OutOfMemoryError) neuralOom = true }
+
+                        AotExecutionCoordinator.Backend.NNAPI -> fixedBackendAttempt(
+                            backend = backend,
+                            session = nnapiSession,
+                            prepared = request,
+                            preparationError = preparationError,
+                            crop = crop,
+                            side = side,
+                        ).also { if (it is AotExecutionCoordinator.Attempt.Failed && it.error is OutOfMemoryError) neuralOom = true }
+
+                        AotExecutionCoordinator.Backend.XNNPACK,
+                        AotExecutionCoordinator.Backend.CPU,
+                        -> fixedBackendAttempt(
+                            backend = backend,
+                            session = fixedSess,
+                            prepared = request,
+                            preparationError = preparationError,
+                            crop = crop,
+                            side = side,
+                        ).also { if (it is AotExecutionCoordinator.Attempt.Failed && it.error is OutOfMemoryError) neuralOom = true }
+
+                        AotExecutionCoordinator.Backend.DYNAMIC -> {
+                            if (dynamicSess == null) {
+                                AotExecutionCoordinator.Attempt.Unavailable("dynamic_session_unavailable")
+                            } else {
+                                tryNeuralCandidate(
+                                    route = dynamicSessionRoute,
+                                    session = dynamicSess,
+                                    page = image,
+                                    mask = maskBitmap,
+                                    crop = crop,
+                                    side = side,
+                                    fixedShape = false,
+                                ).also { if (it is AotExecutionCoordinator.Attempt.Failed && it.error is OutOfMemoryError) neuralOom = true }
+                            }
+                        }
                     }
                 },
-                fallback = {
-                    if (fixedOom) {
-                        loggedFailure("dynamic", "skipped_after_fixed_oom", crop, side, null)
-                        AotFallbackCoordinator.CandidateResult.Failed(IllegalStateException("dynamic skipped after fixed OOM"))
-                    } else if (dynamicSess == null) {
-                        loggedFailure("dynamic", "session_unavailable", crop, side, null)
-                        AotFallbackCoordinator.CandidateResult.Failed(IllegalStateException("dynamic session unavailable"))
-                    } else {
-                        tryNeuralCandidate("dynamic", dynamicSess, image, maskBitmap, crop, side, fixedShape = false)
+                telea = {
+                    closePreparedInput()
+                    if (neuralOom) {
+                        BitmapPool.releaseAll()
+                        System.gc()
+                    }
+                    inpaintReportFreeTextFast(image, boxes, reason = "neural_exhausted")
+                },
+                onAcceleratorRuntimeFailure = { backend, error ->
+                    when (backend) {
+                        AotExecutionCoordinator.Backend.QNN_HTP,
+                        AotExecutionCoordinator.Backend.QNN_GPU,
+                        -> {
+                            HardwareDiscoveryEngine.tripCircuitBreaker("qnn_execution_failed", error)
+                            closeAndDetachQnn("execution_failed", error)
+                        }
+
+                        AotExecutionCoordinator.Backend.NNAPI -> {
+                            if (error !is OutOfMemoryError) {
+                                nnapiHealth.disableForNativeException()
+                                closeAndDetachNnapi("runtime_exception", error)
+                            }
+                        }
+
+                        else -> Unit
                     }
                 },
             )
-            return when (result) {
-                is AotFallbackCoordinator.Result.Accepted -> {
+            when (result) {
+                is AotExecutionCoordinator.Result.Neural -> {
                     val originalPixels = IntArray(side * side)
                     image.getPixels(originalPixels, 0, side, crop[0], crop[1], side, side)
                     val alphaField = BubbleMaskBuilder.featherAlphaField(
@@ -753,145 +903,51 @@ class AOTInpainting(
                         height = side,
                         rampWidth = REPORT_FREE_TEXT_FEATHER,
                     )
-                    for (i in originalPixels.indices) {
-                        val a = alphaField[i]
-                        if (a > 0.0f) {
-                            originalPixels[i] = AotPixelOps.blendPixel(originalPixels[i], result.pixels[i], a)
-                        }
-                    }
+                    AotPixelOps.compositeInto(originalPixels, result.value, alphaField, originalPixels)
                     image.setPixels(originalPixels, 0, side, crop[0], crop[1], side, side)
                     image
                 }
-                is AotFallbackCoordinator.Result.Exhausted -> {
-                    if (fixedOom) {
-                        loggedFailure("dynamic", "skipped_after_fixed_oom", crop, side, null)
-                    }
-                    logcat(LogPriority.WARN) {
-                        "[inpaint] route=push_pull reason=neural_exhausted crop=${side}x$side " +
-                            "offset=${crop[0]},${crop[1]} tensor=${side}x$side boxes=${boxes.size}"
-                    }
-                    if (fixedOom) {
-                        BitmapPool.releaseAll()
-                        System.gc()
-                    }
-                    inpaintReportFreeTextFast(image, boxes)
-                }
+
+                is AotExecutionCoordinator.Result.Telea -> result.value
             }
         } finally {
-            BitmapPool.putALPHA8(maskBitmap)
+            val current = prepared
+            prepared = null
+            try {
+                current?.close()
+            } catch (error: Throwable) {
+                logcat(LogPriority.WARN, error) { "[inpaint] fixed_input close=failed" }
+            } finally {
+                BitmapPool.putALPHA8(maskBitmap)
+            }
         }
     }
 
-    private fun tryStrictFixedCandidate(
-        xnnpackSession: OrtSession,
-        page: Bitmap,
-        mask: Bitmap,
+    private fun fixedBackendAttempt(
+        backend: AotExecutionCoordinator.Backend,
+        session: OrtSession?,
+        prepared: PreparedFixedInput?,
+        preparationError: Throwable?,
         crop: IntArray,
         side: Int,
-    ): AotFallbackCoordinator.CandidateResult {
-        val nnapiSession = fixedNnapiSession
-        val memory = EngineMemoryBudget.nnapiMemorySnapshot()
-        val useNnapi = nnapiSession != null &&
-            NnapiCapabilityGate.decide(
-                NnapiCapabilityGate.Snapshot(
-                    sdk = Build.VERSION.SDK_INT,
-                    supportedAbis = Build.SUPPORTED_ABIS.toList(),
-                    emulator = DeviceCapability.isProbablyEmulator,
-                    nnapiProviderCompiled = true,
-                    availableHeapBytes = memory.availableHeapBytes,
-                    systemHeadroomBytes = memory.systemHeadroomBytes,
-                    lowMemory = memory.lowMemory,
-                    healthy = nnapiHealth.isHealthy(),
-                ),
-            ).eligible
-        val prepared = try {
-            prepareFixedInput(page, mask, crop, side)
-        } catch (error: Throwable) {
-            loggedFailure("fixed_prepare", "exception", crop, side, error)
-            return AotFallbackCoordinator.CandidateResult.Failed(error)
+    ): AotExecutionCoordinator.Attempt<IntArray> {
+        if (session == null) {
+            return preparationError?.let { AotExecutionCoordinator.Attempt.Failed(it, runtimeFailure = false) }
+                ?: AotExecutionCoordinator.Attempt.Unavailable("${backend.name.lowercase()}_session_unavailable")
         }
-        val qnnSession = fixedQnnSession
-        if (qnnSession != null) {
-            try {
-                val qnnResult = runPreparedFixedCandidate("fixed_qnn_htp", qnnSession, prepared, crop, side)
-                when (qnnResult) {
-                    is StrictNnapiFallback.Candidate.Accepted -> {
-                        return AotFallbackCoordinator.CandidateResult.Accepted(qnnResult.value)
-                    }
-                    is StrictNnapiFallback.Candidate.Rejected -> {
-                        logcat(LogPriority.WARN) {
-                            "[inpaint] route=fixed_qnn_htp guard_rejected, falling back to CPU XNNPACK"
-                        }
-                        val cpuResult = runPreparedFixedCandidate("fixed_xnnpack", xnnpackSession, prepared, crop, side)
-                        return when (cpuResult) {
-                            is StrictNnapiFallback.Candidate.Accepted -> AotFallbackCoordinator.CandidateResult.Accepted(cpuResult.value)
-                            is StrictNnapiFallback.Candidate.Rejected -> AotFallbackCoordinator.CandidateResult.Rejected(cpuResult.stats)
-                            is StrictNnapiFallback.Candidate.Failed -> AotFallbackCoordinator.CandidateResult.Failed(cpuResult.error)
-                        }
-                    }
-                    is StrictNnapiFallback.Candidate.Failed -> {
-                        HardwareDiscoveryEngine.tripCircuitBreaker("qnn_execution_failed", qnnResult.error)
-                        closeAndDetachQnn("execution_failed", qnnResult.error)
-                        val cpuResult = runPreparedFixedCandidate("fixed_xnnpack", xnnpackSession, prepared, crop, side)
-                        return when (cpuResult) {
-                            is StrictNnapiFallback.Candidate.Accepted -> AotFallbackCoordinator.CandidateResult.Accepted(cpuResult.value)
-                            is StrictNnapiFallback.Candidate.Rejected -> AotFallbackCoordinator.CandidateResult.Rejected(cpuResult.stats)
-                            is StrictNnapiFallback.Candidate.Failed -> AotFallbackCoordinator.CandidateResult.Failed(cpuResult.error)
-                        }
-                    }
-                }
-            } catch (error: Throwable) {
-                HardwareDiscoveryEngine.tripCircuitBreaker("qnn_execution_failed", error)
-                closeAndDetachQnn("execution_exception", error)
-                val cpuResult = runPreparedFixedCandidate("fixed_xnnpack", xnnpackSession, prepared, crop, side)
-                return when (cpuResult) {
-                    is StrictNnapiFallback.Candidate.Accepted -> AotFallbackCoordinator.CandidateResult.Accepted(cpuResult.value)
-                    is StrictNnapiFallback.Candidate.Rejected -> AotFallbackCoordinator.CandidateResult.Rejected(cpuResult.stats)
-                    is StrictNnapiFallback.Candidate.Failed -> AotFallbackCoordinator.CandidateResult.Failed(cpuResult.error)
-                }
-            } finally {
-                prepared.close()
-            }
+        if (prepared == null) {
+            return preparationError?.let { AotExecutionCoordinator.Attempt.Failed(it, runtimeFailure = false) }
+                ?: AotExecutionCoordinator.Attempt.Unavailable("fixed_input_unavailable")
         }
-        val result = try {
-            StrictNnapiFallback.run(
-                useNnapi = useNnapi,
-                nnapi = {
-                    requireNotNull(nnapiSession)
-                    runPreparedFixedCandidate("fixed_nnapi", nnapiSession, prepared, crop, side)
-                },
-                xnnpack = {
-                    runPreparedFixedCandidate("fixed_xnnpack", xnnpackSession, prepared, crop, side)
-                },
-                onNnapiNativeFailure = {
-                    nnapiHealth.disableForNativeException()
-                    closeAndDetachNnapi("runtime_exception", it)
-                },
-                onNnapiOnlyMismatch = {
-                    nnapiHealth.recordNnapiOnlyGuardMismatch()
-                    if (!nnapiHealth.isHealthy()) closeAndDetachNnapi("guard_mismatch_rate")
-                },
-                onSharedRejection = { nnapiHealth.recordSharedRejection() },
-                onNnapiAccepted = { nnapiHealth.recordNnapiAccepted() },
-            )
-        } finally {
-            prepared.close()
+        val route = when (backend) {
+            AotExecutionCoordinator.Backend.QNN_HTP -> "fixed_qnn_htp"
+            AotExecutionCoordinator.Backend.QNN_GPU -> "fixed_qnn_gpu"
+            AotExecutionCoordinator.Backend.NNAPI -> "fixed_nnapi"
+            AotExecutionCoordinator.Backend.XNNPACK -> "fixed_xnnpack"
+            AotExecutionCoordinator.Backend.CPU -> "fixed_cpu"
+            AotExecutionCoordinator.Backend.DYNAMIC -> error("Dynamic backend must use the dynamic session path")
         }
-        val health = nnapiHealth.snapshot()
-        logcat(LogPriority.INFO) {
-            "[inpaint] strictRoute=${result.route} fallback=${result.route != StrictNnapiFallback.Route.NNAPI} " +
-                "healthEnabled=${health.enabled} healthSamples=${health.samples} healthMismatches=${health.mismatches} " +
-                "healthReason=${health.disableReason} ${DeviceCapability.describe()}"
-        }
-        return when (result.route) {
-            StrictNnapiFallback.Route.NNAPI, StrictNnapiFallback.Route.XNNPACK ->
-                AotFallbackCoordinator.CandidateResult.Accepted(requireNotNull(result.value))
-            StrictNnapiFallback.Route.PUSH_PULL -> when (val baseline = result.xnnpack) {
-                is StrictNnapiFallback.Candidate.Rejected -> AotFallbackCoordinator.CandidateResult.Rejected(baseline.stats)
-                is StrictNnapiFallback.Candidate.Failed -> AotFallbackCoordinator.CandidateResult.Failed(baseline.error)
-                else -> AotFallbackCoordinator.CandidateResult.Failed(IllegalStateException("fixed providers exhausted"))
-            }
-        }
+        return runPreparedFixedCandidate(route, backend, session, prepared, crop, side)
     }
 
     private inner class PreparedFixedInput(
@@ -940,7 +996,6 @@ class AOTInpainting(
             binaryMask,
             PushPullGradient.DEFAULT_RING,
         )
-        val offset = AotPadPath.centeredOffset(side)
         val paddedPixels = getImgPixels()
         java.util.Arrays.fill(paddedPixels, background)
         val paddedMask = getMaskPixels()
@@ -965,21 +1020,16 @@ class AOTInpainting(
         var imageTensor: OnnxTensor? = null
         var maskTensor: OnnxTensor? = null
         try {
-            imageBuffer.clear()
-            maskBuffer.clear()
-            val pixels = AotPadPath.SIZE * AotPadPath.SIZE
-            imageBuffer.limit(3 * pixels)
-            maskBuffer.limit(pixels)
-            for (index in 0 until pixels) {
-                val pixel = paddedPixels[index]
-                maskBuffer.put(index, if (AotPixelOps.maskValue(paddedMask[index]) > 127) 1.0f else 0.0f)
-                imageBuffer.put(index, AotPixelOps.encodeFixedImageChannel(pixel shr 16 and 0xFF))
-                imageBuffer.put(pixels + index, AotPixelOps.encodeFixedImageChannel(pixel shr 8 and 0xFF))
-                imageBuffer.put(2 * pixels + index, AotPixelOps.encodeFixedImageChannel(pixel and 0xFF))
-            }
+            val offset = AotFixedTensorContract.writeInputs(
+                paddedImage = paddedPixels,
+                paddedMask = paddedMask,
+                sourceSize = side,
+                imageBuffer = imageBuffer,
+                maskBuffer = maskBuffer,
+            )
             val environment = OnnxRuntimeProvider.environment
-            imageTensor = OnnxTensor.createTensor(environment, imageBuffer, longArrayOf(1, 3, 512, 512))
-            maskTensor = OnnxTensor.createTensor(environment, maskBuffer, longArrayOf(1, 1, 512, 512))
+            imageTensor = OnnxTensor.createTensor(environment, imageBuffer, AotFixedTensorContract.imageShape())
+            maskTensor = OnnxTensor.createTensor(environment, maskBuffer, AotFixedTensorContract.maskShape())
             return PreparedFixedInput(
                 imageTensor = imageTensor,
                 maskTensor = maskTensor,
@@ -1008,55 +1058,54 @@ class AOTInpainting(
 
     private fun runPreparedFixedCandidate(
         route: String,
+        backend: AotExecutionCoordinator.Backend,
         session: OrtSession,
         prepared: PreparedFixedInput,
         crop: IntArray,
         side: Int,
-    ): StrictNnapiFallback.Candidate<IntArray> {
+    ): AotExecutionCoordinator.Attempt<IntArray> {
         val started = System.nanoTime()
+        val inference = try {
+            session.run(mapOf("image" to prepared.imageTensor, "mask" to prepared.maskTensor))
+        } catch (oom: OutOfMemoryError) {
+            loggedFailure(route, "oom", crop, side, oom, started)
+            return AotExecutionCoordinator.Attempt.Failed(oom, runtimeFailure = false)
+        } catch (error: Throwable) {
+            loggedFailure(route, "runtime_exception", crop, side, error, started)
+            return AotExecutionCoordinator.Attempt.Failed(error, runtimeFailure = true)
+        }
         return try {
-            session.run(mapOf("image" to prepared.imageTensor, "mask" to prepared.maskTensor)).use { result ->
+            inference.use { result ->
                 val output = result[0] as OnnxTensor
                 val shape = output.info.shape
-                require(shape.contentEquals(longArrayOf(1, 3, 512, 512))) {
-                    "fixed AOT output shape changed: ${shape.contentToString()}"
-                }
-                val buffer = output.floatBuffer
-                val candidate = IntArray(side * side)
-                val channelSize = AotPadPath.SIZE * AotPadPath.SIZE
-                for (y in 0 until side) {
-                    for (x in 0 until side) {
-                        val outputIndex = (prepared.offset + y) * AotPadPath.SIZE + prepared.offset + x
-                        val red = AotPixelOps.decodeFixedChannel(buffer.get(outputIndex))
-                        val green = AotPixelOps.decodeFixedChannel(buffer.get(channelSize + outputIndex))
-                        val blue = AotPixelOps.decodeFixedChannel(buffer.get(2 * channelSize + outputIndex))
-                        candidate[y * side + x] = if (prepared.grayscale) {
-                            val luma = (0.299f * red + 0.587f * green + 0.114f * blue).roundToInt()
-                            (0xFF shl 24) or (luma shl 16) or (luma shl 8) or luma
-                        } else {
-                            (0xFF shl 24) or (red shl 16) or (green shl 8) or blue
-                        }
-                    }
-                }
+                val candidate = AotFixedTensorContract.decodeOutput(
+                    output = output.floatBuffer,
+                    outputShape = shape,
+                    sourceSize = side,
+                    offset = prepared.offset,
+                    grayscale = prepared.grayscale,
+                )
                 val stats = AotOutputGuard.inspect(candidate, prepared.croppedMaskPixels, side, side)
                 if (AotOutputGuard.classify(stats)) {
-                    loggedFailure(route, "guard_rejected", crop, side, null, started, stats)
-                    StrictNnapiFallback.Candidate.Rejected(stats)
-                } else {
-                    lastAcceptedRoute = route
-                    logcat(LogPriority.INFO) {
-                        "[inpaint] route=$route accepted totalMs=${elapsedMs(started)} crop=${side}x$side " +
-                            "tensor=512x512 offset=${prepared.offset},${prepared.offset} guard=pass"
+                    logcat(LogPriority.WARN) {
+                        "[inpaint] route=$route output_diagnostic=suspicious_uniform " +
+                            "mean=${stats.mean} variance=${stats.variance} channelDelta=${stats.channelDelta} " +
+                            "masked=${stats.maskedCount} decision=none"
                     }
-                    StrictNnapiFallback.Candidate.Accepted(candidate)
                 }
+                lastAcceptedRoute = route
+                logcat(LogPriority.INFO) {
+                    "[inpaint] route=$route accepted totalMs=${elapsedMs(started)} crop=${side}x$side " +
+                        "tensor=512x512 offset=${prepared.offset},${prepared.offset} outputDiagnostic=only"
+                }
+                AotExecutionCoordinator.Attempt.Success(backend, candidate)
             }
         } catch (oom: OutOfMemoryError) {
             loggedFailure(route, "oom", crop, side, oom, started)
-            StrictNnapiFallback.Candidate.Failed(oom)
+            AotExecutionCoordinator.Attempt.Failed(oom, runtimeFailure = false)
         } catch (error: Throwable) {
-            loggedFailure(route, "exception", crop, side, error, started)
-            StrictNnapiFallback.Candidate.Failed(error)
+            loggedFailure(route, "output_contract_exception", crop, side, error, started)
+            AotExecutionCoordinator.Attempt.Failed(error, runtimeFailure = false)
         }
     }
 
@@ -1069,30 +1118,36 @@ class AOTInpainting(
             error?.addSuppressed(closeError)
             logcat(LogPriority.ERROR, closeError) { "[inpaint] route=nnapi close=failed reason=$reason" }
         }
-        logcat(LogPriority.WARN, error) { "[inpaint] route=xnnpack nnapi=disabled reason=$reason" }
+        logcat(LogPriority.WARN, error) { "[inpaint] route=fixed_nnapi disabled reason=$reason" }
     }
 
     private fun closeAndDetachQnn(reason: String, error: Throwable? = null) {
         val session = fixedQnnSession ?: return
         fixedQnnSession = null
+        val backend = fixedQnnBackend
+        fixedQnnBackend = null
+        val route = when (backend) {
+            AotExecutionCoordinator.Backend.QNN_GPU -> "fixed_qnn_gpu"
+            else -> "fixed_qnn_htp"
+        }
         try {
             session.close()
         } catch (closeError: Throwable) {
             error?.addSuppressed(closeError)
-            logcat(LogPriority.ERROR, closeError) { "[inpaint] route=qnn_htp close=failed reason=$reason" }
+            logcat(LogPriority.ERROR, closeError) { "[inpaint] route=$route close=failed reason=$reason" }
         }
-        logcat(LogPriority.WARN, error) { "[inpaint] route=xnnpack qnn_htp=disabled reason=$reason" }
+        logcat(LogPriority.WARN, error) { "[inpaint] route=$route disabled reason=$reason" }
     }
 
     private fun tryNeuralCandidate(
         route: String,
-        sess: OrtSession,
+        session: OrtSession,
         page: Bitmap,
         mask: Bitmap,
         crop: IntArray,
         side: Int,
         fixedShape: Boolean,
-    ): AotFallbackCoordinator.CandidateResult {
+    ): AotExecutionCoordinator.Attempt<IntArray> {
         var working: Bitmap? = null
         val started = System.nanoTime()
         return try {
@@ -1105,13 +1160,12 @@ class AOTInpainting(
                 null,
             )
             inpaint(
-                sess = sess,
+                sess = session,
                 image = candidate,
                 maskBitmap = mask,
                 cropBounds = intArrayOf(0, 0, side, side),
                 maskAlreadyCropped = true,
                 featherRampPx = 0,
-                reportFallbackOnly = true,
                 fixedShape = fixedShape,
                 route = route,
             )
@@ -1120,24 +1174,19 @@ class AOTInpainting(
             lastAcceptedRoute = route
             logcat(LogPriority.INFO) {
                 "[inpaint] route=$route accepted totalMs=${elapsedMs(started)} crop=${side}x$side " +
-                    "tensor=${if (fixedShape) "512x512" else "${side}x$side"} offset=${crop[0]},${crop[1]} guard=pass"
+                    "tensor=${if (fixedShape) "512x512" else "${side}x$side"} offset=${crop[0]},${crop[1]} outputDiagnostic=only"
             }
-            AotFallbackCoordinator.CandidateResult.Accepted(pixels)
+            AotExecutionCoordinator.Attempt.Success(AotExecutionCoordinator.Backend.DYNAMIC, pixels)
         } catch (oom: OutOfMemoryError) {
             loggedFailure(route, "oom", crop, side, oom, started)
-            AotFallbackCoordinator.CandidateResult.Failed(oom)
-        } catch (rejected: AotRejectedException) {
-            loggedFailure(route, "guard_rejected", crop, side, rejected, started, rejected.stats)
-            AotFallbackCoordinator.CandidateResult.Rejected(rejected.stats)
+            AotExecutionCoordinator.Attempt.Failed(oom, runtimeFailure = false)
         } catch (error: Throwable) {
             loggedFailure(route, "exception", crop, side, error, started)
-            AotFallbackCoordinator.CandidateResult.Failed(error)
+            AotExecutionCoordinator.Attempt.Failed(error, runtimeFailure = true)
         } finally {
             working?.let { BitmapPool.putARGB8888(it) }
         }
     }
-
-    private class AotRejectedException(val stats: AotOutputGuard.GuardStats) : RuntimeException("AOT guard rejected output")
 
     private fun elapsedMs(started: Long): Double = (System.nanoTime() - started) / 1_000_000.0
 
@@ -1148,12 +1197,11 @@ class AOTInpainting(
         side: Int,
         error: Throwable?,
         started: Long = System.nanoTime(),
-        stats: AotOutputGuard.GuardStats? = null,
     ) {
         logcat(LogPriority.WARN, error) {
             "[inpaint] route=$route result=fallback reason=$reason totalMs=${elapsedMs(started)} crop=${side}x$side " +
                 "tensor=${if (route.startsWith("fixed")) "512x512" else "${side}x$side"} offset=${crop[0]},${crop[1]} " +
-                "guard=${stats?.let { "mean=${it.mean},variance=${it.variance},channelDelta=${it.channelDelta},masked=${it.maskedCount}" } ?: "n/a"}"
+                "outputDiagnostic=only"
         }
     }
 
@@ -1171,9 +1219,7 @@ class AOTInpainting(
         maskBitmap: Bitmap,
         cropBounds: IntArray,
         maskAlreadyCropped: Boolean = false,
-        fallbackBoxes: List<IntArray> = emptyList(),
         featherRampPx: Int = FEATHER_RAMP_PX,
-        reportFallbackOnly: Boolean = false,
         fixedShape: Boolean = false,
         route: String = "dynamic",
     ): Bitmap {
@@ -1405,23 +1451,13 @@ class AOTInpainting(
             val candidate = scaled
             val guardStats = isSuspiciousUniformOutput(candidate, maskBitmap, maskAlreadyCropped, xMin, yMin, cropWidth, cropHeight)
             if (guardStats != null) {
-                // rejection covers near-BLACK too (a uniform black
-                // block is the documented failure for oversized/long masks where
-                // cropMargin→0 and the model collapses to ~0). Route to cleanRegions
-                // so the page degrades visibly rather than showing a solid rectangle.
-                logcat(LogPriority.WARN) {
-                    "[inpaint] suspicious uniform output rejected: " +
+                logcat(LogPriority.INFO) {
+                    "[inpaint] route=$route output_diagnostic=suspicious_uniform decision=none " +
                         "mean=${"%.1f".format(guardStats.mean)} " +
                         "variance=${"%.1f".format(guardStats.variance)} " +
                         "channelDelta=${"%.1f".format(guardStats.channelDelta)} " +
-                        "masked=${guardStats.maskedCount} crop=${cropWidth}x$cropHeight " +
-                        "— falling back to cleanRegions"
+                        "masked=${guardStats.maskedCount} crop=${cropWidth}x$cropHeight"
                 }
-                if (reportFallbackOnly) {
-                    throw AotRejectedException(guardStats)
-                }
-                val boxesForFallback = fallbackBoxes.ifEmpty { listOf(intArrayOf(boxX1, boxY1, boxX2, boxY2)) }
-                return bubbleCleaner.cleanRegions(image, boxesForFallback)
             }
 
             blended = featherBlend(image, candidate, maskBitmap, maskAlreadyCropped, xMin, yMin, cropWidth, cropHeight, featherRampPx)
@@ -1431,7 +1467,7 @@ class AOTInpainting(
 
             logcat(LogPriority.INFO) {
                 "[inpaint] route=$route modelMs=${(t1 - t0) / 1_000_000.0} crop=${cropWidth}x$cropHeight " +
-                    "tensor=${inferenceWidth}x$inferenceHeight offset=$fixedOffset,$fixedOffset guard=pass"
+                    "tensor=${inferenceWidth}x$inferenceHeight offset=$fixedOffset,$fixedOffset outputDiagnostic=only"
             }
 
             return image
@@ -1557,18 +1593,12 @@ class AOTInpainting(
                 rampWidth = rampWidth,
             )
         }
-        for (idx in 0 until blendSize) {
-            val alpha = alphaField[idx]
-            if (alpha > 0.0f) {
-                origPixels[idx] = AotPixelOps.blendPixel(origPixels[idx], inpPixels[idx], alpha)
-            }
-        }
+        AotPixelOps.compositeInto(origPixels, inpPixels, alphaField, origPixels)
         result.setPixels(origPixels, 0, width, 0, 0, width, height)
         return result
     }
 
     fun close() {
-        bubbleCleaner.clearWorkingBuffers()
         val fixed = fixedSession
         val nnapi = fixedNnapiSession
         val qnn = fixedQnnSession
@@ -1579,6 +1609,7 @@ class AOTInpainting(
         fixedSession = null
         fixedNnapiSession = null
         fixedQnnSession = null
+        fixedQnnBackend = null
         dynamicSession = null
         AotSessionLifecycle.closeIndependently(fixed, dynamic, nnapi, qnn) { failure ->
             logcat(LogPriority.ERROR, failure.error) {
@@ -1596,18 +1627,15 @@ class AOTInpainting(
 
     /**
      * drop cross-call working buffers while staying usable.
-     * [SmartBubbleTextCleaner] retains its largest-seen IntArray pair for the
-     * session, pinning large heap arrays after a dense early page; on OOM
-     * recovery the next inpaint reallocates a buffer sized to the page it sees.
+     * The AOT pixel scratch and pooled tensor buffers are released so an OOM
+     * recovery can allocate only for the next page it sees.
      */
     fun reclaimPooledMemory() {
-        bubbleCleaner.clearWorkingBuffers()
         imgInputPool.clear()
         maskInputPool.clear()
     }
 
     fun forceReleaseNativeBuffers() {
-        bubbleCleaner.clearWorkingBuffers()
         clearScratch()
         imgInputPool.clear()
         maskInputPool.clear()
