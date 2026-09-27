@@ -36,7 +36,7 @@ import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
@@ -73,7 +73,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Engine and native collaborators are supplied by the pipeline.
  */
 internal class BatchChapterTranslator(
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val translationPreferences: TranslationPreferences,
     private val nativeLane: NativeLaneRunner,
     private val engineRebuildMutex: Mutex,

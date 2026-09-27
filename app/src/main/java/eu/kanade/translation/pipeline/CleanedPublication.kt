@@ -10,7 +10,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.CleanedImagePublisher
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +26,7 @@ import tachiyomi.domain.manga.model.Manga
  * rebuilds are reflected.
  */
 internal class CleanedPublication(
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val streamRegistry: TranslationStreamRegistry,
     private val currentInpaintingMode: () -> InpaintingMode,
 ) {

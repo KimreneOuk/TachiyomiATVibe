@@ -29,7 +29,7 @@ import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
@@ -81,7 +81,7 @@ internal class BatchLaneWorkers(
     private val manga: Manga,
     private val chapter: Chapter,
     private val source: HttpSource,
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val translationPreferences: TranslationPreferences,
     private val tracker: TranslationBatchProgressTracker?,
     private val batchGeneration: Long,

@@ -14,7 +14,7 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class TranslationProvider(
+class TranslationFileProvider(
     private val context: Context,
     private val storageManager: StorageManager = Injekt.get(),
 ) {

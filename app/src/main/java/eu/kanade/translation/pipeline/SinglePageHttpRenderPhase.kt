@@ -38,7 +38,7 @@ import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.persistence.chapter.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
@@ -65,7 +65,7 @@ import kotlin.coroutines.coroutineContext
  */
 internal class SinglePageHttpRenderPhase(
     private val translationPreferences: TranslationPreferences,
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val streamRegistry: eu.kanade.translation.pipeline.execution.TranslationStreamRegistry,
     private val engines: EngineLane,
     private val cleanedPublication: CleanedPublication,

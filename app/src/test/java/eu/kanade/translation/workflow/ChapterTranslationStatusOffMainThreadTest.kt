@@ -3,7 +3,7 @@ package eu.kanade.translation.workflow
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import io.kotest.matchers.shouldBe
@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit
 class ChapterTranslationStatusOffMainThreadTest {
 
     /** Fake whose slow lookup blocks an IO worker, never the caller. */
-    private fun blockingProvider(lookupStarted: CountDownLatch, releaseLookup: CountDownLatch): TranslationProvider =
+    private fun blockingProvider(lookupStarted: CountDownLatch, releaseLookup: CountDownLatch): TranslationFileProvider =
         mockk {
             every { findTranslationFile(any(), any(), any(), any()) } answers {
                 lookupStarted.countDown()

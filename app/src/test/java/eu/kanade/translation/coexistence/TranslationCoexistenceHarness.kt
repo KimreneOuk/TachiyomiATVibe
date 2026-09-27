@@ -216,7 +216,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 every { getSharedPreferences(any(), any()) } returns InMemorySharedPreferences()
             }
             val preferences = harnessPreferences()
-            val provider = mockk<eu.kanade.translation.persistence.chapter.TranslationProvider>(relaxed = true)
+            val provider = mockk<eu.kanade.translation.persistence.chapter.TranslationFileProvider>(relaxed = true)
             if (cleanedImagesOnDisk.isNotEmpty()) {
                 val onDisk = mockk<UniFile> {
                     every { exists() } returns true

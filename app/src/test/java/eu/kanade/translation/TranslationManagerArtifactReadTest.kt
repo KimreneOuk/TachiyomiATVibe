@@ -10,7 +10,7 @@ import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.workflow.ChapterTranslator
 import eu.kanade.translation.workflow.TranslationManager
 import eu.kanade.translation.workflow.isFreshOrphanedCleanedImage
@@ -79,7 +79,7 @@ class TranslationManagerArtifactReadTest {
     private fun newManager(file: UniFile): TranslationManager {
         val source = mockk<Source>(relaxed = true)
         every { source.id } returns 77L
-        val provider = mockk<TranslationProvider>(relaxed = true)
+        val provider = mockk<TranslationFileProvider>(relaxed = true)
         every { provider.findTranslationFile(any(), any(), any(), any()) } returns file
         every { provider.findMangaDir(any(), any()) } returns FakeUniFile(parent = null, backing = mangaDir)
         val sourceManager = mockk<SourceManager>(relaxed = true)

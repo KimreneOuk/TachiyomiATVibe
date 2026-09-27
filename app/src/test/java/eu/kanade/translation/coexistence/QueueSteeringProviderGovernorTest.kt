@@ -124,7 +124,7 @@ class QueueSteeringProviderGovernorTest {
 
     private fun createTranslatorWithQueue(initial: List<Translation>): ChapterTranslator {
         val mockContext = mockk<android.content.Context>(relaxed = true)
-        val mockProvider = mockk<eu.kanade.translation.persistence.chapter.TranslationProvider>(relaxed = true)
+        val mockProvider = mockk<eu.kanade.translation.persistence.chapter.TranslationFileProvider>(relaxed = true)
         val mockDownloadProvider = mockk<eu.kanade.tachiyomi.data.download.DownloadProvider>(relaxed = true)
         val mockSourceManager = mockk<tachiyomi.domain.source.service.SourceManager>(relaxed = true)
         val mockPreferences = mockk<tachiyomi.domain.translation.TranslationPreferences>(relaxed = true)

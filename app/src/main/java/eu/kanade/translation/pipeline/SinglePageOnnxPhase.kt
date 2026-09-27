@@ -24,7 +24,7 @@ import eu.kanade.translation.model.resetAttemptCharge
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
 import eu.kanade.translation.persistence.chapter.StagePatchResult
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
@@ -57,7 +57,7 @@ import kotlin.coroutines.coroutineContext
 internal class SinglePageOnnxPhase(
     private val context: Context,
     private val translationPreferences: TranslationPreferences,
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val downloadProvider: DownloadProvider,
     private val streamRegistry: TranslationStreamRegistry,
     private val engines: EngineLane,

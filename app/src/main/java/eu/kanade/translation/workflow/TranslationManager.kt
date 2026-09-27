@@ -19,7 +19,7 @@ import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterResetPreflight
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
@@ -63,7 +63,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 class TranslationManager(
     private val context: Context,
-    private val provider: TranslationProvider = Injekt.get(),
+    private val provider: TranslationFileProvider = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
     // File truth for startup reconciliation (pending + valid files -> admit once).

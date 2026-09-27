@@ -13,7 +13,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.displayImageName
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.workflow.TranslationManager
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
@@ -36,7 +36,7 @@ internal class DownloadPageLoader(
 ) : PageLoader() {
 
     private val context: Application by injectLazy()
-    private val translationProvider: TranslationProvider = Injekt.get()
+    private val translationProvider: TranslationFileProvider = Injekt.get()
 
     private var archivePageLoader: ArchivePageLoader? = null
 

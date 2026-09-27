@@ -5,7 +5,7 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
@@ -64,7 +64,7 @@ class ChapterTranslatorTerminalExitsTest {
     private val context = mockk<Context> {
         every { getSharedPreferences(any(), any()) } returns InMemorySharedPreferences()
     }
-    private val provider = mockk<TranslationProvider>(relaxed = true)
+    private val provider = mockk<TranslationFileProvider>(relaxed = true)
     private val downloadProvider = mockk<DownloadProvider>(relaxed = true)
     private val sourceManager = mockk<SourceManager>(relaxed = true)
     private val preferences = mockk<TranslationPreferences>(relaxed = true)

@@ -10,7 +10,7 @@ import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -179,12 +179,12 @@ class DurableStatusWipeGateTest {
             ?: com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
                 .findFile("Chapter 1.json.migrated")!!
 
-    private fun provider(): TranslationProvider {
+    private fun provider(): TranslationFileProvider {
         // Post-migration production shape: the flat "Chapter 1.json" is gone
         // (renamed .migrated on disk), so the document resolves name-only
         // from the manga dir and opens through openArtifact.
         val parent = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
-        val provider = mockk<TranslationProvider>()
+        val provider = mockk<TranslationFileProvider>()
         every { provider.findTranslationFile(any(), any(), any(), any()) } returns null
         every { provider.findMangaDir(any(), any()) } returns parent
         every { provider.getTranslationFileName(any(), any()) } answers { "${firstArg<String>()}.json" }
@@ -192,7 +192,7 @@ class DurableStatusWipeGateTest {
     }
 
     private fun resolver(
-        provider: TranslationProvider,
+        provider: TranslationFileProvider,
         registry: ActiveChapterStoreRegistry,
         cache: ConcurrentHashMap<DurableChapterKey, DurableStatus>,
     ): DurableChapterStatusResolver = DurableChapterStatusResolver(

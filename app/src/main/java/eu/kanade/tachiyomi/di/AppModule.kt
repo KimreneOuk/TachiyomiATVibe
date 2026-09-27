@@ -20,7 +20,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.AndroidSourceManager
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.workflow.TranslationManager
 import io.requery.android.database.sqlite.RequerySQLiteOpenHelperFactory
 import kotlinx.serialization.json.Json
@@ -127,7 +127,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { DownloadCache(app) }
 
         // TachiyomiAT
-        addSingletonFactory { TranslationProvider(app) }
+        addSingletonFactory { TranslationFileProvider(app) }
         addSingletonFactory { eu.kanade.translation.pipeline.execution.TranslationStreamRegistry() }
         addSingletonFactory { TranslationManager(app) }
         addSingletonFactory { get<TranslationManager>().scheduler }

@@ -8,7 +8,7 @@ import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.TranslationProvider
+import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchContextFrontier
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
@@ -34,7 +34,7 @@ internal enum class BatchResumeGate { SKIP_ALL, INPAINT_ONLY, FULL }
  */
 internal class BatchResumePlanner(
     private val store: ChapterTranslationStore,
-    private val provider: TranslationProvider,
+    private val provider: TranslationFileProvider,
     private val manga: Manga,
     private val source: HttpSource,
     private val chapter: Chapter,
