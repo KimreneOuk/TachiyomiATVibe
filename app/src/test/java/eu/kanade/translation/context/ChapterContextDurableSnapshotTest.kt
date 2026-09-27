@@ -138,7 +138,7 @@ class ChapterContextDurableSnapshotTest {
         initialManifest.context.shouldBeNull()
 
         // Publish durable context snapshot
-        val snapshot = store.contextService.snapshotForDurable(
+        val snapshot = ChapterContextService(store).snapshotForDurable(
             targetLang = "en",
             sourceLang = "ja",
             revision = 1L,
@@ -173,7 +173,7 @@ class ChapterContextDurableSnapshotTest {
         val store = createStoreWithManifest(io, initialManifest)
 
         // Capture request context before dispatch
-        val prepared = store.contextService.prepare(
+        val prepared = ChapterContextService(store).prepare(
             ContextRequest(
                 pageKeys = listOf("0001.jpg"),
                 targetLang = "en",
@@ -266,7 +266,7 @@ class ChapterContextDurableSnapshotTest {
         (timePage200 < 50_000_000L) shouldBe true
 
         // Context preparation budget measurement:
-        val prepared = store.contextService.prepare(
+        val prepared = ChapterContextService(store).prepare(
             ContextRequest(
                 pageKeys = listOf("0200.jpg"),
                 targetLang = "en",

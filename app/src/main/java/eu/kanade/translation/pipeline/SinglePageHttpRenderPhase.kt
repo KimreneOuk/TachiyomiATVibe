@@ -2,6 +2,7 @@ package eu.kanade.translation.pipeline
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
 import eu.kanade.translation.diagnostics.BatchDiagnosticDecision
@@ -346,7 +347,7 @@ internal class SinglePageHttpRenderPhase(
                     .takeLast(TranslationContextChunkPlanner.MAX_ROLLING_PAIRS)
                     .joinToString("\n")
                 val glossaryText = ChapterGlossaryBuilder.formatGlossary(store.glossarySnapshot())
-                val prepared = store.contextService.prepare(
+                val prepared = ChapterContextService(store).prepare(
                     ContextRequest(
                         pageKeys = listOf(pageKey),
                         targetLang = targetLang,

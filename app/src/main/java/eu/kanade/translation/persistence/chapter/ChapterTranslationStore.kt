@@ -1,7 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -3048,8 +3047,6 @@ class ChapterTranslationStore(
      * inside the guarded patch lambda).
      */
     internal fun currentGlossaryVersion(): Int? = glossaryStore.currentGlossaryVersion()
-
-    val contextService: ChapterContextService = ChapterContextService(this)
 
     fun readReusableProfile(): ChapterTranslationProfile? {
         val artifact = artifactEngine ?: return null
