@@ -1,4 +1,4 @@
-package eu.kanade.translation.util
+package eu.kanade.translation.pipeline.planning
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

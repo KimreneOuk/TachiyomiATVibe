@@ -739,7 +739,7 @@ class ChapterTranslator(
                 // Reader viewport/last-read position is intentionally not a
                 // batch scheduling input; resume is decided per stage by the
                 // pipeline planner while pages remain 1..N.
-                val orderedStreams = eu.kanade.translation.util.ResumeOrdering.naturalOrder(streams)
+                val orderedStreams = eu.kanade.translation.pipeline.planning.ResumeOrdering.naturalOrder(streams)
                 batchOrderedPageKeys = orderedStreams.map { it.first }
                 // A rejected pre-registration is an explicit
                 // pipeline error. Fail the chapter with a typed terminal tracker
