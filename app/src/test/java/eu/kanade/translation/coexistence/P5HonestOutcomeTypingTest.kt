@@ -32,29 +32,11 @@ import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- *  Typed-outcome truth at the single-page boundary and the batch
- * progress snapshot, covering conditions A/B/C.
- *
- * Defects under test (each RED failure names its condition):
- *  - **Condition A (resume outcome):** the resume
- *    paths of `translateSinglePageOnnx` return `null` on SUCCESS. This is a NEW
- *    wrong-outcome case introduced by 's honest-timeout flip — pre- the
- *    accident produced the right `Completed` for resumes; 's fix mapped the
- *    same null to `Failed(pageKey, "native phase timed out")`. The boundary must
- *    inspect store terminality (the `buildTerminalPreparedPage` discipline)
- *    before mapping null → Failed.
- *  - **Condition B (-1):** an HTTP+render timeout (`withTimeoutOrNull` → null
- *    outcome) falls through to `SinglePageOutcome.Completed`. It must be typed
- *    honestly (Failed family, naming the HTTP+render timer).
- *  - **Condition C:** `TranslationCompletionOutcome.PersistenceRejected`
- *    and `TranslationCompletionOutcome.Failed` returned as VALUES by the HTTP phase are
- *    mapped only for `Paused`; everything else falls through to `Completed`.
- *  - **Batch:** the `nonDurableFailure` fact must reach the progress
- *    snapshot as a bounded value field (boolean + nullable reason, no enum).
- *
- * Store truth is never in question here — every test also pins the fail-closed
- * durable state so the outcome typing can never be "fixed" by lying about the
- * store instead.
+ * Checks that single-page and batch progress report typed outcomes consistently
+ * with durable store state. Resume paths may return no new work when the stored
+ * page is already terminal; timeouts and rejected persistence must remain failed
+ * outcomes, and batch progress carries non-durable failure as a boolean with an
+ * optional reason.
  */
 class P5HonestOutcomeTypingTest {
 

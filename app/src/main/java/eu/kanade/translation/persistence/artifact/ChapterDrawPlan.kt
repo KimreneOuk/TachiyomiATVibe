@@ -160,7 +160,7 @@ data class PageLayoutDrawPlan(
         const val SCHEMA_VERSION = 1
         const val KIND = "PAGE_LAYOUT_DRAW_PLAN"
 
-        /** 02 schema bound (T, tunable). */
+        /** Maximum number of page blocks accepted in a layout draw plan. */
         const val MAX_BLOCKS = 256
     }
 }
@@ -242,7 +242,7 @@ data class ColorStylePreparation(
         const val SCHEMA_VERSION = 1
         const val KIND = "COLOR_STYLE_PREPARATION"
 
-        /** 02 schema bound (T, tunable). */
+        /** Maximum number of page blocks accepted in a color-style plan. */
         const val MAX_BLOCKS = 256
     }
 }

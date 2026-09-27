@@ -549,10 +549,8 @@ internal class PreflightWorker(
                     if (adoption is CheckpointAdoption.Adopted) {
                         reusedPages++
                         corpusFingerprints += pageKey to reusable.ocrContentFingerprint
-                        // Same live-progress marks a fresh OCR page emits: without
-                        // them the tracker's snapshot stays frozen at the pre-resume
-                        // counts for the entire revalidation and the drawer looks
-                        // unresponsive (2026-09-15/16 field report).
+                        // Reused pages emit the same progress marks as fresh OCR so
+                        // the tracker publishes updated resumed counts in the drawer.
                         listener.ocrStarted(pageKey)
                         listener.ocrPublished(pageKey)
                         stampAdoptedRenderTerminal(pageKey)

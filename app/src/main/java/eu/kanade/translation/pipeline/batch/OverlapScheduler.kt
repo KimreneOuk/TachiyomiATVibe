@@ -56,7 +56,7 @@ internal class OverlapScheduler(
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
 ) {
 
-    /** Gate-6.5 evidence counters (operational only, never fingerprinted). */
+    /** Operational overlap and serial-fallback counters; never fingerprinted. */
     class Counters {
         val overlapInpaintsExecuted = AtomicLong(0)
         val overlapInpaintFailures = AtomicLong(0)
@@ -563,8 +563,8 @@ internal class OverlapScheduler(
                 if (store.snapshot(pageKey).leaseToken != null) {
                     if (overlap) {
                         deferredUntilNextWindow += pageKey
-                        // Gate-6.5 accounting: this page could not ride the
-                        // overlap window and falls back to the serial arm.
+                        // Count a serial fallback when the overlap window cannot
+                        // own this page.
                         counters.serialFallbacks.incrementAndGet()
                     } else {
                         deferredByLeaseOwner += pageKey
@@ -582,8 +582,8 @@ internal class OverlapScheduler(
                         // is authoritative; a later run reconciles).
                         deferredByLeaseOwner += pageKey
                         if (overlap) {
-                            // Gate-6.5 accounting: this page could not ride the
-                            // overlap window and falls back to the serial arm.
+                            // Count a serial fallback after lease ownership is
+                            // denied to the overlap worker.
                             counters.serialFallbacks.incrementAndGet()
                         }
                         logcat(LogPriority.INFO) {

@@ -529,11 +529,9 @@ internal class BatchChapterTranslator(
                     // frontier used by the shell and its other collaborators.
                     val batchScheduleListener = object : BatchScheduleListener() {
                         override fun ocrStarted(pageKey: String) {
-                            // Live progress: reused preflight pages emit the same
-                            // marks as fresh OCR pages — the tracker recomputes its
-                            // snapshot only on events, so silent adoption left the
-                            // drawer frozen at pre-resume counts for the whole
-                            // revalidation phase (2026-09-15/16 field report).
+                            // Reused preflight pages emit the same progress mark as
+                            // fresh OCR pages. The tracker publishes snapshots on
+                            // events, so each resumed page must advance the display.
                             tracker?.markOcrRunning(pageKey)
                         }
 

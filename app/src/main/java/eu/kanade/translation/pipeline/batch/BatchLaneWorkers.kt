@@ -756,14 +756,9 @@ internal class BatchLaneWorkers(
                 // from the committed blocks. A page that just reached
                 // inpaint-terminal with translated blocks is therefore
                 // display-complete as-is, but the durable record kept
-                // renderStatus PENDING, so hasRenderedResult never fired: the
-                // page never promoted to a committed display bundle (no
-                // pageSnapshotFileName), the reader's displayImageName gate
-                // stayed null and every batch page showed the ORIGINAL forever
-                // (2026-09-16 field report), while the reader's stranded-page
-                // sweep healed these healthy pages one by one. Stamp render
-                // terminal here: the durable write carries hasRenderedResult,
-                // which fires the committed promotion and flips the reader gate.
+                // Persist render terminality so the store commits the page snapshot
+                // and updates displayImageName. Without that projection, the reader
+                // keeps showing the source image until its stranded-page sweep runs.
                 if (target.translationStatus == StageStatus.READY ||
                     target.translationStatus == StageStatus.PARTIAL
                 ) {

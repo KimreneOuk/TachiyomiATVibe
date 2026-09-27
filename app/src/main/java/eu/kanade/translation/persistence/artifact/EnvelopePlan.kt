@@ -84,7 +84,7 @@ data class EnvelopePlan(
         const val SCHEMA_VERSION = 1
         const val KIND = "ENVELOPE_PLAN"
 
-        /** 02 schema bound (T, tunable). */
+        /** Maximum number of envelopes accepted in a persisted plan. */
         const val MAX_ENVELOPES = 4096
     }
 }

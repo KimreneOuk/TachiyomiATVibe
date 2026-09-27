@@ -511,8 +511,8 @@ internal class SinglePageHttpRenderPhase(
                     // creates, guaranteeing one wasted batch repair per manually translated
                     // page after every session. A concurrent mode's fold between request
                     // build and commit is claimed but unseen: rare, converging, accepted.
-                    // Absence of a pointer stamps 0 (gate-off semantics: `0 > recorded` can
-                    // only repair chapters where a glossary exists and matured).
+                    // A missing glossary version is represented as zero so an
+                    // uninitialized glossary does not look like a newer version.
                     pageTranslation.translationGlossaryVersion = store.currentGlossaryVersion() ?: 0
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
                     logcat(LogPriority.INFO) {
