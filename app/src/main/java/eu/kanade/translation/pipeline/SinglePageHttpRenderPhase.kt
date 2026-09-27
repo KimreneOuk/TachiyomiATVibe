@@ -22,11 +22,11 @@ import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.TranslationBlockValidation
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.engines.translator.contextual.TranslationPrompts
 import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
 import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.engines.translator.retry.RequestRetryBudget
@@ -346,7 +346,7 @@ internal class SinglePageHttpRenderPhase(
                     }
                     .takeLast(TranslationContextChunkPlanner.MAX_ROLLING_PAIRS)
                     .joinToString("\n")
-                val glossaryText = ChapterGlossaryBuilder.formatGlossary(store.glossarySnapshot())
+                val glossaryText = TranslationPrompts.formatGlossary(store.glossarySnapshot())
                 val prepared = ChapterContextService(store).prepare(
                     ContextRequest(
                         pageKeys = listOf(pageKey),

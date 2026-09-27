@@ -1,13 +1,13 @@
-package eu.kanade.translation.engines.translator.contextual
+package eu.kanade.translation.persistence.internal
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
-class ChapterGlossaryBuilderTest {
+class ChapterGlossaryAccumulatorTest {
 
     @Test
     fun `a recurring name with a stable rendering is captured`() {
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         stats.add("太郎は走る", "Taro runs")
         stats.add("太郎が来た", "Taro came")
         stats.add("太郎を見た", "I saw Taro")
@@ -18,7 +18,7 @@ class ChapterGlossaryBuilderTest {
 
     @Test
     fun `terms below the recurrence threshold are not captured`() {
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         stats.add("太郎は走る", "Taro runs")
         stats.add("太郎が来た", "Taro came")
 
@@ -27,7 +27,7 @@ class ChapterGlossaryBuilderTest {
 
     @Test
     fun `CJK function words and particles are excluded even when recurring`() {
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         // の is a particle; it recurs but must never become a glossary entry.
         stats.add("私の本", "My book")
         stats.add("彼の車", "His car")
@@ -40,7 +40,7 @@ class ChapterGlossaryBuilderTest {
 
     @Test
     fun `a common English sentence-starter is not mistaken for a rendering`() {
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         // "学校" recurs but its translations start with the sentence-starter
         // "The"; the discriminative filter must reject "The" as its rendering.
         stats.add("学校に行く", "The school is far")
@@ -52,7 +52,7 @@ class ChapterGlossaryBuilderTest {
 
     @Test
     fun `blank, source-equal, and empty translations contribute nothing`() {
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         stats.add("太郎", "")
         stats.add("太郎", "   ")
         stats.add("東京", "東京") // source-equal
@@ -61,16 +61,8 @@ class ChapterGlossaryBuilderTest {
     }
 
     @Test
-    fun `formatGlossary renders source-arrow-target lines`() {
-        val text = ChapterGlossaryBuilder.formatGlossary(
-            linkedMapOf("太郎" to "Taro", "東京" to "Tokyo"),
-        )
-        text shouldBe "太郎 => Taro\n東京 => Tokyo"
-    }
-
-    @Test
     fun `remove decreases recurrence and evicts term below threshold`() {
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         stats.add("太郎は走る", "Taro runs")
         stats.add("太郎が来た", "Taro came")
         stats.add("太郎を見た", "I saw Taro")
@@ -88,7 +80,7 @@ class ChapterGlossaryBuilderTest {
 
     @Test
     fun `remove cleans up candidate and rendering maps when count drops to zero`() {
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         stats.add("太郎は走る", "Taro runs")
         stats.remove("太郎は走る", "Taro runs")
 
@@ -97,7 +89,7 @@ class ChapterGlossaryBuilderTest {
 
     @Test
     fun `replace updates contributions and maintains rankings`() {
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         val oldPairs = listOf(
             "太郎は走る" to "Taro runs",
             "太郎が来た" to "Taro came",
@@ -126,11 +118,11 @@ class ChapterGlossaryBuilderTest {
             "太郎を見た" to "I saw Taro",
             "学校に行く" to "The school is far",
         )
-        val stats = ChapterGlossaryBuilder.Stats()
+        val stats = ChapterGlossaryAccumulator.Stats()
         stats.addAll(pairs)
 
         val incremental = stats.build()
-        val streamed = ChapterGlossaryBuilder.streamedRecompute(pairs)
+        val streamed = ChapterGlossaryAccumulator.streamedRecompute(pairs)
         incremental shouldBe streamed
         incremental["太郎"] shouldBe "Taro"
     }

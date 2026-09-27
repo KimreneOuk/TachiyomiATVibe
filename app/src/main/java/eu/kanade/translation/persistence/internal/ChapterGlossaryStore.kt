@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence.internal
 
-import eu.kanade.translation.engines.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.MutationAdmission
 import kotlinx.coroutines.sync.withLock
@@ -23,7 +22,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
 
     // One accumulator per store and a contribution watermark per page. Both
     // are protected by store.mutex.
-    internal val stats = ChapterGlossaryBuilder.Stats()
+    internal val stats = ChapterGlossaryAccumulator.Stats()
     private var statsSeeded = false
     internal val pageContributions = HashMap<String, List<Pair<String, String>>>()
 
@@ -166,7 +165,7 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
      * accumulator cannot be used.
      */
     internal fun streamedRecomputeFallback(): Map<String, String> =
-        ChapterGlossaryBuilder.streamedRecompute(translatedPairs())
+        ChapterGlossaryAccumulator.streamedRecompute(translatedPairs())
 
     internal fun loadGlossary() {
         val artifact = store.artifactEngine

@@ -31,6 +31,10 @@ object TranslationPrompts {
         return ParsedLine(id, content)
     }
 
+    /** Renders glossary entries as compact source-to-target prompt lines. */
+    fun formatGlossary(glossary: Map<String, String>): String =
+        glossary.entries.joinToString("\n") { "${it.key} => ${it.value}" }
+
     /** Combined context prefix from a glossary (stable term renderings) and a
      *  rolling recent-pairs buffer. Empty when both are blank so the first chunk
      *  of a chapter adds no framing noise. */

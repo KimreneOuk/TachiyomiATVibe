@@ -134,4 +134,13 @@ class TranslationPromptsTest {
             parseLine("invalid") shouldBe null
         }
     }
+
+    @Test
+    fun `formatGlossary renders source-arrow-target lines`() {
+        val text = TranslationPrompts.formatGlossary(
+            linkedMapOf("太郎" to "Taro", "東京" to "Tokyo"),
+        )
+
+        text shouldBe "太郎 => Taro\n東京 => Tokyo"
+    }
 }

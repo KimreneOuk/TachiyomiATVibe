@@ -1,9 +1,9 @@
-package eu.kanade.translation.engines.translator.contextual
+package eu.kanade.translation.persistence.internal
 
 import java.util.TreeSet
 
 /**
- * Pure, deterministic, **advisory** chapter-level term→target glossary builder.
+ * Pure, deterministic accumulator for advisory chapter-level term→target glossary state.
  *
  * Mines recurring, consistent source→target mappings from translated OCR pairs
  * so proper nouns (names, places, recurring terms) are rendered consistently
@@ -11,8 +11,7 @@ import java.util.TreeSet
  *
  * It is intentionally high-precision / low-recall and NEVER causes a fallback:
  * a wrong or empty entry can only nudge a translation; it cannot break parsing
- * or rendering (it is injected only as advisory context via
- * [TranslationPrompts.contextPrefix]).
+ * or rendering because generated entries are only added as advisory chapter context.
  *
  * Candidate = a maximal CJK run (a name/compound). A candidate is kept only when
  * it recurs in ≥ [MIN_RECURRENCE] bubbles AND a single capitalized Latin token
@@ -20,7 +19,7 @@ import java.util.TreeSet
  * a common English sentence-starter/pronoun (which would be a coincidental, not
  * a discriminative, rendering).
  */
-object ChapterGlossaryBuilder {
+internal object ChapterGlossaryAccumulator {
 
     private const val MIN_RECURRENCE = 3
     private const val MAX_ENTRIES = 30
@@ -220,10 +219,6 @@ object ChapterGlossaryBuilder {
         return target.split(CAPITALIZED_TOKEN_REGEX)
             .filter { it.length >= MIN_RENDERING_LEN && it[0].isUpperCase() }
     }
-
-    /** Renders a glossary map as compact `source => target` lines for the prompt. */
-    fun formatGlossary(glossary: Map<String, String>): String =
-        glossary.entries.joinToString("\n") { "${it.key} => ${it.value}" }
 
     private fun isIdeograph(ch: Char): Boolean {
         val block = Character.UnicodeBlock.of(ch)

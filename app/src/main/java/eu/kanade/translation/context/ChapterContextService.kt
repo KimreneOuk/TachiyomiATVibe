@@ -1,6 +1,5 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.engines.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.engines.translator.contextual.ProfileSubsetMatcher
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.contextual.TranslationPrompts
@@ -175,12 +174,12 @@ class ChapterContextService(
                     subset.entries.none { it.sourceForm.equals(k, ignoreCase = true) }
                 }
                 if (additionalGlossary.isNotEmpty()) {
-                    s = s.trimEnd() + "\nAdditional chapter terms:\n" + ChapterGlossaryBuilder.formatGlossary(additionalGlossary) + "\n"
+                    s = s.trimEnd() + "\nAdditional chapter terms:\n" + TranslationPrompts.formatGlossary(additionalGlossary) + "\n"
                 }
                 sheet = s
                 rolling = TranslationPrompts.profileAwareRollingPrefix(pairLines, resolvedLines, unresolvedLines)
             } else {
-                sheet = ChapterGlossaryBuilder.formatGlossary(foldedGlossary)
+                sheet = TranslationPrompts.formatGlossary(foldedGlossary)
                 rolling = pairLines
             }
         }
@@ -248,7 +247,7 @@ class ChapterContextService(
             var keepCount = entries.size
             while (currentContextTokens() > maxBudget && keepCount > 1) {
                 keepCount = (keepCount + 1) / 2
-                sheet = ChapterGlossaryBuilder.formatGlossary(entries.take(keepCount).associate { it.key to it.value })
+                sheet = TranslationPrompts.formatGlossary(entries.take(keepCount).associate { it.key to it.value })
                 omissions += "TERMS_HALVED_FOR_BUDGET"
             }
             if (currentContextTokens() > maxBudget) {
