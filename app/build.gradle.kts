@@ -248,6 +248,69 @@ tasks.named("check") {
     dependsOn("checkTestRunBlocking")
 }
 
+val checkModelAssets = tasks.register("checkModelAssets") {
+    group = "verification"
+    description = "Verifies that required translation models exist in assets before packaging an APK."
+
+    val manifestFile = rootProject.file("scripts/models.manifest")
+    val modelsDir = file("src/main/assets/models")
+
+    inputs.file(manifestFile)
+    inputs.dir(modelsDir)
+
+    doLast {
+        if (project.hasProperty("skipModelCheck") || project.hasProperty("skipModelAssetsCheck")) {
+            return@doLast
+        }
+        if (!manifestFile.exists()) {
+            throw GradleException("Model manifest not found: ${manifestFile.absolutePath}")
+        }
+        @Suppress("UNCHECKED_CAST")
+        val parsed = groovy.json.JsonSlurper().parse(manifestFile) as? Map<String, Any>
+            ?: throw GradleException("Invalid JSON in ${manifestFile.name}")
+        @Suppress("UNCHECKED_CAST")
+        val files = parsed["files"] as? List<Map<String, Any>>
+            ?: throw GradleException("No files list found in ${manifestFile.name}")
+
+        val missing = mutableListOf<String>()
+        for (entry in files) {
+            val relPath = entry["path"] as? String ?: continue
+            val target = modelsDir.resolve(relPath)
+            if (!target.isFile || target.length() == 0L) {
+                missing.add(relPath)
+            }
+        }
+
+        if (missing.isNotEmpty()) {
+            val missingList = missing.joinToString("\n") { "  - $it" }
+            throw GradleException(
+                """
+                |
+                |======================================================================
+                |BUILD FAILED: Missing ${missing.size} required translation model asset(s):
+                |$missingList
+                |
+                |The translation pipeline requires packaged ONNX models to function.
+                |Run the setup script to fetch, convert, and verify them:
+                |
+                |    python scripts/fetch_models.py
+                |
+                |See docs/MODEL_SOURCES.md for source and licensing details.
+                |To bypass this check (e.g. for non-translation UI testing), pass:
+                |    -PskipModelCheck=true
+                |======================================================================
+                """.trimMargin(),
+            )
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name.startsWith("merge") && name.endsWith("Assets") && !name.contains("Shader")) {
+        dependsOn(checkModelAssets)
+    }
+}
+
 dependencies {
     implementation(projects.i18n)
     implementation(projects.i18nAt)

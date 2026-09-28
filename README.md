@@ -32,29 +32,72 @@ Most of the fork-specific development (translation pipeline, tests, tooling) was
 
 ## Requirements and getting the app
 
-Android 8.0 (API 26) or newer is required. There are no prebuilt public releases at this time, so build the app from source using the instructions below. The main-branch [CI workflow](https://github.com/KimreneOuk/TachiyomiATVibe/actions/workflows/build_push.yml) uploads an unsigned arm64 APK as a run artifact; open a successful main-branch run and look under **Artifacts**.
+Android 8.0 (API 26) or newer is required (arm64-v8a physical device or x86_64 emulator).
+
+There are no prebuilt public releases at this time, so build the app from source using the instructions below. Note that the main-branch [CI workflow](https://github.com/KimreneOuk/TachiyomiATVibe/actions/workflows/build_push.yml) produces **unsigned** verification artifacts; they cannot be installed directly on a device without signing. Building locally automatically signs the debug APK with your local Android debug key.
+
+For a comprehensive guide covering IDE setup, adb commands, APK variants, and troubleshooting, see the [Development Setup Guide](docs/DEVELOPMENT_SETUP.md).
 
 ## Translation quickstart
 
-1. Open **Settings → Translations**.
-2. Set **Translate From** and **Translate To**, then choose a **Translator type**. Select a standard engine or an AI provider and enter any required credentials or connection details.
-3. Open a chapter. Use the page's **Translate** action for a single page, the reader's translation controls for automatic translation while reading, or the chapter translation action for batch translation.
+1. Open **More → Settings → Translations**.
+2. Set **Translate From** and **Translate To**, then choose a **Translator type**.
+   - To test immediately without credentials, select **Google Translate** (requires internet) or **ML Kit** (on-device; downloads language models on first use).
+   - For AI providers (Gemini, DeepSeek, OpenRouter, DeepL), enter your personal API key.
+3. Open a chapter. Tap the page's **Translate** action for a single page, enable automatic translation in the reader dialog while reading, or queue a chapter for batch translation.
 
-The ONNX model assets are fetched and converted before the app is built, then packaged into the APK. The app copies these packaged assets into its private storage when needed; it does not fetch those assets on the first translation. ML Kit may separately download its language model the first time a language is used.
+The ONNX model assets are fetched and converted before the app is built, then packaged into the APK. The app copies these packaged assets into its private storage when needed; it does not fetch those assets on the first translation.
 
 ## Building from source
 
-You need Python 3, JDK 17, and the Android SDK. Android Studio can install the SDK components required by the project. The model fetch step downloads and verifies upstream models and locally converts derived models before Gradle packages the app. See [MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for model sources, conversion notes, and license details.
+Prerequisites:
+- **Python 3.10 – 3.12** (pinned by converter dependencies)
+- **JDK 17** (or Android Studio's bundled JetBrains Runtime; set `JAVA_HOME`)
+- **Android SDK Platform 35** (`android-35`; set `ANDROID_HOME` or define `sdk.dir` in `local.properties`)
+
+### Linux & macOS
 
 ```sh
 git clone https://github.com/KimreneOuk/TachiyomiATVibe.git
 cd TachiyomiATVibe
-python3 -m pip install -r scripts/converters/requirements.txt
-python3 scripts/fetch_models.py
+
+# Set up Python virtual environment & install converter dependencies
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r scripts/converters/requirements.txt
+
+# Fetch, convert, and verify model assets (~159 MB)
+python scripts/fetch_models.py
+
+# Verify environment readiness
+python scripts/setup_check.py
+
+# Build standard debug APK
 ./gradlew :app:assembleStandardDebug
 ```
 
-On Windows PowerShell, run `py -3 -m pip install -r scripts/converters/requirements.txt`, `py -3 scripts/fetch_models.py`, then `.\gradlew.bat :app:assembleStandardDebug`. The Standard debug APKs are written under `app/build/outputs/apk/standard/debug/`.
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/KimreneOuk/TachiyomiATVibe.git
+cd TachiyomiATVibe
+
+# Set up Python virtual environment & install converter dependencies
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r scripts/converters/requirements.txt
+
+# Fetch, convert, and verify model assets (~159 MB)
+python scripts/fetch_models.py
+
+# Verify environment readiness
+python scripts/setup_check.py
+
+# Build standard debug APK
+.\gradlew.bat :app:assembleStandardDebug
+```
+
+The debug APKs will be generated in `app/build/outputs/apk/standard/debug/` (e.g. `app-standard-arm64-v8a-debug.apk` for phones, `app-standard-x86_64-debug.apk` for emulators, or `app-standard-universal-debug.apk`). See [DEVELOPMENT_SETUP.md](docs/DEVELOPMENT_SETUP.md) for details.
 
 ## Development
 

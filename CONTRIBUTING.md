@@ -7,31 +7,41 @@ Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Larger changes are easi
 ## Prerequisites
 
 - Familiarity with Kotlin and Android development
-- Android Studio with JDK 17 and the Android SDK
-- An emulator or Android device for changes that need runtime verification
+- **Python 3.10 – 3.12** for model conversion tooling
+- **Android Studio** with **JDK 17** (or bundled JBR) and **Android SDK Platform 35**
+- An emulator (x86_64) or Android device (Android 8.0+, arm64-v8a) for runtime verification
+- For complete fresh-machine setup instructions, see the [Development Setup Guide](docs/DEVELOPMENT_SETUP.md).
 
 ## Build and test
 
-The translation model assets are not committed to Git. Before building or testing translation features, fetch them once (~159 MB, hash-verified):
+The translation model assets are not committed to Git. Before building or testing translation features, set up a virtual environment and fetch them once (~159 MB, hash-verified):
 
 ```sh
-python3 -m pip install -r scripts/converters/requirements.txt
-python3 scripts/fetch_models.py
+# 1. Virtual environment & converter dependencies
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\Activate.ps1
+python -m pip install -r scripts/converters/requirements.txt
+
+# 2. Fetch and convert model assets
+python scripts/fetch_models.py
+
+# 3. Optional diagnostic check
+python scripts/setup_check.py
 ```
 
-JVM unit tests do not require the model assets. Build the Standard debug app with:
+Build the Standard debug app with:
 
 ```sh
 ./gradlew :app:assembleStandardDebug
+# On Windows: .\gradlew.bat :app:assembleStandardDebug
 ```
 
-Run JVM unit tests with:
+JVM unit tests do not require the model assets. Run them with:
 
 ```sh
 ./gradlew test
+# On Windows: .\gradlew.bat test
 ```
-
-On Windows, use `gradlew.bat` in place of `./gradlew`.
 
 ## Translation changes
 

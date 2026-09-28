@@ -184,7 +184,7 @@ When on, logcat shows, per text bubble:
 
 To capture for analysis (see `docs/build-and-install.md` for adb setup):
 ```
-adb logcat --pid=$(adb shell pidof app.kanade.tachiyomi.at.debug) | grep ocr_block
+adb logcat --pid=$(adb shell pidof app.kanade.tachiyomi.vibe.debug) | grep ocr_block
 ```
 
 Also requires `verbose_logging` = ON (Settings → Advanced) so the `logcat()`

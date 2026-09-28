@@ -4,8 +4,11 @@ A single place documenting how to compile, build the APK, locate the tools,
 and install on a device for this repo. Captured after the first build session,
 where these were discovered the hard way.
 
-> Paths below are specific to the current dev machine (Windows). If you're on a
-> different machine, use the same **commands** but fix the **paths** — the section
+> [!TIP]
+> For the comprehensive, cross-platform contributor onboarding guide covering Linux, macOS, and Windows, see **[`DEVELOPMENT_SETUP.md`](DEVELOPMENT_SETUP.md)**.
+
+> Paths below are specific to a Windows development environment. If you're on a
+> different machine, use the same **commands** but adjust the **paths** — the section
 > "Locating the tools on a new machine" explains how.
 
 ---
@@ -32,13 +35,13 @@ set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
 ```
 (Or set it as a permanent system environment variable so you don't have to.)
 
-### Android SDK (`local.properties`)
+### Android SDK (`local.properties` or `ANDROID_HOME`)
 
-Already committed-as-generated in `local.properties`:
+`local.properties` is gitignored and not committed. On a fresh machine, specify your SDK location:
+```properties
+sdk.dir=C\:\\Users\\<YourUser>\\AppData\\Local\\Android\\Sdk
 ```
-sdk.dir=C\:\\Users\\User\\AppData\\Local\\Android\\Sdk
-```
-If the SDK moves, update this file. `adb` lives inside it (see below).
+(Or set the `ANDROID_HOME` environment variable). `adb` lives inside the SDK under `platform-tools`.
 
 ---
 
@@ -182,15 +185,15 @@ List of devices attached
 ## 6. Installing the APK on the connected device
 
 The package name of the `standard` **debug** build is
-`app.kanade.tachiyomi.at.debug` (NOT `eu.kanade.tachiyomi` — the applicationId
+`app.kanade.tachiyomi.vibe.debug` (NOT `eu.kanade.tachiyomi` — the applicationId
 differs per flavor/build-type). Install the APK matching the device ABI:
 
 ```cmd
-set "PATH=%PATH%;C:\Users\User\AppData\Local\Android\Sdk\platform-tools"
-adb -s 192.168.100.207:37625 install -r app\build\outputs\apk\standard\debug\app-standard-arm64-v8a-debug.apk
+set "PATH=%PATH%;C:\Users\<YourUser>\AppData\Local\Android\Sdk\platform-tools"
+adb install -r app\build\outputs\apk\standard\debug\app-standard-arm64-v8a-debug.apk
 ```
 
-- `-s <serial>` targets the specific device when several are attached. Omit it
+- `-s <serial>` targets a specific device when several are attached. Omit it
   if only one device is connected.
 - `-r` reinstalls (replaces) the existing app and keeps its data.
 
@@ -198,34 +201,33 @@ If the install fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (signature
 mismatch vs. a Play Store / different build install), uninstall first using the
 **debug package name**:
 ```cmd
-adb -s 192.168.100.207:37625 uninstall app.kanade.tachiyomi.at.debug
+adb uninstall app.kanade.tachiyomi.vibe.debug
 ```
 then reinstall. To find the exact package name on any device:
 ```cmd
-adb -s 192.168.100.207:37625 shell pm list packages | findstr /I tachiyomi
+adb shell pm list packages | findstr /I tachiyomi
 ```
 
 To launch after installing (note: the launcher Activity class differs per fork,
 so the `monkey` invocation — which resolves the launcher activity automatically —
 is more reliable than `am start -n <pkg>/<activity>`):
 ```cmd
-adb -s 192.168.100.207:37625 shell monkey -p app.kanade.tachiyomi.at.debug -c android.intent.category.LAUNCHER 1
+adb shell monkey -p app.kanade.tachiyomi.vibe.debug -c android.intent.category.LAUNCHER 1
 ```
 A successful launch prints `Events injected: 1`.
 
 ---
 
-## 7. All-in-one: build + install on the Wi-Fi phone
+## 7. All-in-one: build + install on device
 
-Copy-paste from the repo root:
+Copy-paste from the repo root (adjusting your SDK path and device serial/IP if needed):
 
 ```cmd
 set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
-set "PATH=%PATH%;C:\Users\User\AppData\Local\Android\Sdk\platform-tools"
+set "PATH=%PATH%;C:\Users\<YourUser>\AppData\Local\Android\Sdk\platform-tools"
 gradlew.bat :app:assembleStandardDebug && ^
-adb connect 192.168.100.207:37625 && ^
-adb -s 192.168.100.207:37625 install -r app\build\outputs\apk\standard\debug\app-standard-arm64-v8a-debug.apk && ^
-adb -s 192.168.100.207:37625 shell monkey -p app.kanade.tachiyomi.at.debug -c android.intent.category.LAUNCHER 1
+adb install -r app\build\outputs\apk\standard\debug\app-standard-arm64-v8a-debug.apk && ^
+adb shell monkey -p app.kanade.tachiyomi.vibe.debug -c android.intent.category.LAUNCHER 1
 ```
 
 ---

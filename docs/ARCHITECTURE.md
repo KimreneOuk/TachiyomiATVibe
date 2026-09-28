@@ -116,10 +116,10 @@ The project uses **two product flavors** with **two build types**:
 
 | Flavor | Build Type | Application ID | Notes |
 |--------|-----------|---------------|-------|
-| `standard` | Debug | `app.kanade.tachiyomi.at.debug` | Standard debug build |
-| `standard` | Release | `app.kanade.tachiyomi.at` | Standard release build |
-| `dev` | Debug | `app.kanade.tachiyomi.at.debug` | Dev resources / pseudolocale config |
-| `dev` | Release | `app.kanade.tachiyomi.at` | Dev release build |
+| `standard` | Debug | `app.kanade.tachiyomi.vibe.debug` | Standard debug build |
+| `standard` | Release | `app.kanade.tachiyomi.vibe` | Standard release build |
+| `dev` | Debug | `app.kanade.tachiyomi.vibe.debug` | Dev resources / pseudolocale config |
+| `dev` | Release | `app.kanade.tachiyomi.vibe` | Dev release build |
 
 Flavors do not add their own applicationId suffixes here; build types do.
 
@@ -195,6 +195,6 @@ The automatic translation system is the defining feature of this fork:
 | `eu.kanade.domain` | App-specific domain layer |
 | `tachiyomi.` | Refactored/migrated code from original |
 | `mihon.` | Newer code from Mihon fork |
-| `app.kanade.tachiyomi.at*` | Final build application ID |
+| `app.kanade.tachiyomi.vibe*` | Final build application ID |
 
 The codebase is in active migration from `eu.kanade.tachiyomi` → `tachiyomi.` / `mihon.` packages.

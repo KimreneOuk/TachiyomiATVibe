@@ -61,7 +61,11 @@ kilo.json
 *.aab
 /captures/
 
-# Runtime models are fetched from the models-v1 release; retain empty placeholders
+# Python virtual environments
+.venv/
+venv/
+
+# Runtime model assets fetched by scripts/fetch_models.py; retain empty placeholders
 /app/src/main/assets/models/**
 !/app/src/main/assets/models/**/
 !/app/src/main/assets/models/**/.gitkeep
