@@ -19,13 +19,20 @@ class ExtensionRepoService(
     suspend fun fetchRepoDetails(
         repo: String,
     ): ExtensionRepo? {
+        val cleanRepo = repo
+            .removeSuffix("/")
+            .removeSuffix("/index.min.json")
+            .removeSuffix("/index.json")
+            .removeSuffix("/index.pb")
+            .removeSuffix("/repo.json")
+            .removeSuffix("/")
         return withIOContext {
             try {
                 with(json) {
-                    client.newCall(GET("$repo/repo.json"))
+                    client.newCall(GET("$cleanRepo/repo.json"))
                         .awaitSuccess()
                         .parseAs<ExtensionRepoMetaDto>()
-                        .toExtensionRepo(baseUrl = repo)
+                        .toExtensionRepo(baseUrl = cleanRepo)
                 }
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Failed to fetch repo details" }

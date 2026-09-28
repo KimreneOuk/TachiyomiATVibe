@@ -51,7 +51,7 @@ internal object ExtensionLoader {
     private const val METADATA_LIB_VERSION = "tachiyomix.extensionLib"
     private const val METADATA_LIB_VERSION_ALT = "tachiyomi.extensionLib"
     const val LIB_VERSION_MIN = 1.4
-    const val LIB_VERSION_MAX = 1.6
+    const val LIB_VERSION_MAX = 1.7
 
     @Suppress("DEPRECATION")
     private val PACKAGE_FLAGS = PackageManager.GET_CONFIGURATIONS or
@@ -248,7 +248,7 @@ internal object ExtensionLoader {
             is String -> value.toDoubleOrNull()
             else -> null
         }
-        val libVersion = metaLibVersion ?: versionName.substringBeforeLast('.').toDoubleOrNull()
+        val libVersion = metaLibVersion ?: versionName.split('.').take(2).joinToString(".").toDoubleOrNull()
         if (libVersion == null || libVersion < (LIB_VERSION_MIN - 0.01) || libVersion > (LIB_VERSION_MAX + 0.01)) {
             logcat(LogPriority.WARN) {
                 "Lib version is $libVersion, while only versions " +
@@ -375,9 +375,16 @@ internal object ExtensionLoader {
      * @param pkgInfo The package info of the application.
      */
     private fun isPackageAnExtension(pkgInfo: PackageInfo): Boolean {
-        return pkgInfo.reqFeatures.orEmpty().any {
+        val hasFeature = pkgInfo.reqFeatures.orEmpty().any {
             it.name == EXTENSION_FEATURE || it.name == EXTENSION_FEATURE_X
         }
+        val hasMetadata = pkgInfo.applicationInfo?.metaData?.let { meta ->
+            meta.containsKey(METADATA_SOURCE_CLASS) ||
+                meta.containsKey(METADATA_SOURCE_FACTORY) ||
+                meta.containsKey("tachiyomix.extension.class") ||
+                meta.containsKey("tachiyomix.extension.factory")
+        } ?: false
+        return hasFeature || hasMetadata
     }
 
     /**

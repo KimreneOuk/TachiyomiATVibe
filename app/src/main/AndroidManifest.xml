@@ -33,6 +33,16 @@
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- Queries for Android 11+ (API 30+) extension package visibility -->
+    <queries>
+        <intent>
+            <action android:name="tachiyomi.extension" />
+        </intent>
+        <intent>
+            <action android:name="tachiyomi.extension.action.PING" />
+        </intent>
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="false"

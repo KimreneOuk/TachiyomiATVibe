@@ -244,11 +244,12 @@ internal class EngineLane(
             currentOcrModel = OcrModel.MLKIT
             currentInpaintingMode = InpaintingMode.FAST
             currentReadingOrder = tachiyomi.domain.translation.TranslationReadingOrder.AUTO
-            recognitionEngine = createRecognitionEngine(
-                TextRecognizerLanguage.JAPANESE,
-                OcrModel.MLKIT,
-                InpaintingMode.FAST,
-            )
+            recognitionEngine = object : PageRecognitionEngine {
+                override suspend fun analyze(bitmap: android.graphics.Bitmap): PageTranslation {
+                    throw IllegalStateException("Recognition engine not initialized (models not installed)")
+                }
+                override fun close() {}
+            }
             // Throws on use; entry-point fromPref throws first. Guarantees the field
             // is never null without a lateinit crash.
             textTranslator = object : TextTranslator {

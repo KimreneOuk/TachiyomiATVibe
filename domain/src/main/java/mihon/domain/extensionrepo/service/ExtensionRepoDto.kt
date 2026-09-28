@@ -11,9 +11,9 @@ data class ExtensionRepoMetaDto(
 @Serializable
 data class ExtensionRepoDto(
     val name: String,
-    val shortName: String?,
-    val website: String,
-    val signingKeyFingerprint: String,
+    val shortName: String? = null,
+    val website: String = "",
+    val signingKeyFingerprint: String = "",
 )
 
 fun ExtensionRepoMetaDto.toExtensionRepo(baseUrl: String): ExtensionRepo {

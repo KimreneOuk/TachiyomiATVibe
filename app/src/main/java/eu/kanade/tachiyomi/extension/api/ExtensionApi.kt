@@ -11,8 +11,16 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonPrimitive
 import logcat.LogPriority
 import mihon.domain.extensionrepo.interactor.GetExtensionRepo
 import mihon.domain.extensionrepo.interactor.UpdateExtensionRepo
@@ -49,6 +57,12 @@ internal class ExtensionApi {
 
     private suspend fun getExtensions(extRepo: ExtensionRepo): List<Extension.Available> {
         val repoBaseUrl = extRepo.baseUrl
+            .removeSuffix("/")
+            .removeSuffix("/index.min.json")
+            .removeSuffix("/index.json")
+            .removeSuffix("/index.pb")
+            .removeSuffix("/repo.json")
+            .removeSuffix("/")
         // 1. Try modern index.json (Keiyoushi and newer repositories)
         try {
             val response = networkService.client
@@ -202,11 +216,11 @@ internal class ExtensionApi {
     }
 
     private fun ExtensionJsonObject.extractLibVersion(): Double {
-        return libVersion ?: version.substringBeforeLast('.').toDoubleOrNull() ?: 0.0
+        return libVersion ?: version.split('.').take(2).joinToString(".").toDoubleOrNull() ?: 0.0
     }
 
     private fun RepoExtensionEntryJsonObject.extractLibVersion(): Double {
-        return extensionLib?.toDoubleOrNull() ?: versionName.substringBeforeLast('.').toDoubleOrNull() ?: 0.0
+        return extensionLib?.toDoubleOrNull() ?: versionName.split('.').take(2).joinToString(".").toDoubleOrNull() ?: 0.0
     }
 
     private fun isDummyWarningExtension(pkg: String, name: String): Boolean {
@@ -214,6 +228,32 @@ internal class ExtensionApi {
             pkg == "eu.kanade.tachiyomi.extension.all.mihon" ||
             name.contains("Outdated App", ignoreCase = true) ||
             name.contains("Update to Mihon", ignoreCase = true)
+    }
+}
+
+object AnyStringSerializer : KSerializer<String> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("AnyString", PrimitiveKind.STRING)
+    override fun serialize(encoder: Encoder, value: String) = encoder.encodeString(value)
+    override fun deserialize(decoder: Decoder): String {
+        val input = decoder as? JsonDecoder ?: return decoder.decodeString()
+        return when (val element = input.decodeJsonElement()) {
+            is JsonPrimitive -> element.content
+            else -> element.toString()
+        }
+    }
+}
+
+object AnyLongSerializer : KSerializer<Long> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("AnyLong", PrimitiveKind.LONG)
+    override fun serialize(encoder: Encoder, value: Long) = encoder.encodeLong(value)
+    override fun deserialize(decoder: Decoder): Long {
+        val input = decoder as? JsonDecoder ?: return decoder.decodeLong()
+        return when (val element = input.decodeJsonElement()) {
+            is JsonPrimitive -> element.content.toLongOrNull() ?: 0L
+            else -> 0L
+        }
     }
 }
 
@@ -233,7 +273,9 @@ private data class RepoExtensionEntryJsonObject(
     val name: String,
     val packageName: String,
     val versionName: String,
+    @Serializable(with = AnyStringSerializer::class)
     val versionCode: String? = null,
+    @Serializable(with = AnyStringSerializer::class)
     val extensionLib: String? = null,
     val contentWarning: String? = null,
     val resources: RepoExtensionResourcesJsonObject? = null,
@@ -249,6 +291,7 @@ private data class RepoExtensionResourcesJsonObject(
 
 @Serializable
 private data class RepoExtensionSourceJsonObject(
+    @Serializable(with = AnyStringSerializer::class)
     val id: String? = null,
     val name: String? = null,
     val language: String? = null,
@@ -261,15 +304,17 @@ private data class ExtensionJsonObject(
     val pkg: String,
     val apk: String,
     val lang: String,
-    val code: Long,
+    @Serializable(with = AnyLongSerializer::class)
+    val code: Long = 0L,
     val version: String,
-    val nsfw: Int,
-    val sources: List<ExtensionSourceJsonObject>?,
+    val nsfw: Int = 0,
+    val sources: List<ExtensionSourceJsonObject>? = null,
     val libVersion: Double? = null,
 )
 
 @Serializable
 private data class ExtensionSourceJsonObject(
+    @Serializable(with = AnyLongSerializer::class)
     val id: Long,
     val lang: String,
     val name: String,
