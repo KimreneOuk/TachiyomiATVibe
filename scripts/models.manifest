@@ -9,8 +9,8 @@
     },
     {
       "path": "detection/manga_panel_detector_int8.onnx",
-      "size_bytes": 2849991,
-      "sha256": "d7dcc9efbc0908f388697c9f8128374fbde5a2598bd2896ee87473ea4ff9bba7",
+      "size_bytes": 2872318,
+      "sha256": "6b1728706197d54bf8023ebae890ef1a8d42ddc0de27e3edec22f32dc674075b",
       "source_url": "https://huggingface.co/leoxs22/manga-panel-detector-yolo26n/resolve/40a2854663d537563cfb95c370288a84c6505b9a/manga_panel_detector_fp32.pt",
       "convert": {
         "script": "scripts/converters/convert_panel_detector.py",
@@ -21,8 +21,8 @@
     },
     {
       "path": "inpainting/aot-512.onnx",
-      "size_bytes": 22854564,
-      "sha256": "b1d0e7c50f95910cf1ea58fac646699a97ce2efadf7e2c57af3785bf0ea4f9eb",
+      "size_bytes": 61469172,
+      "sha256": "7cafb478c750d0dc7a2e9bad6b034a0fbff5c5df6db95ceb165ba571026c2f8e",
       "source_url": "https://huggingface.co/ogkalu/aot-inpainting/resolve/42ffc84ff1bd46dd95f1c5a41e83ee7e98f39189/aot.onnx",
       "convert": {
         "script": "scripts/converters/convert_aot_512.py",
@@ -87,8 +87,8 @@
     },
     {
       "path": "segmentation/manga109_bubble_int8.onnx",
-      "size_bytes": 3347784,
-      "sha256": "a398f6482cbd9d8b2573763c91fbb858e3d4cd195b2c3be85c85f5802f9ddce9",
+      "size_bytes": 3444163,
+      "sha256": "2c80dab0b9df4455b40501614ebdf4bae7a90c3880635635e8d87baa50cdfa94",
       "source_url": "https://huggingface.co/huyvux3005/manga109-segmentation-bubble/resolve/f9a4108c4955136a810e5e92207972f3fb3a65fd/best.pt",
       "convert": {
         "script": "scripts/converters/convert_bubble_segmenter.py",
