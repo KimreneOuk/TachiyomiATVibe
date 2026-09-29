@@ -13,12 +13,14 @@ import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Test
@@ -26,10 +28,17 @@ import java.util.concurrent.CountDownLatch
 
 class PageSnapshotLostUpdateTest {
 
-    private fun stagedDebounceJob(store: ChapterTranslationStore): Job? =
-        ChapterTranslationStore::class.java.getDeclaredField("stagedDebounceJob").apply {
+    private fun persistenceScheduler(store: ChapterTranslationStore): Any =
+        ChapterTranslationStore::class.java.getDeclaredField("persistenceScheduler").apply {
             isAccessible = true
-        }.get(store) as? Job
+        }.get(store)
+
+    private suspend fun stagedDebounceJob(store: ChapterTranslationStore): Job? =
+        store.mutex.withLock {
+            StorePersistenceScheduler::class.java.getDeclaredField("stagedDebounceJob").apply {
+                isAccessible = true
+            }.get(persistenceScheduler(store)) as? Job
+        }
 
     @Test
     fun hydration_serializes_with_writers_and_preserves_the_newer_page_state() = runTest {
