@@ -65,11 +65,8 @@ class ChapterArtifactSchemaGuardCacheTest {
                 CleanedFileState.VALID,
             ),
         ),
-        glossary = emptyMap(),
         legacyIdentity = identity(identityTag),
         sourceFileName = "Chapter 1.json",
-        glossaryFileName = null,
-        glossaryIdentity = null,
         migratedByVersionCode = 63L,
         migratedAtEpochMs = 42L,
     )

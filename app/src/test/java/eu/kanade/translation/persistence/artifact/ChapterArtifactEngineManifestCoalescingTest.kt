@@ -73,15 +73,12 @@ class ChapterArtifactEngineManifestCoalescingTest {
 
     private fun legacySnapshot(pageKeys: List<String>) = ArtifactSeed(
         pages = pageKeys.associateWith { key -> ArtifactPageFacts(page(key), CleanedFileState.VALID) },
-        glossary = emptyMap(),
         legacyIdentity = LegacySourceIdentity(
             sha256 = "sha-chapter",
             lengthBytes = 1L,
             lastModifiedMs = 1L,
         ),
         sourceFileName = "Chapter 1.json",
-        glossaryFileName = null,
-        glossaryIdentity = null,
         migratedByVersionCode = 63L,
         migratedAtEpochMs = 42L,
     )

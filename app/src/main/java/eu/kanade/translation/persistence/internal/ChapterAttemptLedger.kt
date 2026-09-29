@@ -8,8 +8,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- *  Durable attempt-ledger collaborator
- * moved alongside `ChapterGlossaryStore`. Owns the chapter's
+ * Durable attempt-ledger collaborator for a chapter. Owns the chapter's
  * [ChapterAttemptLedgerDocument]; every mutation is delegated by the owning
  * store under the store mutex (the collaborator receives the store and locks
  * through it) and every durably published document goes through the artifact

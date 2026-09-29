@@ -105,21 +105,6 @@ object StageFingerprints {
         outputDimensions,
     )
 
-    /**
-     * Chapter glossary version fingerprint: vocabulary hints only (contract
-     * §14.8). Each key and value is fed as its own length-prefixed field in
-     * sorted-key order, so no comma/equals composite can alias a different
-     * key/value split.
-     */
-    fun glossaryVersion(entries: Map<String, String>): String {
-        val fields = mutableListOf<Any?>("glossary")
-        entries.keys.sorted().forEach { key ->
-            fields += key
-            fields += entries.getValue(key)
-        }
-        return fingerprintIndexed(fields)
-    }
-
     /** Failure fingerprint: identifies the failing configuration/source shape (contract §13). */
     fun failure(stage: ArtifactStage, failureMessage: String?, stageStatuses: List<String>): String =
         fingerprintIndexed("failure", stage.name, failureMessage ?: "", stageStatuses)

@@ -60,7 +60,7 @@ For a new provider, first read `engines/translator/TextTranslator.kt`, `engines/
 | `persistence/artifact` | Durable artifact documents, manifests, candidate/commit records, and recovery metadata. Candidate-open outcomes are neutral; `pipeline.batch` maps reuse outcomes to batch diagnostics. |
 | `persistence/chapter` | Live chapter/page state coordination, leases, cleaned-image publication, and `TranslationFileProvider` chapter file locations. |
 | `persistence/queue` | Durable queue membership and pending request records. |
-| `persistence/internal` | Concrete collaborators used by chapter-state and persistence owners, including `ChapterGlossaryAccumulator`; these are not a second public API. |
+| `persistence/internal` | Concrete collaborators used by chapter-state and persistence owners; these are not a second public API. |
 | `model` | Shared translation values, page state, and domain contracts. Keep feature policy and projections with their owning package. |
 | `context` | Chapter and series context used to prepare translation requests. |
 | `presentation` | Reader and confirmation-dialog projections, including translation settings summaries and notification copy. |

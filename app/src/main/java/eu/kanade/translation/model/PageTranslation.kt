@@ -57,12 +57,6 @@ data class PageTranslation(
     var inpaintFingerprint: String? = null,
     var translationFingerprint: String? = null,
     var layoutFingerprint: String? = null,
-    /**
-     * Legacy glossary version stamp retained for compatibility with persisted
-     * page JSON. Current translation requests and resume planning do not read
-     * or write it; rolling context is derived from committed predecessor pages.
-     */
-    var translationGlossaryVersion: Int? = null,
     /** Reader-ad-hoc output is displayable but lacks full-chapter context. */
     var translationOrigin: String? = null,
     /**
@@ -185,7 +179,6 @@ data class PageTranslation(
         translationStatus = StageStatus.PENDING
         translationError = null
         translationFingerprint = null
-        translationGlossaryVersion = null
         translationOrigin = null
         blocks.forEach {
             it.translation = ""

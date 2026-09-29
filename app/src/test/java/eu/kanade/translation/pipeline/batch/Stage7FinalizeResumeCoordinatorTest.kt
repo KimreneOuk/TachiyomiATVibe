@@ -12,8 +12,6 @@ import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.engines.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
 import eu.kanade.translation.engines.translator.analysis.ValidatedTerm
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
@@ -313,11 +311,6 @@ class Stage7FinalizeResumeCoordinatorTest {
     private fun activeRunPointer(store: ChapterTranslationStore): SidecarPointer =
         artifactStore().readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
 
-    /** Summary-glossary seam (Director redesign): an empty sheet freezes fine. */
-    private val emptyGlossarySynthesizer = GlossarySynthesizer { _, _, _ ->
-        GlossarySynthesisOutcome.Glossary(emptyList())
-    }
-
     private fun coordinator(
         store: ChapterTranslationStore,
         worker: NativeLaneWorker,
@@ -340,7 +333,6 @@ class Stage7FinalizeResumeCoordinatorTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
-        glossarySynthesizer = emptyGlossarySynthesizer,
         textTranslator = translator,
         translationSublimitGate = BatchRequestSublimitGate(),
         overlapScheduler = overlapScheduler,

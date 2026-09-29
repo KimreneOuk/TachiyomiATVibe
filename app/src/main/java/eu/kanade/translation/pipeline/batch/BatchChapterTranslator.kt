@@ -750,7 +750,7 @@ internal class BatchChapterTranslator(
                                 // standard engine (one-way signature, never a raw
                                 // key). NO AnalysisChunkExecutor and NO contextual
                                 // translator on this lane — AI envelope,
-                                // analysis, and glossary work never runs here.
+                                // analysis work never runs here.
                                 val standardEngine = translationPreferences.translationStandardEngine().get()
                                 val credentialSecret = if (standardEngine == StandardEngine.DEEPL) {
                                     translationPreferences.translationDeeplApiKey().get()
@@ -1038,7 +1038,7 @@ internal class BatchChapterTranslator(
          * only — the  flag completed its A/B lifecycle and was removed.
          *  - STANDARD engine → STANDARD_PIPELINE (the same coordinator's
          *    standard tail — pure FULL OCR preflight, then per-page legacy
-         *    batch translation without the glossary);
+         *    per-page legacy batch translation);
          *  - anything else (AI_MODEL, contextual or not) → PROFILE_PIPELINE;
          *    the degenerate non-contextual AI config takes the coordinator's
          *    typed CONFIGURATION pause at the envelope seam.

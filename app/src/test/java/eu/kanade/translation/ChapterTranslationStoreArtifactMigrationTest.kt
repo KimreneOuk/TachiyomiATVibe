@@ -40,8 +40,8 @@ import java.util.zip.DeflaterOutputStream
 /**
  * Production-path coverage for the artifact manifest hook wired into
  * [ChapterTranslationStore.open]: a legacy chapter opened through the store
- * gains a sibling manifest and versioned glossary sidecar; a later legacy
- * mutation and persist forces a resync to the newest authoritative bytes.
+ * gains a sibling manifest; a later legacy mutation and persist forces a
+ * resync to the newest authoritative bytes.
  *
  * The cleaned-image validation seam ([ChapterTranslationStore.artifactImageProbe])
  * is pointed at a header-parsing PNG probe because android.graphics is not
@@ -173,7 +173,6 @@ class ChapterTranslationStoreArtifactMigrationTest {
         val store = ChapterTranslationStore.openArtifact(root, "Chapter 1.json")
         store.preRegisterPages(listOf("page.jpg"))
         store.updatePage("page.jpg") { displayablePage() }
-        store.updateGlossary(mapOf("sensei" to "teacher"))
         store.closeAndFlush()
     }
 
@@ -292,7 +291,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
     }
 
     @Test
-    fun `artifact-only lazy store writes glossary without materializing flat compatibility file`() = runTest {
+    fun `artifact-only lazy store writes pages without materializing flat compatibility file`() = runTest {
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val store = ChapterTranslationStore.lazy(
             fileCreator = { error("artifact-only store must not create the flat file") },
@@ -300,7 +299,6 @@ class ChapterTranslationStoreArtifactMigrationTest {
             artifactFileName = "Chapter 2.json",
         )
         store.updatePage("page.jpg") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
-        store.updateGlossary(mapOf("sensei" to "teacher"))
         store.flush()
 
         File(mangaDir, "Chapter 2.json").exists() shouldBe false
@@ -308,7 +306,6 @@ class ChapterTranslationStoreArtifactMigrationTest {
         File(mangaDir, "Chapter 2.manifest.json").exists() shouldBe true
         readManifest("Chapter 2").expectedPageCount shouldBe 1
         readManifest("Chapter 2").expectedPageCountTrusted shouldBe false
-        File(mangaDir, "Chapter 2_artifacts/glossary/chapter.glossary.1.json").exists() shouldBe true
     }
 
     @Test

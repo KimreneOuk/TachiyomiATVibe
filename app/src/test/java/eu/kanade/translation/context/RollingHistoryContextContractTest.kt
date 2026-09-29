@@ -27,7 +27,6 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
-import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 
 class RollingHistoryContextContractTest {
@@ -256,20 +255,16 @@ class RollingHistoryContextContractTest {
     }
 
     @Test
-    fun `N4 glossary terms outside the rolling window do not enter prepared context`(): Unit = runBlocking<Unit> {
+    fun `N4 old history outside the rolling window does not enter prepared context`() {
         val fixture = fixture(
             (0..40).map { index -> historyPage("p$index", index, "source-$index", "target-$index") } +
                 historyPage("current", 41, "current", "CURRENT"),
         )
-        fixture.store.updateGlossary(mapOf("source-0" to "LEGACY GLOSSARY TERM"))
-        fixture.store.glossarySnapshot() shouldBe mapOf("source-0" to "LEGACY GLOSSARY TERM")
 
         val prepared = fixture.prepare("current", LaneCapability.MANUAL)
 
-        prepared.rollingContext.contains("LEGACY GLOSSARY TERM") shouldBe false
         prepared.rollingContext.contains("source-0 => target-0") shouldBe false
         prepared.selectedPairs.none { it.first == "source-0" } shouldBe true
-        Unit
     }
 
     @Test

@@ -41,8 +41,6 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
 
     private val artifactManifest get() = store.artifactManifest
 
-    private val glossaryStore get() = store.glossaryStore
-
     private val translationFile: UniFile? get() = store.translationFile
 
     private val fileCreator: (() -> UniFile)? get() = store.fileCreator
@@ -66,8 +64,6 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         set(value) {
             store.persistCount = value
         }
-
-    private fun persistGlossaryLocked(): Boolean = store.persistGlossaryLocked()
 
     internal fun persistLocked(): Boolean {
         if (defunct) return false
@@ -119,10 +115,6 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         store.flushStagedMutationsLocked(eu.kanade.translation.persistence.artifact.CommitPoint.EXPLICIT_FLUSH)
         if (dirty) {
             if (persistLocked()) dirty = false else dirty = true
-        }
-        if (glossaryStore.glossaryDirty) {
-            // Keep dirty on failure so a later completion/close flush can retry.
-            if (persistGlossaryLocked()) glossaryStore.glossaryDirty = false
         }
     }
 

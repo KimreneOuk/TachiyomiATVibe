@@ -168,7 +168,6 @@ class DurableStatusWipeGateTest {
     private fun writeLegacyChapter() {
         File(mangaDir, "Chapter 1_images").mkdirs()
         File(mangaDir, "Chapter 1_images/page.cleaned.abc.jpg").writeBytes(pngBytes(100, 100))
-        File(mangaDir, "Chapter 1.glossary.json").writeText("""{"sensei":"teacher"}""")
         File(mangaDir, "Chapter 1.json").writeText(
             buildJsonObject { put("page.jpg", Json.encodeToJsonElement(displayablePage()).jsonObject) }.toString(),
         )

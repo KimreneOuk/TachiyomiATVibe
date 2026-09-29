@@ -46,11 +46,6 @@
   "partialBatchInfo": null,
   "activeCandidateGenerationIds": [],
   "durableFailures": {},
-  "glossary": {
-    "fileName": "Chapter 1_artifacts/glossary/chapter.glossary.1.json",
-    "version": 1,
-    "versionFingerprint": "2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a"
-  },
   "legacySource": {
     "sha256": "4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c",
     "lengthBytes": 4211,
@@ -63,14 +58,6 @@
     "requestedSourceFileName": "Chapter 1.json",
     "resolvedSourceFileName": "Chapter 1.json.migrated",
     "sourcePreservedAtEpochMs": 1757000000000,
-    "glossaryPreservation": "PRESERVED",
-    "requestedGlossaryFileName": "Chapter 1.glossary.json",
-    "resolvedGlossaryFileName": "Chapter 1.glossary.json.migrated",
-    "glossaryIdentity": {
-      "sha256": "3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b",
-      "lengthBytes": 22,
-      "lastModifiedMs": 1757030000000
-    },
     "sourceIdentity": {
       "sha256": "4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c",
       "lengthBytes": 4211,

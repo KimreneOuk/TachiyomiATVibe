@@ -34,13 +34,10 @@ data class ChapterContextSnapshot(
     val contentFingerprint: String = "",
     /**
      * Identity 3: reuse and compatibility policy identity.
-     * Retains existing stage fingerprints and glossary compatibility version.
      */
     val reuseCompatibility: String = "v1",
     val selectionPolicyVersion: Int = 1,
     val serializationPolicyVersion: Int = 1,
-    val glossaryPointer: SidecarPointer? = null,
-    val glossaryFingerprint: String? = null,
     val profilePointer: ProfilePointer? = null,
     val profileInputFingerprint: String? = null,
     val committedPageReferences: List<PageContextReference> = emptyList(),

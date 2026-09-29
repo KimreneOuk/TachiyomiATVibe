@@ -25,14 +25,13 @@ class ActiveChapterStoreWriterRegistryTest {
     }
 
     @Test
-    fun `writer origins contains all 6 required origins`() {
+    fun `writer origins contains all 5 required origins`() {
         val expected = listOf(
             WriterOrigin.MAIN_STORE,
             WriterOrigin.PROBE_STORE,
             WriterOrigin.STATUS_RESOLVER,
             WriterOrigin.MIGRATION_SOURCE,
             WriterOrigin.HEALTH_VERIFY,
-            WriterOrigin.GLOSSARY_LANE,
         )
         WriterOrigin.values().toList() shouldContainExactlyInAnyOrder expected
     }
@@ -79,27 +78,19 @@ class ActiveChapterStoreWriterRegistryTest {
             chapterKey = chapterKey,
             origin = WriterOrigin.HEALTH_VERIFY,
         )
-        val token3 = ActiveChapterStoreRegistry.registerWriter(
-            chapterId = chapterId,
-            chapterKey = chapterKey,
-            origin = WriterOrigin.GLOSSARY_LANE,
-        )
-
         val writers = ActiveChapterStoreRegistry.getActiveWriters(chapterId = chapterId)
-        writers shouldHaveSize 3
+        writers shouldHaveSize 2
         writers.map { it.origin } shouldContainExactlyInAnyOrder listOf(
             WriterOrigin.MAIN_STORE,
             WriterOrigin.HEALTH_VERIFY,
-            WriterOrigin.GLOSSARY_LANE,
         )
 
         token2.close()
-        ActiveChapterStoreRegistry.getActiveWriters(chapterId = chapterId) shouldHaveSize 2
+        ActiveChapterStoreRegistry.getActiveWriters(chapterId = chapterId) shouldHaveSize 1
         ActiveChapterStoreRegistry.hasActiveWriter(chapterId = chapterId, origin = WriterOrigin.HEALTH_VERIFY) shouldBe false
         ActiveChapterStoreRegistry.hasActiveWriter(chapterId = chapterId, origin = WriterOrigin.MAIN_STORE) shouldBe true
 
         token1.close()
-        token3.close()
         ActiveChapterStoreRegistry.getActiveWriters(chapterId = chapterId) shouldHaveSize 0
     }
 

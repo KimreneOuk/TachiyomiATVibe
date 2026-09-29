@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test
  * flagged [ChapterProfileBatchCoordinator] with the injected standard seam
  * over a durable ARTIFACTS-authority store; the standard translator is the
  * harness's [FakeTransportTranslator] resolved through the normal EngineLane
- * construction path. Pinned here (the Director's four points):
+ * construction path. Pinned here (the Director's three points):
  *
  *  1. the legacy SequentialBatchCoordinator is NOT constructed — by behavior:
  *     the transport is called exactly once per page, and the artifact manifest
@@ -34,7 +34,6 @@ import org.junit.jupiter.api.Test
  *     renderStatus READY — no in-pass render WORK ran, but the durable page
  *     record carries the render-terminal stamp (2026-09-16 E-fix) so the
  *     display bundle commits and the reader gate flips without a sweep;
- *  4. the store glossary is never written.
  */
 //  test-stability quarantine: load-ordering sensitive under full-suite JVM
 // churn; tracked for stabilization. Runs with -PincludeQuarantinedTests.
@@ -47,7 +46,6 @@ class StandardPipelineCoexistenceTest {
         val harness = TranslationCoexistenceHarness.createStandard(pageKeys)
         try {
             harness.stubChapterPages(pageKeys)
-            val glossaryBefore = harness.store.glossarySnapshot()
 
             val batch = harness.launchBatch(pageKeys)
             val reconciliation = runBlocking {
@@ -127,10 +125,6 @@ class StandardPipelineCoexistenceTest {
             }
             // No in-pass render ever ran — the flagged lane renders later.
             harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.RENDER) shouldBe 0
-
-            // ---- Contract 4: the glossary is never written. ----
-            store.glossarySnapshot() shouldBe glossaryBefore
-            store.glossarySnapshot() shouldBe emptyMap()
 
             // Resume parity rides the preflight checkpoints: every page's OCR
             // evidence is durably checkpointed.

@@ -19,8 +19,6 @@ import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
 import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.engines.translator.analysis.GlossarySynthesisOutcome
-import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
 import eu.kanade.translation.engines.translator.analysis.ValidatedTerm
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
@@ -130,18 +128,12 @@ class ProfileEnvelopeDispatchTest {
      * contend for the process-wide shared 15-RPM pool (the gate TYPE is the
      * seam; the default shared instance is pinned at the construction sites).
      */
-    /** Summary-glossary seam (Director redesign): an empty sheet freezes fine. */
-    private val emptyGlossarySynthesizer = GlossarySynthesizer { _, _, _ ->
-        GlossarySynthesisOutcome.Glossary(emptyList())
-    }
-
     private fun coordinator(
         store: ChapterTranslationStore,
         worker: NativeLaneWorker,
         pages: List<PageKey>,
         runner: AnalysisChunkRunner,
         translator: FakeTranslator?,
-        glossarySynthesizer: GlossarySynthesizer = emptyGlossarySynthesizer,
         maxPagesPerEnvelope: Int = 8,
         gate: BatchRequestSublimitGate = BatchRequestSublimitGate(),
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
@@ -162,7 +154,6 @@ class ProfileEnvelopeDispatchTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
-        glossarySynthesizer = glossarySynthesizer,
         textTranslator = translator,
         translationSublimitGate = gate,
     )
@@ -350,17 +341,12 @@ class ProfileEnvelopeDispatchTest {
     }
 
     @Test
-    fun `N2 normal AI batch makes zero analysis and glossary synthesis transport calls`() = runTest {
+    fun `N2 normal AI batch makes zero analysis transport calls`() = runTest {
         val store = lazyStore()
         val pageKeys = listOf("p1")
         store.preRegisterPages(pageKeys)
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
         val analysis = FakeAnalyzer()
-        val synthesisCalls = AtomicInteger()
-        val synthesizer = GlossarySynthesizer { _, _, _ ->
-            synthesisCalls.incrementAndGet()
-            GlossarySynthesisOutcome.Glossary(emptyList())
-        }
         val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
 
         val outcome = coordinator(
@@ -369,12 +355,10 @@ class ProfileEnvelopeDispatchTest {
             pages,
             analysis,
             translator,
-            glossarySynthesizer = synthesizer,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         outcome.status shouldBe BatchPass1Status.COMPLETED
         analysis.executedOrdinals shouldBe emptyList()
-        synthesisCalls.get() shouldBe 0
     }
 
     @Test

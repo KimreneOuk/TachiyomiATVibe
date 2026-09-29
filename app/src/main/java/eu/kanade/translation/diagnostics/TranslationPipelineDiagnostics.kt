@@ -17,8 +17,8 @@ import java.util.concurrent.CancellationException
  *  - One log tag; every line starts `schema=translation_trace_v1` with fixed
  *    key order and space-separated `key=value` tokens.
  *  - No raw content ever crosses this boundary: manga/chapter/page names,
- *    source/OCR text, translations, prompts, URLs, API material, glossary
- *    content, and exception messages are structurally impossible to emit.
+ *    source/OCR text, translations, prompts, URLs, API material, and
+ *    exception messages are structurally impossible to emit.
  *    pageIndex is the only accepted non-content positional field (§10.3).
  *  - Formatting and sink calls are synchronous, non-suspending, and
  *    fail-open: any failure is swallowed and never reaches the pipeline.

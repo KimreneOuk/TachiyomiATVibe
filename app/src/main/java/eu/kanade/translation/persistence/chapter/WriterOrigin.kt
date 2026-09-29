@@ -6,7 +6,7 @@ package eu.kanade.translation.persistence.chapter
  * but excludes nothing, preserving existing probe/verify  choreography.
  *
  * With group commit enabled, a second writer
- * (probe store, health-verify, migration, glossary lane) force-flushes the owning
+ * (probe store, health-verify, migration) force-flushes the owning
  * store's staged buffer before its own publication and re-reads durable truth.
  */
 enum class WriterOrigin(val description: String) {
@@ -15,7 +15,6 @@ enum class WriterOrigin(val description: String) {
     STATUS_RESOLVER("durable chapter status resolver"),
     MIGRATION_SOURCE("legacy chapter migration source"),
     HEALTH_VERIFY("legacy artifact health verification"),
-    GLOSSARY_LANE("glossary update lane"),
 }
 
 data class ActiveWriter(

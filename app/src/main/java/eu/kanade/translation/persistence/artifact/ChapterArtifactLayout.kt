@@ -7,7 +7,7 @@ import java.security.MessageDigest
  *
  * Given a chapter translation file base name `X` (e.g. `Group_Chapter 1`), the
  * manifest is the sibling document `X.manifest.json` — matching the existing
- * `X.glossary.json` / `X.summary.json` sidecar convention — and all immutable
+ * `X.summary.json` sidecar convention — and all immutable
  * payloads live under the chapter directory `X_artifacts/`:
  *
  * ```
@@ -16,7 +16,6 @@ import java.security.MessageDigest
  *   images/<pageIdentity>/<generation>-<fingerprint>.<ext>
  *   context/<naturalPageIndex>-<checkpointHash>.json
  *   generations/<generationId>.json
- *   glossary/chapter.glossary.<version>.json
  * ```
  *
  * Every name produced here is a `/`-separated path relative to the chapter's
@@ -49,7 +48,6 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     // Scene-checkpoint sidecar directory.
     private val contextDirectoryName = "$artifactRootDirectoryName/context"
     private val generationDirectoryName = "$artifactRootDirectoryName/generations"
-    private val glossaryDirectoryName = "$artifactRootDirectoryName/glossary"
 
     // Durable attempt-ledger sidecar directory. One bounded
     // document per chapter — not versioned sidecars — so a single fixed name.
@@ -94,12 +92,9 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     val imagesRootDirectory: String get() = imageDirectoryName
     val stageArtifactsRootDirectory: String get() = artifactDirectoryName
     val generationsRootDirectory: String get() = generationDirectoryName
-    val glossaryDirectory: String get() = glossaryDirectoryName
 
     fun generationFile(generationId: String): String =
         "$generationDirectoryName/${generationSegment(generationId)}.json"
-
-    fun glossaryFile(version: Int): String = "$glossaryDirectoryName/chapter.glossary.$version.json"
 
     /** The chapter's single durable attempt-ledger document. */
     val attemptLedgerFileName: String get() = "$attemptsDirectoryName/ledger.json"
@@ -159,7 +154,6 @@ class ChapterArtifactLayout(chapterBaseName: String) {
         pageSnapshotDirectoryName,
         contextDirectoryName,
         generationDirectoryName,
-        glossaryDirectoryName,
         attemptsDirectoryName,
         runRecordsDirectoryName,
         ocrCheckpointDirectoryName,

@@ -8,8 +8,8 @@ import kotlinx.serialization.Serializable
  *
  * `chapter.translation.manifest.json`-equivalent sibling of the legacy flat
  * translation file. Holds schema version, page records with committed and
- * candidate metadata, active candidate ids, durable failures, and the glossary
- * pointer. Large payloads stay immutable files under the artifact tree; the
+ * candidate metadata, active candidate ids, durable failures, and migration
+ * metadata. Large payloads stay immutable files under the artifact tree; the
  * manifest never duplicates image bytes.
  */
 @Serializable
@@ -34,7 +34,6 @@ data class ChapterArtifactManifest(
     val partialBatchInfo: PartialBatchInfo? = null,
     val activeCandidateGenerationIds: Set<String> = emptySet(),
     val durableFailures: Map<String, DurableFailureMetadata> = emptyMap(),
-    val glossary: GlossaryPointer? = null,
     /**
      * Identity of the legacy flat translation file this manifest describes.
      * Null on manifests written before resync tracking existed; a null value
@@ -128,11 +127,7 @@ data class LegacyMigrationMetadata(
     val requestedSourceFileName: String? = null,
     val resolvedSourceFileName: String? = null,
     val sourcePreservedAtEpochMs: Long? = null,
-    val glossaryPreservation: LegacyPreservationState = LegacyPreservationState.NONE,
-    val requestedGlossaryFileName: String? = null,
-    val resolvedGlossaryFileName: String? = null,
     val sourceIdentity: LegacySourceIdentity? = null,
-    val glossaryIdentity: LegacySourceIdentity? = null,
     val sourcePageCount: Int = 0,
     val sourcePageKeyDigest: String = "",
     val migratedByVersionCode: Long = 0L,
@@ -147,7 +142,6 @@ data class LegacyMigrationMetadata(
             sourceFileName.isNotBlank() &&
             sourceIdentity?.isValidForCleanup() == true &&
             sourcePreservationIsSupported() &&
-            glossaryPreservationIsSupported() &&
             verificationIsSupported() &&
             sourcePageCount >= 0 &&
             sourcePageKeyDigest.length == SHA256_HEX_LENGTH &&
@@ -166,23 +160,6 @@ data class LegacyMigrationMetadata(
         LegacyPreservationState.DELETED -> requestedSourceFileName.isPresent() &&
             resolvedSourceFileName.isPresent() &&
             sourcePreservedAtEpochMs.isValidTimestamp() &&
-            health == LegacyMigrationHealth.VERIFIED
-    }
-
-    private fun glossaryPreservationIsSupported(): Boolean = when (glossaryPreservation) {
-        LegacyPreservationState.NONE ->
-            requestedGlossaryFileName == null &&
-                resolvedGlossaryFileName == null &&
-                glossaryIdentity == null
-        LegacyPreservationState.INTENT -> requestedGlossaryFileName.isPresent() &&
-            resolvedGlossaryFileName == null &&
-            glossaryIdentity?.isValidForCleanup() == true
-        LegacyPreservationState.PRESERVED -> requestedGlossaryFileName.isPresent() &&
-            resolvedGlossaryFileName.isPresent() &&
-            glossaryIdentity?.isValidForCleanup() == true
-        LegacyPreservationState.DELETED -> requestedGlossaryFileName.isPresent() &&
-            resolvedGlossaryFileName.isPresent() &&
-            glossaryIdentity?.isValidForCleanup() == true &&
             health == LegacyMigrationHealth.VERIFIED
     }
 
@@ -214,7 +191,7 @@ data class LegacyMigrationMetadata(
     }
 }
 
-/** Preservation lifecycle for a legacy source or glossary sidecar. */
+/** Preservation lifecycle for a legacy source. */
 enum class LegacyPreservationState {
     NONE,
     INTENT,
@@ -306,33 +283,6 @@ data class CandidateGenerationMetadata(
     val pageSnapshotFileName: String? = null,
 )
 
-/** Pointer to the versioned vocabulary glossary sidecar (lifecycle contract §14.8). */
-@Serializable
-data class GlossaryPointer(
-    /** File name under the chapter glossary directory, e.g. `chapter.glossary.1.json`. */
-    val fileName: String,
-    val version: Int,
-    val versionFingerprint: String,
-)
-
-/**
- * Versioned chapter glossary sidecar. Entries are user/provider vocabulary
- * hints only — never speaker, gender, relationship, or narrative evidence.
- */
-@Serializable
-data class ChapterGlossary(
-    val schemaVersion: Int = SCHEMA_VERSION,
-    val version: Int,
-    val versionFingerprint: String,
-    val kind: String = KIND_VOCABULARY_HINTS,
-    val entries: Map<String, String> = emptyMap(),
-) {
-    companion object {
-        const val SCHEMA_VERSION = 1
-        const val KIND_VOCABULARY_HINTS = "VOCABULARY_HINTS"
-    }
-}
-
 /**
  *  Which lane started a paid provider
  * attempt. The crash-loop cap binds auto-retry loops only — never the user.
@@ -381,8 +331,8 @@ data class ChapterAttemptLedgerDocument(
 }
 
 /**
- * 03: generalization of the [GlossaryPointer] pattern — a pointer to
- * one immutable, content-addressed sidecar document. [contentFingerprint] is
+ * 03: a pointer to one immutable, content-addressed sidecar document.
+ * [contentFingerprint] is
  * the semantic content identity of the pointed document (64 lowercase hex);
  * the file name is `f-<sha256(contentFingerprint)>.json` under its stage
  * directory.
@@ -403,7 +353,7 @@ data class SidecarPointer(
 /**
  * 03: [SidecarPointer] extended with the profile's monotonic
  * [version] (operational ordering only, ) and its input identity.
- * Flat data class following the [GlossaryPointer] precedent.
+ * Flat data class with the profile's input identity.
  */
 @Serializable
 data class ProfilePointer(

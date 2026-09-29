@@ -146,15 +146,6 @@ data class LegacySourceIdentity(
     val lastModifiedMs: Long,
 )
 
-/**
- * Mtime is diagnostic evidence only; content identity owns adoption.
- * Single canonical copy shared by `ChapterArtifactEngine` and
- * `ChapterArtifactDeletion` (previously duplicated in both).
- */
-internal fun identitiesMatch(expected: LegacySourceIdentity, actual: LegacySourceIdentity): Boolean =
-    expected.sha256.equals(actual.sha256, ignoreCase = true) &&
-        expected.lengthBytes == actual.lengthBytes
-
 /** Artifact metadata and provenance for one stage of one page (lifecycle contract §§4–8). */
 @Serializable
 data class StageArtifactRecord(
