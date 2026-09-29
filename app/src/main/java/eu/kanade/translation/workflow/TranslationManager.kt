@@ -177,13 +177,7 @@ class TranslationManager private constructor(
     // auto-start translation when its download completes (Director policy: no
     // OCR/LLM after a restart without an explicit user action); a live
     // in-session request never carries the mark and starts unchanged.
-    // Nullable backing + self-heal retained until the follow-up Phase A4 cleanup.
-    @Volatile
-    private var restoreAdmittedChapterIds: MutableSet<Long>? = null
-
-    private fun restoreAdmittedMarks(): MutableSet<Long> =
-        restoreAdmittedChapterIds ?: ConcurrentHashMap.newKeySet<Long>()
-            .also { restoreAdmittedChapterIds = it }
+    private val restoreAdmittedChapterIds = ConcurrentHashMap.newKeySet<Long>()
 
     // Startup reconciliation waits for both the downloader and translation
     // queue restores to complete.
@@ -197,8 +191,8 @@ class TranslationManager private constructor(
 
     // Request state stays manager-owned. The coordinator receives current state
     // through providers so each operation uses the same generation and lock owners.
-    private val requestCoordinator: TranslationRequestCoordinator
-        get() = TranslationRequestCoordinator(
+    private val requestCoordinator: TranslationRequestCoordinator by lazy {
+        TranslationRequestCoordinator(
             pendingRequestStoreProvider = { pendingRequestStore },
             pendingTranslationRequestsStateProvider = { pendingTranslationRequestsState },
             pendingRequestWriteVersionsProvider = { pendingRequestWriteVersions },
@@ -214,6 +208,7 @@ class TranslationManager private constructor(
             downloadAttachGenerationsProvider = { downloadAttachGenerations },
             groupIdSequenceProvider = { pendingGroupIdSequence },
         )
+    }
 
     // Durable status and document caches stay manager-owned so reads and resets
     // share one invalidation boundary; the resolver uses these current values.
@@ -396,7 +391,7 @@ class TranslationManager private constructor(
 
     fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {
         // A live request supersedes any restore-admitted mark.
-        chapter.id?.let { chapterId -> restoreAdmittedMarks().remove(chapterId) }
+        chapter.id?.let { chapterId -> restoreAdmittedChapterIds.remove(chapterId) }
         requestCoordinator.queueTranslationAfterDownload(manga, chapter)
     }
 
@@ -410,7 +405,7 @@ class TranslationManager private constructor(
     fun acknowledgeTranslationRequests(chapters: List<Chapter>) {
         // Live acknowledgements supersede restore-admitted marks.
         chapters.forEach { chapter ->
-            chapter.id?.let { chapterId -> restoreAdmittedMarks().remove(chapterId) }
+            chapter.id?.let { chapterId -> restoreAdmittedChapterIds.remove(chapterId) }
         }
         requestCoordinator.acknowledgeTranslationRequests(chapters)
     }
@@ -524,7 +519,7 @@ class TranslationManager private constructor(
         // admitted is enqueued PAUSED when its download completes in this
         // process; live requests carry no mark and auto-start unchanged.
         val chapterId = chapter.id
-        val restoreAdmitted = chapterId != null && restoreAdmittedMarks().remove(chapterId)
+        val restoreAdmitted = chapterId != null && restoreAdmittedChapterIds.remove(chapterId)
         requestCoordinator.startTranslationAfterDownloadIfRequested(manga, chapter, !restoreAdmitted)
     }
 
@@ -625,7 +620,7 @@ class TranslationManager private constructor(
                     // A restore-admitted WAITING request is marked
                     // one-shot so the download handoff in this process enqueues
                     // PAUSED instead of auto-starting translation.
-                    restoreAdmittedMarks().add(chapterId)
+                    restoreAdmittedChapterIds.add(chapterId)
                     if (current.phase != TranslationRequestPhase.WAITING_FOR_DOWNLOAD) {
                         setPendingTranslationRequest(
                             chapterId,
@@ -724,7 +719,7 @@ class TranslationManager private constructor(
             if (queueState.value.any { it.chapter.id == chapterId }) {
                 // Mark the admission one-shot so any later
                 // handoff for this chapter cannot auto-start it either.
-                restoreAdmittedMarks().add(chapterId)
+                restoreAdmittedChapterIds.add(chapterId)
                 clearPendingTranslationRequest(chapterId)
             } else {
                 markTranslationQueueFailureIfAcknowledged(manga, chapterId)
@@ -735,8 +730,8 @@ class TranslationManager private constructor(
     }
 
     // The mutex stays on the manager so both public stop paths serialize through the same owner.
-    private val readerTeardown: ReaderTeardownCoordinator
-        get() = ReaderTeardownCoordinator(
+    private val readerTeardown: ReaderTeardownCoordinator by lazy {
+        ReaderTeardownCoordinator(
             applicationScopeProvider = { applicationScope },
             readerTeardownMutexProvider = { readerTeardownMutex },
             schedulerProvider = { scheduler },
@@ -744,21 +739,20 @@ class TranslationManager private constructor(
             translatorProvider = { translator },
             sessionCoordinatorProvider = { sessionCoordinator },
             isAnyBatchTranslationActiveProvider = { isAnyBatchTranslationActive },
-            isBatchTranslationRetainedFn = { chapterId -> isBatchTranslationRetained(chapterId) },
+            isChapterBatchActiveFn = { chapterId, includePaused ->
+                isChapterBatchActive(chapterId, includePaused)
+            },
             unregisterActiveTranslationStoreFn = { chapterId -> unregisterActiveTranslationStore(chapterId) },
             disposeBatchTrackerFn = { chapterId -> disposeBatchTracker(chapterId) },
             clearAllPendingTranslationRequestsFn = { clearAllPendingTranslationRequests() },
         )
+    }
 
     fun stopReaderTranslations(reason: String) = readerTeardown.stopReaderTranslations(reason)
 
     fun requestReaderStop(reason: String): Deferred<Unit> = readerTeardown.requestReaderStop(reason)
 
     suspend fun awaitReaderStop(reason: String) = readerTeardown.awaitReaderStop(reason)
-
-    fun isTranslating(): Boolean = queueState.value.any {
-        it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING
-    }
 
     /** Canonical batch projection used by every UI surface and the notification. */
     fun getTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
@@ -812,24 +806,16 @@ class TranslationManager private constructor(
         pipeline.warmUp()
     }
 
-    fun isBatchTranslationActive(chapterId: Long): Boolean {
-        return queueState.value.any { translation ->
-            translation.chapter.id == chapterId &&
-                (translation.status == Translation.State.QUEUE || translation.status == Translation.State.TRANSLATING)
-        }
-    }
-
     /**
-     * Whether a chapter still owns batch artifacts across reader lifecycle
-     * transitions. PAUSED is intentionally included here even though it is
-     * excluded from the foreground-service active predicate.
+     * Whether a chapter owns batch work under the requested activity policy.
+     * PAUSED is included only when the caller is retaining reader-owned artifacts.
      */
-    fun isBatchTranslationRetained(chapterId: Long): Boolean = queueState.value.any { translation ->
+    fun isChapterBatchActive(chapterId: Long, includePaused: Boolean): Boolean = queueState.value.any { translation ->
         translation.chapter.id == chapterId &&
             (
                 translation.status == Translation.State.QUEUE ||
                     translation.status == Translation.State.TRANSLATING ||
-                    translation.status == Translation.State.PAUSED
+                    (includePaused && translation.status == Translation.State.PAUSED)
                 )
     }
 
@@ -1075,8 +1061,8 @@ class TranslationManager private constructor(
 
     // Progress flow orchestration lives in TranslationProgressProjection;
     // page/display/status truth is projected by ChapterTranslationStore.
-    private val progressProjection: TranslationProgressProjection
-        get() = TranslationProgressProjection(
+    private val progressProjection: TranslationProgressProjection by lazy {
+        TranslationProgressProjection(
             activeStoresProvider = { activeStores },
             batchTrackerRegistryProvider = { batchTrackerRegistry },
             queueStateProvider = { queueState },
@@ -1101,6 +1087,7 @@ class TranslationManager private constructor(
                 reconstructDurableTerminalSnapshot(chapterId)
             },
         )
+    }
 
     //  ANR fix: suspend — delegates to the projector whose durable leg
     // performs SAF/FUSE I/O. Callers (ReaderViewModel.loadChapter,
@@ -1134,14 +1121,15 @@ class TranslationManager private constructor(
     )
 
     // Durable status and document lookup share these manager-lifetime caches and invalidation rules.
-    private val durableStatusResolver: DurableChapterStatusResolver
-        get() = DurableChapterStatusResolver(
+    private val durableStatusResolver: DurableChapterStatusResolver by lazy {
+        DurableChapterStatusResolver(
             providerProvider = { provider },
             sourceManagerProvider = { sourceManager },
             activeStoresProvider = { activeStores },
             durableStatusCacheProvider = { durableStatusCache },
             durableDocumentCacheProvider = { durableDocumentCache },
         )
+    }
 
     //  ANR fix: suspend — this used to be reached synchronously from the
     // main thread (ReaderViewModel.loadChapter inside withUIContext,
@@ -1498,12 +1486,13 @@ class TranslationManager private constructor(
     }
 
     // Cleaned-image lookup and retirement are owned by the lifecycle collaborator.
-    private val cleanedImageLifecycle: CleanedImageLifecycleController
-        get() = CleanedImageLifecycleController(
+    private val cleanedImageLifecycle: CleanedImageLifecycleController by lazy {
+        CleanedImageLifecycleController(
             applicationScopeProvider = { applicationScope },
             streamRegistryProvider = { streamRegistry },
             providerProvider = { provider },
         )
+    }
 
     private fun scheduleRetiredCleanedImageCleanup(
         store: ChapterTranslationStore,
@@ -1616,7 +1605,7 @@ class TranslationManager private constructor(
         // the chapter's batch is queued; the next update after the queue drains
         // arms normally. `translateChapter`'s one-shot shutdownAutoCoordinator
         // remains what retires an already-live window at admission.
-        if (isBatchTranslationRetained(identity.chapterId)) {
+        if (isChapterBatchActive(identity.chapterId, includePaused = true)) {
             logcat(LogPriority.INFO) {
                 "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=${identity.chapterId}"
             }
@@ -1640,7 +1629,7 @@ class TranslationManager private constructor(
         //   a stale window cannot be re-admitted mid-batch — the
         // scheduler's admission hook rejects same-chapter reconcile while the
         // chapter's batch queue entry is retained.
-        scheduler.reconcileAutoWindow(admissionGuard = { chapterId -> !isBatchTranslationRetained(chapterId) })
+        scheduler.reconcileAutoWindow(admissionGuard = { chapterId -> !isChapterBatchActive(chapterId, includePaused = true) })
     }
 
     /** Reader-facing projection with the committed display pointer applied. */
@@ -1675,15 +1664,12 @@ class TranslationManager private constructor(
     ): Flow<TranslationProgressSnapshot> =
         progressProjection.observeBatchProgress(chapterId, durableStateHint)
 
-    fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
-        progressProjection.observeTranslationProgress(chapterId)
-
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? =
         progressProjection.observePageView(chapterId, pageKey)
 
     // Chapter and page deletion/reset ordering is owned by this collaborator.
-    private val chapterDataReset: ChapterDataResetController
-        get() = ChapterDataResetController(
+    private val chapterDataReset: ChapterDataResetController by lazy {
+        ChapterDataResetController(
             findTranslationDocumentFn = { chapterName, scanlator, mangaTitle, source ->
                 findTranslationDocument(chapterName, scanlator, mangaTitle, source)
             },
@@ -1708,6 +1694,7 @@ class TranslationManager private constructor(
                 openExistingChapterTranslationStore(chapterId, chapterName, scanlator, mangaTitle, source)
             },
         )
+    }
 
     suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) =
         chapterDataReset.deleteTranslation(chapter, manga, source)

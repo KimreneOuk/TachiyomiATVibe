@@ -245,7 +245,7 @@ internal class ReaderTranslationController(
         chapter: ReaderChapter,
         source: HttpSource,
     ) {
-        val batchActive = chapter.chapter.id?.let { translationManager.isBatchTranslationActive(it) } == true
+        val batchActive = chapter.chapter.id?.let { translationManager.isChapterBatchActive(it, includePaused = false) } == true
         if (!batchActive && !isInTranslationWarmWindow(page)) {
             page.translatedStream = null
             page.showTranslatedImage = false
@@ -1217,7 +1217,7 @@ internal class ReaderTranslationController(
      * already reached FAILED. Idempotent.
      */
     private suspend fun sweepStrandedPageStatus(store: ChapterTranslationStore, chapterId: Long) {
-        if (translationManager.isBatchTranslationRetained(chapterId)) {
+        if (translationManager.isChapterBatchActive(chapterId, includePaused = true)) {
             return
         }
         val currentGen = store.currentGeneration
