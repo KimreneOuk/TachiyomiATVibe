@@ -90,6 +90,12 @@ class TranslationManager private constructor(
         val streamRegistry: TranslationStreamRegistry,
     )
 
+    private enum class AdmissionResult {
+        STALE_GENERATION,
+        QUEUED,
+        QUEUE_FAILED,
+    }
+
     companion object {
         @VisibleForTesting
         internal fun createForTesting(
@@ -819,6 +825,54 @@ class TranslationManager private constructor(
                 )
     }
 
+    /** Performs only the queue mutation sequence while the caller holds the request lock. */
+    private fun admitChapterThroughQueue(
+        manga: Manga,
+        chapter: Chapter,
+        expectedGeneration: Long?,
+        admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext?,
+        evictStaleQueuedEntry: Boolean,
+    ): AdmissionResult {
+        val chapterId = chapter.id ?: return AdmissionResult.QUEUE_FAILED
+        if (expectedGeneration != null) {
+            val current = pendingTranslationRequestsState.value[chapterId]
+            if (current == null || current.generation != expectedGeneration) {
+                if (evictStaleQueuedEntry) {
+                    val expectedRequestGeneration = expectedGeneration
+                    logcat(LogPriority.INFO) {
+                        "T911 dropped stale translate admission for chapter $chapterId " +
+                            "(expectedGeneration=$expectedRequestGeneration)"
+                    }
+                } else {
+                    val expected = expectedGeneration
+                    logcat(LogPriority.INFO) {
+                        "T911 dropped stale translate admission for chapter $chapterId " +
+                            "(expectedGeneration=$expected currentGeneration=${current?.generation})"
+                    }
+                }
+                return AdmissionResult.STALE_GENERATION
+            }
+        }
+        scheduler.shutdownAutoCoordinator(chapterId)
+        if (evictStaleQueuedEntry) {
+            evictStaleQueuedChapters(chapterId, manga.source)
+        }
+        markTranslationRequestPreparing(chapterId)
+        translator.queueChapter(
+            manga,
+            chapter,
+            admissionContext?.probedSourcePageCount,
+            admissionContext?.sourceCountKnown ?: false,
+        )
+        return if (queueState.value.any { it.chapter.id == chapterId }) {
+            clearPendingTranslationRequest(chapterId)
+            AdmissionResult.QUEUED
+        } else {
+            markTranslationQueueFailureIfAcknowledged(manga, chapterId)
+            AdmissionResult.QUEUE_FAILED
+        }
+    }
+
     /**
      * When [expectedRequestGeneration] is supplied, the
      * whole admit sequence runs under the request mutation lock and is
@@ -838,32 +892,16 @@ class TranslationManager private constructor(
     ) {
         val chapterId = chapters.id ?: return
         if (!admitBatchSession(setOf(chapterId))) return
-        synchronized(pendingRequestMutationLock) {
-            if (expectedRequestGeneration != null &&
-                pendingTranslationRequestsState.value[chapterId]?.let { it.generation } !=
-                expectedRequestGeneration
-            ) {
-                logcat(LogPriority.INFO) {
-                    "T911 dropped stale translate admission for chapter $chapterId " +
-                        "(expectedGeneration=$expectedRequestGeneration)"
-                }
-                return
-            }
-            scheduler.shutdownAutoCoordinator(chapterId)
-            evictStaleQueuedChapters(chapterId, manga.source)
-            markTranslationRequestPreparing(chapterId)
-            translator.queueChapter(
-                manga,
-                chapters,
-                admissionContext?.probedSourcePageCount,
-                admissionContext?.sourceCountKnown ?: false,
+        val admissionResult = synchronized(pendingRequestMutationLock) {
+            admitChapterThroughQueue(
+                manga = manga,
+                chapter = chapters,
+                expectedGeneration = expectedRequestGeneration,
+                admissionContext = admissionContext,
+                evictStaleQueuedEntry = true,
             )
-            if (queueState.value.any { it.chapter.id == chapterId }) {
-                clearPendingTranslationRequest(chapterId)
-            } else {
-                markTranslationQueueFailureIfAcknowledged(manga, chapterId)
-            }
         }
+        if (admissionResult == AdmissionResult.STALE_GENERATION) return
         if (autoStart) {
             // An explicit per-chapter request is the only gate
             // that re-arms a PAUSED/ERROR queue entry (queueChapter is a no-op
@@ -923,28 +961,16 @@ class TranslationManager private constructor(
         synchronized(pendingRequestMutationLock) {
             chapters.forEach { chapter ->
                 val chapterId = chapter.id ?: return@forEach
-                if (expectedGenerations != null) {
-                    val expected = expectedGenerations[chapterId] ?: return@forEach
-                    val current = pendingTranslationRequestsState.value[chapterId]
-                    if (current == null || current.generation != expected) {
-                        logcat(LogPriority.INFO) {
-                            "T911 dropped stale translate admission for chapter $chapterId " +
-                                "(expectedGeneration=$expected currentGeneration=${current?.generation})"
-                        }
-                        return@forEach
-                    }
-                }
-                val admissionContext = admissionContexts[chapterId]
-                scheduler.shutdownAutoCoordinator(chapterId)
-                markTranslationRequestPreparing(chapterId)
-                translator.queueChapter(
-                    manga,
-                    chapter,
-                    admissionContext?.probedSourcePageCount,
-                    admissionContext?.sourceCountKnown ?: false,
+                val expectedGeneration = expectedGenerations?.get(chapterId)
+                if (expectedGenerations != null && expectedGeneration == null) return@forEach
+                val result = admitChapterThroughQueue(
+                    manga = manga,
+                    chapter = chapter,
+                    expectedGeneration = expectedGeneration,
+                    admissionContext = admissionContexts[chapterId],
+                    evictStaleQueuedEntry = false,
                 )
-                if (queueState.value.any { it.chapter.id == chapterId }) {
-                    clearPendingTranslationRequest(chapterId)
+                if (result == AdmissionResult.QUEUED) {
                     // An explicit selection re-arms a PAUSED/ERROR
                     // queue entry (queueChapter is a no-op for an existing
                     // entry); a generic queue start must not resurrect that work.
@@ -956,8 +982,6 @@ class TranslationManager private constructor(
                                 )
                     }?.status = Translation.State.QUEUE
                     admitted += chapter
-                } else {
-                    markTranslationQueueFailureIfAcknowledged(manga, chapterId)
                 }
             }
         }
