@@ -2,6 +2,7 @@ package eu.kanade.translation.pipeline
 
 import android.content.Context
 import android.graphics.Bitmap
+import androidx.annotation.VisibleForTesting
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -74,7 +75,7 @@ class LayoutFailureException(val blockIds: List<String>, message: String) : Exce
 
 private class NativePageAlreadyInFlightException : Exception()
 
-class TranslationPipeline(
+class TranslationPipeline private constructor(
     private val context: Context,
     private val provider: TranslationFileProvider,
     private val downloadProvider: DownloadProvider = Injekt.get(),
@@ -89,13 +90,68 @@ class TranslationPipeline(
      * inject a short value to exercise the typed timeout path deterministically.
      */
     internal val singlePageTimeoutMs: Long = SINGLE_PAGE_TIMEOUT_MS,
+    private val testConstruction: TestConstruction?,
 ) : TranslationExecutor, java.io.Closeable {
+
+    constructor(
+        context: Context,
+        provider: TranslationFileProvider,
+        downloadProvider: DownloadProvider = Injekt.get(),
+        translationPreferences: TranslationPreferences = Injekt.get(),
+        streamRegistry: TranslationStreamRegistry = Injekt.get(),
+        stallThresholdMs: Long = NATIVE_STALL_THRESHOLD_MS,
+        nativeTimeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
+        singlePageTimeoutMs: Long = SINGLE_PAGE_TIMEOUT_MS,
+    ) : this(
+        context,
+        provider,
+        downloadProvider,
+        translationPreferences,
+        streamRegistry,
+        stallThresholdMs,
+        nativeTimeoutMs,
+        singlePageTimeoutMs,
+        null,
+    )
+
+    @VisibleForTesting
+    internal data class TestConstruction(
+        val engineRebuildMutex: kotlinx.coroutines.sync.Mutex,
+        val inFlightPageKeys: MutableSet<String>,
+        val nativeRunScope: CoroutineScope,
+        val nativeStallWatchdog: NativeStallWatchdog,
+        val nativeRunQuarantine: NativeRunQuarantine,
+        val engines: EngineLane,
+    )
 
     override fun close() {
         nativeRunScope.cancel()
     }
 
     companion object {
+        @VisibleForTesting
+        internal fun createForTesting(
+            context: Context,
+            provider: TranslationFileProvider,
+            downloadProvider: DownloadProvider,
+            translationPreferences: TranslationPreferences,
+            streamRegistry: TranslationStreamRegistry,
+            stallThresholdMs: Long,
+            nativeTimeoutMs: Long,
+            singlePageTimeoutMs: Long,
+            testConstruction: TestConstruction,
+        ): TranslationPipeline = TranslationPipeline(
+            context = context,
+            provider = provider,
+            downloadProvider = downloadProvider,
+            translationPreferences = translationPreferences,
+            streamRegistry = streamRegistry,
+            stallThresholdMs = stallThresholdMs,
+            nativeTimeoutMs = nativeTimeoutMs,
+            singlePageTimeoutMs = singlePageTimeoutMs,
+            testConstruction = testConstruction,
+        )
+
         /**
          * Maximum wall-clock time a single page may hold the sole
          * native lane during [translateSinglePage]. Bounds the damage of
@@ -153,7 +209,7 @@ class TranslationPipeline(
     /** Current native lane owner, used by progress reporting. */
     internal fun permitHolderPageKeySnapshot(): String? = engines.permitHolderPageKeySnapshot()
 
-    private val engineRebuildMutex = kotlinx.coroutines.sync.Mutex()
+    private val engineRebuildMutex = testConstruction?.engineRebuildMutex ?: kotlinx.coroutines.sync.Mutex()
 
     /**
      * pageKeys currently mid-flight in [translateSinglePage]. Guards against
@@ -162,16 +218,16 @@ class TranslationPipeline(
      * because native quarantine and [closeEngines] touch this outside
      * the native lane.
      */
-    private val inFlightPageKeys = ConcurrentHashMap.newKeySet<String>()
+    private val inFlightPageKeys = testConstruction?.inFlightPageKeys ?: ConcurrentHashMap.newKeySet<String>()
 
     // Native work runs in an independent scope so caller cancellation cannot
     // falsely signal native exit. The quarantine owns admission until real exit.
-    private val nativeRunScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val nativeStallWatchdog = NativeStallWatchdog(
+    private val nativeRunScope = testConstruction?.nativeRunScope ?: CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val nativeStallWatchdog = testConstruction?.nativeStallWatchdog ?: NativeStallWatchdog(
         scope = nativeRunScope,
         thresholdMs = stallThresholdMs,
     )
-    private val nativeRunQuarantine = NativeRunQuarantine(
+    private val nativeRunQuarantine = testConstruction?.nativeRunQuarantine ?: NativeRunQuarantine(
         scope = nativeRunScope,
         occupancyObserver = object : NativeRunQuarantine.OccupancyObserver {
             override fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long) {
@@ -207,7 +263,7 @@ class TranslationPipeline(
 
     // EngineLane owns engine construction and native-call drainage. Its short
     // drain grace is retried by epoch, and the drain runs off the main thread.
-    internal val engines = EngineLane(
+    internal val engines = testConstruction?.engines ?: EngineLane(
         context = context,
         translationPreferences = translationPreferences,
         nativeRunQuarantine = nativeRunQuarantine,

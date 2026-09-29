@@ -1,6 +1,7 @@
 package eu.kanade.translation.workflow
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
@@ -61,25 +62,77 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
-class TranslationManager(
+class TranslationManager private constructor(
     private val context: Context,
-    private val provider: TranslationFileProvider = Injekt.get(),
-    private val sourceManager: SourceManager = Injekt.get(),
-    private val translationPreferences: TranslationPreferences = Injekt.get(),
+    private val provider: TranslationFileProvider,
+    private val sourceManager: SourceManager,
+    private val translationPreferences: TranslationPreferences,
     // File truth for startup reconciliation (pending + valid files -> admit once).
     // DownloadProvider only resolves directories, avoiding a callback into this manager.
-    private val downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider = Injekt.get(),
+    private val downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider,
+    private val testConstruction: TestConstruction?,
 ) {
-    private val pipeline = TranslationPipeline(context, provider)
-    private val translator = ChapterTranslator(context, provider, pipeline = pipeline)
+    constructor(
+        context: Context,
+        provider: TranslationFileProvider = Injekt.get(),
+        sourceManager: SourceManager = Injekt.get(),
+        translationPreferences: TranslationPreferences = Injekt.get(),
+        downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider = Injekt.get(),
+    ) : this(context, provider, sourceManager, translationPreferences, downloadProvider, null)
+
+    private data class TestConstruction(
+        val pipeline: TranslationPipeline,
+        val translator: ChapterTranslator,
+        val pendingRequestStore: TranslationPendingRequestStore,
+        val pendingRequests: MutableStateFlow<Map<Long, TranslationRequestState>>,
+        val scheduler: eu.kanade.translation.scheduling.TranslationScheduler?,
+        val sessionCoordinator: TranslationSessionCoordinator?,
+        val streamRegistry: TranslationStreamRegistry,
+    )
+
+    companion object {
+        @VisibleForTesting
+        internal fun createForTesting(
+            context: Context,
+            provider: TranslationFileProvider,
+            sourceManager: SourceManager,
+            translationPreferences: TranslationPreferences,
+            downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider,
+            pipeline: TranslationPipeline,
+            translator: ChapterTranslator,
+            pendingRequestStore: TranslationPendingRequestStore,
+            pendingRequests: MutableStateFlow<Map<Long, TranslationRequestState>> = MutableStateFlow(emptyMap()),
+            scheduler: eu.kanade.translation.scheduling.TranslationScheduler? = null,
+            sessionCoordinator: TranslationSessionCoordinator? = null,
+            streamRegistry: TranslationStreamRegistry = TranslationStreamRegistry(),
+        ): TranslationManager = TranslationManager(
+            context = context,
+            provider = provider,
+            sourceManager = sourceManager,
+            translationPreferences = translationPreferences,
+            downloadProvider = downloadProvider,
+            testConstruction = TestConstruction(
+                pipeline = pipeline,
+                translator = translator,
+                pendingRequestStore = pendingRequestStore,
+                pendingRequests = pendingRequests,
+                scheduler = scheduler,
+                sessionCoordinator = sessionCoordinator,
+                streamRegistry = streamRegistry,
+            ),
+        )
+    }
+
+    private val pipeline = testConstruction?.pipeline ?: TranslationPipeline(context, provider)
+    private val translator = testConstruction?.translator ?: ChapterTranslator(context, provider, pipeline = pipeline)
 
     /** Single owner for reader/batch admission; lifecycle coordinators delegate here. */
-    val sessionCoordinator = TranslationSessionCoordinator(
+    val sessionCoordinator = testConstruction?.sessionCoordinator ?: TranslationSessionCoordinator(
         onBatchSwitchRequested = { translator.pause() },
     )
 
     // Held here (DI singleton) so deleteTranslation can evict stale reader page-stream closures pointing at the deleted rendered/cleaned PNGs.
-    private val streamRegistry: TranslationStreamRegistry = Injekt.get()
+    private val streamRegistry: TranslationStreamRegistry = testConstruction?.streamRegistry ?: Injekt.get()
 
     /**
      * Application-lifetime scope for one-off init work (queue rehydration). SupervisorJob so a
@@ -90,8 +143,8 @@ class TranslationManager(
     /** Serializes reader lifecycle teardown so pause/finish cannot race store eviction. */
     private val readerTeardownMutex = Mutex()
 
-    private val pendingRequestStore = TranslationPendingRequestStore(context)
-    private val pendingTranslationRequestsState = MutableStateFlow(loadPendingTranslationRequests())
+    private val pendingRequestStore = testConstruction?.pendingRequestStore ?: TranslationPendingRequestStore(context)
+    private val pendingTranslationRequestsState = testConstruction?.pendingRequests ?: MutableStateFlow(loadPendingTranslationRequests())
 
     /**
      * Versions fence the asynchronous STARTING commit from a later download,
@@ -124,8 +177,7 @@ class TranslationManager(
     // auto-start translation when its download completes (Director policy: no
     // OCR/LLM after a restart without an explicit user action); a live
     // in-session request never carries the mark and starts unchanged.
-    // Nullable backing + self-heal: reflection-built test fixtures skip field
-    // initializers, so an absent set simply means "no marks".
+    // Nullable backing + self-heal retained until the follow-up Phase A4 cleanup.
     @Volatile
     private var restoreAdmittedChapterIds: MutableSet<Long>? = null
 
@@ -179,7 +231,7 @@ class TranslationManager(
      * The scheduler resolves the per-chapter store back through this manager via [storeResolver]
      * — store instances are shared between reader and translator, so they must not be owned by the scheduler.
      */
-    val scheduler = eu.kanade.translation.scheduling.TranslationScheduler(
+    val scheduler = testConstruction?.scheduler ?: eu.kanade.translation.scheduling.TranslationScheduler(
         executor = pipeline,
         storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { chapterId ->
             activeStores.get(chapterId)
@@ -194,91 +246,93 @@ class TranslationManager(
     )
 
     init {
-        // Share the store instance between reader and translator so live updates do not need a chapter reload.
-        pipeline.activeStoreResolver = { translation ->
-            openOrCreateActiveChapterTranslationStore(
-                translation.chapter.id!!,
-                translation.chapter.name,
-                translation.chapter.scanlator,
-                translation.manga.title,
-                translation.source,
-                translation.manga.id,
-            )
-        }
-        pipeline.onBatchClosed = { manga, chapter, source, store ->
-            chapter.id?.let { chapterId ->
-                sweepOrphanedCleanedImages(
-                    store = store,
-                    chapterId = chapterId,
-                    chapterName = chapter.name,
-                    scanlator = chapter.scanlator,
-                    mangaTitle = manga.title,
-                    source = source,
-                    mangaId = manga.id,
+        if (testConstruction == null) {
+            // Share the store instance between reader and translator so live updates do not need a chapter reload.
+            pipeline.activeStoreResolver = { translation ->
+                openOrCreateActiveChapterTranslationStore(
+                    translation.chapter.id!!,
+                    translation.chapter.name,
+                    translation.chapter.scanlator,
+                    translation.manga.title,
+                    translation.source,
+                    translation.manga.id,
                 )
             }
-            if (!isAnyBatchTranslationActive && queueState.value.none { it.status == Translation.State.PAUSED }) {
-                sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
-            }
-        }
-        // NOTE: activeStoreUnregister is intentionally NOT wired. Evicting after
-        // each single-page translation broke live updates (reader captured the
-        // StateFlow once; next translate got a fresh unobserved store). Eviction
-        // now happens only on chapter change / reader exit (cancelPageTranslations /
-        // cancelAllPageTranslations callers).
-
-        // Native quarantine reports timeout only after the underlying call exits;
-        // evict the stale job so a subsequent request can be admitted safely.
-        pipeline.onPageStuck = { chapterId, pageKey ->
-            if (chapterId != null && pageKey.isNotEmpty()) {
-                scheduler.markPageJobStuck(chapterId, pageKey)
-            }
-        }
-
-        // Batch tracker factory: lets the pipeline create and register a tracker per active batch (observable via observeBatchProgress).
-        pipeline.batchTrackerFactory = { chapterId, store, orderedPageKeys ->
-            createBatchTracker(chapterId, store, orderedPageKeys)
-        }
-
-        // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
-        // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
-        applicationScope.launch {
-            // Any queue emission can follow a durable transition (completion,
-            // failure, cancel). Membership-set comparison is not enough: a
-            // conflated remove→re-add of the same chapter reproduces the same
-            // membership set while durable truth changed in between, and the
-            // arm-after-pause path re-emits the same list verbatim. Wipe on
-            // every emission — the clear is two map clears, and emissions only
-            // fire on queue mutations, never on batch progress ticks.
-            translator.queueState.collect {
-                durableStatusResolver.clearDurableStatusCache()
-            }
-        }
-        applicationScope.launch {
-            // A paused chapter is not an active foreground job, but its durable
-            // outcome still deserves a visible notification after process
-            // restart. The service owns only the active QUEUE/TRANSLATING
-            // predicate; this collector owns the detached paused projection.
-            statusFlow().collect { translation ->
-                if (translation.status == Translation.State.PAUSED && !isAnyBatchTranslationActive) {
-                    val snapshot = translation.chapter.id?.let { chapterId ->
-                        getTranslationProgress(chapterId)?.firstOrNull()
-                    }
-                    TranslationForegroundService.showPaused(
-                        context = context,
-                        chapterName = translation.chapter.name,
-                        chapterId = translation.chapter.id,
-                        snapshot = snapshot,
+            pipeline.onBatchClosed = { manga, chapter, source, store ->
+                chapter.id?.let { chapterId ->
+                    sweepOrphanedCleanedImages(
+                        store = store,
+                        chapterId = chapterId,
+                        chapterName = chapter.name,
+                        scanlator = chapter.scanlator,
+                        mangaTitle = manga.title,
+                        source = source,
+                        mangaId = manga.id,
                     )
                 }
+                if (!isAnyBatchTranslationActive && queueState.value.none { it.status == Translation.State.PAUSED }) {
+                    sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
+                }
             }
+            // NOTE: activeStoreUnregister is intentionally NOT wired. Evicting after
+            // each single-page translation broke live updates (reader captured the
+            // StateFlow once; next translate got a fresh unobserved store). Eviction
+            // now happens only on chapter change / reader exit (cancelPageTranslations /
+            // cancelAllPageTranslations callers).
+
+            // Native quarantine reports timeout only after the underlying call exits;
+            // evict the stale job so a subsequent request can be admitted safely.
+            pipeline.onPageStuck = { chapterId, pageKey ->
+                if (chapterId != null && pageKey.isNotEmpty()) {
+                    scheduler.markPageJobStuck(chapterId, pageKey)
+                }
+            }
+
+            // Batch tracker factory: lets the pipeline create and register a tracker per active batch (observable via observeBatchProgress).
+            pipeline.batchTrackerFactory = { chapterId, store, orderedPageKeys ->
+                createBatchTracker(chapterId, store, orderedPageKeys)
+            }
+
+            // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
+            // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
+            applicationScope.launch {
+                // Any queue emission can follow a durable transition (completion,
+                // failure, cancel). Membership-set comparison is not enough: a
+                // conflated remove→re-add of the same chapter reproduces the same
+                // membership set while durable truth changed in between, and the
+                // arm-after-pause path re-emits the same list verbatim. Wipe on
+                // every emission — the clear is two map clears, and emissions only
+                // fire on queue mutations, never on batch progress ticks.
+                translator.queueState.collect {
+                    durableStatusResolver.clearDurableStatusCache()
+                }
+            }
+            applicationScope.launch {
+                // A paused chapter is not an active foreground job, but its durable
+                // outcome still deserves a visible notification after process
+                // restart. The service owns only the active QUEUE/TRANSLATING
+                // predicate; this collector owns the detached paused projection.
+                statusFlow().collect { translation ->
+                    if (translation.status == Translation.State.PAUSED && !isAnyBatchTranslationActive) {
+                        val snapshot = translation.chapter.id?.let { chapterId ->
+                            getTranslationProgress(chapterId)?.firstOrNull()
+                        }
+                        TranslationForegroundService.showPaused(
+                            context = context,
+                            chapterName = translation.chapter.name,
+                            chapterId = translation.chapter.id,
+                            snapshot = snapshot,
+                        )
+                    }
+                }
+            }
+            applicationScope.launch {
+                // After the downloader reports its restore too, run the one-shot
+                // pending-request reconciliation pass.
+                translator.restoreQueue()
+                runStartupReconciliationIfReady()
+            }.also { translationQueueRestoreJob = it }
         }
-        applicationScope.launch {
-            // After the downloader reports its restore too, run the one-shot
-            // pending-request reconciliation pass.
-            translator.restoreQueue()
-            runStartupReconciliationIfReady()
-        }.also { translationQueueRestoreJob = it }
     }
 
     /**

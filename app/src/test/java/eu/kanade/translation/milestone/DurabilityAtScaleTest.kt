@@ -20,13 +20,10 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 class DurabilityAtScaleTest {
 
@@ -37,12 +34,6 @@ class DurabilityAtScaleTest {
         pendingRequestStore: TranslationPendingRequestStore,
         seed: Map<Long, TranslationRequestState> = emptyMap(),
     ): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-
         val scheduler = TranslationScheduler(
             executor = mockk<TranslationExecutor>(relaxed = true),
             storeResolver = TranslationStoreResolver { null },
@@ -53,19 +44,18 @@ class DurabilityAtScaleTest {
             every { it.isRunning } returns false
         }
 
-        setField(manager, "scheduler", scheduler)
-        setField(manager, "translator", translator)
-        setField(manager, "pendingRequestStore", pendingRequestStore)
-
-        val pendingState = MutableStateFlow(seed)
-        setField(manager, "pendingTranslationRequestsState", pendingState)
-        setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
-        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
-        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
-        return manager
+        return TranslationManager.createForTesting(
+            context = mockk<android.content.Context>(relaxed = true),
+            provider = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = pendingRequestStore,
+            pendingRequests = MutableStateFlow(seed),
+            scheduler = scheduler,
+        )
     }
 
     private fun setField(target: Any, fieldName: String, value: Any) {

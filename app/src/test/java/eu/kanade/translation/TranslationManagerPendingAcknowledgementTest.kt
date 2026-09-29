@@ -15,14 +15,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 class TranslationManagerPendingAcknowledgementTest {
 
@@ -161,29 +158,24 @@ class TranslationManagerPendingAcknowledgementTest {
         }
     }
 
-    /** Mirrors TranslationManagerDownloadFailureRecoveryTest's uninitialized fixture. */
+    /** Mirrors TranslationManagerDownloadFailureRecoveryTest's test factory fixture. */
     private fun uninitializedManager(
         pendingRequestStore: TranslationPendingRequestStore,
         laneJob: CompletableJob = SupervisorJob(),
         initialRequests: Map<Long, TranslationRequestState> = emptyMap(),
     ): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "context", mockk<Context>(relaxed = true))
-        setField(manager, "pendingRequestStore", pendingRequestStore)
-        val pendingState = MutableStateFlow(initialRequests)
-        setField(manager, "pendingTranslationRequestsState", pendingState)
-        setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
+        val manager = TranslationManager.createForTesting(
+            context = mockk<Context>(relaxed = true),
+            provider = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = mockk(relaxed = true),
+            pendingRequestStore = pendingRequestStore,
+            pendingRequests = MutableStateFlow(initialRequests),
+        )
         setField(manager, "storeScope", CoroutineScope(laneJob + Dispatchers.IO))
-        // Generation, download-attachment, and group state used by the request coordinator.
-        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
-        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
         return manager
     }
 

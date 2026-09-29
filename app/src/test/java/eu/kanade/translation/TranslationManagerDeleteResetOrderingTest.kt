@@ -84,12 +84,6 @@ class TranslationManagerDeleteResetOrderingTest {
         store: ChapterTranslationStore,
         queue: MutableStateFlow<List<Translation>>,
     ): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-
         val source = mockk<HttpSource>(relaxed = true)
         val manga = mockk<Manga>(relaxed = true)
         val chapter = mockk<Chapter>(relaxed = true)
@@ -142,17 +136,23 @@ class TranslationManagerDeleteResetOrderingTest {
         val batchTrackerRegistry = mockk<TranslationBatchTrackerRegistry>(relaxed = true)
         every { batchTrackerRegistry.dispose(any()) } answers { log("disposeBatchTracker") }
 
-        setField(manager, "provider", provider)
+        val manager = TranslationManager.createForTesting(
+            context = mockk(relaxed = true),
+            provider = provider,
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = mockk(relaxed = true),
+            scheduler = scheduler,
+            streamRegistry = streamRegistry,
+        )
         setField(manager, "scheduler", scheduler)
-        setField(manager, "translator", translator)
         setField(manager, "activeStores", ActiveChapterStoreRegistry().apply { register(42L, store) })
         setField(manager, "applicationScope", CoroutineScope(SupervisorJob() + Dispatchers.IO))
         setField(manager, "readerTeardownMutex", Mutex())
         setField(manager, "durableStatusCache", observableCache())
-        // Unsafe.allocateInstance skips field initializers; the resolver's
-        // document-memo provider captures this field and NPEs when unset.
-        setField(manager, "durableDocumentCache", ConcurrentHashMap<Any, Any>())
-        setField(manager, "streamRegistry", streamRegistry)
         setField(manager, "batchTrackerRegistry", batchTrackerRegistry)
         return manager
     }

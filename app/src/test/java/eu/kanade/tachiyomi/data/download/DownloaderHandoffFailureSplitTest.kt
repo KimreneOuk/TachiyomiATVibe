@@ -9,7 +9,6 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.translation.InMemorySharedPreferences
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.assertions.throwables.shouldThrow
@@ -25,15 +24,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.IOException
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  *  slice 3 (R8 / contract item 3): the downloader separates download
@@ -61,14 +57,19 @@ class DownloaderHandoffFailureSplitTest {
     }
 
     private fun downloader(translationManager: TranslationManager): Downloader {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val downloader = allocateInstance.invoke(unsafe, Downloader::class.java) as Downloader
-        setField(downloader, "translationManager", translationManager)
-        setField(downloader, "provider", mockk<DownloadProvider>(relaxed = true))
-        setField(downloader, "context", mockk<Context>(relaxed = true))
+        val downloader = Downloader.createForTesting(
+            context = mockk<Context>(relaxed = true),
+            provider = mockk(relaxed = true),
+            cache = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            chapterCache = mockk(relaxed = true),
+            downloadPreferences = mockk(relaxed = true),
+            xml = mockk(relaxed = true),
+            getCategories = mockk(relaxed = true),
+            getTracks = mockk(relaxed = true),
+            translationManager = translationManager,
+            store = mockk(relaxed = true),
+        )
         setField(downloader, "notifier\$delegate", lazy { mockk<DownloadNotifier>(relaxed = true) })
         return downloader
     }
@@ -291,28 +292,23 @@ class DownloaderHandoffFailureSplitTest {
     }
 
     private fun uninitializedManager(preferences: InMemorySharedPreferences): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "context", mockk<Context>(relaxed = true))
-        setField(
-            manager,
-            "pendingRequestStore",
-            TranslationPendingRequestStore(
+        val context = mockk<Context> {
+            every { getSharedPreferences(any(), any()) } returns preferences
+        }
+        return TranslationManager.createForTesting(
+            context = context,
+            provider = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = mockk(relaxed = true),
+            pendingRequestStore = TranslationPendingRequestStore(
                 mockk { every { getSharedPreferences(any(), any()) } returns preferences },
             ),
-        )
-        val pendingState = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap())
-        setField(manager, "pendingTranslationRequestsState", pendingState)
-        setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
-        setField(manager, "storeScope", CoroutineScope(Dispatchers.IO))
-        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
-        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
-        return manager
+            pendingRequests = MutableStateFlow(emptyMap()),
+        ).also { manager ->
+            setField(manager, "storeScope", CoroutineScope(Dispatchers.IO))
+        }
     }
 }

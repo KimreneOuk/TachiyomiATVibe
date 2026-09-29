@@ -15,13 +15,9 @@ import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
-import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Covers the manager's reader auto-delete protection entry points.
@@ -79,49 +75,27 @@ class TranslationManagerAutoDeleteProtectionTest {
         manager.protectedChapterIds() shouldBe setOf(10L, 20L, 30L, 40L)
     }
 
-    /** Mirrors TranslationManagerDownloadFailureRecoveryTest's uninitialized fixture. */
+    /** Mirrors TranslationManagerDownloadFailureRecoveryTest's test factory fixture. */
     private fun uninitializedManager(
         pendingRequestStore: TranslationPendingRequestStore,
         translator: ChapterTranslator,
         seed: Map<Long, TranslationRequestState> = emptyMap(),
     ): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(
-            manager,
-            "scheduler",
-            TranslationScheduler(
+        return TranslationManager.createForTesting(
+            context = mockk<Context>(relaxed = true),
+            provider = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = pendingRequestStore,
+            pendingRequests = MutableStateFlow(seed),
+            scheduler = TranslationScheduler(
                 executor = mockk<TranslationExecutor>(relaxed = true),
                 storeResolver = TranslationStoreResolver { null },
                 immediateStoreResolver = { null },
             ),
         )
-        setField(manager, "translator", translator)
-        setField(manager, "context", mockk<Context>(relaxed = true))
-        setField(manager, "pendingRequestStore", pendingRequestStore)
-        val pendingState = MutableStateFlow(seed)
-        setField(manager, "pendingTranslationRequestsState", pendingState)
-        setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
-        return manager
-    }
-
-    private fun setField(target: Any, fieldName: String, value: Any) {
-        var cls: Class<*>? = target.javaClass
-        while (cls != null) {
-            try {
-                val field: Field = cls.getDeclaredField(fieldName)
-                field.isAccessible = true
-                field.set(target, value)
-                return
-            } catch (_: NoSuchFieldException) {
-                cls = cls.superclass
-            }
-        }
-        throw NoSuchFieldException("Field $fieldName not found on ${target.javaClass}")
     }
 }

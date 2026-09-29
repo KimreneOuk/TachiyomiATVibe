@@ -1,6 +1,7 @@
 package eu.kanade.translation.pipeline
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
@@ -45,9 +46,44 @@ internal class EngineLane(
     private val drainScope: CoroutineScope? = null,
     private val translatorFactory: (TextRecognizerLanguage, TextTranslatorLanguage) -> TextTranslator =
         { fromLang, toLang -> TranslationEngineBuilder.build(translationPreferences, fromLang, toLang) },
+    private val testState: TestState? = null,
 ) {
 
+    @VisibleForTesting
+    internal data class TestState(
+        val fromLang: TextRecognizerLanguage,
+        val ocrModel: OcrModel,
+        val readingOrder: tachiyomi.domain.translation.TranslationReadingOrder,
+        val inpaintingMode: InpaintingMode,
+        val translator: TextTranslator,
+        val recognitionEngine: PageRecognitionEngine,
+        val translatorSignature: EngineSignature,
+    )
+
     internal companion object {
+        @VisibleForTesting
+        internal fun createForTesting(
+            context: Context,
+            translationPreferences: TranslationPreferences,
+            nativeRunQuarantine: NativeRunQuarantine,
+            inFlightPageKeys: MutableSet<String>,
+            onPageStuck: () -> ((chapterId: Long?, pageKey: String) -> Unit)?,
+            drainGraceMs: Long,
+            drainScope: CoroutineScope,
+            translatorFactory: (TextRecognizerLanguage, TextTranslatorLanguage) -> TextTranslator,
+            state: TestState,
+        ): EngineLane = EngineLane(
+            context = context,
+            translationPreferences = translationPreferences,
+            nativeRunQuarantine = nativeRunQuarantine,
+            inFlightPageKeys = inFlightPageKeys,
+            onPageStuck = onPageStuck,
+            drainGraceMs = drainGraceMs,
+            drainScope = drainScope,
+            translatorFactory = translatorFactory,
+            testState = state,
+        )
+
         /**
          * Engine teardown uses a short drain grace. If it expires, the epoch
          * guard retries the racing page against a rebuilt translator exactly
@@ -220,50 +256,61 @@ internal class EngineLane(
     }
 
     init {
-        // fromPref/build THROW on invalid config (intended on the translate path). But this
-        // object is constructed eagerly as a field initializer in TranslationManager, so an
-        // invalid pref at startup must NOT crash here: build defensively and let the first
-        // translate's fromPref re-throw and surface the error. ensureEnginesBuiltFor overwrites
-        // these once config is valid.
-        try {
-            val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-            val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-            val ocrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
-            currentFromLang = fromLang
-            currentOcrModel = ocrModel
-            currentInpaintingMode = inpaintingModeFromPref()
-            currentReadingOrder = translationPreferences.translationReadingOrder().get()
-            recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
-            textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
-            currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) {
-                "TachiyomiAT pipeline init: invalid translation config, deferring to first translate"
-            }
-            currentFromLang = TextRecognizerLanguage.JAPANESE
-            currentOcrModel = OcrModel.MLKIT
-            currentInpaintingMode = InpaintingMode.FAST
-            currentReadingOrder = tachiyomi.domain.translation.TranslationReadingOrder.AUTO
-            recognitionEngine = object : PageRecognitionEngine {
-                override suspend fun analyze(bitmap: android.graphics.Bitmap): PageTranslation {
-                    throw IllegalStateException("Recognition engine not initialized (models not installed)")
+        val testState = testState
+        if (testState != null) {
+            currentFromLang = testState.fromLang
+            currentOcrModel = testState.ocrModel
+            currentReadingOrder = testState.readingOrder
+            currentInpaintingMode = testState.inpaintingMode
+            textTranslator = testState.translator
+            recognitionEngine = testState.recognitionEngine
+            currentTranslatorSignature = testState.translatorSignature
+        } else {
+            // fromPref/build THROW on invalid config (intended on the translate path). But this
+            // object is constructed eagerly as a field initializer in TranslationManager, so an
+            // invalid pref at startup must NOT crash here: build defensively and let the first
+            // translate's fromPref re-throw and surface the error. ensureEnginesBuiltFor overwrites
+            // these once config is valid.
+            try {
+                val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
+                val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+                val ocrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
+                currentFromLang = fromLang
+                currentOcrModel = ocrModel
+                currentInpaintingMode = inpaintingModeFromPref()
+                currentReadingOrder = translationPreferences.translationReadingOrder().get()
+                recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
+                textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
+                currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) {
+                    "TachiyomiAT pipeline init: invalid translation config, deferring to first translate"
                 }
-                override fun close() {}
-            }
-            // Throws on use; entry-point fromPref throws first. Guarantees the field
-            // is never null without a lateinit crash.
-            textTranslator = object : TextTranslator {
-                override val fromLang = TextRecognizerLanguage.JAPANESE
-                override val toLang = TextTranslatorLanguage.ENGLISH
-                override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-                    throw IllegalStateException("Translation pipeline not initialized (invalid config)")
+                currentFromLang = TextRecognizerLanguage.JAPANESE
+                currentOcrModel = OcrModel.MLKIT
+                currentInpaintingMode = InpaintingMode.FAST
+                currentReadingOrder = tachiyomi.domain.translation.TranslationReadingOrder.AUTO
+                recognitionEngine = object : PageRecognitionEngine {
+                    override suspend fun analyze(bitmap: android.graphics.Bitmap): PageTranslation {
+                        throw IllegalStateException("Recognition engine not initialized (models not installed)")
+                    }
+                    override fun close() {}
                 }
-                override fun close() {}
+                // Throws on use; entry-point fromPref throws first. Guarantees the field
+                // is never null without a lateinit crash.
+                textTranslator = object : TextTranslator {
+                    override val fromLang = TextRecognizerLanguage.JAPANESE
+                    override val toLang = TextTranslatorLanguage.ENGLISH
+                    override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+                        throw IllegalStateException("Translation pipeline not initialized (invalid config)")
+                    }
+                    override fun close() {}
+                }
+                currentTranslatorSignature = computeTranslatorSignature(
+                    TextRecognizerLanguage.JAPANESE,
+                    TextTranslatorLanguage.ENGLISH,
+                )
             }
-            currentTranslatorSignature = computeTranslatorSignature(
-                TextRecognizerLanguage.JAPANESE,
-                TextTranslatorLanguage.ENGLISH,
-            )
         }
     }
 

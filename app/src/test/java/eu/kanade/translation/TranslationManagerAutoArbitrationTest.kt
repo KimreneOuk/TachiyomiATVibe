@@ -4,9 +4,7 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationScheduler
@@ -33,8 +31,6 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Production-path arbitration coverage. The fixture injects only the manager
@@ -206,28 +202,18 @@ class TranslationManagerAutoArbitrationTest {
         scheduler: TranslationScheduler,
         translator: ChapterTranslator,
     ): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
-        setField(manager, "scheduler", scheduler)
-        setField(manager, "translator", translator)
-        setField(manager, "context", mockk<Context>(relaxed = true))
-        setField(manager, "pendingRequestStore", mockk<TranslationPendingRequestStore>(relaxed = true))
-        setField(
-            manager,
-            "pendingTranslationRequestsState",
-            MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap()),
+        return TranslationManager.createForTesting(
+            context = mockk<Context>(relaxed = true),
+            provider = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = mockk(relaxed = true),
+            scheduler = scheduler,
+            sessionCoordinator = TranslationSessionCoordinator(),
         )
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
-        // Seed the request-generation and download-attachment state resolved by the coordinator.
-        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
-        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
-        return manager
     }
 
     private fun setField(target: Any, fieldName: String, value: Any) {
