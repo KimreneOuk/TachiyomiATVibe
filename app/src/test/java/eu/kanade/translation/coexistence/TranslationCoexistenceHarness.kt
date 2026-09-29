@@ -1381,10 +1381,14 @@ internal class TranslationCoexistenceHarness private constructor(
                 "pauseReason=${it.pauseReason}, abortedReason=${it.abortedReason}, " +
                 "nonDurableFailureReason=${it.nonDurableFailureReason}"
         } ?: "not published"
+        val batchWriteGateRejection = store.lastBatchWriteGateRejectionDiagnostic ?: "none"
+        val guardedWriteRejection = store.lastGuardedWriteRejectionDiagnostic ?: "none"
 
         return "chapterId=$CHAPTER_ID, chapterKey=$chapterKey, " +
             "rejectingComponent=BatchLaneWorkers.standardTranslateOutcome -> " +
             "BatchWriteGate.guardedBatchUpdate -> ChapterTranslationStore.updatePageGuarded, " +
+            "batchWriteGateRejection=$batchWriteGateRejection, " +
+            "guardedWriteRejection=$guardedWriteRejection, " +
             "activeWriters=$activeWriters, guardedWriteState=$guardedWriteState, " +
             "pageSnapshots=$pageSnapshots, artifactPages=$artifactPages, " +
             "durableFailures=$durableFailures, run=$runSummary, liveTracker={$liveTracker}, " +
