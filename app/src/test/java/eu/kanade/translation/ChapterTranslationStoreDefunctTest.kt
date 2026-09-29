@@ -44,7 +44,7 @@ class ChapterTranslationStoreDefunctTest {
     )
 
     @Test
-    fun `markDefunct flips isDefunct`() {
+    fun `markDefunct flips isDefunct`() = runTest {
         val store = newStore()
         store.isDefunct shouldBe false
         store.markDefunct()

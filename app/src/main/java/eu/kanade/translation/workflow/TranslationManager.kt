@@ -1391,9 +1391,9 @@ class TranslationManager private constructor(
         durableStatusResolver.clearDurableStatusCache()
     }
 
-    fun unregisterActiveTranslationStore(chapterId: Long) {
-        // Mark the evicted store defunct BEFORE removing it from the registry. A worker still
-        // holding a reference has late writes rejected rather than recreating deleted output.
+    suspend fun unregisterActiveTranslationStore(chapterId: Long) {
+        // Remove it before joining persistence so new lookups cannot bind to the store being
+        // evicted. Once the bounded join ends, markDefunct fences workers that still hold it.
         activeStores.remove(chapterId)?.markDefunct()
         durableStatusResolver.clearDurableStatusCache()
     }
@@ -1818,7 +1818,7 @@ class TranslationManager private constructor(
         reason: String = "Translation cancelled",
     ) = readerTeardown.cancelPageTranslations(chapterId, reason)
 
-    fun cancelAllPageTranslations(
+    suspend fun cancelAllPageTranslations(
         cancelBatchQueue: Boolean = false,
         reason: String = "All translation cancelled",
     ) = readerTeardown.cancelAllPageTranslations(cancelBatchQueue, reason)

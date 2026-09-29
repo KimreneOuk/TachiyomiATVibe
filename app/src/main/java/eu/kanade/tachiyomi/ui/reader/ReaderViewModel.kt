@@ -87,6 +87,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.preference.toggle
@@ -768,9 +769,13 @@ class ReaderViewModel @JvmOverloads constructor(
         chapter: ReaderChapter,
         currentIndex: Int,
         dispatchRefresh: Boolean,
-    ) = translationController.updateTranslationWorkingSet(chapter, currentIndex, dispatchRefresh)
+    ) {
+        viewModelScope.launch {
+            translationController.updateTranslationWorkingSet(chapter, currentIndex, dispatchRefresh)
+        }
+    }
 
-    private fun attachTranslatedStreamIfWarm(
+    private suspend fun attachTranslatedStreamIfWarm(
         page: ReaderPage,
         manga: Manga,
         chapter: ReaderChapter,
@@ -780,7 +785,7 @@ class ReaderViewModel @JvmOverloads constructor(
     /**
      * Delegates the holder-facing stream attachment seam to the translation controller.
      */
-    fun attachTranslatedStreamForPage(page: ReaderPage) =
+    suspend fun attachTranslatedStreamForPage(page: ReaderPage) =
         translationController.attachTranslatedStreamForPage(page)
 
     private fun isInTranslationWarmWindow(page: ReaderPage): Boolean =

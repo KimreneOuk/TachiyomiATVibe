@@ -25,7 +25,7 @@ internal class ReaderTeardownCoordinator(
     private val sessionCoordinatorProvider: () -> TranslationSessionCoordinator,
     private val isAnyBatchTranslationActiveProvider: () -> Boolean,
     private val isBatchTranslationRetainedFn: (Long) -> Boolean,
-    private val unregisterActiveTranslationStoreFn: (Long) -> Unit,
+    private val unregisterActiveTranslationStoreFn: suspend (Long) -> Unit,
     private val disposeBatchTrackerFn: (Long) -> Unit,
     private val clearAllPendingTranslationRequestsFn: () -> Unit,
 ) {
@@ -47,7 +47,7 @@ internal class ReaderTeardownCoordinator(
 
     private fun isBatchTranslationRetained(chapterId: Long): Boolean = isBatchTranslationRetainedFn(chapterId)
 
-    private fun unregisterActiveTranslationStore(chapterId: Long) = unregisterActiveTranslationStoreFn(chapterId)
+    private suspend fun unregisterActiveTranslationStore(chapterId: Long) = unregisterActiveTranslationStoreFn(chapterId)
 
     private fun disposeBatchTracker(chapterId: Long) = disposeBatchTrackerFn(chapterId)
 
@@ -57,9 +57,8 @@ internal class ReaderTeardownCoordinator(
         translator.stop(reason, closeEngines)
 
     fun stopReaderTranslations(reason: String) {
-        // The cancellation path includes synchronous runBlocking bridges for durable store
-        // cleanup and bounded persist joins. Keep the entire chain on the manager's IO scope so
-        // ReaderActivity lifecycle callbacks return without touching those bridges on main.
+        // Keep the suspending durable cleanup and bounded persist joins on the manager's IO
+        // scope so ReaderActivity lifecycle callbacks return without doing storage work on main.
         applicationScope.launch(start = CoroutineStart.DEFAULT) {
             readerTeardownMutex.withLock {
                 sessionCoordinator.abortPausingToBatch()
@@ -142,7 +141,7 @@ internal class ReaderTeardownCoordinator(
      * keeps running and no collector outlives the session. Job cancellation is delegated to the
      * scheduler; store eviction + chapter queue clearing are manager-owned.
      */
-    fun cancelAllPageTranslations(
+    suspend fun cancelAllPageTranslations(
         cancelBatchQueue: Boolean = false,
         reason: String = "All translation cancelled",
     ) {
@@ -159,10 +158,8 @@ internal class ReaderTeardownCoordinator(
             // silently dropped, leaving pages RUNNING in the next session's
             // rehydrated snapshot. Run the clear to completion here (bounded by
             // the small number of active chapter stores) before eviction.
-            kotlinx.coroutines.runBlocking {
-                stores.forEach { store ->
-                    store.clearTransientQueuePages(reason)
-                }
+            stores.forEach { store ->
+                store.clearTransientQueuePages(reason)
             }
         }
         chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
@@ -175,11 +172,7 @@ internal class ReaderTeardownCoordinator(
         }
     }
 
-    /**
-     * Runs the synchronous teardown bridge away from the reader main thread.
-     * The underlying method remains synchronous for existing lifecycle callers,
-     * but its SAF-backed store cleanup must never execute on UI dispatchers.
-     */
+    /** Runs suspending teardown and SAF-backed store cleanup away from reader UI dispatchers. */
     suspend fun cancelAllPageTranslationsOffMain(
         cancelBatchQueue: Boolean = false,
         reason: String = "All translation cancelled",

@@ -58,7 +58,7 @@ class TranslationManagerDeleteResetOrderingTest {
         every { store.state } returns MutableStateFlow(
             mapOf(pageKey to PageTranslation(cleanedImageName = "old.jpg")),
         )
-        every { store.markDefunct() } answers { log("markDefunct") }
+        coEvery { store.markDefunct() } coAnswers { log("markDefunct") }
         coEvery { store.updatePageFromCurrentSnapshot(any(), any(), any()) } answers {
             log("updatePageFromCurrentSnapshot")
             ChapterTranslationStore.PatchResult.Accepted(

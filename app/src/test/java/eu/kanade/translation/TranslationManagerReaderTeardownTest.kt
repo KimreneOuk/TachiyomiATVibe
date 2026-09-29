@@ -50,13 +50,13 @@ class TranslationManagerReaderTeardownTest {
             cleanupRelease.await(5, TimeUnit.SECONDS)
             Unit
         }
-        every { readerStore.markDefunct() } answers {
+        coEvery { readerStore.markDefunct() } coAnswers {
             readerStoreDefunct.complete(Unit)
             Unit
         }
 
         val batchStore = mockk<ChapterTranslationStore>(relaxed = true)
-        every { batchStore.markDefunct() } answers { batchStoreDefunct.set(true) }
+        coEvery { batchStore.markDefunct() } coAnswers { batchStoreDefunct.set(true) }
 
         val source = mockk<HttpSource>(relaxed = true)
         val manga = mockk<Manga>(relaxed = true)
@@ -115,7 +115,7 @@ class TranslationManagerReaderTeardownTest {
     fun `reader stop preserves a paused batch store for retry`() = runBlocking<Unit> {
         val storeDefunct = AtomicBoolean(false)
         val batchStore = mockk<ChapterTranslationStore>(relaxed = true)
-        every { batchStore.markDefunct() } answers { storeDefunct.set(true) }
+        coEvery { batchStore.markDefunct() } coAnswers { storeDefunct.set(true) }
 
         val source = mockk<HttpSource>(relaxed = true)
         val manga = mockk<Manga>(relaxed = true)
