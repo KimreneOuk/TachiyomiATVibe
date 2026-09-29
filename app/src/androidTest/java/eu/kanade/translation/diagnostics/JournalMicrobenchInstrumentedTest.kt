@@ -97,7 +97,7 @@ class JournalMicrobenchInstrumentedTest {
     private fun directoryFsyncSamples(directory: File, count: Int): List<Long> {
         val descriptor = Os.open(
             directory.absolutePath,
-            OsConstants.O_RDONLY or OsConstants.O_DIRECTORY,
+            OsConstants.O_RDONLY or O_DIRECTORY_FLAG,
             0,
         )
         return try {
@@ -190,6 +190,7 @@ class JournalMicrobenchInstrumentedTest {
     }
 
     private companion object {
+        private const val O_DIRECTORY_FLAG = 0x10000 // bionic O_DIRECTORY, hidden from public SDK
         const val KIB = 1024
         const val APPEND_COUNT = 1_024
         const val SYNC_SAMPLE_COUNT = 120
