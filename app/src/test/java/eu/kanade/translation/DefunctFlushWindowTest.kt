@@ -14,6 +14,7 @@ import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.coEvery
@@ -36,8 +37,13 @@ class DefunctFlushWindowTest {
 
     private val layout = ChapterArtifactLayout("defunct-flush-window")
 
-    private fun stagedDebounceJobField(store: ChapterTranslationStore) =
-        ChapterTranslationStore::class.java.getDeclaredField("stagedDebounceJob").apply {
+    private fun persistenceScheduler(store: ChapterTranslationStore): Any =
+        ChapterTranslationStore::class.java.getDeclaredField("persistenceScheduler").apply {
+            isAccessible = true
+        }.get(store)
+
+    private fun persistenceStateField(name: String) =
+        StorePersistenceScheduler::class.java.getDeclaredField(name).apply {
             isAccessible = true
         }
 
@@ -105,7 +111,9 @@ class DefunctFlushWindowTest {
             store.mutex.withLock {
                 store.stagePageMutationLocked(pageKey, intermediatePage(pageKey))
             }
-            (stagedDebounceJobField(store).get(store) as Job).cancel()
+            store.mutex.withLock {
+                (persistenceStateField("stagedDebounceJob").get(persistenceScheduler(store)) as Job).cancel()
+            }
             store.hasStagedMutations() shouldBe true
             io.writtenNames shouldBe writesBeforeMutation
 
@@ -117,7 +125,9 @@ class DefunctFlushWindowTest {
                     store.flushStagedMutationsLocked()
                 }
             }
-            stagedDebounceJobField(store).set(store, delayedFlush)
+            store.mutex.withLock {
+                persistenceStateField("stagedDebounceJob").set(persistenceScheduler(store), delayedFlush)
+            }
             delayedFlush.start()
             store.markDefunct()
 
@@ -155,7 +165,9 @@ class DefunctFlushWindowTest {
             joinStarted.complete(Unit)
             releaseJoin.await()
         }
-        store.persistJob = pendingPersist
+        store.mutex.withLock {
+            persistenceStateField("persistJob").set(persistenceScheduler(store), pendingPersist)
+        }
 
         val eviction = async(Dispatchers.IO) {
             try {

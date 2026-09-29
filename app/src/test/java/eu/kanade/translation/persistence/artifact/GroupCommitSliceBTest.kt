@@ -9,6 +9,7 @@ import eu.kanade.translation.persistence.chapter.WriterOrigin
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.withLock
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -209,7 +210,9 @@ class GroupCommitSliceBTest {
                 registry.register(1L, store)
                 try {
                     // Perform an intermediate mutation staged in memory
-                    store.stagePageMutationLocked("0001.jpg", intermediatePage())
+                    store.mutex.withLock {
+                        store.stagePageMutationLocked("0001.jpg", intermediatePage())
+                    }
                     store.hasStagedMutations() shouldBe true
 
                     // When a second writer registers (e.g. PROBE_STORE), it triggers forceFlushOwningStore
