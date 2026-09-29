@@ -250,7 +250,7 @@ class TranslationManager private constructor(
         if (testConstruction == null) {
             // Share the store instance between reader and translator so live updates do not need a chapter reload.
             pipeline.activeStoreResolver = { translation ->
-                openOrCreateActiveChapterTranslationStore(
+                openOrCreateActiveChapterTranslationStoreSuspend(
                     translation.chapter.id!!,
                     translation.chapter.name,
                     translation.chapter.scanlator,
@@ -1411,36 +1411,16 @@ class TranslationManager private constructor(
     }
 
     /**
-     * Returns the existing active [ChapterTranslationStore] for [chapterId], or
-     * opens one from disk if it is not yet registered. If neither an in-memory
-     * store nor an on-disk translation file exists, this creates a fresh store
-     * tied to the expected translation path and registers it, so a translator
-     * starting now and a reader observing now share the same instance.
-     */
-    fun openOrCreateActiveChapterTranslationStore(
-        chapterId: Long,
-        chapterName: String,
-        scanlator: String?,
-        mangaTitle: String,
-        source: Source,
-        mangaId: Long? = null,
-    ): ChapterTranslationStore? = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-        openOrCreateActiveChapterTranslationStoreImpl(
-            chapterId,
-            chapterName,
-            scanlator,
-            mangaTitle,
-            source,
-            mangaId,
-        )
-    }
-
-    /**
-     * Non-blocking variant of [openOrCreateActiveChapterTranslationStore] for
-     * coroutine callers (reader loadChapter / per-page view subscription).
-     * Opening a store for the first time performs legacy artifact migration
-     * with SAF binder I/O; callers must never runBlocking on that path from
-     * the main thread (reader-entry ANR) — they should suspend on IO instead.
+     * Resolves the existing active [ChapterTranslationStore] for [chapterId],
+     * or suspends while opening one from disk if it is not yet registered. If
+     * neither an in-memory store nor an on-disk translation file exists, this
+     * creates a fresh store tied to the expected translation path and registers
+     * it, so a translator starting now and a reader observing now share the
+     * same instance.
+     *
+     * This suspends on IO because opening a store can perform legacy artifact
+     * migration with SAF binder I/O; callers should not block their dispatcher
+     * while that work runs.
      */
     suspend fun openOrCreateActiveChapterTranslationStoreSuspend(
         chapterId: Long,
@@ -1568,7 +1548,7 @@ class TranslationManager private constructor(
         imageName: String,
     ) = cleanedImageLifecycle.retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
 
-    fun openTranslationSession(
+    suspend fun openTranslationSession(
         manga: Manga,
         chapter: Chapter,
         source: HttpSource,
@@ -1577,7 +1557,7 @@ class TranslationManager private constructor(
         // Rolling-auto owns the chapter from here; a stale DOWNLOAD_FAILED
         // batch request must not keep projecting its failed state.
         clearStaleDownloadFailedRequest(chapterId)
-        val store = openOrCreateActiveChapterTranslationStore(
+        val store = openOrCreateActiveChapterTranslationStoreSuspend(
             chapterId,
             chapter.name,
             chapter.scanlator,

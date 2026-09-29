@@ -86,7 +86,7 @@ class ChapterTranslatorBatchStartGuardTest {
     /**
      * Every batch "runs" by first entering the store resolver — the same
      * position the pipeline occupies before its generation is advanced. The
-     * resolver blocks inside non-suspending code, so a cancelled-but-unwinding
+     * resolver holds its callback until released, so a cancelled-but-unwinding
      * batch stays in flight exactly like a mid-run uncancellable native call.
      */
     private fun stubInFlightResolver(

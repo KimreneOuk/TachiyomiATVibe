@@ -341,7 +341,7 @@ internal class ReaderTranslationController(
         }
     }
 
-    private fun handleAutoTranslationOnIo(currentPage: ReaderPage) {
+    private suspend fun handleAutoTranslationOnIo(currentPage: ReaderPage) {
         val chapterId = currentPage.chapter.chapter.id ?: return
         val manga = manga ?: return
         val chapter = currentPage.chapter.chapter
@@ -635,7 +635,7 @@ internal class ReaderTranslationController(
             //   - ASYNC: run deleteTranslation, then re-subscribe + reset state ONLY
             //     after teardown completes. The previous code re-subscribed
             //     synchronously while delete's eviction still ran on a background
-            //     coroutine, so the cache-first openOrCreateActiveChapterTranslationStore
+            //     coroutine, so the cache-first openOrCreateActiveChapterTranslationStoreSuspend
             //     could re-bind the reader to the about-to-be-evicted store while the
             //     translator wrote to a different instance — leaving the reader on
             //     ORIGINAL images with a stuck global spinner on delete-then-retranslate.
