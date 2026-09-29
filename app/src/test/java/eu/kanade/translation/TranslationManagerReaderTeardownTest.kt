@@ -11,8 +11,8 @@ import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -51,7 +51,10 @@ class TranslationManagerReaderTeardownTest {
             cleanupRelease.await(5, TimeUnit.SECONDS)
             Unit
         }
-        every { readerStore.markDefunct() } answers { readerStoreDefunct.complete(Unit); Unit }
+        every { readerStore.markDefunct() } answers {
+            readerStoreDefunct.complete(Unit)
+            Unit
+        }
 
         val batchStore = mockk<ChapterTranslationStore>(relaxed = true)
         every { batchStore.markDefunct() } answers { batchStoreDefunct.set(true) }

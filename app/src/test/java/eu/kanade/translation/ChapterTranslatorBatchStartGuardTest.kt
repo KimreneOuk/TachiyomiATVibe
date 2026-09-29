@@ -208,5 +208,4 @@ class ChapterTranslatorBatchStartGuardTest {
         }
         throw NoSuchFieldException("Field $fieldName not found on ${target.javaClass}")
     }
-
 }
