@@ -1,5 +1,6 @@
 package eu.kanade.translation.diagnostics
 
+import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.ContentProvider
 import android.content.ContentValues
@@ -71,6 +72,7 @@ internal object TranslationTraceDebugRuntime {
         buffer = traceBuffer
         fileSink = traceFileSink
         TranslationPipelineDiagnostics.sink = DebugTraceFanOutSink(traceBuffer, traceFileSink)
+        (appContext as? Application)?.registerActivityLifecycleCallbacks(TranslationLatencyHud(traceBuffer))
     }
 
     @Synchronized
