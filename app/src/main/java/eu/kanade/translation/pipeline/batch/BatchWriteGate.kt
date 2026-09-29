@@ -16,6 +16,7 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageStageLease
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.internal.formatWriteDiagnostic
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import java.util.concurrent.ConcurrentHashMap
@@ -133,12 +134,18 @@ internal class BatchWriteGate(
             val live = store.snapshot(pageKey)
             val leaseOwner = store.pageLeaseOwner(pageKey)
             store.recordBatchWriteGateRejectionDiagnostic(
-                "pageKey=$pageKey, description=$description, stage=$stage, " +
-                    "result=${missingIdentity.reason}, leaseOwner=$leaseOwner, live={generation=${live.generation}, " +
-                    "pageVersion=${live.pageVersion}, leaseToken=${live.leaseToken}, " +
-                    "candidateGenerationId=${live.candidateGenerationId}, " +
-                    "dependencyFingerprint=${live.dependencyFingerprint}, " +
-                    "artifactPageVersion=${live.artifactPageVersion}}",
+                formatWriteDiagnostic(
+                    pageKey,
+                    "description" to description,
+                    "stage" to stage,
+                    "result" to missingIdentity.reason,
+                    "leaseOwner" to leaseOwner,
+                    "live" to "{generation=${live.generation}, " +
+                        "pageVersion=${live.pageVersion}, leaseToken=${live.leaseToken}, " +
+                        "candidateGenerationId=${live.candidateGenerationId}, " +
+                        "dependencyFingerprint=${live.dependencyFingerprint}, " +
+                        "artifactPageVersion=${live.artifactPageVersion}}",
+                ),
             )
             if (!missingIdentity.isBatchPageLeaseMissing() ||
                 live.leaseToken != null ||
@@ -164,10 +171,14 @@ internal class BatchWriteGate(
                 is LeaseAcquisition.Granted -> acquisition.lease
                 is LeaseAcquisition.Denied -> {
                     store.recordBatchWriteGateRejectionDiagnostic(
-                        "pageKey=$pageKey, description=$description, result=${missingIdentity.reason}, " +
-                            "ownerProofDenied={owner=${acquisition.owner}, reason=${acquisition.reason}}, " +
-                            "live={generation=${live.generation}, pageVersion=${live.pageVersion}, " +
-                            "candidateGenerationId=${live.candidateGenerationId}}",
+                        formatWriteDiagnostic(
+                            pageKey,
+                            "description" to description,
+                            "result" to missingIdentity.reason,
+                            "ownerProofDenied" to "{owner=${acquisition.owner}, reason=${acquisition.reason}}",
+                            "live" to "{generation=${live.generation}, pageVersion=${live.pageVersion}, " +
+                                "candidateGenerationId=${live.candidateGenerationId}}",
+                        ),
                     )
                     return missingIdentity
                 }
@@ -291,16 +302,21 @@ internal class BatchWriteGate(
         } else if (result is ChapterTranslationStore.PatchResult.Rejected) {
             val live = store.snapshot(pageKey)
             store.recordBatchWriteGateRejectionDiagnostic(
-                "pageKey=$pageKey, description=$description, stage=$stage, result=${result.reason}, " +
-                    "expected={generation=${identity.generation}, pageVersion=${identity.pageVersion}, " +
-                    "leaseToken=${identity.leaseToken}, candidateGenerationId=${identity.candidateGenerationId}, " +
-                    "dependencyFingerprint=${identity.dependencyFingerprint}, " +
-                    "artifactPageVersion=${identity.artifactPageVersion}}, " +
-                    "live={generation=${live.generation}, pageVersion=${live.pageVersion}, " +
-                    "leaseToken=${live.leaseToken}, candidateGenerationId=${live.candidateGenerationId}, " +
-                    "dependencyFingerprint=${live.dependencyFingerprint}, " +
-                    "artifactPageVersion=${live.artifactPageVersion}}, " +
-                    "leaseTokenMismatchHeal=$leaseTokenMismatchHeal",
+                formatWriteDiagnostic(
+                    pageKey,
+                    "description" to description,
+                    "stage" to stage,
+                    "result" to result.reason,
+                    "expected" to "{generation=${identity.generation}, pageVersion=${identity.pageVersion}, " +
+                        "leaseToken=${identity.leaseToken}, candidateGenerationId=${identity.candidateGenerationId}, " +
+                        "dependencyFingerprint=${identity.dependencyFingerprint}, " +
+                        "artifactPageVersion=${identity.artifactPageVersion}}",
+                    "live" to "{generation=${live.generation}, pageVersion=${live.pageVersion}, " +
+                        "leaseToken=${live.leaseToken}, candidateGenerationId=${live.candidateGenerationId}, " +
+                        "dependencyFingerprint=${live.dependencyFingerprint}, " +
+                        "artifactPageVersion=${live.artifactPageVersion}}",
+                    "leaseTokenMismatchHeal" to leaseTokenMismatchHeal,
+                ),
             )
         }
         return result

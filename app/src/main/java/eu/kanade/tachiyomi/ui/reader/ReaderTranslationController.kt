@@ -63,6 +63,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
@@ -180,7 +181,7 @@ internal class ReaderTranslationController(
         owner.getMangaReadingMode(resolveDefault)
     private fun resolvePageKey(page: ReaderPage): String = owner.resolvePageKey(page)
 
-    internal fun updateTranslationWorkingSet(
+    internal suspend fun updateTranslationWorkingSet(
         chapter: ReaderChapter,
         currentIndex: Int,
         dispatchRefresh: Boolean,
@@ -239,7 +240,7 @@ internal class ReaderTranslationController(
         }
     }
 
-    internal fun attachTranslatedStreamIfWarm(
+    internal suspend fun attachTranslatedStreamIfWarm(
         page: ReaderPage,
         manga: Manga,
         chapter: ReaderChapter,
@@ -256,7 +257,7 @@ internal class ReaderTranslationController(
             val translation = page.translation
             if (translation != null && translation.blocks.isEmpty()) {
                 val pageKey = resolvePageKey(page)
-                val hydrated = store.getOrLoadPageSnapshot(pageKey)
+                val hydrated = withContext(Dispatchers.IO) { store.getOrLoadPageSnapshot(pageKey) }
                 if (hydrated != null) {
                     page.translation = hydrated
                 }
@@ -309,7 +310,7 @@ internal class ReaderTranslationController(
      * return LAZY `(() -> InputStream)?` factories — no disk I/O happens here,
      * only when Coil invokes the lambda on its decoder thread.
      */
-    internal fun attachTranslatedStreamForPage(page: ReaderPage) {
+    internal suspend fun attachTranslatedStreamForPage(page: ReaderPage) {
         val manga = manga ?: return
         val chapter = getCurrentChapter() ?: return
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
@@ -1156,8 +1157,10 @@ internal class ReaderTranslationController(
         if (!translationPreferences.autoTranslate().get()) return
         val chapter = getCurrentChapter() ?: return
         if (chapterPageIndex < 0) return
-        updateTranslationWorkingSet(chapter, chapterPageIndex, dispatchRefresh = true)
-        translateCurrentPageForAuto()
+        viewModelScope.launch {
+            updateTranslationWorkingSet(chapter, chapterPageIndex, dispatchRefresh = true)
+            translateCurrentPageForAuto()
+        }
     }
 
     internal fun onMemoryPressure(level: Int) {

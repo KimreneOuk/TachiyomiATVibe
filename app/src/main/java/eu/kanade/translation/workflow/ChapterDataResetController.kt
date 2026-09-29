@@ -36,7 +36,7 @@ internal class ChapterDataResetController(
     private val removeFromTranslationQueueFn: (Chapter) -> Unit,
     private val translatorProvider: () -> ChapterTranslator,
     private val disposeBatchTrackerFn: (Long) -> Unit,
-    private val unregisterActiveTranslationStoreFn: (Long) -> Unit,
+    private val unregisterActiveTranslationStoreFn: suspend (Long) -> Unit,
     private val streamRegistryProvider: () -> TranslationStreamRegistry,
     private val providerProvider: () -> TranslationFileProvider,
     private val retireChapterCompanionImagesFn: (Manga, Chapter, Source) -> Unit,
@@ -81,7 +81,7 @@ internal class ChapterDataResetController(
 
     private fun disposeBatchTracker(chapterId: Long) = disposeBatchTrackerFn(chapterId)
 
-    private fun unregisterActiveTranslationStore(chapterId: Long) = unregisterActiveTranslationStoreFn(chapterId)
+    private suspend fun unregisterActiveTranslationStore(chapterId: Long) = unregisterActiveTranslationStoreFn(chapterId)
 
     private fun retireChapterCompanionImages(manga: Manga, chapter: Chapter, source: Source) =
         retireChapterCompanionImagesFn(manga, chapter, source)

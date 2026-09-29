@@ -49,12 +49,14 @@ import eu.kanade.translation.persistence.internal.PageStageLeaseTable
 import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
 import eu.kanade.translation.persistence.internal.StoreStatusInputs
 import eu.kanade.translation.persistence.internal.StoreStatusProjector
+import eu.kanade.translation.persistence.internal.formatWriteDiagnostic
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -574,31 +576,26 @@ class ChapterTranslationStore(
     @Volatile
     private var defunct = false
 
-    fun markDefunct() {
+    suspend fun markDefunct() = withContext(NonCancellable) {
         persistJob?.let { pendingPersist ->
-            val completed = runBlocking {
-                withTimeoutOrNull(PERSIST_JOIN_TIMEOUT_MS) { pendingPersist.join() }
-            }
+            val completed = withTimeoutOrNull(PERSIST_JOIN_TIMEOUT_MS) { pendingPersist.join() }
             if (completed == null) {
                 logcat(LogPriority.WARN) {
-                    "TachiyomiAT store persist did not finish within $PERSIST_JOIN_TIMEOUT_MS ms before eviction"
+                    "TachiyomiAT store persist did not finish within ${PERSIST_JOIN_TIMEOUT_MS} ms before eviction"
                 }
             }
             pendingPersist.cancel()
         }
         persistJob = null
-        runBlocking {
-            mutex.withLock {
-                defunct = true
-                generation++
-                stagedDebounceJob?.cancel()
-                stagedDebounceJob = null
-                synchronized(pageLeases) { pageLeases.clear() }
-            }
+        mutex.withLock {
+            defunct = true
+            generation++
+            stagedDebounceJob?.cancel()
+            stagedDebounceJob = null
+            synchronized(pageLeases) { pageLeases.clear() }
         }
         logcat(LogPriority.WARN) { "TachiyomiAT store marked defunct: generation=$generation" }
     }
-
     val isDefunct: Boolean
         get() = defunct
 
@@ -1038,17 +1035,17 @@ class ChapterTranslationStore(
                             "page lease token expected=${mismatch.expectedToken} " +
                             "actual=${mismatch.actualToken}"
                     }
-                lastGuardedWriteRejectionDiagnostic =
-                    "pageKey=$pageKey, description=$description, reason=$rejection, " +
-                    "expected={generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
-                    "artifactPageVersion=${expected.artifactPageVersion}, " +
-                    "candidateGenerationId=${expected.candidateGenerationId}, " +
-                    "dependencyFingerprint=${expected.dependencyFingerprint}, " +
-                    "leaseToken=${expected.leaseToken}}, " +
-                    "actual={generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
-                    "artifactPageVersion=${actual.artifactPageVersion}, " +
-                    "candidateGenerationId=${actual.candidateGenerationId}, " +
-                    "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}"
+                lastGuardedWriteRejectionDiagnostic = formatWriteDiagnostic(
+                    pageKey,
+                    "description" to description,
+                    "reason" to rejection,
+                    "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
+                        "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
+                        "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
+                    "actual" to "{generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
+                        "artifactPageVersion=${actual.artifactPageVersion}, candidateGenerationId=${actual.candidateGenerationId}, " +
+                        "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}",
+                )
                 rejected(pageKey, description, rejection, leaseTokenMismatch)
             } else {
                 val previous = pages[pageKey]
@@ -1057,18 +1054,18 @@ class ChapterTranslationStore(
                 if (!publishLocked(previous, updated, expected)) {
                     restorePageLocked(pageKey, previous)
                     val actual = snapshotLocked(pageKey)
-                    lastGuardedWriteRejectionDiagnostic =
-                        "pageKey=$pageKey, description=$description, reason=ARTIFACT_PUBLICATION_FAILED, " +
-                        "artifactPublication=${lastArtifactPublicationRejectionDiagnostic ?: "reason unavailable"}, " +
-                        "expected={generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
-                        "artifactPageVersion=${expected.artifactPageVersion}, " +
-                        "candidateGenerationId=${expected.candidateGenerationId}, " +
-                        "dependencyFingerprint=${expected.dependencyFingerprint}, " +
-                        "leaseToken=${expected.leaseToken}}, " +
-                        "actual={generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
-                        "artifactPageVersion=${actual.artifactPageVersion}, " +
-                        "candidateGenerationId=${actual.candidateGenerationId}, " +
-                        "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}"
+                    lastGuardedWriteRejectionDiagnostic = formatWriteDiagnostic(
+                        pageKey,
+                        "description" to description,
+                        "reason" to "ARTIFACT_PUBLICATION_FAILED",
+                        "artifactPublication" to (lastArtifactPublicationRejectionDiagnostic ?: "reason unavailable"),
+                        "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
+                            "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
+                            "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
+                        "actual" to "{generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
+                            "artifactPageVersion=${actual.artifactPageVersion}, candidateGenerationId=${actual.candidateGenerationId}, " +
+                            "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}",
+                    )
                     return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
                 }
                 PatchResult.Accepted(snapshotLocked(pageKey))
@@ -2294,15 +2291,16 @@ class ChapterTranslationStore(
         lastArtifactPublicationRejectionDiagnostic = null
         fun reject(reason: String): Boolean {
             val page = artifactManifest?.pages?.get(pageKey)
-            lastArtifactPublicationRejectionDiagnostic =
-                "pageKey=$pageKey, reason=$reason, " +
-                "expected={generation=${expected?.generation}, pageVersion=${expected?.pageVersion}, " +
-                "artifactPageVersion=${expected?.artifactPageVersion}, " +
-                "candidateGenerationId=${expected?.candidateGenerationId}, " +
-                "dependencyFingerprint=${expected?.dependencyFingerprint}, leaseToken=${expected?.leaseToken}}, " +
-                "localArtifact={pageVersion=${page?.pageVersion}, " +
-                "candidateGenerationId=${page?.candidate?.generationId}, " +
-                "dependencyFingerprint=${page?.candidate?.dependencyFingerprint}}"
+            lastArtifactPublicationRejectionDiagnostic = formatWriteDiagnostic(
+                pageKey,
+                "reason" to reason,
+                "expected" to "{generation=${expected?.generation}, pageVersion=${expected?.pageVersion}, " +
+                    "artifactPageVersion=${expected?.artifactPageVersion}, candidateGenerationId=${expected?.candidateGenerationId}, " +
+                    "dependencyFingerprint=${expected?.dependencyFingerprint}, leaseToken=${expected?.leaseToken}}",
+                "localArtifact" to "{pageVersion=${page?.pageVersion}, " +
+                    "candidateGenerationId=${page?.candidate?.generationId}, " +
+                    "dependencyFingerprint=${page?.candidate?.dependencyFingerprint}}",
+            )
             return false
         }
         if (engineMode is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Memory) {
@@ -2643,7 +2641,9 @@ class ChapterTranslationStore(
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val store = ChapterArtifactEngine(documents, layout)
-        val manifest = synchronized(artifactOpenLock(parent, fileName)) { store.load().manifest }
+        val manifest = withArtifactOpenLock(parent, fileName) { openLock ->
+            synchronized(openLock.monitor) { store.load().manifest }
+        }
         engineMode = eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable(store)
         artifactManifest = manifest
         return true
@@ -2726,10 +2726,10 @@ class ChapterTranslationStore(
      * Lazily loads full page snapshot (including text blocks) from durable storage
      * if the page is currently backed by a synthesized or empty placeholder.
      */
-    fun getOrLoadPageSnapshot(pageKey: String): PageTranslation? {
+    suspend fun getOrLoadPageSnapshot(pageKey: String): PageTranslation? = mutex.withLock {
         val current = pages[pageKey]
         if (current != null && current.blocks.isNotEmpty()) {
-            return current
+            return@withLock current
         }
         val record = artifactManifest?.pages?.get(pageKey)
         val snapshotFileName = record?.candidate?.pageSnapshotFileName
@@ -2752,10 +2752,10 @@ class ChapterTranslationStore(
                     )
                     _display.value = displaySnapshotLocked()
                 }
-                return loaded
+                return@withLock loaded
             }
         }
-        return current
+        current
     }
 
     /** The frozen committed display bundle for [pageKey], if one exists. */
@@ -3084,17 +3084,50 @@ class ChapterTranslationStore(
             openArtifact(translationFile.parentFile ?: error("translation file has no parent"), translationFile.name ?: DEFAULT_FILE_NAME)
 
         /** Opens an artifact chapter, creating an empty manifest when needed. */
-        internal fun openArtifact(parent: UniFile, fileName: String): ChapterTranslationStore =
-            openArtifactOnly(parent, fileName)
-
-        private val ARTIFACT_OPEN_LOCKS = ConcurrentHashMap<String, Any>()
-
-        private fun artifactOpenLock(parent: UniFile?, fileName: String): Any {
-            val parentKey = parent?.filePath ?: parent?.uri?.toString() ?: "<unknown>"
-            return ARTIFACT_OPEN_LOCKS.computeIfAbsent("$parentKey:$fileName") { Any() }
+        internal fun openArtifact(parent: UniFile, fileName: String): ChapterTranslationStore {
+            return withArtifactOpenLock(parent, fileName) { openLock ->
+                openArtifactOnly(parent, fileName, openLock.monitor)
+            }
         }
 
-        private fun openArtifactOnly(parent: UniFile?, fileName: String): ChapterTranslationStore {
+        private class ArtifactOpenLock {
+            val monitor = Any()
+            var references = 0
+        }
+
+        private val ARTIFACT_OPEN_LOCKS = ConcurrentHashMap<String, ArtifactOpenLock>()
+
+        private fun artifactOpenKey(parent: UniFile?, fileName: String): String {
+            val parentKey = parent?.filePath ?: parent?.uri?.toString() ?: "<unknown>"
+            return "$parentKey:$fileName"
+        }
+
+        private fun <T> withArtifactOpenLock(
+            parent: UniFile?,
+            fileName: String,
+            block: (ArtifactOpenLock) -> T,
+        ): T {
+            val key = artifactOpenKey(parent, fileName)
+            val openLock = checkNotNull(
+                ARTIFACT_OPEN_LOCKS.compute(key) { _, current ->
+                    (current ?: ArtifactOpenLock()).also { it.references++ }
+                },
+            )
+            return try {
+                block(openLock)
+            } finally {
+                ARTIFACT_OPEN_LOCKS.compute(key) { _, current ->
+                    check(current === openLock)
+                    openLock.references--
+                    openLock.takeIf { it.references > 0 }
+                }
+            }
+        }
+        private fun openArtifactOnly(
+            parent: UniFile?,
+            fileName: String,
+            openMonitor: Any,
+        ): ChapterTranslationStore {
             if (parent == null) {
                 return ChapterTranslationStore(
                     translationFile = null,
@@ -3106,7 +3139,7 @@ class ChapterTranslationStore(
             val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
             val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
             val artifact = ChapterArtifactEngine(documents, layout)
-            val manifest = synchronized(artifactOpenLock(parent, fileName)) { artifact.load().manifest }
+            val manifest = synchronized(openMonitor) { artifact.load().manifest }
             val committedPages = manifest.pages.mapNotNull { (pageKey, record) ->
                 record.committed?.pageSnapshotFileName
                     ?.let(artifact::readPageSnapshot)
