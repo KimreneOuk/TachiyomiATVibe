@@ -131,7 +131,9 @@ internal class ReaderTeardownCoordinator(
         disposeBatchTracker(chapterId)
         activeStores.get(chapterId)?.clearTransientQueuePages(reason)
         // Evict the store on chapter exit; the reader re-opens it via observeLiveTranslationStore on the next loadChapter.
-        unregisterActiveTranslationStore(chapterId)
+        withContext(Dispatchers.IO) {
+            unregisterActiveTranslationStore(chapterId)
+        }
     }
 
     /**

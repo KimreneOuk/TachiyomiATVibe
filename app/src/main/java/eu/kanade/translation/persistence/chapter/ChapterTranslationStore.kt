@@ -483,6 +483,7 @@ class ChapterTranslationStore(
     }
 
     internal fun flushStagedMutationsLocked(commitPoint: CommitPoint = CommitPoint.EXPLICIT_FLUSH): Boolean {
+        if (defunct) return true
         stagedDebounceJob?.cancel()
         stagedDebounceJob = null
         if (stagedPageKeys.isEmpty()) {
@@ -567,7 +568,8 @@ class ChapterTranslationStore(
      * ONNX when cancel() was requested can still reach a suspension point AFTER
      * its store was evicted and the on-disk file + images deleted; without this
      * guard it would recreate the deleted file or strand a page at RUNNING.
-     * Volatile: written under mutex by markDefunct, read by mutators lock-free.
+     * Volatile: the eviction transition is written under [mutex] after the persist join;
+     * mutators read it lock-free.
      */
     @Volatile
     private var defunct = false
@@ -585,9 +587,15 @@ class ChapterTranslationStore(
             pendingPersist.cancel()
         }
         persistJob = null
-        defunct = true
-        generation++
-        synchronized(pageLeases) { pageLeases.clear() }
+        runBlocking {
+            mutex.withLock {
+                defunct = true
+                generation++
+                stagedDebounceJob?.cancel()
+                stagedDebounceJob = null
+                synchronized(pageLeases) { pageLeases.clear() }
+            }
+        }
         logcat(LogPriority.WARN) { "TachiyomiAT store marked defunct: generation=$generation" }
     }
 
