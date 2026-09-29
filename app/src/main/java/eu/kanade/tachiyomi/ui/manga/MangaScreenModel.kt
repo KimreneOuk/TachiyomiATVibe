@@ -179,102 +179,6 @@ class MangaScreenModel(
         }
     }
 
-    init {
-        screenModelScope.launchIO {
-            combine(
-                getMangaAndChapters.subscribe(mangaId, applyScanlatorFilter = true).distinctUntilChanged(),
-                downloadCache.changes,
-                downloadManager.queueState,
-                // TachiyomiAT
-                translationManager.queueState,
-                translationManager.pendingTranslationRequests,
-            ) { mangaAndChapters, _, _, _, _ -> mangaAndChapters }
-                .flowWithLifecycle(lifecycle)
-                .collectLatest { (manga, chapters) ->
-                    updateSuccessState {
-                        it.copy(
-                            manga = manga,
-                            //  ANR fix: the per-downloaded-chapter
-                            // getChapterTranslationStatus query inside
-                            // toChapterListItems is now suspend and runs here
-                            // on the IO collector — it used to park Main via
-                            // runBlocking in the durable resolver.
-                            chapters = chapters.toChapterListItems(manga),
-                        )
-                    }
-                }
-        }
-
-        screenModelScope.launchIO {
-            getExcludedScanlators.subscribe(mangaId)
-                .flowWithLifecycle(lifecycle)
-                .distinctUntilChanged()
-                .collectLatest { excludedScanlators ->
-                    updateSuccessState {
-                        it.copy(excludedScanlators = excludedScanlators)
-                    }
-                }
-        }
-
-        screenModelScope.launchIO {
-            getAvailableScanlators.subscribe(mangaId)
-                .flowWithLifecycle(lifecycle)
-                .distinctUntilChanged()
-                .collectLatest { availableScanlators ->
-                    updateSuccessState {
-                        it.copy(availableScanlators = availableScanlators)
-                    }
-                }
-        }
-
-        observeDownloads()
-        // TachiyomiAT
-        observeTranslations()
-        observeTranslationRequests()
-
-        screenModelScope.launchIO {
-            val manga = getMangaAndChapters.awaitManga(mangaId)
-            val chapters = getMangaAndChapters.awaitChapters(mangaId, applyScanlatorFilter = true)
-                .toChapterListItems(manga)
-
-            if (!manga.favorite) {
-                setMangaDefaultChapterFlags.await(manga)
-            }
-
-            val needRefreshInfo = !manga.initialized
-            val needRefreshChapter = chapters.isEmpty()
-
-            // Show what we have earlier
-            mutableState.update {
-                State.Success(
-                    manga = manga,
-                    source = Injekt.get<SourceManager>().getOrStub(manga.source),
-                    isFromSource = isFromSource,
-                    chapters = chapters,
-                    availableScanlators = getAvailableScanlators.await(mangaId),
-                    excludedScanlators = getExcludedScanlators.await(mangaId),
-                    isRefreshingData = needRefreshInfo || needRefreshChapter,
-                    dialog = null,
-                )
-            }
-
-            // Start observe tracking since it only needs mangaId
-            observeTrackers()
-
-            // Fetch info-chapters when needed
-            if (screenModelScope.isActive) {
-                val fetchFromSourceTasks = listOf(
-                    async { if (needRefreshInfo) fetchMangaFromSource() },
-                    async { if (needRefreshChapter) fetchChaptersFromSource() },
-                )
-                fetchFromSourceTasks.awaitAll()
-            }
-
-            // Initial loading finished
-            updateSuccessState { it.copy(isRefreshingData = false) }
-        }
-    }
-
     fun fetchAllFromSource(manualFetch: Boolean = true) {
         screenModelScope.launch {
             updateSuccessState { it.copy(isRefreshingData = true) }
@@ -564,6 +468,102 @@ class MangaScreenModel(
     // queue, pending request emissions) and collector cancellation at terminal
     // status cannot erase an unchanged live or terminal snapshot.
     private val translationSnapshots = ChapterTranslationSnapshotRegistry()
+
+    init {
+        screenModelScope.launchIO {
+            combine(
+                getMangaAndChapters.subscribe(mangaId, applyScanlatorFilter = true).distinctUntilChanged(),
+                downloadCache.changes,
+                downloadManager.queueState,
+                // TachiyomiAT
+                translationManager.queueState,
+                translationManager.pendingTranslationRequests,
+            ) { mangaAndChapters, _, _, _, _ -> mangaAndChapters }
+                .flowWithLifecycle(lifecycle)
+                .collectLatest { (manga, chapters) ->
+                    updateSuccessState {
+                        it.copy(
+                            manga = manga,
+                            //  ANR fix: the per-downloaded-chapter
+                            // getChapterTranslationStatus query inside
+                            // toChapterListItems is now suspend and runs here
+                            // on the IO collector — it used to park Main via
+                            // runBlocking in the durable resolver.
+                            chapters = chapters.toChapterListItems(manga),
+                        )
+                    }
+                }
+        }
+
+        screenModelScope.launchIO {
+            getExcludedScanlators.subscribe(mangaId)
+                .flowWithLifecycle(lifecycle)
+                .distinctUntilChanged()
+                .collectLatest { excludedScanlators ->
+                    updateSuccessState {
+                        it.copy(excludedScanlators = excludedScanlators)
+                    }
+                }
+        }
+
+        screenModelScope.launchIO {
+            getAvailableScanlators.subscribe(mangaId)
+                .flowWithLifecycle(lifecycle)
+                .distinctUntilChanged()
+                .collectLatest { availableScanlators ->
+                    updateSuccessState {
+                        it.copy(availableScanlators = availableScanlators)
+                    }
+                }
+        }
+
+        observeDownloads()
+        // TachiyomiAT
+        observeTranslations()
+        observeTranslationRequests()
+
+        screenModelScope.launchIO {
+            val manga = getMangaAndChapters.awaitManga(mangaId)
+            val chapters = getMangaAndChapters.awaitChapters(mangaId, applyScanlatorFilter = true)
+                .toChapterListItems(manga)
+
+            if (!manga.favorite) {
+                setMangaDefaultChapterFlags.await(manga)
+            }
+
+            val needRefreshInfo = !manga.initialized
+            val needRefreshChapter = chapters.isEmpty()
+
+            // Show what we have earlier
+            mutableState.update {
+                State.Success(
+                    manga = manga,
+                    source = Injekt.get<SourceManager>().getOrStub(manga.source),
+                    isFromSource = isFromSource,
+                    chapters = chapters,
+                    availableScanlators = getAvailableScanlators.await(mangaId),
+                    excludedScanlators = getExcludedScanlators.await(mangaId),
+                    isRefreshingData = needRefreshInfo || needRefreshChapter,
+                    dialog = null,
+                )
+            }
+
+            // Start observe tracking since it only needs mangaId
+            observeTrackers()
+
+            // Fetch info-chapters when needed
+            if (screenModelScope.isActive) {
+                val fetchFromSourceTasks = listOf(
+                    async { if (needRefreshInfo) fetchMangaFromSource() },
+                    async { if (needRefreshChapter) fetchChaptersFromSource() },
+                )
+                fetchFromSourceTasks.awaitAll()
+            }
+
+            // Initial loading finished
+            updateSuccessState { it.copy(isRefreshingData = false) }
+        }
+    }
 
     private fun observeTranslationProgress(
         chapterId: Long,
