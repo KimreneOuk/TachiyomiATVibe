@@ -9,7 +9,6 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
@@ -35,9 +34,12 @@ import org.junit.jupiter.api.Test
  *     record carries the render-terminal stamp (2026-09-16 E-fix) so the
  *     display bundle commits and the reader gate flips without a sweep;
  */
-//  test-stability quarantine: load-ordering sensitive under full-suite JVM
-// churn; tracked for stabilization. Runs with -PincludeQuarantinedTests.
-@Tag("quarantined-flaky")
+// Characterized 2026-09-30: one failure in nine forced full-suite executions;
+// eight passed, including five consecutive post-failure runs. The failure ended
+// in TRANSLATE rather than COMPLETE after p1's guarded publication was rejected.
+// Static review found the ignored staged-flush rejection predates E12, making an
+// E12 interaction unlikely though not behaviorally disproven. Diagnostic commit
+// 3707047 now surfaces the concrete write-gate rejection if this recurs.
 class StandardPipelineCoexistenceTest {
 
     @Test
