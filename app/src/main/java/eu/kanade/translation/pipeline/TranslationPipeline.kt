@@ -312,7 +312,7 @@ class TranslationPipeline private constructor(
      * listener is provided, the translator falls back to opening a local store.
      */
     @Volatile
-    var activeStoreResolver: ((Translation) -> ChapterTranslationStore?)? = null
+    var activeStoreResolver: (suspend (Translation) -> ChapterTranslationStore?)? = null
 
     /** Chapter-close hook for bounded storage cleanup owned by TranslationManager. */
     @Volatile
@@ -356,7 +356,7 @@ class TranslationPipeline private constructor(
         attemptCount,
     )
 
-    private fun resolveActiveStore(
+    private suspend fun resolveActiveStore(
         manga: Manga,
         chapter: Chapter,
         source: HttpSource,

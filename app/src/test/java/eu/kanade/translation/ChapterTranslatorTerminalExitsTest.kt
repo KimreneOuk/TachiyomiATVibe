@@ -74,7 +74,7 @@ class ChapterTranslatorTerminalExitsTest {
     private val registry = TranslationBatchTrackerRegistry()
     private val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private var activeStoreResolver: ((Translation) -> ChapterTranslationStore?)? = null
+    private var activeStoreResolver: (suspend (Translation) -> ChapterTranslationStore?)? = null
     private var trackerFactory: (
         (
             Long,

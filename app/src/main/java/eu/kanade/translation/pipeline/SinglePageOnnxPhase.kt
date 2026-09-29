@@ -63,7 +63,7 @@ internal class SinglePageOnnxPhase(
     private val engines: EngineLane,
     private val cleanedPublication: CleanedPublication,
     private val pageStoreWriter: PageStoreWriter,
-    private val activeStoreResolverProvider: () -> ((Translation) -> ChapterTranslationStore?)?,
+    private val activeStoreResolverProvider: () -> (suspend (Translation) -> ChapterTranslationStore?)?,
     // Shared with the pipeline so rebuild ordering against the caller's
     // native-quarantine admission is exactly the pre-move mutex.
     private val engineRebuildMutex: Mutex,

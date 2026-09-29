@@ -363,7 +363,7 @@ internal class TranslationCoexistenceHarness private constructor(
             // Extra chapter stores make the resolver
             // chapter-keyed so a manual tap on ANOTHER chapter shares the same
             // graph (and the same governed provider bucket) as the batch.
-            val storeResolverHook: (Translation) -> ChapterTranslationStore? = { translation ->
+            val storeResolverHook: suspend (Translation) -> ChapterTranslationStore? = { translation ->
                 extraStores[translation.chapter.id] ?: store
             }
 

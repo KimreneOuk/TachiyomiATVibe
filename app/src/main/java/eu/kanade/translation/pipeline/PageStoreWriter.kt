@@ -20,7 +20,7 @@ import java.io.InputStream
  * is delegated to the pipeline caller.
  */
 internal class PageStoreWriter(
-    private val activeStoreResolver: () -> ((Translation) -> ChapterTranslationStore?)?,
+    private val activeStoreResolver: () -> (suspend (Translation) -> ChapterTranslationStore?)?,
     private val streamRegistry: TranslationStreamRegistry,
     private val handleCriticalTranslationOom: (stage: String, oom: OutOfMemoryError) -> Unit,
 ) {
@@ -90,7 +90,7 @@ internal class PageStoreWriter(
      * clobbers an already-completed page — only overwrites entries that are still
      * in a non-terminal (RUNNING/PENDING) state.
      */
-    fun resolveActiveStore(
+    suspend fun resolveActiveStore(
         manga: Manga,
         chapter: Chapter,
         source: HttpSource,
