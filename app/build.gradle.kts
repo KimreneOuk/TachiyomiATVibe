@@ -517,6 +517,9 @@ dependencies {
     testImplementation(libs.bundles.test)
     // Android instrumentation tests (the renderer fixture uses AndroidJUnit4).
     androidTestImplementation(androidx.test.ext)
+    // The runner must be packaged into the test APK; without it am instrument
+    // fails with ClassNotFoundException on androidx.test.runner.AndroidJUnitRunner.
+    androidTestImplementation(androidx.test.runner)
 
     // For detecting memory leaks; see https://square.github.io/leakcanary/
     // debugImplementation(libs.leakcanary.android)
