@@ -237,6 +237,6 @@ interface ContextualTextTranslator : TextTranslator {
         chunk: TranslationContextChunk,
     ): ContextualTranslationBatch
 
-    /** Prompts the underlying model directly (used for glossary generation and summarization). */
+    /** Prompts the underlying model directly for summarization. */
     suspend fun promptText(prompt: String): String
 }

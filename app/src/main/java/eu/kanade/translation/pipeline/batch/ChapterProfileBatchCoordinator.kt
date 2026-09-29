@@ -6,7 +6,6 @@ import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.engines.translator.analysis.AnalysisRequestBuilder
-import eu.kanade.translation.engines.translator.analysis.GlossarySynthesizer
 import eu.kanade.translation.engines.translator.contextual.EnvelopePlanResult
 import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerBlock
 import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPage
@@ -172,14 +171,11 @@ internal class ChapterProfileBatchCoordinator(
     private val failureRecorder: suspend (PreflightStageFailure) -> Unit =
         { failure -> persistDurablePreflightFailure(store, failure, nowEpochMs) },
     /**
-     * Dormant test/migration seams retained for callers compiled against the
-     * former analysis and glossary stages. The translation flow never reads
-     * or invokes them.
+     * Dormant test/migration seam retained for callers compiled against the
+     * former analysis stage. The translation flow never reads or invokes it.
      */
     @Suppress("UNUSED_PARAMETER")
     analysisChunkRunner: AnalysisChunkRunner? = null,
-    @Suppress("UNUSED_PARAMETER")
-    glossarySynthesizer: GlossarySynthesizer? = null,
     /**
      * Optional translator for the AI envelope path. If absent, or if the AI
      * path receives a plain translator without contextual support, the run

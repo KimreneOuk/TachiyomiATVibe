@@ -48,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap
  * coordinator (STANDARD_PIPELINE). The Director design: both AI and standard
  * engines do the same OCR; the standard engine continues with per-page batch
  * translation exactly like the AI lane minus everything AI-specific (no
- * glossary, no analysis/profile/envelope work), then the shared engine-
+ * analysis/profile/envelope work), then the shared engine-
  * agnostic Stage-7 FINALIZE (translation-terminal completion, single
  * COMPLETE).
  */
@@ -410,7 +410,6 @@ class StandardPipelineCoordinatorTest {
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
         val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
         val observedStates = mutableListOf<ChapterRunState>()
-        val glossaryBefore = store.glossarySnapshot()
 
         val translator = FakeStandardTranslator()
         val seam = StandardSeam(
@@ -503,14 +502,11 @@ class StandardPipelineCoordinatorTest {
         seam.invoked shouldContainExactly pageKeys
         translator.calls shouldContainExactly listOf("p1", "p3", "p4")
 
-        // Zero AI-side manifest pointers and zero glossary writes.
+        // Zero AI-side manifest pointers.
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         manifest.profile.shouldBeNull()
         manifest.envelopePlan.shouldBeNull()
         manifest.analysisChunks shouldBe emptyList()
-        store.glossarySnapshot() shouldBe glossaryBefore
-        store.glossarySnapshot() shouldBe emptyMap()
-
         //  evidence: every page's translated snapshot stays durably
         // addressable through its open candidate pointer.
         pageKeys.forEach { key ->

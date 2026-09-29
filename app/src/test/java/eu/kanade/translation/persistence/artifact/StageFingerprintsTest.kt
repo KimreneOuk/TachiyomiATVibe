@@ -89,24 +89,6 @@ class StageFingerprintsTest {
     }
 
     @Test
-    fun `glossary version is order-independent and content-sensitive`() {
-        val one = StageFingerprints.glossaryVersion(mapOf("a" to "1", "b" to "2"))
-        val reordered = StageFingerprints.glossaryVersion(mapOf("b" to "2", "a" to "1"))
-        val changed = StageFingerprints.glossaryVersion(mapOf("a" to "1", "b" to "3"))
-        one shouldBe reordered
-        one shouldNotBe changed
-    }
-
-    @Test
-    fun `glossary key-value composites cannot collide across splits`() {
-        // Under a comma/equals composite join these two maps produced the
-        // identical string "a=b,c=d"; per-element encoding must separate them.
-        val one = StageFingerprints.glossaryVersion(mapOf("a" to "b,c=d"))
-        val two = StageFingerprints.glossaryVersion(mapOf("a" to "b", "c" to "d"))
-        one shouldNotBe two
-    }
-
-    @Test
     fun `committed bundle fingerprint covers base and stage identities`() {
         val source = SourceIdentity(pageKey = "p", sha256 = "h", width = 1, height = 1, orientation = "n")
         val base = DisplayBaseReference(DisplayBaseKind.CLEANED_IMAGE, fileName = "a.jpg")

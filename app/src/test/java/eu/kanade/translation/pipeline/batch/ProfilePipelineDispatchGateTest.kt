@@ -10,7 +10,8 @@ import org.junit.jupiter.api.Test
  * Truth table:
  *  - STANDARD engine → STANDARD_PIPELINE (the same coordinator, per-page
  *    standard tail — the Director design: both engines do the same OCR, the
- *    standard engine continues batch translation without the glossary).
+ *    standard engine continues batch translation without profile-specific
+ *    stages).
  *  - AI_MODEL (contextual or not) → PROFILE_PIPELINE. The degenerate
  *    non-contextual AI config no longer falls back to a legacy coordinator:
  *    it takes the coordinator's typed CONFIGURATION pause at the envelope

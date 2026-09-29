@@ -23,13 +23,9 @@ enum class CleanedFileState {
 
 data class ArtifactSeed(
     val pages: Map<String, ArtifactPageFacts> = emptyMap(),
-    val glossary: Map<String, String> = emptyMap(),
     val translationFileCorrupt: Boolean = false,
-    val glossaryFileCorrupt: Boolean = false,
     val legacyIdentity: LegacySourceIdentity? = null,
     val sourceFileName: String? = null,
-    val glossaryFileName: String? = null,
-    val glossaryIdentity: LegacySourceIdentity? = null,
     val migratedByVersionCode: Long = 0L,
     val migratedAtEpochMs: Long = 0L,
 )
@@ -41,7 +37,7 @@ fun ChapterArtifactEngine.loadArtifact(seed: ArtifactSeed = ArtifactSeed()): Cha
     // the durable document exactly as production does.
     val existing = readManifest()
     var manifest = load().manifest
-    if (existing != null || (seed.pages.isEmpty() && seed.glossary.isEmpty())) {
+    if (existing != null || seed.pages.isEmpty()) {
         return ChapterArtifactEngine.LoadResult(manifest)
     }
 
@@ -71,13 +67,8 @@ fun ChapterArtifactEngine.loadArtifact(seed: ArtifactSeed = ArtifactSeed()): Cha
     }.toMap()
     manifest = manifest.copy(
         pages = pages,
-        glossary = null,
         updatedAtEpochMs = seed.migratedAtEpochMs,
     )
-    if (seed.glossary.isNotEmpty()) {
-        val pointer = publishGlossary(seed.glossary)
-        manifest = manifest.copy(glossary = pointer)
-    }
     check(publishManifest(manifest)) { "artifact test fixture publication failed" }
     return ChapterArtifactEngine.LoadResult(manifest)
 }

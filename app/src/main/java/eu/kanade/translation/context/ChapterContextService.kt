@@ -37,7 +37,7 @@ data class PreparedContext(
 ) {
     /**
      * Stable identity of the finalized rolling-context section. Other former
-     * profile/glossary compatibility inputs are deliberately absent.
+     * profile compatibility inputs are deliberately absent.
      */
     fun computeRequestContextFingerprint(
         targetLang: String,
@@ -67,7 +67,7 @@ data class PreparedContext(
 /**
  * The single rolling-history builder shared by reader, auto, AI batch and
  * standard batch. It reads manifest pointers and committed page snapshots;
- * live page maps, glossary state, profiles and execution queues are not inputs.
+ * live page maps, profiles and execution queues are not inputs.
  */
 class ChapterContextService(
     val store: ChapterTranslationStore,

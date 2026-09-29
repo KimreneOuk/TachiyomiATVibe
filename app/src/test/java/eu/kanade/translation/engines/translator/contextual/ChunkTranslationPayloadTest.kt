@@ -68,7 +68,7 @@ class ChunkTranslationPayloadTest {
     }
 
     @Test
-    fun `context prefix is empty when glossary and pairs are blank`() {
+    fun `context prefix is empty for blank inputs`() {
         TranslationPrompts.contextPrefix("   ") shouldBe ""
         TranslationPrompts.contextPrefix("") shouldBe ""
     }

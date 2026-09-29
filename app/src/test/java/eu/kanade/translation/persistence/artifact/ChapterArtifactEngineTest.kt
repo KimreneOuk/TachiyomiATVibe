@@ -58,14 +58,10 @@ class ChapterArtifactEngineTest {
     private fun legacySnapshot(
         identityTag: String = "v1",
         page: PageTranslation = displayablePage(),
-        glossary: Map<String, String> = mapOf("sensei" to "teacher"),
     ) = ArtifactSeed(
         pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
-        glossary = glossary,
         legacyIdentity = identity(identityTag),
         sourceFileName = "Chapter 1.json",
-        glossaryFileName = "Chapter 1.glossary.json",
-        glossaryIdentity = identity("glossary-$identityTag"),
         migratedByVersionCode = 63L,
         migratedAtEpochMs = 42L,
     )
@@ -279,7 +275,6 @@ class ChapterArtifactEngineTest {
         val candidateImage = layout.imageFile("0001.jpg", "g2", "fp2", "jpg")
         val ocrSidecar = layout.stageArtifactFile("0001.jpg", ArtifactStage.OCR, "deadbeef")
         val keptGeneration = layout.generationFile("g1")
-        val keptGlossary = layout.glossaryFile(1)
         val manifest = ChapterArtifactManifest(
             chapterKey = "Chapter 1",
             pages = mapOf(
@@ -307,7 +302,6 @@ class ChapterArtifactEngineTest {
                     ),
                 ),
             ),
-            glossary = GlossaryPointer(fileName = keptGlossary, version = 1, versionFingerprint = "fp"),
         )
         io.write(committedImage, byteArrayOf(1))
         io.write(previousImage, byteArrayOf(2))
@@ -318,9 +312,6 @@ class ChapterArtifactEngineTest {
         io.write(keptGeneration, byteArrayOf(7))
         io.write(layout.generationFile("stale-gen"), byteArrayOf(8))
         io.write("Chapter 1_artifacts/context/legacy-orphan.json", byteArrayOf(9))
-        io.write(keptGlossary, byteArrayOf(11))
-        io.write(layout.glossaryFile(2), byteArrayOf(12))
-        io.write(layout.glossaryFile(9), byteArrayOf(13))
         // Legacy documents outside the managed tree survive.
         io.write("Chapter 1.json", byteArrayOf(14))
         io.write("Chapter 1_images/page.cleaned.abc.jpg", byteArrayOf(15))
@@ -336,12 +327,9 @@ class ChapterArtifactEngineTest {
         io.files.containsKey(keptGeneration) shouldBe true
         io.files.containsKey(layout.generationFile("stale-gen")) shouldBe false
         io.files.containsKey("Chapter 1_artifacts/context/legacy-orphan.json") shouldBe false
-        io.files.containsKey(keptGlossary) shouldBe true
-        io.files.containsKey(layout.glossaryFile(2)) shouldBe false
-        io.files.containsKey(layout.glossaryFile(9)) shouldBe false
         io.files.containsKey("Chapter 1.json") shouldBe true
         io.files.containsKey("Chapter 1_images/page.cleaned.abc.jpg") shouldBe true
-        result.deletedCount shouldBe 6
+        result.deletedCount shouldBe 4
     }
 
     @Test
@@ -522,30 +510,10 @@ class ChapterArtifactEngineTest {
     }
 
     @Test
-    fun `glossary republish advances the sidecar version and retention bounds it`() {
-        val io = FakeChapterDocumentIo()
-        val store = artifactStore(io)
-        val manifest = store.loadArtifact(legacySnapshot()).manifest
-        val second = store.publishGlossary(mapOf("sensei" to "professor")).shouldNotBeNull()
-        second.version shouldBe 2
-        val reread = store.readGlossary(second).shouldNotBeNull()
-        reread.entries shouldBe mapOf("sensei" to "professor")
-        // First version still readable as an immutable sidecar.
-        store.readGlossary(manifest.glossary.shouldNotBeNull()) shouldNotBe null
-
-        // Retention bounded to the pointed version only.
-        val updated = manifest.copy(glossary = second)
-        store.reconcileRetention(updated)
-        io.files.containsKey(layout.glossaryFile(1)) shouldBe false
-        io.files.containsKey(layout.glossaryFile(2)) shouldBe true
-    }
-
-    @Test
-    fun `empty legacy chapter produces an empty manifest and no glossary`() {
+    fun `empty legacy chapter produces an empty manifest`() {
         val io = FakeChapterDocumentIo()
         val result = artifactStore(io).loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
         result.manifest.pages.isEmpty() shouldBe true
-        result.manifest.glossary.shouldBeNull()
     }
 
     @Test
@@ -814,11 +782,6 @@ class ChapterArtifactEngineTest {
             lengthBytes = 4211L,
             lastModifiedMs = 1757030000000L,
         )
-        manifest.glossary shouldBe GlossaryPointer(
-            fileName = "Chapter 1_artifacts/glossary/chapter.glossary.1.json",
-            version = 1,
-            versionFingerprint = "2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
-        )
         val page = manifest.pages.getValue("0001.jpg")
         page.pageVersion shouldBe 3L
         page.committed.shouldNotBeNull().generationId shouldBe "g-1757040000000-0001jpg-5baa61e4"
@@ -846,9 +809,8 @@ class ChapterArtifactEngineTest {
         String(io.read(layout.manifestFileName)!!).contains("\"schemaVersion\":${ChapterArtifactManifest.SCHEMA_VERSION}") shouldBe true
         val reparsed = store.readManifest().shouldNotBeNull()
         reparsed shouldBe loaded.copy(updatedAtEpochMs = 999L)
-        // The old page record and glossary pointer survive the rewrite byte-for-byte.
+        // The old page record survives the rewrite byte-for-byte.
         reparsed.pages shouldBe loaded.pages
-        reparsed.glossary shouldBe loaded.glossary
         reparsed.legacyMigration shouldBe loaded.legacyMigration
         // Second load with unchanged bytes takes the fast path and stays equal.
         val reloaded = store.loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))

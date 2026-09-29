@@ -161,29 +161,6 @@ class ChapterArtifactEngine(
     /** Crash-safe manifest publication: temp, validate, rotate backup, rename. */
     fun publishManifest(manifest: ChapterArtifactManifest): Boolean =
         publishManifestInternal(stampChapterKey(manifest))
-    fun publishGlossary(entries: Map<String, String>): GlossaryPointer? {
-        val existing = readManifest()
-        val lastVersion = maxOf(
-            existing?.glossary?.version ?: 0,
-            latestGlossarySidecarVersion(),
-        )
-        val version = lastVersion + 1
-        val fingerprint = StageFingerprints.glossaryVersion(entries)
-        val glossary = ChapterGlossary(
-            version = version,
-            versionFingerprint = fingerprint,
-            entries = entries,
-        )
-        val name = layout.glossaryFile(version)
-        if (!documents.publishJson(name, glossary)) return null
-        return GlossaryPointer(fileName = name, version = version, versionFingerprint = fingerprint)
-    }
-
-    fun readGlossary(pointer: GlossaryPointer): ChapterGlossary? =
-        documents.readValidated<ChapterGlossary>(pointer.fileName) { glossary ->
-            glossary.schemaVersion == ChapterGlossary.SCHEMA_VERSION &&
-                glossary.kind == ChapterGlossary.KIND_VOCABULARY_HINTS
-        }
 
     /**
      * Reads the chapter's durable attempt-ledger document.
@@ -1873,12 +1850,12 @@ class ChapterArtifactEngine(
     /**
      * Bounded retention (lifecycle contract §15): preserves exactly the files
      * reachable from the manifest/generation graph — committed, candidate, and
-     * one-previous bundles, their generation records, referenced stage
-     * sidecars, and the pointed glossary version — and deletes every other
+     * one-previous bundles, their generation records, and referenced stage
+     * sidecars — and deletes every other
      * file under the managed artifact tree using store reachability, never
      * filename age alone. All comparisons use canonical root-relative paths;
      * only contained managed paths are ever deleted. Legacy documents outside
-     * the artifact tree (flat JSON, legacy glossary, summary, companion
+     * the artifact tree (flat JSON, summary, companion
      * images) are never touched.
      */
     fun reconcileRetention(
@@ -2121,13 +2098,6 @@ class ChapterArtifactEngine(
         } else {
             manifest.copy(chapterKey = layout.chapterKey)
         }
-
-    private fun latestGlossarySidecarVersion(): Int =
-        io.list(layout.glossaryDirectory).orEmpty()
-            .mapNotNull { name ->
-                Regex("""chapter\.glossary\.(\d+)\.json$""").find(name)?.groupValues?.get(1)?.toIntOrNull()
-            }
-            .maxOrNull() ?: 0
 
     internal fun backupName(): String = AtomicChapterDocuments.backupNameFor(layout.manifestFileName)
 }

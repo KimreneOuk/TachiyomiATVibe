@@ -323,7 +323,7 @@ internal class FinalizeWorker(
     /**
      * Runs standard-engine page translation after OCR preflight confirms the
      * complete corpus. It shares chapter completion semantics with the AI
-     * lane but does not use glossary, analysis, profile, or envelope work.
+     * lane but does not use analysis, profile, or envelope work.
      *
      * The run record carries the OCR corpus fingerprint. Translation proceeds in page order
      * through [standardTranslateOutcome]. Already terminal pages are not

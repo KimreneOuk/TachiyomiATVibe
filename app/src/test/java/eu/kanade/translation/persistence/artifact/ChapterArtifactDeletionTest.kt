@@ -17,9 +17,8 @@ class ChapterArtifactDeletionTest {
         lastModifiedMs = 1L,
     )
 
-    private fun manifest(source: ByteArray, glossary: ByteArray): ChapterArtifactManifest {
+    private fun manifest(source: ByteArray): ChapterArtifactManifest {
         val sourceIdentity = identity(source)
-        val glossaryIdentity = identity(glossary)
         return ChapterArtifactManifest(
             chapterKey = layout.chapterKey,
             legacySource = sourceIdentity,
@@ -29,11 +28,7 @@ class ChapterArtifactDeletionTest {
                 requestedSourceFileName = "Chapter 1.json",
                 resolvedSourceFileName = "Chapter 1.json.migrated",
                 sourcePreservedAtEpochMs = 2L,
-                glossaryPreservation = LegacyPreservationState.PRESERVED,
-                requestedGlossaryFileName = "Chapter 1.glossary.json",
-                resolvedGlossaryFileName = "Chapter 1.glossary.json.migrated",
                 sourceIdentity = sourceIdentity,
-                glossaryIdentity = glossaryIdentity,
                 migratedByVersionCode = 1L,
                 migratedAtEpochMs = 1L,
             ),
@@ -44,8 +39,7 @@ class ChapterArtifactDeletionTest {
     fun `raw delete removes authority tree and matching preserved names but retains mismatch`() {
         val io = FakeChapterDocumentIo()
         val source = "legacy-source".toByteArray()
-        val glossary = "legacy-glossary".toByteArray()
-        AtomicChapterDocuments(io).publishJson(layout.manifestFileName, manifest(source, glossary)) shouldBe true
+        AtomicChapterDocuments(io).publishJson(layout.manifestFileName, manifest(source)) shouldBe true
         io.write("${layout.manifestFileName}.tmp", byteArrayOf(1)) shouldBe true
         io.write("${layout.manifestFileName}.bak", byteArrayOf(2)) shouldBe true
         io.write("${layout.manifestFileName}.corrupt.deadbeef", byteArrayOf(3)) shouldBe true
@@ -81,8 +75,7 @@ class ChapterArtifactDeletionTest {
             supportsNoReplaceRename = false
         }
         val source = "legacy-source".toByteArray()
-        val glossary = "legacy-glossary".toByteArray()
-        AtomicChapterDocuments(io).publishJson(layout.manifestFileName, manifest(source, glossary)) shouldBe true
+        AtomicChapterDocuments(io).publishJson(layout.manifestFileName, manifest(source)) shouldBe true
         io.write("${layout.artifactRootDirectoryName}/pages/p/committed-g.json", byteArrayOf(4)) shouldBe true
         io.deleteNamesToFail += layout.manifestFileName
 

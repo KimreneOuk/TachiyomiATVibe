@@ -223,7 +223,6 @@ internal class ArtifactRetention(
         manifest.activeCandidateGenerationIds.forEach { generationId ->
             add(layout.generationFile(generationId))
         }
-        manifest.glossary?.fileName?.let(::add)
         // The attempt-ledger sidecar is always reachable —
         // it is not manifest-pointed, so without this rule the retention sweep
         // would delete the crash-loop evidence it exists to preserve.

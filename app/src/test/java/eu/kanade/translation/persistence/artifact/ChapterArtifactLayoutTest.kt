@@ -76,9 +76,8 @@ class ChapterArtifactLayoutTest {
     }
 
     @Test
-    fun `glossary names follow the layout contract`() {
+    fun `generation names follow the layout contract`() {
         val layout = ChapterArtifactLayout("c")
-        layout.glossaryFile(2) shouldBe "c_artifacts/glossary/chapter.glossary.2.json"
         layout.generationFile("gen1") shouldBe "c_artifacts/generations/${layout.generationSegment("gen1")}.json"
     }
 
@@ -101,7 +100,6 @@ class ChapterArtifactLayoutTest {
             "c_artifacts/pages",
             "c_artifacts/context",
             "c_artifacts/generations",
-            "c_artifacts/glossary",
             // The attempt-ledger sidecar directory.
             "c_artifacts/attempts",
             //  Stage 1: versioned sidecar directories.

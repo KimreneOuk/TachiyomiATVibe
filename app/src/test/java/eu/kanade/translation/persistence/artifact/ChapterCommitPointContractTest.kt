@@ -70,11 +70,8 @@ class ChapterCommitPointContractTest {
 
     private fun legacySnapshot(page: PageTranslation) = ArtifactSeed(
         pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
-        glossary = emptyMap(),
         legacyIdentity = identity("v1"),
         sourceFileName = "Chapter 1.json",
-        glossaryFileName = null,
-        glossaryIdentity = null,
         migratedByVersionCode = 63L,
         migratedAtEpochMs = 42L,
     )

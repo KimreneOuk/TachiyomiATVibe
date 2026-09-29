@@ -59,7 +59,6 @@ class ChapterContextLegacySnapshotCompatibilityTest {
             chapterKey = layout.chapterKey,
             targetLang = "en",
             contentFingerprint = fingerprint,
-            glossaryFingerprint = "legacy-glossary-fingerprint",
             profileInputFingerprint = "legacy-profile-fingerprint",
             characterAndTermSheet = "LEGACY PROFILE SHEET",
             rollingContext = "OUTSIDE WINDOW => stale term",

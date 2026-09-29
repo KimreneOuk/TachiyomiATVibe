@@ -7,7 +7,6 @@ import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.WriterOrigin
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
@@ -17,7 +16,7 @@ import org.junit.jupiter.api.Test
 /**
  * Covers staged mutation publication at commit points or after the debounce,
  * candidate-promotion merging, file-backed read-back validation, stop-time
- * draining, second-writer flushing, glossary flushing, and disabled-flag behavior.
+ * draining, second-writer flushing, and disabled-flag behavior.
  */
 class GroupCommitSliceBTest {
 
@@ -231,40 +230,6 @@ class GroupCommitSliceBTest {
                     // reuse this layout key cannot force-flush this test's store.
                     registry.remove(1L)?.closeAndFlush()
                 }
-            }
-        }
-    }
-
-    @Test
-    fun `Amendment F glossary force-flush flushes staged buffer before glossary pointer publish`() {
-        runBlocking {
-            GroupCommitConfiguration.withFlag(true) {
-                val io = FakeChapterDocumentIo().apply { fileBacked = true }
-                val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
-                val initialManifest = ChapterArtifactManifest(
-                    chapterKey = layout.chapterKey,
-                    pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
-                )
-                AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
-
-                val store = ChapterTranslationStore(
-                    translationFile = null,
-                    fileCreator = null,
-                    initialPages = mapOf("0001.jpg" to PageTranslation()),
-                    artifactStore = artifactStore,
-                    initialArtifactManifest = initialManifest,
-                )
-
-                // Stage an intermediate mutation
-                store.stagePageMutationLocked("0001.jpg", intermediatePage())
-                store.hasStagedMutations() shouldBe true
-
-                // When glossary is updated, it must force-flush staged mutations first
-                store.glossaryStore.updateGlossary(mapOf("apple" to "pomme"))
-
-                // Staged mutations were flushed to durable truth before glossary pointer publish
-                store.hasStagedMutations() shouldBe false
-                store.artifactManifest?.glossary shouldNotBe null
             }
         }
     }

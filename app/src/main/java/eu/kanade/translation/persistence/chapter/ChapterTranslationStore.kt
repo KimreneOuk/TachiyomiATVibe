@@ -45,7 +45,6 @@ import eu.kanade.translation.persistence.artifact.SourceIdentity
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.internal.ChapterAttemptLedger
-import eu.kanade.translation.persistence.internal.ChapterGlossaryStore
 import eu.kanade.translation.persistence.internal.PageStageLeaseTable
 import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
 import eu.kanade.translation.persistence.internal.StoreStatusInputs
@@ -359,10 +358,6 @@ class ChapterTranslationStore(
     ) : AbstractCoroutineContextElement(Key) {
         companion object Key : CoroutineContext.Key<GenerationContext>
     }
-
-    // Glossary mutations use the store mutex; the scheduler persists the same
-    // collaborator state when a page mutation marks the store dirty.
-    internal val glossaryStore = ChapterGlossaryStore(this)
 
     // Attempt records are written under the store mutex; persistence failures
     // fail open, and memory-only stores keep no durable ledger.
@@ -2959,20 +2954,8 @@ class ChapterTranslationStore(
     private fun snapshotPages(): Map<String, PageTranslation> =
         pages.entries.associate { (key, page) -> key to page.detachedCopy() }
 
-    fun glossarySnapshot(): Map<String, String> = glossaryStore.glossarySnapshot()
-
     /** Durable translation status derived from the committed artifact state. */
     fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
-
-    fun translatedPairs(): List<Pair<String, String>> = glossaryStore.translatedPairs()
-
-    suspend fun updateGlossary(updated: Map<String, String>) {
-        glossaryStore.updateGlossary(updated)
-    }
-
-    suspend fun foldPageContribution(pageKey: String, pairs: List<Pair<String, String>>) {
-        glossaryStore.foldPageContribution(pageKey, pairs)
-    }
 
     fun readReusableProfile(): ChapterTranslationProfile? {
         val artifact = artifactEngine ?: return null
@@ -2999,13 +2982,6 @@ class ChapterTranslationStore(
         }
         return profile
     }
-
-    internal fun loadGlossary() {
-        glossaryStore.loadGlossary()
-    }
-
-    // Called by the scheduler while it serializes a durable flush.
-    internal fun persistGlossaryLocked(): Boolean = glossaryStore.persistGlossaryLocked()
 
     private fun PageTranslation.isQueueVisibleTransient(): Boolean {
         return ocrStatus.isQueueTransient() ||
@@ -3151,7 +3127,7 @@ class ChapterTranslationStore(
                 initialRetiredCleanedImages = retiredCleanedImages,
                 artifactParent = parent,
                 artifactFileName = fileName,
-            ).also { it.loadGlossary() }
+            )
         }
 
         /**

@@ -23,9 +23,7 @@ import java.io.IOException
  *
  * Each chunk request asks for a free-form bounded summary. Provider responses
  * do not have a response schema, block-id pattern, or hash-echo requirement;
- * that strict contract repeatedly failed with real providers. One structured
- * glossary is produced per chapter by [postGlossarySynthesis] over the stored
- * summaries.
+ * that strict contract repeatedly failed with real providers.
  */
 class AnalysisEngineTransport(
     private val engine: AiTranslator,
@@ -71,55 +69,6 @@ class AnalysisEngineTransport(
                 e,
             )
         }
-
-    /**
-     * ONE chapter-level synthesis call: the durable chunk summaries in, a
-     * small CHARACTER/PLACE glossary out. Same transport guarantees (typed
-     * failures, one raw attempt); the caller owns admission/retry.
-     */
-    suspend fun postGlossarySynthesis(
-        sourceLanguage: String,
-        targetLanguage: String,
-        summaries: List<String>,
-    ): String {
-        val userPrompt = buildString {
-            append(SYNTHESIS_USER_INSTRUCTIONS_HEADER)
-            append("Source language: ").append(sourceLanguage).append('\n')
-            append("Target language: ").append(targetLanguage).append("\n\n")
-            summaries.forEachIndexed { index, summary ->
-                append("Chunk ").append(index + 1).append(":\n")
-                append(summary.trim()).append("\n\n")
-            }
-        }
-        return try {
-            engine.postStructuredAnalysisRaw(
-                systemPrompt = SYNTHESIS_SYSTEM_PROMPT,
-                userPrompt = userPrompt,
-                maxOutputTokens = clampedOutputBudget(
-                    systemPrompt = SYNTHESIS_SYSTEM_PROMPT,
-                    userPrompt = userPrompt,
-                    requestedOutputTokens = SYNTHESIS_MAX_OUTPUT_TOKENS,
-                    driftReserveTokens = ENGINE_FRAMING_DRIFT_TOKENS,
-                ),
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: ProviderFailureException) {
-            throw e
-        } catch (e: IOException) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT t924 glossary synthesis IO failure: ${e::class.java.simpleName}"
-            }
-            throw ProviderFailureException(
-                ProviderFailure(
-                    kind = ProviderFailureKind.NETWORK,
-                    retryability = ProviderFailureRetryability.PAUSE,
-                    safeSummary = "glossary synthesis network failure",
-                ),
-                e,
-            )
-        }
-    }
 
     /**
      * Execution-time output-budget clamp (the translation envelopes'
@@ -181,17 +130,11 @@ class AnalysisEngineTransport(
          */
         const val ENGINE_FRAMING_DRIFT_TOKENS = 128
 
-        /** A usable analysis/synthesis answer cannot be shorter than this. */
+        /** A usable analysis answer cannot be shorter than this. */
         const val MIN_ANALYSIS_OUTPUT_TOKENS = 256
-
-        /** The chapter-level synthesis answer is a small capped glossary. */
-        const val SYNTHESIS_MAX_OUTPUT_TOKENS = 768
 
         /** Hard per-chunk summary cap (chars) — also the durable bound. */
         const val MAX_SUMMARY_CHARS = 1_200
-
-        /** Total summaries fed to one synthesis call (chars) — context diet. */
-        const val MAX_SYNTHESIS_INPUT_CHARS = 8_000
 
         /**
          * The per-chunk framing prompt: free-form, bounded, no response
@@ -218,27 +161,5 @@ class AnalysisEngineTransport(
             "Summarize the following chapter chunk request (protocol " +
                 "tachiyomiat-analysis, schemaVersion 1, free-form summary " +
                 "response). Request envelope:"
-
-        /** The one-shot chapter glossary synthesis prompts. */
-        const val SYNTHESIS_SYSTEM_PROMPT =
-            "You are a manga translation consistency engine. You receive " +
-                "ordered plain-text summaries of one chapter's chunks. Reply " +
-                "with ONE raw JSON array — no markdown fences, no commentary " +
-                "— of the chapter's recurring identity anchors ONLY, shaped " +
-                "exactly: [{\"kind\":\"CHARACTER\",\"source\":\"<name exactly " +
-                "as written in the source language>\",\"target\":\"<one " +
-                "consistent rendering in the target language>\"," +
-                "\"aliases\":[\"<other source spellings>\"]},{\"kind\":" +
-                "\"PLACE\",\"source\":\"...\",\"target\":\"...\"," +
-                "\"aliases\":[\"...\"]}] . Rules: include only characters " +
-                "that appear in more than one chunk or clearly matter; at " +
-                "most 16 CHARACTER entries and 8 PLACE entries; keep every " +
-                "name short (no titles or honorifics inside the name); no " +
-                "plot facts, no relationships, no terms beyond characters " +
-                "and places — extra kinds or entries are noise and will be " +
-                "dropped. If nothing recurs, reply exactly: []"
-
-        const val SYNTHESIS_USER_INSTRUCTIONS_HEADER =
-            "Build the chapter glossary from these chunk summaries:\n"
     }
 }
