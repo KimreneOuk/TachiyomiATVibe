@@ -46,7 +46,6 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.MethodOrderer
 import org.junit.jupiter.api.Order
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.TestMethodOrder
@@ -77,11 +76,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
-//  test-stability quarantine: the @BeforeAll boot await can starve under
-// CI-scale JVM churn (2-core runner, full-suite parallel load) even though it
-// is 5x green locally with bounded workers; tracked for stabilization.
-// Runs with -PincludeQuarantinedTests.
-@Tag("quarantined-flaky")
+// Characterized 2026-09-30: two full-suite runs timed out in @BeforeAll with
+// screen state Loading. The second exposed the cause: the constructor coroutine
+// hit an NPE in carryingTranslationSnapshots because translationSnapshots had
+// not been initialized yet. Production fix 581c5bf launches bootstrap after all
+// instance fields initialize. Focused Standard Release rerun passed 5/5; failure
+// evidence is retained under %TEMP%\e22-batch-lease-flip\evidence.
 class MangaScreenModelTranslationDrawerTest {
 
     // A real single-threaded main executor (as in MigratorTest); the JVM has no
