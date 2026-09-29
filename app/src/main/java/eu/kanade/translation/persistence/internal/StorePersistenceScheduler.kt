@@ -3,11 +3,14 @@ package eu.kanade.translation.persistence.internal
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -16,26 +19,45 @@ import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
-// This collaborator serializes durable writes and retention work. Its own
-// scope owns debounce jobs; page mutations and lifecycle transitions still
-// update store state under the store mutex. markDefunct uses the same bounded
-// join timeout when it drains an active persistence job.
-internal class StorePersistenceScheduler(private val store: ChapterTranslationStore) {
+// This collaborator serializes durable writes and retention work. It owns the
+// persistence state storage and its coroutine scope, while the store mutex is
+// the only lock that protects mutations of that state. Scheduler-to-store
+// flush paths acquire the store mutex; store-to-scheduler schedulePersist calls
+// are synchronous and never acquire a scheduler-side state lock.
+internal class StorePersistenceScheduler(
+    private val store: ChapterTranslationStore,
+    dispatcher: CoroutineDispatcher,
+) {
 
-    val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val persistScope = CoroutineScope(SupervisorJob() + dispatcher)
 
     internal companion object {
         internal const val PERSIST_JOIN_TIMEOUT_MS = 2_000L
-        private const val PERSIST_DEBOUNCE_MS = 250L
+        internal const val PERSIST_DEBOUNCE_MS = 250L
     }
 
     // State resolves through the owning store at each call.
     private val mutex get() = store.mutex
 
-    /** Serializes scheduled and explicit barriers so no task can outrun flush(). */
+    /**
+     * This lock serializes flush transactions only. It never guards persistence
+     * state and schedulePersist never acquires it.
+     */
     private val flushMutex = Mutex()
 
     private val defunct get() = store.isDefunct
+
+    // Scheduler-owned storage. Every mutation below, including updates from
+    // store methods, is made while holding store.mutex; this class deliberately
+    // has no second mutex for these fields or collections. The staged debounce
+    // job runs in persistScope and re-enters through mutex.withLock before it
+    // touches staged state or calls back into the store.
+    internal var dirty = false
+    internal var persistJob: Job? = null
+    internal val stagedPageKeys = LinkedHashSet<String>()
+    internal var stagedDebounceJob: Job? = null
+    internal val pendingLazyMutations = LinkedHashMap<String, ChapterTranslationStore.PendingLazyMutation>()
+    internal val pendingLazyTasks = java.util.ArrayDeque<ChapterTranslationStore.LazyPersistenceTask>()
 
     private val artifactStore get() = store.artifactEngine
 
@@ -46,18 +68,6 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
     private val fileCreator: (() -> UniFile)? get() = store.fileCreator
 
     private val artifactParent: UniFile? get() = store.artifactParent
-
-    private var dirty: Boolean
-        get() = store.dirty
-        set(value) {
-            store.dirty = value
-        }
-
-    private var persistJob: Job?
-        get() = store.persistJob
-        set(value) {
-            store.persistJob = value
-        }
 
     private var persistCount: Int
         get() = store.persistCount
@@ -78,10 +88,13 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         // tasks first, then publish the corresponding live page mutations and
         // artifact transactions under the existing facade lock.
         while (true) {
-            val task = store.takeLazyPersistenceTask()
+            val task = mutex.withLock { store.takeLazyPersistenceTaskLocked() }
             if (task == null) break
             try {
-                if (store.isLazyGenerationCurrent(task.generation)) {
+                val generationIsCurrent = mutex.withLock {
+                    store.isLazyGenerationCurrent(task.generation)
+                }
+                if (generationIsCurrent) {
                     val completed = try {
                         task.work()
                     } catch (failure: Throwable) {
@@ -202,6 +215,11 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         }
     }
 
+    /**
+     * Synchronous store-to-scheduler handoff. Caller holds store.mutex. This
+     * method never acquires flushMutex or any scheduler-side state lock; its
+     * state writes are serialized by the caller's store mutex.
+     */
     internal fun schedulePersist(markPageDirty: Boolean = true) {
         if (markPageDirty) dirty = true
         // A memory-only store has no future persistence target. Avoid leaving a
@@ -209,16 +227,29 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
         // remains available for deterministic callers and preserves dirty state.
         if (translationFile == null && fileCreator == null && artifactParent == null) return
         if (persistJob?.isActive == true) return
-        persistJob = persistScope.launch {
-            delay(PERSIST_DEBOUNCE_MS)
+        val scheduledJob = persistScope.launch {
+            val runningJob = currentCoroutineContext()[Job]
             try {
+                delay(PERSIST_DEBOUNCE_MS)
                 flush()
             } finally {
-                persistJob = null
-                if (store.hasPendingLazyPersistence()) {
-                    schedulePersist(markPageDirty = false)
+                withContext(NonCancellable) {
+                    mutex.withLock {
+                        if (persistJob === runningJob) {
+                            persistJob = null
+                            // Preserve the existing completion behavior: pending
+                            // lazy work may schedule a replacement even as the
+                            // owning store is being evicted. markDefunct keeps
+                            // that replacement reference, and its flush paths
+                            // still take the mutex and honor defunct/generation guards.
+                            if (store.hasPendingLazyPersistenceLocked()) {
+                                schedulePersist(markPageDirty = false)
+                            }
+                        }
+                    }
                 }
             }
         }
+        persistJob = scheduledJob
     }
 }

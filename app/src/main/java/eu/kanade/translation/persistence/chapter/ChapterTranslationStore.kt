@@ -54,8 +54,9 @@ import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -195,6 +196,7 @@ class ChapterTranslationStore(
     initialRetiredCleanedImages: Map<String, Set<String>> = emptyMap(),
     internal val artifactParent: UniFile? = null,
     private val artifactFileName: String? = null,
+    persistenceDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /** Explicit memory, lazy-durable, or opened-durable storage mode. */
     internal var engineMode: eu.kanade.translation.persistence.internal.ChapterStoreEngineMode =
@@ -388,12 +390,11 @@ class ChapterTranslationStore(
     // fail open, and memory-only stores keep no durable ledger.
     private val attemptLedger = ChapterAttemptLedger(this)
 
-    // The scheduler owns its persistence scope. The store keeps mutation state
-    // here because page replacement, rekeying, transient cleanup, and teardown
-    // update it under the store mutex.
-    internal var dirty = false
-    internal var persistJob: Job? = null
-    private val persistenceScheduler = StorePersistenceScheduler(this)
+    // Persistence state is stored by the scheduler, but every mutation is
+    // serialized by this store's mutex. Store-to-scheduler scheduling is a
+    // synchronous handoff that does not take a scheduler lock; scheduler flush
+    // paths come back through mutex.withLock before reading or changing state.
+    private val persistenceScheduler = StorePersistenceScheduler(this, persistenceDispatcher)
 
     /**
      * Active reader stores publish live state first.  Their durable artifact
@@ -421,7 +422,7 @@ class ChapterTranslationStore(
         lastBatchWriteGateRejectionDiagnostic = diagnostic
     }
 
-    private data class PendingLazyMutation(
+    internal data class PendingLazyMutation(
         val pageKey: String,
         val previous: PageTranslation?,
         val updated: PageTranslation,
@@ -434,9 +435,6 @@ class ChapterTranslationStore(
         val work: suspend () -> Boolean,
         val result: CompletableDeferred<Boolean>,
     )
-
-    private val pendingLazyMutations = LinkedHashMap<String, PendingLazyMutation>()
-    private val pendingLazyTasks = java.util.ArrayDeque<LazyPersistenceTask>()
 
     /** Enables memory-first publication for a registered production chapter. */
     internal fun enableLazyPersistence() {
@@ -461,45 +459,50 @@ class ChapterTranslationStore(
         mutex.withLock {
             if (defunct || generation != expectedGeneration) {
                 result.complete(false)
-                return@withLock
+            } else {
+                persistenceScheduler.pendingLazyTasks.addLast(
+                    LazyPersistenceTask(
+                        generation = expectedGeneration,
+                        work = work,
+                        result = result,
+                    ),
+                )
             }
-            pendingLazyTasks.addLast(
-                LazyPersistenceTask(
-                    generation = expectedGeneration,
-                    work = work,
-                    result = result,
-                ),
-            )
+            // Keep this synchronous store-to-scheduler call under the same
+            // mutex as the queue mutation, so the scheduler's job reference
+            // has the same single-writer boundary as the queued task.
+            persistenceScheduler.schedulePersist(markPageDirty = false)
         }
-        persistenceScheduler.schedulePersist(markPageDirty = false)
         return result
     }
 
-    internal suspend fun takeLazyPersistenceTask(): LazyPersistenceTask? = mutex.withLock {
-        if (pendingLazyTasks.isEmpty()) null else pendingLazyTasks.removeFirst()
-    }
+    /** Caller holds [mutex]; scheduler flushes call this only from mutex.withLock. */
+    internal fun takeLazyPersistenceTaskLocked(): LazyPersistenceTask? =
+        persistenceScheduler.pendingLazyTasks.pollFirst()
 
-    internal suspend fun hasPendingLazyPersistence(): Boolean = mutex.withLock {
-        pendingLazyTasks.isNotEmpty() || pendingLazyMutations.isNotEmpty()
-    }
+    /** Caller holds [mutex]; scheduler uses this to decide whether to reschedule a flush. */
+    internal fun hasPendingLazyPersistenceLocked(): Boolean =
+        persistenceScheduler.pendingLazyTasks.isNotEmpty() || persistenceScheduler.pendingLazyMutations.isNotEmpty()
 
     // Intermediate page mutations share a bounded buffer and debounce window.
-    private val stagedPageKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    private var stagedDebounceJob: Job? = null
+    internal suspend fun hasStagedMutations(): Boolean = mutex.withLock {
+        persistenceScheduler.stagedPageKeys.isNotEmpty()
+    }
 
-    internal fun hasStagedMutations(): Boolean = stagedPageKeys.isNotEmpty()
-
+    /** Caller holds [mutex]; the scheduler-scope debounce re-enters through mutex.withLock. */
     internal fun stagePageMutationLocked(pageKey: String, updated: PageTranslation) {
-        stagedPageKeys.add(pageKey)
+        persistenceScheduler.stagedPageKeys.add(pageKey)
         persistenceScheduler.schedulePersist(markPageDirty = false)
-        if (stagedPageKeys.size >= GroupCommitConfiguration.MAX_STAGED_PAGES) {
-            stagedDebounceJob?.cancel()
-            stagedDebounceJob = null
+        if (persistenceScheduler.stagedPageKeys.size >= GroupCommitConfiguration.MAX_STAGED_PAGES) {
+            persistenceScheduler.stagedDebounceJob?.cancel()
+            persistenceScheduler.stagedDebounceJob = null
             flushStagedMutationsLocked(CommitPoint.BATCH_CHUNK)
         } else {
-            stagedDebounceJob?.cancel()
-            stagedDebounceJob = persistenceScheduler.persistScope.launch {
+            persistenceScheduler.stagedDebounceJob?.cancel()
+            persistenceScheduler.stagedDebounceJob = persistenceScheduler.persistScope.launch {
                 kotlinx.coroutines.delay(GroupCommitConfiguration.DEBOUNCE_MS)
+                // This scheduler-scope debounce job deliberately enters the
+                // store mutex before touching staged state or the store.
                 mutex.withLock {
                     flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
                 }
@@ -509,9 +512,9 @@ class ChapterTranslationStore(
 
     internal fun flushStagedMutationsLocked(commitPoint: CommitPoint = CommitPoint.EXPLICIT_FLUSH): Boolean {
         if (defunct) return true
-        stagedDebounceJob?.cancel()
-        stagedDebounceJob = null
-        if (stagedPageKeys.isEmpty()) {
+        persistenceScheduler.stagedDebounceJob?.cancel()
+        persistenceScheduler.stagedDebounceJob = null
+        if (persistenceScheduler.stagedPageKeys.isEmpty()) {
             if (commitPoint == CommitPoint.EXPLICIT_FLUSH) {
                 artifactManifest?.let { manifest ->
                     artifactEngine?.publishManifestInternal(manifest, syncToDisk = true)
@@ -519,8 +522,8 @@ class ChapterTranslationStore(
             }
             return true
         }
-        val keys = stagedPageKeys.toList()
-        stagedPageKeys.clear()
+        val keys = persistenceScheduler.stagedPageKeys.toList()
+        persistenceScheduler.stagedPageKeys.clear()
         val store = artifactEngine ?: return false
         var current = artifactManifest ?: return false
         val sync = (commitPoint == CommitPoint.EXPLICIT_FLUSH || commitPoint == CommitPoint.BATCH_CHUNK)
@@ -563,6 +566,7 @@ class ChapterTranslationStore(
      * Caller holds [mutex].
      */
     internal fun flushLazyMutationsLocked(): Boolean {
+        val pendingLazyMutations = persistenceScheduler.pendingLazyMutations
         if (pendingLazyMutations.isEmpty()) return true
         val pending = pendingLazyMutations.values.toList()
         pendingLazyMutations.clear()
@@ -599,22 +603,31 @@ class ChapterTranslationStore(
     @Volatile
     private var defunct = false
 
+    /**
+     * Eviction snapshots and joins the active persist job outside [mutex]. If
+     * that job installs a replacement in its completion handler, preserve the
+     * replacement reference and let its defunct-guarded flush finish; this
+     * boundary deliberately does not loop to drain replacement jobs.
+     */
     suspend fun markDefunct() = withContext(NonCancellable) {
-        persistJob?.let { pendingPersist ->
-            val completed = withTimeoutOrNull(PERSIST_JOIN_TIMEOUT_MS) { pendingPersist.join() }
+        val pendingPersist = mutex.withLock { persistenceScheduler.persistJob }
+        pendingPersist?.let { pending ->
+            val completed = withTimeoutOrNull(PERSIST_JOIN_TIMEOUT_MS) { pending.join() }
             if (completed == null) {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT store persist did not finish within ${PERSIST_JOIN_TIMEOUT_MS} ms before eviction"
                 }
             }
-            pendingPersist.cancel()
+            pending.cancel()
         }
-        persistJob = null
         mutex.withLock {
+            if (persistenceScheduler.persistJob === pendingPersist) {
+                persistenceScheduler.persistJob = null
+            }
             defunct = true
             generation++
-            stagedDebounceJob?.cancel()
-            stagedDebounceJob = null
+            persistenceScheduler.stagedDebounceJob?.cancel()
+            persistenceScheduler.stagedDebounceJob = null
             synchronized(pageLeases) { pageLeases.clear() }
         }
         logcat(LogPriority.WARN) { "TachiyomiAT store marked defunct: generation=$generation" }
@@ -1930,7 +1943,7 @@ class ChapterTranslationStore(
                     promoteDisplayIfReadyLocked(pageKey, owned)
                 }
             }
-            dirty = !persistLocked()
+            persistenceScheduler.dirty = !persistLocked()
             _state.value = snapshotPages()
             _display.value = displaySnapshotLocked()
         }
@@ -1990,7 +2003,7 @@ class ChapterTranslationStore(
             retiredCleanedImages.keys.toList().forEach { pageKey ->
                 if (pageKey !in updatedPages) retiredCleanedImages.remove(pageKey)
             }
-            dirty = true
+            persistenceScheduler.dirty = true
             schedulePersist()
             _state.value = snapshotPages()
             _display.value = displaySnapshotLocked()
@@ -2200,7 +2213,7 @@ class ChapterTranslationStore(
                 pages.keys.forEach { pageKey ->
                     cancelArtifactCandidateLocked(pageKey)
                 }
-                dirty = !persistLocked()
+                persistenceScheduler.dirty = !persistLocked()
                 _state.value = snapshotPages()
                 _display.value = displaySnapshotLocked()
             }
@@ -2267,7 +2280,7 @@ class ChapterTranslationStore(
         val shouldQueueArtifact = shouldPersistUpdate(previous, updated) ||
             artifactManifest?.pages?.containsKey(pageKey) != true
         if (shouldQueueArtifact) {
-            pendingLazyMutations[pageKey] = PendingLazyMutation(
+            persistenceScheduler.pendingLazyMutations[pageKey] = PendingLazyMutation(
                 pageKey = pageKey,
                 previous = previous?.detachedCopy(),
                 updated = updated.detachedCopy(),
@@ -2284,7 +2297,7 @@ class ChapterTranslationStore(
             )
         }
         promoteDisplayIfReadyLocked(pageKey, updated)
-        if (shouldQueueArtifact) dirty = true
+        if (shouldQueueArtifact) persistenceScheduler.dirty = true
         _state.value = snapshotPages()
         _display.value = displaySnapshotLocked()
         if (shouldQueueArtifact) persistenceScheduler.schedulePersist(markPageDirty = false)
@@ -2333,7 +2346,7 @@ class ChapterTranslationStore(
             // that use an in-memory store as a persistence probe: an
             // explicit flush still attempts once and keeps the dirty bit
             // set because there is no durable artifact to publish.
-            dirty = true
+            persistenceScheduler.dirty = true
             return true
         }
         if (engineMode !is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable &&
@@ -3088,6 +3101,10 @@ class ChapterTranslationStore(
      */
     fun reconcileArtifactRetentionAsync() = persistenceScheduler.reconcileArtifactRetentionAsync()
 
+    /**
+     * Store-to-scheduler boundary. Callers hold [mutex]; this handoff is
+     * synchronous and does not acquire a scheduler-side lock.
+     */
     internal fun schedulePersist(markPageDirty: Boolean = true) =
         persistenceScheduler.schedulePersist(markPageDirty)
 
