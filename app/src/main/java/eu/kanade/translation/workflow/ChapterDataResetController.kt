@@ -133,7 +133,9 @@ internal class ChapterDataResetController(
         removeFromTranslationQueue(chapter)
         translator.cancelTranslatorJobAndJoin()
         disposeBatchTracker(chapterId)
-        unregisterActiveTranslationStore(chapterId)
+        withContext(Dispatchers.IO) {
+            unregisterActiveTranslationStore(chapterId)
+        }
         streamRegistry.clearChapter(source.id, manga.id, chapterId)
         var authorityRemoved = true
         artifactDeletionPlan?.let { plan ->
