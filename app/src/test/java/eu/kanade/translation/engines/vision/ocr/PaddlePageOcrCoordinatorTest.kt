@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test
 class PaddlePageOcrCoordinatorTest {
 
     @Test
-    fun `B1 fixture rows map back to every page leaf before the page result is published`() = runBlocking {
+    fun `B1 fixture rows map back to every page leaf before the page result is published`() = runBlocking<Unit> {
         val fixture = PaddleOcrB1FixtureFactory.fallbackHeavy()
         val session = eu.kanade.translation.engines.vision.ocr.PaddleB1FakeSession(
             crops = fixture.leaves.map { it.crop },
@@ -56,7 +56,7 @@ class PaddlePageOcrCoordinatorTest {
     }
 
     @Test
-    fun `manual auto and chapter modes keep visible page leaves page scoped`() = runBlocking {
+    fun `manual auto and chapter modes keep visible page leaves page scoped`() = runBlocking<Unit> {
         assertTrue(PaddlePageOcrMode.MANUAL.priority < PaddlePageOcrMode.AUTO.priority)
         assertTrue(PaddlePageOcrMode.AUTO.priority < PaddlePageOcrMode.CHAPTER.priority)
 
@@ -85,7 +85,7 @@ class PaddlePageOcrCoordinatorTest {
     }
 
     @Test
-    fun `different page generation cannot enter a visible page tensor`() = runBlocking {
+    fun `different page generation cannot enter a visible page tensor`() = runBlocking<Unit> {
         val page = PaddleOcrPageGeneration("chapter/page-visible", generation = 9L)
         val otherPage = page.copy(pageId = "chapter/page-lookahead")
         val releases = linkedMapOf<String, Int>()
@@ -101,7 +101,7 @@ class PaddlePageOcrCoordinatorTest {
     }
 
     @Test
-    fun `cancellation releases submitted leaves and retry publishes a complete result`() = runBlocking {
+    fun `cancellation releases submitted leaves and retry publishes a complete result`() = runBlocking<Unit> {
         val page = PaddleOcrPageGeneration("chapter/page-cancel", generation = 11L)
         val cancelledLeaves = leaves(page, count = 4)
         var shouldCancel = true

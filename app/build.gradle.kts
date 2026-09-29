@@ -200,6 +200,71 @@ kotlin {
 
 val testRunBlockingAllowlist = file("config/runblocking-allowlist.txt")
 
+/**
+ * Count actual @Test-annotated functions and their quarantine tags. Test
+ * sources keep one test class per file (helper classes may also be present),
+ * so a class-level quarantine tag excludes that file's test methods.
+ */
+fun testMethodCounts(): Pair<Int, Int> {
+    val testAnnotation = Regex("""^@Test(?:\s*\([^)]*\))?$""")
+    val quarantineTag = Regex("""@Tag\s*\(\s*"quarantined-flaky"\s*\)""")
+    val classDeclaration = Regex(
+        """^(?:(?:open|abstract|internal|private|public|sealed|data|enum|annotation|inner|final)\s+)*class\b""",
+    )
+    val functionDeclaration = Regex(
+        """^(?:(?:public|private|internal|protected|suspend|open|override|final|inline|operator|infix|tailrec|external)\s+)*fun\b""",
+    )
+    val inlineFunctionDeclaration = Regex("""\bfun\b""")
+    val testSources = fileTree("src/test") { include("**/*.kt") }.files
+    var testMethodCount = 0
+    var quarantinedTestMethodCount = 0
+
+    testSources.forEach { sourceFile ->
+        val lines = sourceFile.readLines()
+        val classIsQuarantined = lines.indices.any { index ->
+            if (!quarantineTag.containsMatchIn(lines[index])) {
+                return@any false
+            }
+            val nextDeclaration = (index + 1 until lines.size)
+                .firstOrNull { next ->
+                    val line = lines[next].trim()
+                    line.isNotEmpty() && !line.startsWith("//") && !line.startsWith("@")
+                }
+            nextDeclaration != null && classDeclaration.containsMatchIn(lines[nextDeclaration].trim())
+        }
+        val pendingAnnotations = mutableListOf<String>()
+
+        fun countTestMethod(annotations: List<String>, classQuarantined: Boolean) {
+            if (annotations.any(testAnnotation::matches)) {
+                testMethodCount++
+                if (classQuarantined || annotations.any(quarantineTag::containsMatchIn)) {
+                    quarantinedTestMethodCount++
+                }
+            }
+        }
+
+        lines.forEach { sourceLine ->
+            val line = sourceLine.trim()
+            when {
+                line.isEmpty() || line.startsWith("//") || line.startsWith("/*") || line.startsWith("*") -> Unit
+                line.startsWith("@") && inlineFunctionDeclaration.containsMatchIn(line) -> {
+                    val functionStart = inlineFunctionDeclaration.find(line)?.range?.first ?: line.length
+                    countTestMethod(pendingAnnotations + line.substring(0, functionStart).trim(), classIsQuarantined)
+                    pendingAnnotations.clear()
+                }
+                line.startsWith("@") -> pendingAnnotations += line
+                functionDeclaration.containsMatchIn(line) -> {
+                    countTestMethod(pendingAnnotations, classIsQuarantined)
+                    pendingAnnotations.clear()
+                }
+                else -> pendingAnnotations.clear()
+            }
+        }
+    }
+
+    return testMethodCount to quarantinedTestMethodCount
+}
+
 tasks.register("checkTestRunBlocking") {
     group = "verification"
     description = "Fails when a unit test uses the expression-body `= runBlocking {` form, " +
@@ -215,22 +280,37 @@ tasks.register("checkTestRunBlocking") {
             .filter { it.isNotEmpty() && !it.startsWith("#") }
 
         // Defect form: `= runBlocking {` or `= runBlocking` at end of line.
-        val risky = Regex("""=\s*runBlocking\s*(\{|$)""")
+        val risky = Regex("""=\s*(kotlinx\.coroutines\.)?runBlocking\s*(\{|$)""")
 
         val offenders = mutableListOf<String>()
+        val testAnnotation = Regex("""@Test\b(?:\s*\([^)]*\))?""")
+        val functionDeclaration = Regex(
+            """^(?:(?:public|private|protected|internal|suspend|open|override|final|inline|operator|infix|tailrec|external)\s+)*fun\b""",
+        )
         fileTree("src/test") { include("**/*.kt") }.forEach { file ->
             val relPath = file.toRelativeString(projectDir).replace('\\', '/')
             if (allowlist.any { relPath.contains(it) }) return@forEach
+            var pendingTestAnnotation = false
             file.readLines().forEachIndexed { index, line ->
-                val match = risky.find(line) ?: return@forEachIndexed
-                // Only function expression bodies are defective; bare statement
-                // forms (`runBlocking { ... }`, `val x = runBlocking { ... }`)
-                // are safe because the method itself returns void.
-                if ("fun" in line.substring(0, match.range.first)) {
+                val trimmedLine = line.trim()
+                if (testAnnotation.containsMatchIn(trimmedLine)) pendingTestAnnotation = true
+                val match = risky.find(line)
+                if (match != null && pendingTestAnnotation && "fun" in line.substring(0, match.range.first)) {
                     offenders += "$relPath:${index + 1}: expression-body `= runBlocking` lets the " +
                         "compiler infer the test's JVM return type; a non-Unit result is silently " +
                         "skipped by JUnit. Declare runBlocking<Unit> " +
                         "(or extend app/config/runblocking-allowlist.txt with an audit note)."
+                }
+                if (functionDeclaration.containsMatchIn(trimmedLine)) {
+                    pendingTestAnnotation = false
+                } else if (
+                    trimmedLine.isNotEmpty() &&
+                    !trimmedLine.startsWith("//") &&
+                    !trimmedLine.startsWith("/*") &&
+                    !trimmedLine.startsWith("*") &&
+                    !trimmedLine.startsWith("@")
+                ) {
+                    pendingTestAnnotation = false
                 }
             }
         }
@@ -246,6 +326,80 @@ tasks.register("checkTestRunBlocking") {
 
 tasks.named("check") {
     dependsOn("checkTestRunBlocking")
+}
+
+// The count-parity task is a finalizer so each full JVM suite run checks its
+// own XML, including when Gradle considers the test task up-to-date. Filtered
+// diagnostics and the opt-in quarantined run intentionally skip this default
+// suite parity check.
+val countParitySuiteNames = setOf("testDevReleaseUnitTest", "testStandardReleaseUnitTest")
+countParitySuiteNames.forEach { suiteTaskName ->
+    tasks.register("${suiteTaskName}CountParity") {
+        group = "verification"
+        description = "Checks declared app test methods against this suite's JUnit XML count."
+        mustRunAfter(suiteTaskName)
+
+        doLast {
+            val suiteTask = tasks.named<org.gradle.api.tasks.testing.Test>(suiteTaskName).get()
+            val (declaredTests, quarantinedTests) = testMethodCounts()
+            val expectedTests = declaredTests - quarantinedTests
+            logger.lifecycle(
+                "Test method inventory for ${suiteTask.name}: declared=$declaredTests, " +
+                    "quarantined=$quarantinedTests, expected=$expectedTests.",
+            )
+            val commandLineFilterActive = listOf(
+                "getCommandLineIncludePatterns",
+                "getCommandLineExcludePatterns",
+            ).any { getterName ->
+                runCatching {
+                    val getter = suiteTask.filter.javaClass.methods
+                        .firstOrNull { it.name == getterName && it.parameterCount == 0 }
+                    (getter?.invoke(suiteTask.filter) as? Collection<*>)?.isNotEmpty() == true
+                }.getOrDefault(false)
+            }
+            if (
+                suiteTask.filter.includePatterns.isNotEmpty() ||
+                suiteTask.filter.excludePatterns.isNotEmpty() ||
+                commandLineFilterActive
+            ) {
+                logger.lifecycle("Skipping test count parity for filtered diagnostics: ${suiteTask.name}")
+                return@doLast
+            }
+            if (project.hasProperty("includeQuarantinedTests")) {
+                logger.lifecycle("Skipping default test count parity for the opt-in quarantined run.")
+                return@doLast
+            }
+
+            val reportDirectory = suiteTask.reports.junitXml.outputLocation.get().asFile
+            val xmlFiles = reportDirectory.walkTopDown()
+                .filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
+                .toList()
+            if (xmlFiles.isEmpty()) {
+                throw GradleException("${suiteTask.name} produced no JUnit XML in $reportDirectory")
+            }
+
+            val testsAttribute = Regex("(?s)<testsuite\\b[^>]*\\btests=\"(\\d+)\"")
+            val actualTests = xmlFiles.sumOf { xmlFile ->
+                val match = testsAttribute.find(xmlFile.readText())
+                    ?: throw GradleException("No tests attribute found in ${xmlFile.path}")
+                match.groupValues[1].toInt()
+            }
+            if (actualTests != expectedTests) {
+                throw GradleException(
+                    "Test count parity failed for ${suiteTask.name}: declared=$declaredTests, " +
+                        "quarantined=$quarantinedTests, expected=$expectedTests, JUnit XML=$actualTests.",
+                )
+            }
+            logger.lifecycle(
+                "Test count parity passed for ${suiteTask.name}: declared=$declaredTests, " +
+                    "quarantined=$quarantinedTests, JUnit XML=$actualTests.",
+            )
+        }
+    }
+}
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    if (name in countParitySuiteNames) finalizedBy("${name}CountParity")
 }
 
 dependencies {

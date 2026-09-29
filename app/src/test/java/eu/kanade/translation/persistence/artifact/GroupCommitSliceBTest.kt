@@ -188,80 +188,84 @@ class GroupCommitSliceBTest {
     }
 
     @Test
-    fun `Slice B1 staging and Amendment B second writer force-flush`() = runBlocking {
-        GroupCommitConfiguration.withFlag(true) {
-            val io = FakeChapterDocumentIo().apply { fileBacked = true }
-            val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
-            val initialManifest = ChapterArtifactManifest(
-                chapterKey = layout.chapterKey,
-                pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
-            )
-            AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
-
-            val registry = ActiveChapterStoreRegistry()
-            val store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
-                initialPages = mapOf("0001.jpg" to PageTranslation()),
-                artifactStore = artifactStore,
-                initialArtifactManifest = initialManifest,
-            )
-            registry.register(1L, store)
-            try {
-                // Perform an intermediate mutation staged in memory
-                store.stagePageMutationLocked("0001.jpg", intermediatePage())
-                store.hasStagedMutations() shouldBe true
-
-                // When a second writer registers (e.g. PROBE_STORE), it triggers forceFlushOwningStore
-                val secondWriterToken = ActiveChapterStoreRegistry.registerWriter(
-                    chapterId = 1L,
+    fun `Slice B1 staging and Amendment B second writer force-flush`() {
+        runBlocking {
+            GroupCommitConfiguration.withFlag(true) {
+                val io = FakeChapterDocumentIo().apply { fileBacked = true }
+                val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+                val initialManifest = ChapterArtifactManifest(
                     chapterKey = layout.chapterKey,
-                    origin = WriterOrigin.PROBE_STORE,
+                    pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
                 )
+                AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
+
+                val registry = ActiveChapterStoreRegistry()
+                val store = ChapterTranslationStore(
+                    translationFile = null,
+                    fileCreator = null,
+                    initialPages = mapOf("0001.jpg" to PageTranslation()),
+                    artifactStore = artifactStore,
+                    initialArtifactManifest = initialManifest,
+                )
+                registry.register(1L, store)
                 try {
-                    // Staged mutations must be flushed!
-                    store.hasStagedMutations() shouldBe false
+                    // Perform an intermediate mutation staged in memory
+                    store.stagePageMutationLocked("0001.jpg", intermediatePage())
+                    store.hasStagedMutations() shouldBe true
+
+                    // When a second writer registers (e.g. PROBE_STORE), it triggers forceFlushOwningStore
+                    val secondWriterToken = ActiveChapterStoreRegistry.registerWriter(
+                        chapterId = 1L,
+                        chapterKey = layout.chapterKey,
+                        origin = WriterOrigin.PROBE_STORE,
+                    )
+                    try {
+                        // Staged mutations must be flushed!
+                        store.hasStagedMutations() shouldBe false
+                    } finally {
+                        secondWriterToken.close()
+                    }
                 } finally {
-                    secondWriterToken.close()
+                    // register() also publishes into the process-wide mainStores map.
+                    // Remove it even after an assertion failure so later chapters that
+                    // reuse this layout key cannot force-flush this test's store.
+                    registry.remove(1L)?.closeAndFlush()
                 }
-            } finally {
-                // register() also publishes into the process-wide mainStores map.
-                // Remove it even after an assertion failure so later chapters that
-                // reuse this layout key cannot force-flush this test's store.
-                registry.remove(1L)?.closeAndFlush()
             }
         }
     }
 
     @Test
-    fun `Amendment F glossary force-flush flushes staged buffer before glossary pointer publish`() = runBlocking {
-        GroupCommitConfiguration.withFlag(true) {
-            val io = FakeChapterDocumentIo().apply { fileBacked = true }
-            val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
-            val initialManifest = ChapterArtifactManifest(
-                chapterKey = layout.chapterKey,
-                pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
-            )
-            AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
+    fun `Amendment F glossary force-flush flushes staged buffer before glossary pointer publish`() {
+        runBlocking {
+            GroupCommitConfiguration.withFlag(true) {
+                val io = FakeChapterDocumentIo().apply { fileBacked = true }
+                val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+                val initialManifest = ChapterArtifactManifest(
+                    chapterKey = layout.chapterKey,
+                    pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
+                )
+                AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
 
-            val store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
-                initialPages = mapOf("0001.jpg" to PageTranslation()),
-                artifactStore = artifactStore,
-                initialArtifactManifest = initialManifest,
-            )
+                val store = ChapterTranslationStore(
+                    translationFile = null,
+                    fileCreator = null,
+                    initialPages = mapOf("0001.jpg" to PageTranslation()),
+                    artifactStore = artifactStore,
+                    initialArtifactManifest = initialManifest,
+                )
 
-            // Stage an intermediate mutation
-            store.stagePageMutationLocked("0001.jpg", intermediatePage())
-            store.hasStagedMutations() shouldBe true
+                // Stage an intermediate mutation
+                store.stagePageMutationLocked("0001.jpg", intermediatePage())
+                store.hasStagedMutations() shouldBe true
 
-            // When glossary is updated, it must force-flush staged mutations first
-            store.glossaryStore.updateGlossary(mapOf("apple" to "pomme"))
+                // When glossary is updated, it must force-flush staged mutations first
+                store.glossaryStore.updateGlossary(mapOf("apple" to "pomme"))
 
-            // Staged mutations were flushed to durable truth before glossary pointer publish
-            store.hasStagedMutations() shouldBe false
-            store.artifactManifest?.glossary shouldNotBe null
+                // Staged mutations were flushed to durable truth before glossary pointer publish
+                store.hasStagedMutations() shouldBe false
+                store.artifactManifest?.glossary shouldNotBe null
+            }
         }
     }
 }

@@ -65,49 +65,52 @@ class QueueSteeringProviderGovernorTest {
     }
 
     @Test
-    fun `S4 provider governor eventization wakes up waiting request on release`() = runBlocking {
-        val governor = ProviderRequestGovernor(
-            policy = {
-                ProviderQuotaPolicy(
-                    requestsPerMinute = 10,
-                    tokensPerMinute = 100_000,
-                    maxInFlight = 1,
-                    pollIntervalMs = 5_000L, // long poll interval to prove wakeup occurs via signal, not poll timer
-                    maxForegroundWaitMs = 10_000L,
-                )
-            },
-            clock = SystemProviderRequestClock,
-        )
+    fun `S4 provider governor eventization wakes up waiting request on release`() {
+        runBlocking {
+            val governor = ProviderRequestGovernor(
+                policy = {
+                    ProviderQuotaPolicy(
+                        requestsPerMinute = 10,
+                        tokensPerMinute = 100_000,
+                        maxInFlight = 1,
+                        pollIntervalMs = 5_000L, // long poll interval to prove wakeup occurs via signal, not poll timer
+                        maxForegroundWaitMs = 10_000L,
+                    )
+                },
+                clock = SystemProviderRequestClock,
+            )
 
-        val key = ProviderRequestKey("test-provider", "test-model")
-        val meta1 = ProviderRequestMetadata(key = key, estimatedInputTokens = 100, reservedOutputTokens = 100)
-        val meta2 = ProviderRequestMetadata(key = key, estimatedInputTokens = 100, reservedOutputTokens = 100, priority = AdmissionPriority.INTERACTIVE)
+            val key = ProviderRequestKey("test-provider", "test-model")
+            val meta1 = ProviderRequestMetadata(key = key, estimatedInputTokens = 100, reservedOutputTokens = 100)
+            val meta2 = ProviderRequestMetadata(key = key, estimatedInputTokens = 100, reservedOutputTokens = 100, priority = AdmissionPriority.INTERACTIVE)
 
-        val decision1 = governor.admit(meta1) as ProviderAdmissionDecision.Admitted
-        val permit1 = decision1.permit
+            val decision1 = governor.admit(meta1) as ProviderAdmissionDecision.Admitted
+            val permit1 = decision1.permit
 
-        val admittedSecond = AtomicBoolean(false)
-        val waitStart = System.currentTimeMillis()
+            val admittedSecond = AtomicBoolean(false)
+            val waitStart = System.currentTimeMillis()
 
-        val job = async(Dispatchers.Default) {
-            val decision2 = governor.admit(meta2)
-            if (decision2 is ProviderAdmissionDecision.Admitted) {
-                admittedSecond.set(true)
-                governor.releaseAdmitted(decision2.permit, meta2)
+            val job = async(Dispatchers.Default) {
+                val decision2 = governor.admit(meta2)
+                if (decision2 is ProviderAdmissionDecision.Admitted) {
+                    admittedSecond.set(true)
+                    governor.releaseAdmitted(decision2.permit, meta2)
+                }
             }
+
+            delay(50) // Let job enqueue and enter wait
+            admittedSecond.get() shouldBe false
+
+            // Release first permit: should trigger releaseWakeupSignal and wake up second job immediately
+            governor.releaseAdmitted(permit1, meta1)
+            job.await()
+
+            val elapsed = System.currentTimeMillis() - waitStart
+            admittedSecond.get() shouldBe true
+            // Proven: elapsed is far below the 5,000ms poll interval!
+            (elapsed < 2_000L) shouldBe true
         }
 
-        delay(50) // Let job enqueue and enter wait
-        admittedSecond.get() shouldBe false
-
-        // Release first permit: should trigger releaseWakeupSignal and wake up second job immediately
-        governor.releaseAdmitted(permit1, meta1)
-        job.await()
-
-        val elapsed = System.currentTimeMillis() - waitStart
-        admittedSecond.get() shouldBe true
-        // Proven: elapsed is far below the 5,000ms poll interval!
-        (elapsed < 2_000L) shouldBe true
     }
 
     private fun mockTranslation(id: Long, state: Translation.State): Translation {

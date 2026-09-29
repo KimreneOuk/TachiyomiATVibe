@@ -336,7 +336,7 @@ class MangaScreenModelTranslationDrawerTest {
 
     @Test
     @Order(4)
-    fun `terminal snapshot survives collector cancellation and a later rebuild`() = runBlocking {
+    fun `terminal snapshot survives collector cancellation and a later rebuild`() = runBlocking<Unit> {
         val terminal = TranslationProgressSnapshot.empty(chapterId, Translation.State.TRANSLATED)
             .copy(
                 donePages = 40,

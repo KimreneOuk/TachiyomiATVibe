@@ -1323,6 +1323,7 @@ internal class TranslationCoexistenceHarness private constructor(
     fun close() {
         runCatching { cancelAndJoinRunningJobs() }
         if (graphicsShimsInstalled) runCatching { uninstallGraphicsShims() }
+        runCatching { unstubChapterPages() }
         runCatching { scheduler.close() }
         runCatching { pipeline.close() }
         runCatching { batchJobStub?.cancel() }

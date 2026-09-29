@@ -11,42 +11,44 @@ import java.util.concurrent.atomic.AtomicInteger
 class LazySourceFingerprintPushThroughTest {
 
     @Test
-    fun `lazy source fingerprinting computes fingerprints on demand and caches results`() = runBlocking {
-        val callCount = AtomicInteger(0)
-        val streams: Map<String, () -> InputStream> = mapOf(
-            "page_1" to { ByteArrayInputStream("content_1".toByteArray()) },
-            "page_2" to { ByteArrayInputStream("content_2".toByteArray()) },
-            "page_3" to { ByteArrayInputStream("content_3".toByteArray()) },
-        )
-        val computeFn: suspend (() -> InputStream) -> String? = { streamFn ->
-            callCount.incrementAndGet()
-            val text = streamFn().bufferedReader().readText()
-            "hash_$text"
+    fun `lazy source fingerprinting computes fingerprints on demand and caches results`() {
+        runBlocking {
+            val callCount = AtomicInteger(0)
+            val streams: Map<String, () -> InputStream> = mapOf(
+                "page_1" to { ByteArrayInputStream("content_1".toByteArray()) },
+                "page_2" to { ByteArrayInputStream("content_2".toByteArray()) },
+                "page_3" to { ByteArrayInputStream("content_3".toByteArray()) },
+            )
+            val computeFn: suspend (() -> InputStream) -> String? = { streamFn ->
+                callCount.incrementAndGet()
+                val text = streamFn().bufferedReader().readText()
+                "hash_$text"
+            }
+
+            val lazyMap = LazySourceFingerprints(streams, computeFn)
+
+            // No computation occurs upon initialization
+            callCount.get() shouldBe 0
+
+            // Accessing page_1 computes hash once
+            val hash1 = lazyMap["page_1"]
+            hash1 shouldBe "hash_content_1"
+            callCount.get() shouldBe 1
+
+            // Repeated access to page_1 hits cache
+            val hash1Cached = lazyMap["page_1"]
+            hash1Cached shouldBe "hash_content_1"
+            callCount.get() shouldBe 1
+
+            // Accessing page_3 computes page_3, leaving page_2 untouched
+            val hash3 = lazyMap["page_3"]
+            hash3 shouldBe "hash_content_3"
+            callCount.get() shouldBe 2
+
+            // Nonexistent key returns null
+            lazyMap["nonexistent"] shouldBe null
+            callCount.get() shouldBe 2
         }
-
-        val lazyMap = LazySourceFingerprints(streams, computeFn)
-
-        // No computation occurs upon initialization
-        callCount.get() shouldBe 0
-
-        // Accessing page_1 computes hash once
-        val hash1 = lazyMap["page_1"]
-        hash1 shouldBe "hash_content_1"
-        callCount.get() shouldBe 1
-
-        // Repeated access to page_1 hits cache
-        val hash1Cached = lazyMap["page_1"]
-        hash1Cached shouldBe "hash_content_1"
-        callCount.get() shouldBe 1
-
-        // Accessing page_3 computes page_3, leaving page_2 untouched
-        val hash3 = lazyMap["page_3"]
-        hash3 shouldBe "hash_content_3"
-        callCount.get() shouldBe 2
-
-        // Nonexistent key returns null
-        lazyMap["nonexistent"] shouldBe null
-        callCount.get() shouldBe 2
     }
 
     @Test

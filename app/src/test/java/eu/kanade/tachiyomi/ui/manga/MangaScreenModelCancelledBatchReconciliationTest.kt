@@ -300,7 +300,7 @@ class MangaScreenModelCancelledBatchReconciliationTest {
      */
     @Test
     @Order(1)
-    fun `cancelled batch strands chapter in translating state with no restart affordance`() = runBlocking {
+    fun `cancelled batch strands chapter in translating state with no restart affordance`() = runBlocking<Unit> {
         // Mid-run production state: a live queue entry translating, observed by
         // the item through the manager status flow.
         val entry = Translation(mockk(relaxed = true), manga, chapter)
@@ -331,7 +331,7 @@ class MangaScreenModelCancelledBatchReconciliationTest {
     /** A newly queued batch (the user restarted, or another entry exists) is never clobbered. */
     @Test
     @Order(2)
-    fun `aborted snapshot does not clobber a newly queued batch for the same chapter`() = runBlocking {
+    fun `aborted snapshot does not clobber a newly queued batch for the same chapter`() = runBlocking<Unit> {
         val newEntry = Translation(mockk(relaxed = true), manga, chapter)
             .apply { status = Translation.State.QUEUE }
         translationQueueState.value = listOf(newEntry)
