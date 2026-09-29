@@ -41,6 +41,10 @@ android {
         }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        if (!project.hasProperty("includeManualMeasurementBenches")) {
+            testInstrumentationRunnerArguments["notAnnotation"] =
+                "eu.kanade.translation.diagnostics.ManualMeasurementBench"
+        }
     }
 
     splits {
@@ -544,6 +548,12 @@ androidComponents {
         // Only excluding in standard flavor because this breaks
         // Layout Inspector's Compose tree
         it.packaging.resources.excludes.add("META-INF/*.version")
+    }
+}
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    if (project.hasProperty("runSyntheticJournalReplayBench")) {
+        systemProperty("measurement.replayBench", "true")
     }
 }
 
