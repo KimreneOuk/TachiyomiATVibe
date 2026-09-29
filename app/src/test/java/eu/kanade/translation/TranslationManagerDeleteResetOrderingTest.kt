@@ -11,6 +11,7 @@ import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.workflow.ChapterTranslator
 import eu.kanade.translation.workflow.DurableChapterKey
+import eu.kanade.translation.workflow.DurableChapterStatusResolver
 import eu.kanade.translation.workflow.DurableStatus
 import eu.kanade.translation.workflow.TranslationManager
 import io.mockk.coEvery
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.service.SourceManager
 import java.lang.reflect.Field
 import java.util.concurrent.ConcurrentHashMap
 
@@ -136,10 +138,12 @@ class TranslationManagerDeleteResetOrderingTest {
         val batchTrackerRegistry = mockk<TranslationBatchTrackerRegistry>(relaxed = true)
         every { batchTrackerRegistry.dispose(any()) } answers { log("disposeBatchTracker") }
 
+        val sourceManager = mockk<SourceManager>(relaxed = true)
+        val activeStores = ActiveChapterStoreRegistry().apply { register(42L, store) }
         val manager = TranslationManager.createForTesting(
             context = mockk(relaxed = true),
             provider = provider,
-            sourceManager = mockk(relaxed = true),
+            sourceManager = sourceManager,
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
             pipeline = mockk(relaxed = true),
@@ -149,11 +153,18 @@ class TranslationManagerDeleteResetOrderingTest {
             streamRegistry = streamRegistry,
         )
         setField(manager, "scheduler", scheduler)
-        setField(manager, "activeStores", ActiveChapterStoreRegistry().apply { register(42L, store) })
+        setField(manager, "activeStores", activeStores)
         setField(manager, "applicationScope", CoroutineScope(SupervisorJob() + Dispatchers.IO))
         setField(manager, "readerTeardownMutex", Mutex())
-        setField(manager, "durableStatusCache", observableCache())
         setField(manager, "batchTrackerRegistry", batchTrackerRegistry)
+
+        val durableResolver = DurableChapterStatusResolver(
+            providerProvider = { provider },
+            sourceManagerProvider = { sourceManager },
+            activeStoresProvider = { activeStores },
+        )
+        setField(durableResolver, "durableStatusCache", observableCache())
+        setField(manager, "durableStatusResolver\$delegate", lazyOf(durableResolver))
         return manager
     }
 
@@ -173,7 +184,7 @@ class TranslationManagerDeleteResetOrderingTest {
         val documentMemo = ConcurrentHashMap<Any, Any>()
         documentMemo[DurableChapterKey(42L, "Chapter 1", null, "Manga", 77L)] =
             DurableStatus(Translation.State.NOT_TRANSLATED)
-        setField(manager, "durableDocumentCache", documentMemo)
+        setField(durableResolver(manager), "durableDocumentCache", documentMemo)
         events.clear()
 
         manager.deleteTranslation(chapter, manga, source)
@@ -285,6 +296,13 @@ class TranslationManagerDeleteResetOrderingTest {
             assertTrue(events.first() == "clearDurableStatusCache", "alias ordering changed: $events")
             assertTrue(events.contains("deletePage") && events.contains("clearPage"), "alias ordering changed: $events")
         }
+
+    private fun durableResolver(manager: TranslationManager): DurableChapterStatusResolver {
+        val field = manager.javaClass.getDeclaredField("durableStatusResolver\$delegate")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        return (field.get(manager) as Lazy<DurableChapterStatusResolver>).value
+    }
 
     private fun setField(target: Any, fieldName: String, value: Any) {
         var cls: Class<*>? = target.javaClass

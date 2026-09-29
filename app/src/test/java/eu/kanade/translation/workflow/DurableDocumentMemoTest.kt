@@ -14,9 +14,8 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Pins the translation-document memo. One reader entry used to walk the SAF
  * tree 5-7 times for the same document (60-210ms per walk on device). The
- * memo must serve positive repeat lookups without re-walking, survive across
- * resolver instances (the manager rebuilds the resolver per access from its
- * field values), and be cleared by the clearDurableStatusCache invalidation
+ * memo must serve positive repeat lookups without re-walking from the
+ * manager-owned resolver, and be cleared by the clearDurableStatusCache invalidation
  * protocol. Negative results are never memoized — a document may appear when
  * a translation is first created.
  */
@@ -47,27 +46,28 @@ class DurableDocumentMemoTest {
         return provider
     }
 
-    private fun resolverWith(
-        provider: TranslationFileProvider,
-        documentCache: ConcurrentHashMap<DurableDocumentKey, TranslationDocument>,
-    ): DurableChapterStatusResolver = DurableChapterStatusResolver(
-        providerProvider = { provider },
-        sourceManagerProvider = { sourceManager },
-        activeStoresProvider = { ActiveChapterStoreRegistry() },
-        durableStatusCacheProvider = { ConcurrentHashMap() },
-        durableDocumentCacheProvider = { documentCache },
-    )
+    private fun resolverWith(provider: TranslationFileProvider): DurableChapterStatusResolver =
+        DurableChapterStatusResolver(
+            providerProvider = { provider },
+            sourceManagerProvider = { sourceManager },
+            activeStoresProvider = { ActiveChapterStoreRegistry() },
+        )
+
+    @Suppress("UNCHECKED_CAST")
+    private fun documentCache(resolver: DurableChapterStatusResolver): ConcurrentHashMap<DurableDocumentKey, TranslationDocument> =
+        DurableChapterStatusResolver::class.java.getDeclaredField("durableDocumentCache").apply {
+            isAccessible = true
+        }.get(resolver) as ConcurrentHashMap<DurableDocumentKey, TranslationDocument>
 
     @Test
-    fun `repeat positive lookups are served from the memo across resolver instances`() {
+    fun `repeat positive lookups are served from the resolver-owned memo`() {
         var providerWalks = 0
-        val cache = ConcurrentHashMap<DurableDocumentKey, TranslationDocument>()
         val provider = documentProvider { providerWalks++ }
+        val resolver = resolverWith(provider)
+        val cache = documentCache(resolver)
 
-        val first = resolverWith(provider, cache)
-            .findTranslationDocument("Chapter 1", null, "Manga", resolverSource)
-        val second = resolverWith(provider, cache)
-            .findTranslationDocument("Chapter 1", null, "Manga", resolverSource)
+        val first = resolver.findTranslationDocument("Chapter 1", null, "Manga", resolverSource)
+        val second = resolver.findTranslationDocument("Chapter 1", null, "Manga", resolverSource)
 
         providerWalks shouldBe 1
         (first === second) shouldBe true
@@ -77,9 +77,8 @@ class DurableDocumentMemoTest {
     @Test
     fun `clearDurableStatusCache drops memoized documents so the next lookup re-walks`() {
         var providerWalks = 0
-        val cache = ConcurrentHashMap<DurableDocumentKey, TranslationDocument>()
         val provider = documentProvider { providerWalks++ }
-        val resolver = resolverWith(provider, cache)
+        val resolver = resolverWith(provider)
 
         resolver.findTranslationDocument("Chapter 1", null, "Manga", resolverSource)
         resolver.clearDurableStatusCache()
@@ -91,14 +90,14 @@ class DurableDocumentMemoTest {
     @Test
     fun `negative lookups are not memoized`() {
         var providerWalks = 0
-        val cache = ConcurrentHashMap<DurableDocumentKey, TranslationDocument>()
         val absentProvider = mockk<TranslationFileProvider>()
         every { absentProvider.findTranslationFile(any(), any(), any(), any()) } answers {
             providerWalks++
             null
         }
         every { absentProvider.findMangaDir(any(), any()) } returns null
-        val resolver = resolverWith(absentProvider, cache)
+        val resolver = resolverWith(absentProvider)
+        val cache = documentCache(resolver)
 
         resolver.findTranslationDocument("Chapter 1", null, "Manga", resolverSource) shouldBe null
         resolver.findTranslationDocument("Chapter 1", null, "Manga", resolverSource) shouldBe null

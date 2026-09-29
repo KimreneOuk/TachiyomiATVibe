@@ -193,13 +193,17 @@ class DurableStatusWipeGateTest {
     private fun resolver(
         provider: TranslationFileProvider,
         registry: ActiveChapterStoreRegistry,
-        cache: ConcurrentHashMap<DurableChapterKey, DurableStatus>,
     ): DurableChapterStatusResolver = DurableChapterStatusResolver(
         providerProvider = { provider },
         sourceManagerProvider = { sourceManager },
         activeStoresProvider = { registry },
-        durableStatusCacheProvider = { cache },
     )
+
+    @Suppress("UNCHECKED_CAST")
+    private fun durableStatusCache(resolver: DurableChapterStatusResolver): ConcurrentHashMap<DurableChapterKey, DurableStatus> =
+        DurableChapterStatusResolver::class.java.getDeclaredField("durableStatusCache").apply {
+            isAccessible = true
+        }.get(resolver) as ConcurrentHashMap<DurableChapterKey, DurableStatus>
 
     @Test
     fun `a created probe pass wipes the durable status cache while a held probe does not`() = runTest {
@@ -210,8 +214,8 @@ class DurableStatusWipeGateTest {
         // reaches the probe path at all.
         ChapterTranslationStore.open(translationFile()).closeAndFlush()
         val registry = ActiveChapterStoreRegistry()
-        val cache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
-        val resolver = resolver(provider(), registry, cache)
+        val resolver = resolver(provider(), registry)
+        val cache = durableStatusCache(resolver)
 
         // Created probe: the store open can advance durable truth (one-way
         // rescue), so pre-existing cached statuses must not survive the pass.
@@ -239,8 +243,8 @@ class DurableStatusWipeGateTest {
         installPngHeaderProbe()
         writeLegacyChapter()
         val registry = ActiveChapterStoreRegistry()
-        val cache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
-        val resolver = resolver(provider(), registry, cache)
+        val resolver = resolver(provider(), registry)
+        val cache = durableStatusCache(resolver)
 
         registry.register(42L, ChapterTranslationStore.open(translationFile()))
         cache[sentinel()] = DurableStatus(Translation.State.NOT_TRANSLATED)

@@ -23,7 +23,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * When the bounded tracker registry misses
@@ -177,7 +176,6 @@ class TranslationProgressProjectionDurableReconstructionTest {
             },
             sourceManagerProvider = { sourceManager },
             activeStoresProvider = { activeStores },
-            durableStatusCacheProvider = { ConcurrentHashMap() },
         )
     }
 
