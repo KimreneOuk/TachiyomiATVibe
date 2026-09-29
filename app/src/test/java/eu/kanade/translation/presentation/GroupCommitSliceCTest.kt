@@ -112,63 +112,67 @@ class GroupCommitSliceCTest {
     }
 
     @Test
-    fun `R1 manual admission signal stamps tap to Queued truth under 100ms when flag is ON`() = runBlocking {
-        GroupCommitConfiguration.withFlag(true) {
-            val executor = TestManualExecutor()
-            val scheduler = TranslationScheduler(executor, { null })
-            val (manga, chapter, source) = mockSession(42L)
+    fun `R1 manual admission signal stamps tap to Queued truth under 100ms when flag is ON`() {
+        runBlocking {
+            GroupCommitConfiguration.withFlag(true) {
+                val executor = TestManualExecutor()
+                val scheduler = TranslationScheduler(executor, { null })
+                val (manga, chapter, source) = mockSession(42L)
 
-            try {
-                // Measure tap -> Queued latency
-                val elapsedMs = measureTimeMillis {
-                    scheduler.translatePage(manga, chapter, source, "0001.jpg")
+                try {
+                    // Measure tap -> Queued latency
+                    val elapsedMs = measureTimeMillis {
+                        scheduler.translatePage(manga, chapter, source, "0001.jpg")
+                    }
+
+                    // Sub-100ms requirement (typically < 5ms)
+                    (elapsedMs < 100L) shouldBe true
+
+                    // In-memory outcome is immediately Admitted
+                    val outcome = scheduler.manualOutcomeFor(42L, "0001.jpg")
+                    outcome shouldBe SinglePageOutcome.Admitted
+
+                    // TranslationUiTruth maps Admitted -> QUEUED
+                    val truth = TranslationUiTruth.forManualOutcome(outcome, null)
+                    truth.shouldNotBeNull()
+                    truth.label shouldBe "Queued."
+                    truth shouldBe TranslationUiTruth.QUEUED
+
+                    // Reader chip feedback correctly joins to ManualTruth(QUEUED)
+                    val feedback = readerManualOutcomeFeedback(
+                        chapterId = 42L,
+                        pageKey = "0001.jpg",
+                        attemptActive = false,
+                        lookup = { c, k -> scheduler.manualOutcomeFor(c, k) },
+                        nativeStall = null,
+                        durable = null,
+                    )
+                    feedback shouldBe ReaderPageFeedbackState.ManualTruth(TranslationUiTruth.QUEUED)
+                } finally {
+                    executor.gate.complete(Unit)
+                    scheduler.close()
                 }
-
-                // Sub-100ms requirement (typically < 5ms)
-                (elapsedMs < 100L) shouldBe true
-
-                // In-memory outcome is immediately Admitted
-                val outcome = scheduler.manualOutcomeFor(42L, "0001.jpg")
-                outcome shouldBe SinglePageOutcome.Admitted
-
-                // TranslationUiTruth maps Admitted -> QUEUED
-                val truth = TranslationUiTruth.forManualOutcome(outcome, null)
-                truth.shouldNotBeNull()
-                truth.label shouldBe "Queued."
-                truth shouldBe TranslationUiTruth.QUEUED
-
-                // Reader chip feedback correctly joins to ManualTruth(QUEUED)
-                val feedback = readerManualOutcomeFeedback(
-                    chapterId = 42L,
-                    pageKey = "0001.jpg",
-                    attemptActive = false,
-                    lookup = { c, k -> scheduler.manualOutcomeFor(c, k) },
-                    nativeStall = null,
-                    durable = null,
-                )
-                feedback shouldBe ReaderPageFeedbackState.ManualTruth(TranslationUiTruth.QUEUED)
-            } finally {
-                executor.gate.complete(Unit)
-                scheduler.close()
             }
         }
     }
 
     @Test
-    fun `Flag OFF does not emit Admitted outcome on tap`() = runBlocking {
-        GroupCommitConfiguration.withFlag(false) {
-            val executor = TestManualExecutor()
-            val scheduler = TranslationScheduler(executor, { null })
-            val (manga, chapter, source) = mockSession(42L)
+    fun `Flag OFF does not emit Admitted outcome on tap`() {
+        runBlocking {
+            GroupCommitConfiguration.withFlag(false) {
+                val executor = TestManualExecutor()
+                val scheduler = TranslationScheduler(executor, { null })
+                val (manga, chapter, source) = mockSession(42L)
 
-            try {
-                scheduler.translatePage(manga, chapter, source, "0001.jpg")
-                // When flag is OFF, legacy behavior leaves outcome null until execution ends
-                val outcome = scheduler.manualOutcomeFor(42L, "0001.jpg")
-                outcome.shouldBeNull()
-            } finally {
-                executor.gate.complete(Unit)
-                scheduler.close()
+                try {
+                    scheduler.translatePage(manga, chapter, source, "0001.jpg")
+                    // When flag is OFF, legacy behavior leaves outcome null until execution ends
+                    val outcome = scheduler.manualOutcomeFor(42L, "0001.jpg")
+                    outcome.shouldBeNull()
+                } finally {
+                    executor.gate.complete(Unit)
+                    scheduler.close()
+                }
             }
         }
     }
@@ -203,43 +207,47 @@ class GroupCommitSliceCTest {
     }
 
     @Test
-    fun `R2 restricted UI-before-persist publishes transient updates before staging`() = runBlocking {
-        GroupCommitConfiguration.withFlag(true) {
-            val io = FakeChapterDocumentIo().apply { fileBacked = true }
-            val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
-            val initialManifest = ChapterArtifactManifest(
-                chapterKey = layout.chapterKey,
-                pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
-            )
-            AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
-
-            val store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
-                initialPages = mapOf("0001.jpg" to PageTranslation(sourceFileName = "0001.jpg")),
-                artifactStore = artifactStore,
-                initialArtifactManifest = initialManifest,
-            )
-
-            // Transient update: flip ocrStatus to RUNNING (shouldPersistUpdate == false)
-            val patchOutcome = store.updatePageGuarded(
-                pageKey = "0001.jpg",
-                expected = store.snapshot("0001.jpg").toPrecondition(),
-                description = "transient OCR flip",
-            ) { prev ->
-                (prev ?: PageTranslation(sourceFileName = "0001.jpg")).copy(
-                    ocrStatus = StageStatus.RUNNING,
+    fun `R2 restricted UI-before-persist keeps non-durable updates unstaged`() {
+        runBlocking {
+            GroupCommitConfiguration.withFlag(true) {
+                val io = FakeChapterDocumentIo().apply { fileBacked = true }
+                val artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+                val initialManifest = ChapterArtifactManifest(
+                    chapterKey = layout.chapterKey,
+                    pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
                 )
+                AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
+
+                val store = ChapterTranslationStore(
+                    translationFile = null,
+                    fileCreator = null,
+                    initialPages = mapOf("0001.jpg" to PageTranslation(sourceFileName = "0001.jpg")),
+                    artifactStore = artifactStore,
+                    initialArtifactManifest = initialManifest,
+                )
+
+                // Transient update: flip ocrStatus to RUNNING (shouldPersistUpdate == false)
+                val patchOutcome = store.updatePageGuarded(
+                    pageKey = "0001.jpg",
+                    expected = store.snapshot("0001.jpg").toPrecondition(),
+                    description = "transient OCR flip",
+                ) { prev ->
+                    (prev ?: PageTranslation(sourceFileName = "0001.jpg")).copy(
+                        ocrStatus = StageStatus.RUNNING,
+                    )
+                }
+
+                // Patch accepted
+                (patchOutcome is ChapterTranslationStore.PatchResult.Accepted) shouldBe true
+
+                // StateFlow observed OCR as RUNNING immediately
+                store.state.value["0001.jpg"]?.ocrStatus shouldBe StageStatus.RUNNING
+
+                // The existing manifest already contains this page, so the
+                // non-durable transient update is accepted and emitted but is
+                // not added to the artifact mutation staging set.
+                store.hasStagedMutations() shouldBe false
             }
-
-            // Patch accepted
-            (patchOutcome is ChapterTranslationStore.PatchResult.Accepted) shouldBe true
-
-            // StateFlow observed OCR as RUNNING immediately
-            store.state.value["0001.jpg"]?.ocrStatus shouldBe StageStatus.RUNNING
-
-            // Mutation is staged in memory (not published directly to disk manifest)
-            store.hasStagedMutations() shouldBe true
         }
     }
 }

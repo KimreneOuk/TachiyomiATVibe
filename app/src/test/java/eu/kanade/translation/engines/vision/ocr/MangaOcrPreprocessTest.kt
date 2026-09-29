@@ -1,6 +1,7 @@
 package eu.kanade.translation.engines.vision.ocr
 
 import io.kotest.matchers.shouldBe
+import io.mockk.mockk
 import org.junit.jupiter.api.Test
 import java.nio.FloatBuffer
 
@@ -48,25 +49,27 @@ class MangaOcrPreprocessTest {
     }
 
     @Test
-    fun `RoiOcrEngine default batch delegates to recognize`() = kotlinx.coroutines.runBlocking {
-        val calls = mutableListOf<String>()
-        val engine = object : RoiOcrEngine {
-            override suspend fun recognize(crop: android.graphics.Bitmap): String {
-                val name = "crop_${calls.size}"
-                calls.add(name)
-                return name
+    fun `RoiOcrEngine default batch delegates to recognize`() {
+        kotlinx.coroutines.runBlocking {
+            val calls = mutableListOf<String>()
+            val engine = object : RoiOcrEngine {
+                override suspend fun recognize(crop: android.graphics.Bitmap): String {
+                    val name = "crop_${calls.size}"
+                    calls.add(name)
+                    return name
+                }
+
+                override fun close() {}
             }
 
-            override fun close() {}
+            val dummyBmp1 = mockk<android.graphics.Bitmap>(relaxed = true)
+            val dummyBmp2 = mockk<android.graphics.Bitmap>(relaxed = true)
+
+            val results = engine.recognizeBatch(listOf(dummyBmp1, dummyBmp2))
+            results shouldBe listOf("crop_0", "crop_1")
+
+            val resultsWithConf = engine.recognizeBatchWithConf(listOf(dummyBmp1))
+            resultsWithConf shouldBe listOf("crop_2" to 1f)
         }
-
-        val dummyBmp1 = android.graphics.Bitmap.createBitmap(10, 10, android.graphics.Bitmap.Config.ARGB_8888)
-        val dummyBmp2 = android.graphics.Bitmap.createBitmap(10, 10, android.graphics.Bitmap.Config.ARGB_8888)
-
-        val results = engine.recognizeBatch(listOf(dummyBmp1, dummyBmp2))
-        results shouldBe listOf("crop_0", "crop_1")
-
-        val resultsWithConf = engine.recognizeBatchWithConf(listOf(dummyBmp1))
-        resultsWithConf shouldBe listOf("crop_2" to 1f)
     }
 }

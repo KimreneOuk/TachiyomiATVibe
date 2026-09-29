@@ -35,7 +35,9 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import java.lang.reflect.Field
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -239,19 +241,22 @@ class TranslationRequestGenerationFenceTest {
             // runs inside it. The atomic fence (check + PREPARING write under
             // the same lock) must then see the removed request and drop the
             // callback entirely.
+            val callbackAttemptingMutation = CountDownLatch(1)
             val callback = Thread {
+                callbackAttemptingMutation.countDown()
                 runBlocking { manager.startTranslationAfterDownloadIfRequested(manga, chapter) }
             }
             synchronized(mutationLock) {
                 callback.start()
-                // Let the callback block on the lock before cancelling.
-                val deadline = System.currentTimeMillis() + 5_000
-                while (callback.state != Thread.State.BLOCKED && System.currentTimeMillis() < deadline) {
-                    Thread.sleep(2)
+                // The callback signals immediately before entering the method
+                // that acquires this lock; cancellation runs while we own it.
+                check(callbackAttemptingMutation.await(5, TimeUnit.SECONDS)) {
+                    "completion callback did not reach the mutation lock"
                 }
                 manager.cancelTranslationRequest(10L)
             }
-            withTimeout(5_000) { callback.join(5_000) }
+            callback.join(5_000)
+            check(!callback.isAlive) { "completion callback did not finish after cancellation released the lock" }
 
             admitted.get() shouldBe false
             manager.pendingTranslationRequests.value.containsKey(10L) shouldBe false

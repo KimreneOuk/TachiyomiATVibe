@@ -243,52 +243,54 @@ class ProviderHeadroomTest {
     }
 
     @Test
-    fun `provider request governor executes distinct backends concurrently`() = runBlocking {
-        val governor = ProviderRequestGovernor(
-            policy = {
-                ProviderQuotaPolicy(
-                    maxInFlight = 1,
-                    minimumSpacingMs = 10L,
-                )
-            },
-        )
+    fun `provider request governor executes distinct backends concurrently`() {
+        runBlocking {
+            val governor = ProviderRequestGovernor(
+                policy = {
+                    ProviderQuotaPolicy(
+                        maxInFlight = 1,
+                        minimumSpacingMs = 10L,
+                    )
+                },
+            )
 
-        val activeBackends = AtomicInteger(0)
-        val maxSimultaneousBackends = AtomicInteger(0)
+            val activeBackends = AtomicInteger(0)
+            val maxSimultaneousBackends = AtomicInteger(0)
 
-        val meta1 = ProviderRequestMetadata(
-            key = ProviderRequestKey(backend = "lm_studio", model = "qwen-2.5"),
-            priority = AdmissionPriority.BACKGROUND,
-        )
-        val meta2 = ProviderRequestMetadata(
-            key = ProviderRequestKey(backend = "gemini", model = "flash"),
-            priority = AdmissionPriority.BACKGROUND,
-        )
+            val meta1 = ProviderRequestMetadata(
+                key = ProviderRequestKey(backend = "lm_studio", model = "qwen-2.5"),
+                priority = AdmissionPriority.BACKGROUND,
+            )
+            val meta2 = ProviderRequestMetadata(
+                key = ProviderRequestKey(backend = "gemini", model = "flash"),
+                priority = AdmissionPriority.BACKGROUND,
+            )
 
-        val job1 = async {
-            governor.executeValue(meta1) {
-                val cur = activeBackends.incrementAndGet()
-                maxSimultaneousBackends.updateAndGet { maxOf(it, cur) }
-                delay(100)
-                activeBackends.decrementAndGet()
-                "done1"
+            val job1 = async {
+                governor.executeValue(meta1) {
+                    val cur = activeBackends.incrementAndGet()
+                    maxSimultaneousBackends.updateAndGet { maxOf(it, cur) }
+                    delay(100)
+                    activeBackends.decrementAndGet()
+                    "done1"
+                }
             }
-        }
 
-        val job2 = async {
-            governor.executeValue(meta2) {
-                val cur = activeBackends.incrementAndGet()
-                maxSimultaneousBackends.updateAndGet { maxOf(it, cur) }
-                delay(100)
-                activeBackends.decrementAndGet()
-                "done2"
+            val job2 = async {
+                governor.executeValue(meta2) {
+                    val cur = activeBackends.incrementAndGet()
+                    maxSimultaneousBackends.updateAndGet { maxOf(it, cur) }
+                    delay(100)
+                    activeBackends.decrementAndGet()
+                    "done2"
+                }
             }
+
+            job1.await() shouldBe "done1"
+            job2.await() shouldBe "done2"
+
+            // Both distinct backends executed concurrently!
+            maxSimultaneousBackends.get() shouldBe 2
         }
-
-        job1.await() shouldBe "done1"
-        job2.await() shouldBe "done2"
-
-        // Both distinct backends executed concurrently!
-        maxSimultaneousBackends.get() shouldBe 2
     }
 }

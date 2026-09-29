@@ -256,7 +256,7 @@ class RollingHistoryContextContractTest {
     }
 
     @Test
-    fun `N4 glossary terms outside the rolling window do not enter prepared context`(): Unit = runBlocking {
+    fun `N4 glossary terms outside the rolling window do not enter prepared context`(): Unit = runBlocking<Unit> {
         val fixture = fixture(
             (0..40).map { index -> historyPage("p$index", index, "source-$index", "target-$index") } +
                 historyPage("current", 41, "current", "CURRENT"),

@@ -12,8 +12,12 @@ import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -85,13 +89,22 @@ class ChapterTranslatorBatchStartGuardTest {
      * resolver blocks inside non-suspending code, so a cancelled-but-unwinding
      * batch stays in flight exactly like a mid-run uncancellable native call.
      */
-    private fun stubInFlightResolver(concurrent: AtomicInteger, maxConcurrent: AtomicInteger) {
+    private fun stubInFlightResolver(
+        concurrent: AtomicInteger,
+        maxConcurrent: AtomicInteger,
+        resolverEntered: CompletableDeferred<Unit>? = null,
+        resolverRelease: CompletableDeferred<Unit>? = null,
+    ) {
         every { pipeline.activeStoreResolver } answers {
             { _ ->
                 val now = concurrent.incrementAndGet()
                 maxConcurrent.updateAndGet { previous -> maxOf(previous, now) }
-                Thread.sleep(IN_FLIGHT_WINDOW_MS)
-                concurrent.decrementAndGet()
+                try {
+                    resolverEntered?.complete(Unit)
+                    resolverRelease?.let { release -> runBlocking { withTimeout(5_000) { release.await() } } }
+                } finally {
+                    concurrent.decrementAndGet()
+                }
                 null
             }
         }
@@ -102,11 +115,14 @@ class ChapterTranslatorBatchStartGuardTest {
         every { pipeline.batchTrackerFactory } returns null
     }
 
-    private fun awaitTrue(timeoutMs: Long = 10_000, condition: () -> Boolean) {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (!condition()) {
-            if (System.currentTimeMillis() > deadline) error("condition not met within ${timeoutMs}ms")
-            Thread.sleep(25)
+    private fun translationJob(translator: ChapterTranslator): Job =
+        readField(translator, "translationJob") as Job
+
+    private fun awaitJobs(vararg jobs: Job) {
+        runBlocking {
+            withTimeout(5_000) {
+                jobs.forEach { it.join() }
+            }
         }
     }
 
@@ -127,19 +143,26 @@ class ChapterTranslatorBatchStartGuardTest {
         val translator = translatorWithQueue(listOf(translation))
 
         translator.start() shouldBe true
-        awaitTrue { !translator.isRunning && translation.status == Translation.State.ERROR }
+        awaitJobs(translationJob(translator))
+        translator.isRunning shouldBe false
+        translation.status shouldBe Translation.State.ERROR
     }
 
     @Test
     fun `overlapping admissions while a batch is in flight schedule exactly one concurrent batch`() {
         val concurrent = AtomicInteger(0)
         val maxConcurrent = AtomicInteger(0)
-        stubInFlightResolver(concurrent, maxConcurrent)
+        val resolverEntered = CompletableDeferred<Unit>()
+        val resolverRelease = CompletableDeferred<Unit>()
+        stubInFlightResolver(concurrent, maxConcurrent, resolverEntered, resolverRelease)
         val translation = translation(Translation.State.QUEUE)
         val translator = translatorWithQueue(listOf(translation))
 
         translator.start() shouldBe true
-        awaitTrue { concurrent.get() == 1 }
+        runBlocking {
+            withTimeout(5_000) { resolverEntered.await() }
+        }
+        val firstJob = translationJob(translator)
 
         // Overlapping admission for the SAME chapter while batch #1 is still
         // in flight (the device idiom: pause cancels the translator job, the
@@ -147,8 +170,12 @@ class ChapterTranslatorBatchStartGuardTest {
         // coroutine has not unwound yet).
         translator.pause()
         translator.start()
+        val restartedJob = translationJob(translator)
 
-        awaitTrue { !translator.isRunning && concurrent.get() == 0 }
+        resolverRelease.complete(Unit)
+        awaitJobs(firstJob, restartedJob)
+        translator.isRunning shouldBe false
+        concurrent.get() shouldBe 0
         maxConcurrent.get() shouldBe 1
         translation.status shouldBe Translation.State.ERROR
     }
@@ -168,7 +195,17 @@ class ChapterTranslatorBatchStartGuardTest {
         throw NoSuchFieldException("Field $fieldName not found on ${target.javaClass}")
     }
 
-    private companion object {
-        const val IN_FLIGHT_WINDOW_MS = 300L
+    private fun readField(target: Any, fieldName: String): Any {
+        var cls: Class<*>? = target.javaClass
+        while (cls != null) {
+            try {
+                val field: Field = cls.getDeclaredField(fieldName)
+                field.isAccessible = true
+                return field.get(target)
+            } catch (_: NoSuchFieldException) {
+                cls = cls.superclass
+            }
+        }
+        throw NoSuchFieldException("Field $fieldName not found on ${target.javaClass}")
     }
 }

@@ -821,12 +821,14 @@ class ProfileEnvelopeDispatchTest {
             .single { it.isFile && it.name == pointer1.fileName.substringAfterLast('/') }
         val planMtime = planFile.lastModified()
         val planBytes = planFile.readBytes()
+        val stablePlanMtime = planMtime + 10_000L
+        planFile.setLastModified(stablePlanMtime) shouldBe true
+        val expectedPlanMtime = planFile.lastModified()
 
         // ---- simulated process death with UNCHANGED state: the pending set
         // and all plan inputs are identical, so the  reuse branch must
         // skip republication entirely (same pointer, no file write) and the
         // run still drains.
-        Thread.sleep(1_100) // exceed 1s-granularity filesystem clocks
         val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
         val resumedWorker = FakePreflightOcrWorker(resumedStore)
         val workingTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
@@ -847,7 +849,7 @@ class ProfileEnvelopeDispatchTest {
         // The published plan was REUSED, never rewritten.
         val pointer2 = artifactStore().readManifest().shouldNotBeNull().envelopePlan.shouldNotBeNull()
         pointer2.contentFingerprint shouldBe pointer1.contentFingerprint
-        planFile.lastModified() shouldBe planMtime
+        planFile.lastModified() shouldBe expectedPlanMtime
         planFile.readBytes() shouldBe planBytes
         runCounters(resumedStore).second["pagesTranslated"] shouldBe 9
     }

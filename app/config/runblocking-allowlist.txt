@@ -13,7 +13,10 @@
 # relative to app/ (forward slashes). Blank lines and lines starting with '#'
 # are ignored. Do not add new entries without an audit note.
 
-# STATUS (2026-08-29): EMPTY — every prior entry was cured (converted to
+# STATUS (2026-09-29): no active exemptions. The four formerly listed files
+# now declare `runBlocking<Unit>` explicitly; quarantined tests are guarded too.
+#
+# Historical STATUS (2026-08-29): empty — every prior entry was cured (converted to
 # runBlocking<Unit>, javap-verified void over app/build/tmp/kotlin-classes/
 # standardDebugUnitTest, test class re-run green) and removed:
 # - scheduling/RollingAutoCoordinatorTest.kt — 8 revived tests, 3 needed test-infra
