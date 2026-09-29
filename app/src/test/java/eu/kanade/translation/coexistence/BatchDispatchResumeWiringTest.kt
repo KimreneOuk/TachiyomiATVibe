@@ -10,7 +10,6 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
@@ -55,9 +54,11 @@ import java.security.MessageDigest
  *      evidence gate supersedes the recorded COMPLETE) while the healthy
  *     page is not re-paid.
  */
-//  test-stability quarantine: load-ordering sensitive under full-suite JVM
-// churn; tracked for stabilization. Runs with -PincludeQuarantinedTests.
-@Tag("quarantined-flaky")
+// Former quarantine note: "load-ordering sensitive under full-suite JVM churn."
+// Characterized 2026-09-30 on 6408252 (Dev Release): 10 isolated runs and 3
+// coexistence-package contexts passed; this class also passed in all 3 full
+// suites. One suite had an unrelated MangaScreenModelTranslationDrawerTest
+// failure; this class remained green. No target failure reproduced.
 class BatchDispatchResumeWiringTest {
 
     private fun hex64(tag: String): String =
