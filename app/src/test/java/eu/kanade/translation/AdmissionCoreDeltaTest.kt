@@ -1,8 +1,6 @@
 package eu.kanade.translation
 
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.model.TranslationRequestState
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import java.util.Collections
@@ -71,9 +69,11 @@ class AdmissionCoreDeltaTest {
     @Test
     fun preExtractionCharacterizationMatchesGoldenFixture() {
         val actual = characterizationRows().joinToString(separator = "\n", postfix = "\n")
-        val expected = checkNotNull(javaClass.getResourceAsStream(
-            "/eu/kanade/translation/admission/admission-characterization-v1.tsv",
-        )) { "Admission characterization golden is missing" }
+        val expected = checkNotNull(
+            javaClass.getResourceAsStream(
+                "/eu/kanade/translation/admission/admission-characterization-v1.tsv",
+            ),
+        ) { "Admission characterization golden is missing" }
             .bufferedReader(Charsets.UTF_8)
             .use { it.readText() }
 
