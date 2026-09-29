@@ -33,7 +33,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.translation.pools.BitmapPool
 
@@ -41,15 +40,46 @@ import tachiyomi.domain.translation.pools.BitmapPool
  * Exercises translator shutdown while a provider call is using the translator.
  * It checks bounded draining, close ordering, the single epoch retry after a
  * drain timeout, native-lane exclusion, and that the drain grace covers the
- * configured provider-call budget. This timing-sensitive test is quarantined
- * because CI load can starve its race probes.
+ * configured provider-call budget.
+ *
+ * Quarantine retirement characterization at HEAD `4959b4adc067` on 2026-09-30
+ * (Asia/Phnom_Penh, UTC+07): ten isolated Dev Release executions passed all
+ * 60 test invocations; three package-context executions each passed all 45
+ * tests, including this class's six; and three forced full-suite Dev Release
+ * executions (`-PincludeQuarantinedTests`) each reported 1,946 test cases,
+ * zero failures/errors, and one unrelated skipped benchmark
+ * (`SyntheticJournalReplayBenchTest.synthetic200PageJournalFullReplayBenchmark`);
+ * this class's six tests passed without skips in every run. Its suite times in
+ * those full-suite runs were 5.973s, 5.820s, and 5.814s. No failure was
+ * reproduced. Local runs cannot disprove the original CI-load-starvation
+ * theory; the class now runs in normal gates so a recurrence is reported.
+ *
+ * Evidence logs and XML are in `%TEMP%\e22-engine-epoch\`:
+ * `run1-20260930-051355-HEAD-4959b4adc067`,
+ * `run2-attempt2-20260930-052138-HEAD-4959b4adc067`,
+ * `run3-20260930-052905-HEAD-4959b4adc067`,
+ * `run4-20260930-053005-HEAD-4959b4adc067`,
+ * `run5-20260930-053059-HEAD-4959b4adc067`,
+ * `run6-20260930-053216-HEAD-4959b4adc067`,
+ * `run7-20260930-053306-HEAD-4959b4adc067`,
+ * `run8-20260930-053358-HEAD-4959b4adc067`,
+ * `run9-20260930-053511-HEAD-4959b4adc067`,
+ * `run10-20260930-053603-HEAD-4959b4adc067`,
+ * `package1-20260930-053806-HEAD-4959b4adc067`,
+ * `package2-20260930-053944-HEAD-4959b4adc067`,
+ * `package3-20260930-054048-HEAD-4959b4adc067`,
+ * `full1-20260930-054237-HEAD-4959b4adc067`,
+ * `full2-20260930-054556-HEAD-4959b4adc067`, and
+ * `full3-20260930-054900-HEAD-4959b4adc067`. An extra launcher attempt at
+ * 05:19:36 was not a test run: its PowerShell process lacked `JAVA_HOME`, so
+ * Gradle never started. It is excluded from the 16 executions; the stale XML
+ * copied by that wrapper attempt was removed.
  *
  * The fixture drives the production prepared-page and translation path against
  * an artifact-authority store, then follows the same shutdown path used by the
  * reader. Coordinator cancellation and drain behavior are covered separately by
  * `AutoProviderCallDrainsNotCancelsTest`.
  */
-@Tag("quarantined-flaky")
 class EngineEpochStopRaceTest {
 
     companion object {
