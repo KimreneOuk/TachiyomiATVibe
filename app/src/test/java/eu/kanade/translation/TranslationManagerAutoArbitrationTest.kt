@@ -66,9 +66,9 @@ class TranslationManagerAutoArbitrationTest {
         val manager = uninitializedManager(scheduler, translator)
 
         try {
-            manager.isTranslating() shouldBe false
             manager.isAnyBatchTranslationActive shouldBe false
-            manager.isBatchTranslationActive(10L) shouldBe false
+            manager.isAnyBatchTranslationActive shouldBe false
+            manager.isChapterBatchActive(10L, includePaused = false) shouldBe false
             Unit
         } finally {
             scheduler.close()

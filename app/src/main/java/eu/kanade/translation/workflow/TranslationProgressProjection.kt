@@ -520,15 +520,6 @@ internal class TranslationProgressProjection(
         permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
     )
 
-    /**
-     * Per-chapter batch progress (done/total) for the manga-screen chapter-list indicator, so
-     * the user can watch pre-translation advance without opening the reader. Emits the active
-     * store's page-count progress; empty when no active store exists (no batch in flight).
-     */
-    fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
-        return observeBatchProgress(chapterId)
-    }
-
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? {
         return observeActiveDisplayStore(chapterId)
             ?.map { pages -> pages[pageKey].toPageView() }

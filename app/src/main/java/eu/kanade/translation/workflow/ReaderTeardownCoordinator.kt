@@ -24,7 +24,7 @@ internal class ReaderTeardownCoordinator(
     private val translatorProvider: () -> ChapterTranslator,
     private val sessionCoordinatorProvider: () -> TranslationSessionCoordinator,
     private val isAnyBatchTranslationActiveProvider: () -> Boolean,
-    private val isBatchTranslationRetainedFn: (Long) -> Boolean,
+    private val isChapterBatchActiveFn: (Long, Boolean) -> Boolean,
     private val unregisterActiveTranslationStoreFn: (Long) -> Unit,
     private val disposeBatchTrackerFn: (Long) -> Unit,
     private val clearAllPendingTranslationRequestsFn: () -> Unit,
@@ -45,7 +45,8 @@ internal class ReaderTeardownCoordinator(
 
     private val isAnyBatchTranslationActive get() = isAnyBatchTranslationActiveProvider()
 
-    private fun isBatchTranslationRetained(chapterId: Long): Boolean = isBatchTranslationRetainedFn(chapterId)
+    private fun isChapterBatchActive(chapterId: Long, includePaused: Boolean): Boolean =
+        isChapterBatchActiveFn(chapterId, includePaused)
 
     private fun unregisterActiveTranslationStore(chapterId: Long) = unregisterActiveTranslationStoreFn(chapterId)
 
@@ -91,7 +92,7 @@ internal class ReaderTeardownCoordinator(
                 sessionCoordinator.abortPausingToBatch()
                 scheduler.awaitReaderStop()
                 val chapterIdsToEvict = activeStores.chapterIds()
-                    .filter { !isBatchTranslationRetained(it) }
+                    .filter { !isChapterBatchActive(it, includePaused = true) }
                 chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
                 sessionCoordinator.finishSession(TranslationSessionState.READER_SESSION)
             }
@@ -125,7 +126,7 @@ internal class ReaderTeardownCoordinator(
         reason: String = "Translation cancelled",
     ) {
         scheduler.cancelPageTranslations(chapterId)
-        if (isBatchTranslationRetained(chapterId)) {
+        if (isChapterBatchActive(chapterId, includePaused = true)) {
             return
         }
         disposeBatchTracker(chapterId)
@@ -146,7 +147,7 @@ internal class ReaderTeardownCoordinator(
     ) {
         scheduler.cancelAllPageTranslations()
         val chapterIdsToEvict = activeStores.chapterIds()
-            .filter { cancelBatchQueue || !isBatchTranslationRetained(it) }
+            .filter { cancelBatchQueue || !isChapterBatchActive(it, includePaused = true) }
         val stores = chapterIdsToEvict.mapNotNull { activeStores.get(it) }
         if (stores.isNotEmpty()) {
             // TachiyomiAT bug 4 fix: the durable CANCELLED write MUST land before
