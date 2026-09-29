@@ -12,15 +12,14 @@ import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import java.lang.reflect.Field
-import java.util.concurrent.atomic.AtomicBoolean
 
 class QueueSteeringProviderGovernorTest {
 
@@ -65,52 +64,60 @@ class QueueSteeringProviderGovernorTest {
     }
 
     @Test
-    fun `S4 provider governor eventization wakes up waiting request on release`() {
-        runBlocking {
-            val governor = ProviderRequestGovernor(
-                policy = {
-                    ProviderQuotaPolicy(
-                        requestsPerMinute = 10,
-                        tokensPerMinute = 100_000,
-                        maxInFlight = 1,
-                        pollIntervalMs = 5_000L, // long poll interval to prove wakeup occurs via signal, not poll timer
-                        maxForegroundWaitMs = 10_000L,
-                    )
-                },
-                clock = SystemProviderRequestClock,
-            )
+    fun `S4 provider governor eventization wakes up waiting request on release`() = runTest {
+        val schedulerTimeBeforeWait = testScheduler.currentTime
+        val governor = ProviderRequestGovernor(
+            policy = {
+                ProviderQuotaPolicy(
+                    requestsPerMinute = 10,
+                    tokensPerMinute = 100_000,
+                    minimumSpacingMs = 0L,
+                    maxInFlight = 1,
+                    pollIntervalMs = 5_000L, // long poll interval to prove wakeup occurs via signal, not poll timer
+                    maxForegroundWaitMs = 10_000L,
+                )
+            },
+            clock = SystemProviderRequestClock,
+        )
 
-            val key = ProviderRequestKey("test-provider", "test-model")
-            val meta1 = ProviderRequestMetadata(key = key, estimatedInputTokens = 100, reservedOutputTokens = 100)
-            val meta2 = ProviderRequestMetadata(key = key, estimatedInputTokens = 100, reservedOutputTokens = 100, priority = AdmissionPriority.INTERACTIVE)
+        val key = ProviderRequestKey("test-provider", "test-model")
+        val meta1 = ProviderRequestMetadata(key = key, estimatedInputTokens = 100, reservedOutputTokens = 100)
+        val meta2 = ProviderRequestMetadata(
+            key = key,
+            estimatedInputTokens = 100,
+            reservedOutputTokens = 100,
+            priority = AdmissionPriority.INTERACTIVE,
+        )
 
-            val decision1 = governor.admit(meta1) as ProviderAdmissionDecision.Admitted
-            val permit1 = decision1.permit
+        val decision1 = governor.admit(meta1) as ProviderAdmissionDecision.Admitted
+        val permit1 = decision1.permit
 
-            val admittedSecond = AtomicBoolean(false)
-            val waitStart = System.currentTimeMillis()
+        var admittedSecond = false
 
-            val job = async(Dispatchers.Default) {
-                val decision2 = governor.admit(meta2)
-                if (decision2 is ProviderAdmissionDecision.Admitted) {
-                    admittedSecond.set(true)
-                    governor.releaseAdmitted(decision2.permit, meta2)
-                }
+        // Start the waiter eagerly so releaseWakeupSignal has an active
+        // subscriber before the permit is released.
+        val job = async(UnconfinedTestDispatcher(testScheduler)) {
+            val decision2 = governor.admit(meta2)
+            if (decision2 is ProviderAdmissionDecision.Admitted) {
+                admittedSecond = true
+                governor.releaseAdmitted(decision2.permit, meta2)
             }
-
-            delay(50) // Let job enqueue and enter wait
-            admittedSecond.get() shouldBe false
-
-            // Release first permit: should trigger releaseWakeupSignal and wake up second job immediately
-            governor.releaseAdmitted(permit1, meta1)
-            job.await()
-
-            val elapsed = System.currentTimeMillis() - waitStart
-            admittedSecond.get() shouldBe true
-            // Proven: elapsed is far below the 5,000ms poll interval!
-            (elapsed < 2_000L) shouldBe true
         }
 
+        // Run the waiter until it suspends on the release signal. The
+        // coroutine test scheduler does not advance, so the long poll timeout
+        // cannot admit this request before the release event.
+        testScheduler.runCurrent()
+        admittedSecond shouldBe false
+
+        // Releasing the first permit signals the waiter, which should complete
+        // at the same virtual time without waiting for its poll timeout.
+        governor.releaseAdmitted(permit1, meta1)
+        testScheduler.runCurrent()
+
+        admittedSecond shouldBe true
+        job.isCompleted shouldBe true
+        testScheduler.currentTime shouldBe schedulerTimeBeforeWait
     }
 
     private fun mockTranslation(id: Long, state: Translation.State): Translation {

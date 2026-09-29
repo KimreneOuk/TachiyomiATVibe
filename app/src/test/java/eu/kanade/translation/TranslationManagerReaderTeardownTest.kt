@@ -12,10 +12,10 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -41,7 +41,7 @@ class TranslationManagerReaderTeardownTest {
         val cleanupStarted = CountDownLatch(1)
         val cleanupRelease = CountDownLatch(1)
         val cleanupThread = AtomicReference<Thread>()
-        val readerStoreDefunct = AtomicBoolean(false)
+        val readerStoreDefunct = CompletableDeferred<Unit>()
         val batchStoreDefunct = AtomicBoolean(false)
 
         val readerStore = mockk<ChapterTranslationStore>(relaxed = true)
@@ -51,7 +51,7 @@ class TranslationManagerReaderTeardownTest {
             cleanupRelease.await(5, TimeUnit.SECONDS)
             Unit
         }
-        every { readerStore.markDefunct() } answers { readerStoreDefunct.set(true) }
+        every { readerStore.markDefunct() } answers { readerStoreDefunct.complete(Unit); Unit }
 
         val batchStore = mockk<ChapterTranslationStore>(relaxed = true)
         every { batchStore.markDefunct() } answers { batchStoreDefunct.set(true) }
@@ -90,20 +90,17 @@ class TranslationManagerReaderTeardownTest {
                 }
             }
 
-            withTimeout(5_000) { while (entryReturned.count > 0L) delay(10) }
             assertTrue(
-                entryReturned.count == 0L,
+                entryReturned.await(5, TimeUnit.SECONDS),
                 "reader lifecycle entry must not wait for store persistence",
             )
-            withTimeout(5_000) { while (cleanupStarted.count > 0L) delay(10) }
+            assertTrue(cleanupStarted.await(5, TimeUnit.SECONDS), "reader store cleanup did not start")
             assertNotSame(callerThread.get(), cleanupThread.get())
             assertFalse(batchStoreDefunct.get(), "batch-owned store must remain registered")
 
             cleanupRelease.countDown()
             callerFuture.get(5, TimeUnit.SECONDS)
-            withTimeout(5_000) {
-                while (!readerStoreDefunct.get()) delay(10)
-            }
+            withTimeout(5_000) { readerStoreDefunct.await() }
             assertFalse(batchStoreDefunct.get(), "batch-owned store must not be evicted")
         } finally {
             cleanupRelease.countDown()
@@ -179,12 +176,10 @@ class TranslationManagerReaderTeardownTest {
                 }
             }
 
-            withTimeout(5_000) { while (schedulerStarted.count > 0L) delay(10) }
-            assertTrue(schedulerStarted.count == 0L)
+            assertTrue(schedulerStarted.await(5, TimeUnit.SECONDS), "scheduler teardown did not start")
             assertNotSame(callerThread.get(), schedulerThread.get())
             schedulerRelease.countDown()
-            withTimeout(5_000) { while (callerFinished.count > 0L) delay(10) }
-            assertTrue(callerFinished.count == 0L)
+            assertTrue(callerFinished.await(5, TimeUnit.SECONDS), "caller did not finish after scheduler release")
             callerFuture.get(5, TimeUnit.SECONDS)
         } finally {
             schedulerRelease.countDown()
@@ -231,13 +226,11 @@ class TranslationManagerReaderTeardownTest {
                 }
             }
 
-            withTimeout(5_000) { while (entryReturned.count > 0L) delay(10) }
             assertTrue(
-                entryReturned.count == 0L,
+                entryReturned.await(5, TimeUnit.SECONDS),
                 "requestReaderStop must return before scheduler teardown joins",
             )
-            withTimeout(5_000) { while (schedulerStarted.count > 0L) delay(10) }
-            assertTrue(schedulerStarted.count == 0L)
+            assertTrue(schedulerStarted.await(5, TimeUnit.SECONDS), "scheduler teardown did not start")
             assertNotSame(callerThread.get(), schedulerThread.get())
             schedulerRelease.countDown()
             deferredRef.get().await()
