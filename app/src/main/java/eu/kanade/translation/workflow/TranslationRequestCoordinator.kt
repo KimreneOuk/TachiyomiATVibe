@@ -29,28 +29,24 @@ import java.util.concurrent.atomic.AtomicLong
 internal class TranslationRequestCoordinator(
     private val pendingRequestStoreProvider: () -> TranslationPendingRequestStore,
     private val pendingTranslationRequestsStateProvider: () -> MutableStateFlow<Map<Long, TranslationRequestState>>,
-    private val pendingRequestWriteVersionsProvider: () -> ConcurrentHashMap<Long, AtomicLong>,
     private val pendingRequestMutationLockProvider: () -> Any,
     private val storeScopeProvider: () -> CoroutineScope,
     private val queueStateProvider: () -> StateFlow<List<Translation>>,
     private val translatorProvider: () -> ChapterTranslator,
     private val getQueuedTranslationOrNull: (Long) -> Translation?,
     private val translateChapter: (Manga, Chapter, Long?, Boolean) -> Unit,
-    private val pendingRequestGenerationCountersProvider: () -> ConcurrentHashMap<Long, AtomicLong>,
-    private val downloadAttachGenerationsProvider: () -> ConcurrentHashMap<Long, Long>,
-    private val groupIdSequenceProvider: () -> AtomicLong,
 ) {
 
     private val pendingRequestStore get() = pendingRequestStoreProvider()
     private val pendingTranslationRequestsState get() = pendingTranslationRequestsStateProvider()
-    private val pendingRequestWriteVersions get() = pendingRequestWriteVersionsProvider()
+    private val pendingRequestWriteVersions = ConcurrentHashMap<Long, AtomicLong>()
+    private val pendingRequestGenerationCounters = ConcurrentHashMap<Long, AtomicLong>()
+    private val downloadAttachGenerations = ConcurrentHashMap<Long, Long>()
+    private val pendingGroupIdSequence = AtomicLong(0)
     private val pendingRequestMutationLock get() = pendingRequestMutationLockProvider()
     private val storeScope get() = storeScopeProvider()
     private val queueState get() = queueStateProvider()
     private val translator get() = translatorProvider()
-    private val generationCounters get() = pendingRequestGenerationCountersProvider()
-    private val downloadAttachGenerations get() = downloadAttachGenerationsProvider()
-    private val groupSequence get() = groupIdSequenceProvider()
 
     fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {
         chapter.id?.let { chapterId ->
@@ -384,7 +380,7 @@ internal class TranslationRequestCoordinator(
             nextPendingRequestVersion(chapterId)
             // Generation bump on cancel/removal: a later request for the same
             // chapter must never reuse the removed request's generation.
-            generationCounters.computeIfAbsent(chapterId) {
+            pendingRequestGenerationCounters.computeIfAbsent(chapterId) {
                 AtomicLong(pendingRequestStore.generation(chapterId))
             }.incrementAndGet()
             downloadAttachGenerations.remove(chapterId)
@@ -404,7 +400,7 @@ internal class TranslationRequestCoordinator(
             requests.forEach { request ->
                 val chapterId = request.chapterId
                 nextPendingRequestVersion(chapterId)
-                generationCounters.computeIfAbsent(chapterId) {
+                pendingRequestGenerationCounters.computeIfAbsent(chapterId) {
                     AtomicLong(pendingRequestStore.generation(chapterId))
                 }.incrementAndGet()
                 downloadAttachGenerations.remove(chapterId)
@@ -422,7 +418,7 @@ internal class TranslationRequestCoordinator(
 
     /** Continues per-chapter generations from durable state so retries cannot reuse an old generation. */
     private fun allocateGeneration(chapterId: Long): Long =
-        generationCounters.computeIfAbsent(chapterId) {
+        pendingRequestGenerationCounters.computeIfAbsent(chapterId) {
             AtomicLong(
                 maxOf(
                     pendingRequestStore.generation(chapterId),
@@ -431,7 +427,7 @@ internal class TranslationRequestCoordinator(
             )
         }.incrementAndGet()
 
-    private fun nextGroupId(): String = "batch-${groupSequence.incrementAndGet()}"
+    private fun nextGroupId(): String = "batch-${pendingGroupIdSequence.incrementAndGet()}"
 
     private fun TranslationRequestPhase.isTerminalPhase(): Boolean =
         this == TranslationRequestPhase.DOWNLOAD_FAILED ||

@@ -60,7 +60,6 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 
 class TranslationManager private constructor(
     private val context: Context,
@@ -152,13 +151,6 @@ class TranslationManager private constructor(
     private val pendingRequestStore = testConstruction?.pendingRequestStore ?: TranslationPendingRequestStore(context)
     private val pendingTranslationRequestsState = testConstruction?.pendingRequests ?: MutableStateFlow(loadPendingTranslationRequests())
 
-    /**
-     * Versions fence the asynchronous STARTING commit from a later download,
-     * preparation, or cancellation update. The version is advanced before a
-     * synchronous normal mutation writes its new durable state.
-     */
-    private val pendingRequestWriteVersions = ConcurrentHashMap<Long, AtomicLong>()
-
     /** Immediate, lifecycle-independent acknowledgement for pre-translation requests. */
     val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
         pendingTranslationRequestsState.asStateFlow()
@@ -169,12 +161,6 @@ class TranslationManager private constructor(
 
     /** Serializes request versioning, state publication, and durable writes. */
     private val pendingRequestMutationLock = Any()
-
-    // Per-chapter generations fence late downloader callbacks and in-flight
-    // probe mutations after a request is replaced or cancelled.
-    private val pendingRequestGenerationCounters = ConcurrentHashMap<Long, AtomicLong>()
-    private val downloadAttachGenerations = ConcurrentHashMap<Long, Long>()
-    private val pendingGroupIdSequence = AtomicLong(0)
 
     // One-shot marks for pending requests startup reconciliation
     // admitted (process-local is sufficient — the reconciler and the later
@@ -195,13 +181,12 @@ class TranslationManager private constructor(
 
     private val startupReconciliationOnce = AtomicBoolean(false)
 
-    // Request state stays manager-owned. The coordinator receives current state
-    // through providers so each operation uses the same generation and lock owners.
+    // The coordinator owns request-version and generation counters; the manager
+    // retains the request state and mutation lock that these operations synchronize.
     private val requestCoordinator: TranslationRequestCoordinator by lazy {
         TranslationRequestCoordinator(
             pendingRequestStoreProvider = { pendingRequestStore },
             pendingTranslationRequestsStateProvider = { pendingTranslationRequestsState },
-            pendingRequestWriteVersionsProvider = { pendingRequestWriteVersions },
             pendingRequestMutationLockProvider = { pendingRequestMutationLock },
             storeScopeProvider = { storeScope },
             queueStateProvider = { queueState },
@@ -210,21 +195,8 @@ class TranslationManager private constructor(
             translateChapter = { manga, chapter, expectedRequestGeneration, autoStart ->
                 translateChapter(manga, chapter, expectedRequestGeneration, autoStart = autoStart)
             },
-            pendingRequestGenerationCountersProvider = { pendingRequestGenerationCounters },
-            downloadAttachGenerationsProvider = { downloadAttachGenerations },
-            groupIdSequenceProvider = { pendingGroupIdSequence },
         )
     }
-
-    // Durable status and document caches stay manager-owned so reads and resets
-    // share one invalidation boundary; the resolver uses these current values.
-
-    private val durableStatusCache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
-
-    // Memoized translation-document locations, invalidated by the same
-    // clearDurableStatusCache protocol. One reader entry used to walk the
-    // SAF tree for the same document 5-7 times.
-    private val durableDocumentCache = ConcurrentHashMap<DurableDocumentKey, TranslationDocument>()
 
     /**
      * Owns single-page + auto-prefetch job scheduling, dedup, and cancellation. This manager
@@ -1150,8 +1122,6 @@ class TranslationManager private constructor(
             providerProvider = { provider },
             sourceManagerProvider = { sourceManager },
             activeStoresProvider = { activeStores },
-            durableStatusCacheProvider = { durableStatusCache },
-            durableDocumentCacheProvider = { durableDocumentCache },
         )
     }
 

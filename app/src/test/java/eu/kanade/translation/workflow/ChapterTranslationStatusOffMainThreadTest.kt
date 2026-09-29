@@ -41,6 +41,11 @@ import java.util.concurrent.TimeUnit
  * leak uncaught exceptions into a later runTest.
  */
 class ChapterTranslationStatusOffMainThreadTest {
+    @Suppress("UNCHECKED_CAST")
+    private fun durableStatusCache(resolver: DurableChapterStatusResolver): ConcurrentHashMap<DurableChapterKey, DurableStatus> =
+        DurableChapterStatusResolver::class.java.getDeclaredField("durableStatusCache").apply {
+            isAccessible = true
+        }.get(resolver) as ConcurrentHashMap<DurableChapterKey, DurableStatus>
 
     /** Fake whose slow lookup blocks an IO worker, never the caller. */
     private fun blockingProvider(lookupStarted: CountDownLatch, releaseLookup: CountDownLatch): TranslationFileProvider =
@@ -94,13 +99,12 @@ class ChapterTranslationStatusOffMainThreadTest {
 
         val sourceManager = mockk<SourceManager>()
         every { sourceManager.get(any()) } returns mockk<Source>(relaxed = true)
-        val cache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
         val resolver = DurableChapterStatusResolver(
             providerProvider = { blockingProvider(lookupStarted, releaseLookup) },
             sourceManagerProvider = { sourceManager },
             activeStoresProvider = { ActiveChapterStoreRegistry() },
-            durableStatusCacheProvider = { cache },
         )
+        val cache = durableStatusCache(resolver)
 
         try {
             assertCallerStaysFree(mainExecutor, lookupStarted, releaseLookup) {

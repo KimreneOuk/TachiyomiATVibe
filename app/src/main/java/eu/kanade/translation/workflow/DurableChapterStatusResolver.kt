@@ -50,8 +50,6 @@ internal class DurableChapterStatusResolver(
     private val providerProvider: () -> TranslationFileProvider,
     private val sourceManagerProvider: () -> SourceManager,
     private val activeStoresProvider: () -> ActiveChapterStoreRegistry,
-    private val durableStatusCacheProvider: () -> ConcurrentHashMap<DurableChapterKey, DurableStatus>,
-    private val durableDocumentCacheProvider: () -> ConcurrentHashMap<DurableDocumentKey, TranslationDocument> = { ConcurrentHashMap() },
 ) {
 
     // Resolve collaborators lazily so cache-only invalidation does not open providers or stores.
@@ -61,9 +59,10 @@ internal class DurableChapterStatusResolver(
 
     private val activeStores get() = activeStoresProvider()
 
-    private val durableStatusCache get() = durableStatusCacheProvider()
+    private val durableStatusCache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
 
-    private val durableDocumentCache get() = durableDocumentCacheProvider()
+    // Memoized translation-document locations share the status invalidation boundary.
+    private val durableDocumentCache = ConcurrentHashMap<DurableDocumentKey, TranslationDocument>()
 
     /**
      * Invalidates every cached durable status and memoized document. This is
