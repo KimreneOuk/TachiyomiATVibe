@@ -4,7 +4,6 @@ import android.content.Context
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
@@ -24,7 +23,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
@@ -34,12 +32,10 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Request generations fence downloader completion callbacks
@@ -276,33 +272,26 @@ class TranslationRequestGenerationFenceTest {
         every { getSharedPreferences(any(), any()) } returns preferences
     }
 
-    /** Mirrors TranslationManagerDownloadFailureRecoveryTest's uninitialized fixture. */
+    /** Mirrors TranslationManagerDownloadFailureRecoveryTest's test factory fixture. */
     private fun uninitializedManager(
         pendingRequestStore: TranslationPendingRequestStore,
         scheduler: TranslationScheduler,
         translator: ChapterTranslator,
         sourceManager: SourceManager,
     ): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
-        setField(manager, "scheduler", scheduler)
-        setField(manager, "translator", translator)
-        setField(manager, "context", mockk<Context>(relaxed = true))
-        setField(manager, "sourceManager", sourceManager)
-        setField(manager, "pendingRequestStore", pendingRequestStore)
-        val pendingState = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap())
-        setField(manager, "pendingTranslationRequestsState", pendingState)
-        setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
+        val manager = TranslationManager.createForTesting(
+            context = mockk<Context>(relaxed = true),
+            provider = mockk(relaxed = true),
+            sourceManager = sourceManager,
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = pendingRequestStore,
+            scheduler = scheduler,
+            sessionCoordinator = TranslationSessionCoordinator(),
+        )
         setField(manager, "storeScope", scope)
-        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
-        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
         return manager
     }
 

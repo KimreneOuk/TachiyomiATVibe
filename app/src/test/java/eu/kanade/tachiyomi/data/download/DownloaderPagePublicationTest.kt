@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.IOException
-import java.lang.reflect.Field
 
 class DownloaderPagePublicationTest {
 
@@ -91,10 +90,18 @@ class DownloaderPagePublicationTest {
     }
 
     private fun emptyDownloader(): Downloader {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val unsafeField: Field = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = unsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        return allocateInstance.invoke(unsafe, Downloader::class.java) as Downloader
+        return Downloader.createForTesting(
+            context = mockk(relaxed = true),
+            provider = mockk(relaxed = true),
+            cache = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            chapterCache = mockk(relaxed = true),
+            downloadPreferences = mockk(relaxed = true),
+            xml = mockk(relaxed = true),
+            getCategories = mockk(relaxed = true),
+            getTracks = mockk(relaxed = true),
+            translationManager = mockk(relaxed = true),
+            store = mockk(relaxed = true),
+        )
     }
 }

@@ -27,7 +27,6 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -251,24 +250,21 @@ class TranslationManagerReaderTeardownTest {
         activeStores: ActiveChapterStoreRegistry,
         applicationScope: CoroutineScope,
     ): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "scheduler", scheduler)
-        setField(manager, "translator", translator)
-        // Unsafe.allocateInstance skips the manager's admission-owner
-        // initializer; ReaderTeardownCoordinator now aborts a pending
-        // batch-to-reader handoff before it joins reader work.
-        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
+        val manager = TranslationManager.createForTesting(
+            context = mockk(relaxed = true),
+            provider = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = mockk(relaxed = true),
+            scheduler = scheduler,
+            sessionCoordinator = TranslationSessionCoordinator(),
+        )
         setField(manager, "activeStores", activeStores)
         setField(manager, "applicationScope", applicationScope)
         setField(manager, "readerTeardownMutex", Mutex())
-        setField(manager, "durableStatusCache", ConcurrentHashMap<Any, Any>())
-        // Unsafe.allocateInstance skips field initializers; the resolver's
-        // document-memo provider captures this field and NPEs when unset.
-        setField(manager, "durableDocumentCache", ConcurrentHashMap<Any, Any>())
         return manager
     }
 

@@ -25,7 +25,6 @@ import org.junit.jupiter.api.io.TempDir
 import tachiyomi.domain.source.service.SourceManager
 import java.io.File
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
 
 class TranslationManagerArtifactReadTest {
 
@@ -88,19 +87,17 @@ class TranslationManagerArtifactReadTest {
         every { translator.queueState } returns MutableStateFlow(emptyList())
         val activeStores = ActiveChapterStoreRegistry()
 
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "provider", provider)
-        setField(manager, "sourceManager", sourceManager)
-        setField(manager, "translator", translator)
+        val manager = TranslationManager.createForTesting(
+            context = mockk(relaxed = true),
+            provider = provider,
+            sourceManager = sourceManager,
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = mockk(relaxed = true),
+        )
         setField(manager, "activeStores", activeStores)
-        setField(manager, "durableStatusCache", ConcurrentHashMap<Any, Any>())
-        // Unsafe.allocateInstance skips field initializers; the resolver's
-        // document-memo provider captures this field and NPEs when unset.
-        setField(manager, "durableDocumentCache", ConcurrentHashMap<Any, Any>())
         return manager
     }
 

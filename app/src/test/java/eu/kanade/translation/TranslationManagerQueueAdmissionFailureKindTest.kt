@@ -19,14 +19,11 @@ import io.kotest.matchers.shouldNotBe
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * A translation-queue admission rejection is never labeled
@@ -139,26 +136,18 @@ class TranslationManagerQueueAdmissionFailureKindTest {
         every { translator.queueState } returns MutableStateFlow(emptyList())
         every { translator.isRunning } returns false
         every { translator.isQueueConfigValid() } returns configValid
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
-        setField(manager, "scheduler", scheduler)
-        setField(manager, "translator", translator)
-        setField(manager, "context", mockk<Context>(relaxed = true))
-        setField(manager, "sourceManager", sourceManager)
-        setField(manager, "pendingRequestStore", mockk<TranslationPendingRequestStore>(relaxed = true))
-        val pendingState = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap())
-        setField(manager, "pendingTranslationRequestsState", pendingState)
-        setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
-        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
-        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
-        return manager
+        return TranslationManager.createForTesting(
+            context = mockk<Context>(relaxed = true),
+            provider = mockk(relaxed = true),
+            sourceManager = sourceManager,
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = mockk<TranslationPendingRequestStore>(relaxed = true),
+            scheduler = scheduler,
+            sessionCoordinator = TranslationSessionCoordinator(),
+        )
     }
 
     private fun setField(target: Any, fieldName: String, value: Any) {

@@ -16,7 +16,6 @@ import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -29,7 +28,6 @@ import eu.kanade.translation.persistence.chapter.OcrStagePatch
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
@@ -105,9 +103,8 @@ import java.util.concurrent.atomic.AtomicLong
  * → TranslationPipeline (real EngineLane, real SinglePageOnnx/HttpRender phases,
  * real BatchChapterTranslator → BatchLaneWorkers → SequentialBatchCoordinator →
  * BatchRenderJoin) → ChapterTranslationStore (memory-only) → ChapterTranslator —
- * using the repository's JVM-only construction pattern
- * (`sun.misc.Unsafe.allocateInstance` plus reflection field injection; see
- * TranslationManagerAutoArbitrationTest.uninitializedManager).
+ * using the repository's JVM-only test construction factories and reflection
+ * field injection for the graph-specific collaborators.
  * Fakes exist only at sanctioned engine and I/O boundaries.
  *
  * Every reflection-injected field name is listed in ONE place per target class
@@ -341,26 +338,24 @@ internal class TranslationCoexistenceHarness private constructor(
             )
             val noPageStuck: () -> ((chapterId: Long?, pageKey: String) -> Unit)? = { null }
 
-            // ---- EngineLane: real class, Unsafe construction (note §1.1) ----
-            val engineLane = unsafeAllocate(EngineLane::class.java) as EngineLane
-            setFields(
-                engineLane,
-                listOf(
-                    // ctor fields — EngineLane.kt:30-36
-                    "context" to context,
-                    "translationPreferences" to preferences,
-                    "nativeRunQuarantine" to nativeRunQuarantine,
-                    "inFlightPageKeys" to inFlightPageKeys,
-                    "onPageStuck" to noPageStuck,
-                    // init-built cache fields — EngineLane.kt:161-206, :251
-                    "currentFromLang" to fromLang,
-                    "currentOcrModel" to ocrModel,
-                    "currentReadingOrder" to readingOrder,
-                    "currentInpaintingMode" to inpaintingMode,
-                    "recognitionEngine" to fakeRecognition,
-                    "textTranslator" to fakeTransport,
-                    "currentTranslatorSignature" to translatorSignature,
-                    "enginesClosed" to false,
+            // ---- EngineLane: real class with complete fake-engine state ----
+            val engineLane = EngineLane.createForTesting(
+                context = context,
+                translationPreferences = preferences,
+                nativeRunQuarantine = nativeRunQuarantine,
+                inFlightPageKeys = inFlightPageKeys,
+                onPageStuck = noPageStuck,
+                drainGraceMs = drainGraceMs ?: EngineLane.ENGINE_DRAIN_GRACE_MS,
+                drainScope = engineDrainScope,
+                translatorFactory = { _, _ -> newTransport() },
+                state = EngineLane.TestState(
+                    fromLang = fromLang,
+                    ocrModel = ocrModel,
+                    readingOrder = readingOrder,
+                    inpaintingMode = inpaintingMode,
+                    translator = fakeTransport,
+                    recognitionEngine = fakeRecognition,
+                    translatorSignature = translatorSignature,
                 ),
             )
             installEngineDrainSeams(engineLane, drainGraceMs, engineDrainScope, ::newTransport)
@@ -637,29 +632,28 @@ internal class TranslationCoexistenceHarness private constructor(
                 onBatchClosedFn = { null },
             )
 
-            // ---- Pipeline: real class, Unsafe construction (note §0) --------
-            val pipeline = unsafeAllocate(TranslationPipeline::class.java) as TranslationPipeline
+            // ---- Pipeline: real class with its runtime graph injected ------
+            val pipeline = TranslationPipeline.createForTesting(
+                context = context,
+                provider = provider,
+                downloadProvider = downloadProvider,
+                translationPreferences = preferences,
+                streamRegistry = streamRegistry,
+                stallThresholdMs = stallThresholdMs ?: TranslationPipeline.NATIVE_STALL_THRESHOLD_MS,
+                nativeTimeoutMs = nativeTimeoutMs ?: TranslationPipeline.ONNX_PHASE_TIMEOUT_MS,
+                singlePageTimeoutMs = httpRenderTimeoutMs ?: TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS,
+                testConstruction = TranslationPipeline.TestConstruction(
+                    engineRebuildMutex = engineRebuildMutex,
+                    inFlightPageKeys = inFlightPageKeys,
+                    nativeRunScope = nativeRunScope,
+                    nativeStallWatchdog = nativeStallWatchdog,
+                    nativeRunQuarantine = nativeRunQuarantine,
+                    engines = engineLane,
+                ),
+            )
             setFields(
                 pipeline,
                 listOf(
-                    // ctor fields — TranslationPipeline.kt:75-81
-                    "context" to context,
-                    "provider" to provider,
-                    "downloadProvider" to downloadProvider,
-                    "translationPreferences" to preferences,
-                    "streamRegistry" to streamRegistry,
-                    // init-owned runtime fields — :133, :142, :146, :147, :170
-                    "engineRebuildMutex" to engineRebuildMutex,
-                    "inFlightPageKeys" to inFlightPageKeys,
-                    "nativeRunScope" to nativeRunScope,
-                    "nativeRunQuarantine" to nativeRunQuarantine,
-                    "nativeStallWatchdog" to nativeStallWatchdog,
-                    "nativeStall" to nativeStallWatchdog.state,
-                    // Unsafe allocation skips the constructor
-                    // defaults, so the native timeout must be injected
-                    // explicitly or every native call races a 0 ms deadline.
-                    "nativeTimeoutMs" to (nativeTimeoutMs ?: TranslationPipeline.ONNX_PHASE_TIMEOUT_MS),
-                    "engines" to engineLane,
                     // Production collaborators injected into the test graph.
                     "pageStoreWriter" to pageStoreWriter,
                     "cleanedPublication" to cleanedPublicationMock,
@@ -696,7 +690,6 @@ internal class TranslationCoexistenceHarness private constructor(
             } else {
                 runCatching { setField(pipeline, "singlePageTimeoutMs", TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS) }
             }
-
             // ---- real scheduler over the real pipeline ----------------------
             val sessionCoordinator = TranslationSessionCoordinator()
             val scheduler = TranslationScheduler(
@@ -743,27 +736,21 @@ internal class TranslationCoexistenceHarness private constructor(
             // scheduler entry.
             val activeStores = ActiveChapterStoreRegistry()
             val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-            val manager = unsafeAllocate(TranslationManager::class.java) as TranslationManager
-            setFields(
-                manager,
-                listOf(
-                    // exactly the uninitializedManager recipe —
-                    // TranslationManagerAutoArbitrationTest.kt:196-210 — plus the
-                    // store registry the observe paths use (TranslationManager.kt:275).
-                    "scheduler" to scheduler,
-                    "translator" to translator,
-                    "sessionCoordinator" to sessionCoordinator,
-                    "context" to context,
-                    "pendingRequestStore" to mockk<TranslationPendingRequestStore>(relaxed = true),
-                    "pendingTranslationRequestsState" to MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap()),
-                    "pendingRequestWriteVersions" to ConcurrentHashMap<Long, AtomicLong>(),
-                    "pendingRequestMutationLock" to Any(),
-                    "pendingRequestGenerationCounters" to ConcurrentHashMap<Long, AtomicLong>(),
-                    "downloadAttachGenerations" to ConcurrentHashMap<Long, Long>(),
-                    "pendingGroupIdSequence" to AtomicLong(0),
-                    "activeStores" to activeStores,
-                ),
+            val manager = TranslationManager.createForTesting(
+                context = context,
+                provider = provider,
+                sourceManager = sourceManager,
+                translationPreferences = preferences,
+                downloadProvider = downloadProvider,
+                pipeline = pipeline,
+                translator = translator,
+                pendingRequestStore = mockk(relaxed = true),
+                pendingRequests = MutableStateFlow(emptyMap()),
+                scheduler = scheduler,
+                sessionCoordinator = sessionCoordinator,
+                streamRegistry = streamRegistry,
             )
+            setField(manager, "activeStores", activeStores)
 
             val harness = TranslationCoexistenceHarness(
                 chapterId = chapterId,
@@ -797,14 +784,6 @@ internal class TranslationCoexistenceHarness private constructor(
         // reflection helpers (single class-walk, existing setField precedent)
         // ------------------------------------------------------------------
 
-        internal fun unsafeAllocate(cls: Class<*>): Any {
-            val unsafeClass = Class.forName("sun.misc.Unsafe")
-            val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-            val unsafe = theUnsafeField.get(null)
-            val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-            return allocateInstance.invoke(unsafe, cls)
-        }
-
         internal fun setField(target: Any, fieldName: String, value: Any?) {
             var cls: Class<*>? = target.javaClass
             while (cls != null) {
@@ -826,9 +805,9 @@ internal class TranslationCoexistenceHarness private constructor(
         }
 
         /**
-         * Injects engine-epoch and borrow-drain test state into the
-         * Unsafe-allocated [EngineLane]. Missing optional fields are ignored;
-         * an explicitly requested [drainGraceMs] must be available and fails
+         * Injects the engine-epoch and borrow-drain test state into the
+         * constructed [EngineLane]. Missing optional fields are ignored; an
+         * explicitly requested [drainGraceMs] must be available and fails
          * with a named assertion otherwise.
          */
         private fun installEngineDrainSeams(

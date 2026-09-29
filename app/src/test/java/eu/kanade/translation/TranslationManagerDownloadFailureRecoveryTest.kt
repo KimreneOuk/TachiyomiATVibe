@@ -23,14 +23,11 @@ import io.mockk.runs
 import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  *  DOWNLOAD_FAILED pending requests must be self-clearing. The fixture
@@ -198,7 +195,7 @@ class TranslationManagerDownloadFailureRecoveryTest {
             TranslationRequestPhase.WAITING_FOR_DOWNLOAD
     }
 
-    /** Mirrors TranslationManagerAutoArbitrationTest's uninitialized fixture. */
+    /** Mirrors TranslationManagerAutoArbitrationTest's test factory fixture. */
     private fun uninitializedManager(
         pendingRequestStore: TranslationPendingRequestStore,
         scheduler: TranslationScheduler = TranslationScheduler(
@@ -212,28 +209,19 @@ class TranslationManagerDownloadFailureRecoveryTest {
         },
         seed: Map<Long, TranslationRequestState> = emptyMap(),
     ): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
-        setField(manager, "scheduler", scheduler)
-        setField(manager, "translator", translator)
-        setField(manager, "context", mockk<Context>(relaxed = true))
-        setField(manager, "pendingRequestStore", pendingRequestStore)
-        // Unsafe allocation skips property initializers, so the public
-        // projection must be wired to the same flow the manager mutates.
-        val pendingState = MutableStateFlow(seed)
-        setField(manager, "pendingTranslationRequestsState", pendingState)
-        setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
-        // Seed the request-generation and download-attachment state resolved by the coordinator.
-        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
-        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
-        return manager
+        return TranslationManager.createForTesting(
+            context = mockk<Context>(relaxed = true),
+            provider = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = pendingRequestStore,
+            pendingRequests = MutableStateFlow(seed),
+            scheduler = scheduler,
+            sessionCoordinator = TranslationSessionCoordinator(),
+        )
     }
 
     private fun setField(target: Any, fieldName: String, value: Any) {

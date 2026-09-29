@@ -6,7 +6,6 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestRecord
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.workflow.ChapterTranslator
@@ -23,15 +22,12 @@ import io.mockk.runs
 import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.lang.reflect.Field
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The startup reconciler resolves every pending request
@@ -62,44 +58,33 @@ class TranslationManagerStartupReconciliationTest {
     private val preferences = InMemorySharedPreferences()
 
     private fun newManager(translator: ChapterTranslator): TranslationManager {
-        val unsafeClass = Class.forName("sun.misc.Unsafe")
-        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
-        val unsafe = theUnsafeField.get(null)
-        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
-        setField(manager, "sessionCoordinator", TranslationSessionCoordinator())
-        setField(
-            manager,
-            "scheduler",
+        val context = mockk<Context>(relaxed = true)
+        val pendingRequestStore = TranslationPendingRequestStore(
+            mockk { every { getSharedPreferences(any(), any()) } returns preferences },
+        )
+        return TranslationManager.createForTesting(
+            context = context,
+            provider = mockk(relaxed = true),
+            sourceManager = mockk(relaxed = true),
+            translationPreferences = mockk(relaxed = true),
+            downloadProvider = mockk(relaxed = true),
+            pipeline = mockk(relaxed = true),
+            translator = translator,
+            pendingRequestStore = pendingRequestStore,
+            scheduler =
             eu.kanade.translation.scheduling.TranslationScheduler(
                 executor = mockk<eu.kanade.translation.pipeline.execution.TranslationExecutor>(relaxed = true),
                 storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { null },
                 immediateStoreResolver = { null },
             ),
-        )
-        setField(manager, "context", mockk<Context>(relaxed = true))
-        setField(manager, "translator", translator)
-        setField(
-            manager,
-            "pendingRequestStore",
-            TranslationPendingRequestStore(
-                mockk { every { getSharedPreferences(any(), any()) } returns preferences },
-            ),
-        )
-        val pendingState = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap())
-        setField(manager, "pendingTranslationRequestsState", pendingState)
-        setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
-        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "pendingRequestMutationLock", Any())
-        setField(
-            manager,
-            "storeScope",
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
-        )
-        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
-        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
-        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
-        return manager
+            sessionCoordinator = TranslationSessionCoordinator(),
+        ).also {
+            setField(
+                it,
+                "storeScope",
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
+            )
+        }
     }
 
     /** Chapters admitted by the translator, recorded by the fake queue callback. */

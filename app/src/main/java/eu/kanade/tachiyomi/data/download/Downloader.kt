@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.model.getComicInfo
@@ -80,7 +81,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Its queue contains the list of chapters to download.
  */
-class Downloader(
+class Downloader private constructor(
     private val context: Context,
     private val provider: DownloadProvider,
     private val cache: DownloadCache,
@@ -91,7 +92,35 @@ class Downloader(
     private val getCategories: GetCategories = Injekt.get(),
     private val getTracks: GetTracks = Injekt.get(),
     private val translationManager: TranslationManager = Injekt.get(),
+    private val testStore: DownloadStore?,
+    private val restoreOnStartup: Boolean,
 ) {
+
+    constructor(
+        context: Context,
+        provider: DownloadProvider,
+        cache: DownloadCache,
+        sourceManager: SourceManager = Injekt.get(),
+        chapterCache: ChapterCache = Injekt.get(),
+        downloadPreferences: DownloadPreferences = Injekt.get(),
+        xml: XML = Injekt.get(),
+        getCategories: GetCategories = Injekt.get(),
+        getTracks: GetTracks = Injekt.get(),
+        translationManager: TranslationManager = Injekt.get(),
+    ) : this(
+        context,
+        provider,
+        cache,
+        sourceManager,
+        chapterCache,
+        downloadPreferences,
+        xml,
+        getCategories,
+        getTracks,
+        translationManager,
+        null,
+        true,
+    )
 
     /**
      * Files that were durably published for one logical page during the
@@ -109,7 +138,7 @@ class Downloader(
     /**
      * Store for persisting downloads across restarts.
      */
-    private val store = DownloadStore(context)
+    private val store = testStore ?: DownloadStore(context)
 
     /**
      * Queue where active downloads are kept.
@@ -138,17 +167,19 @@ class Downloader(
     var isPaused: Boolean = true
 
     init {
-        launchNow {
-            val chapters = async { store.restore() }
-            addAllToQueue(chapters.await())
-            DownloadJob.stop(context)
-            //  slice 2 (R9): downloader side of the startup reconciliation
-            // readiness barrier. No-op for the downloader; the translation
-            // manager runs its one-shot pending-request pass once both queues
-            // have restored.
-            translationManager.onDownloadQueueRestored(
-                queueState.value.mapNotNull { it.chapter.id }.toSet(),
-            )
+        if (restoreOnStartup) {
+            launchNow {
+                val chapters = async { store.restore() }
+                addAllToQueue(chapters.await())
+                DownloadJob.stop(context)
+                //  slice 2 (R9): downloader side of the startup reconciliation
+                // readiness barrier. No-op for the downloader; the translation
+                // manager runs its one-shot pending-request pass once both queues
+                // have restored.
+                translationManager.onDownloadQueueRestored(
+                    queueState.value.mapNotNull { it.chapter.id }.toSet(),
+                )
+            }
         }
     }
 
@@ -1691,6 +1722,34 @@ class Downloader(
     }
 
     companion object {
+        @VisibleForTesting
+        internal fun createForTesting(
+            context: Context,
+            provider: DownloadProvider,
+            cache: DownloadCache,
+            sourceManager: SourceManager,
+            chapterCache: ChapterCache,
+            downloadPreferences: DownloadPreferences,
+            xml: XML,
+            getCategories: GetCategories,
+            getTracks: GetTracks,
+            translationManager: TranslationManager,
+            store: DownloadStore,
+        ): Downloader = Downloader(
+            context,
+            provider,
+            cache,
+            sourceManager,
+            chapterCache,
+            downloadPreferences,
+            xml,
+            getCategories,
+            getTracks,
+            translationManager,
+            store,
+            false,
+        )
+
         const val TMP_DIR_SUFFIX = "_tmp"
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
