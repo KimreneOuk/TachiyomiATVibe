@@ -1,0 +1,25 @@
+# Captured before classifyMutation extraction on 2026-09-29 by invoking the live
+# persistArtifactMutationLocked dispatch against a durable ChapterTranslationStore.
+# Columns: groupCommit, hasRenderedResult, isTextlessTerminal, manualEdit, durableFailure, dispatch.
+# Excluded as impossible: rendered+textless (rendered requires translated blocks; textless requires none),
+# and textless+manualEdit (manualEdit requires a block; textless requires none).
+00000=Legacy
+00001=Failure
+00010=Legacy
+00011=Failure
+00100=Legacy
+00101=Failure
+01000=Legacy
+01001=Failure
+01010=Legacy
+01011=Failure
+10000=Intermediate
+10001=Failure
+10010=ManualEdit
+10011=Failure
+10100=TerminalPromotion
+10101=Failure
+11000=TerminalPromotion
+11001=Failure
+11010=TerminalPromotion
+11011=Failure

@@ -102,6 +102,29 @@ sealed interface MutationAdmission {
     }
 }
 
+/** The five persistence actions selected from a live page mutation. */
+internal enum class ArtifactMutation {
+    Failure,
+    TerminalPromotion,
+    ManualEdit,
+    Intermediate,
+    Legacy,
+}
+
+/** Selects the artifact persistence action while preserving the historical dispatch order. */
+internal fun classifyMutation(
+    updated: PageTranslation,
+    durableFailure: DurableFailureMetadata?,
+): ArtifactMutation = when {
+    durableFailure != null -> ArtifactMutation.Failure
+    GroupCommitConfiguration.enabled && (updated.hasRenderedResult || updated.isTextlessTerminal) ->
+        ArtifactMutation.TerminalPromotion
+    GroupCommitConfiguration.enabled && updated.blocks.any { it.userEditedAt != null } ->
+        ArtifactMutation.ManualEdit
+    GroupCommitConfiguration.enabled -> ArtifactMutation.Intermediate
+    else -> ArtifactMutation.Legacy
+}
+
 private fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
     val committed = committed
     val displayBase = committed?.displayBase
@@ -2499,111 +2522,42 @@ class ChapterTranslationStore(
         val currentCandidate = manifest.pages.getValue(pageKey).candidate
             ?: run { return reject("candidate missing after open") }
         val expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion
-        if (durableFailure != null) {
-            val persisted = store.persistLiveCandidateAndFailure(
-                manifest = manifest,
-                pageKey = pageKey,
-                generationId = currentCandidate.generationId,
-                expectedPageVersion = expectedPageVersion,
-                expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                pageSnapshot = updated,
-                origin = origin,
-                failure = durableFailure,
-                sourceIdentity = updated.sourceIdentity(pageKey),
-            )
-            manifest = when (persisted) {
-                is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
-                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
-                    }
-                    return reject("candidate persist rejected: ${persisted.reason}")
-                }
-            }
-            artifactManifest = manifest
-        } else if (GroupCommitConfiguration.enabled && (updated.hasRenderedResult || updated.isTextlessTerminal)) {
-            // Promote the candidate at the terminal-page commit point.
-            flushStagedMutationsLocked(CommitPoint.PAGE_TERMINAL_PROMOTION)
-            val current = artifactManifest ?: manifest
-            val currentCand = current.pages[pageKey]?.candidate ?: currentCandidate
-            val promoted = store.promoteLiveCandidate(
-                manifest = current,
-                pageKey = pageKey,
-                generationId = currentCand.generationId,
-                expectedPageVersion = current.pages[pageKey]?.pageVersion ?: expectedPageVersion,
-                expectedDependencyFingerprint = currentCand.dependencyFingerprint.orEmpty(),
-                pageSnapshot = updated,
-                origin = origin,
-                sourceIdentity = updated.sourceIdentity(pageKey),
-            )
-            manifest = when (promoted) {
-                is ChapterArtifactEngine.TransactionOutcome.Committed -> promoted.manifest
-                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
-                    }
-                    return reject("candidate promotion rejected: ${promoted.reason}")
-                }
-            }
-            artifactManifest = manifest
-        } else if (GroupCommitConfiguration.enabled && updated.blocks.any { it.userEditedAt != null }) {
-            // Tier 1: User manual edits are immediately persisted without staging
-            flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
-            val current = artifactManifest ?: manifest
-            val currentCand = current.pages[pageKey]?.candidate ?: currentCandidate
-            val persisted = store.persistLiveCandidate(
-                manifest = current,
-                pageKey = pageKey,
-                generationId = currentCand.generationId,
-                expectedPageVersion = current.pages[pageKey]?.pageVersion ?: expectedPageVersion,
-                expectedDependencyFingerprint = currentCand.dependencyFingerprint.orEmpty(),
-                pageSnapshot = updated,
-                origin = origin,
-                sourceIdentity = updated.sourceIdentity(pageKey),
-            )
-            manifest = when (persisted) {
-                is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
-                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
-                    }
-                    return reject("manual candidate persist rejected: ${persisted.reason}")
-                }
-            }
-            artifactManifest = manifest
-            return true
-        } else if (GroupCommitConfiguration.enabled) {
-            // Buffer intermediate, non-terminal stage writes for a grouped commit.
-            stagePageMutationLocked(pageKey, updated)
-            return true
-        } else {
-            val persisted = store.persistLiveCandidate(
-                manifest = manifest,
-                pageKey = pageKey,
-                generationId = currentCandidate.generationId,
-                expectedPageVersion = expectedPageVersion,
-                expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                pageSnapshot = updated,
-                origin = origin,
-                sourceIdentity = updated.sourceIdentity(pageKey),
-            )
-            manifest = when (persisted) {
-                is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
-                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
-                    }
-                    return reject("candidate persist rejected: ${persisted.reason}")
-                }
-            }
-            artifactManifest = manifest
-            if (updated.hasRenderedResult || updated.isTextlessTerminal) {
-                val promoted = store.promoteLiveCandidate(
+        when (classifyMutation(updated, durableFailure)) {
+            ArtifactMutation.Failure -> {
+                val failure = checkNotNull(durableFailure)
+                val persisted = store.persistLiveCandidateAndFailure(
                     manifest = manifest,
                     pageKey = pageKey,
                     generationId = currentCandidate.generationId,
-                    expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion,
+                    expectedPageVersion = expectedPageVersion,
                     expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                    pageSnapshot = updated,
+                    origin = origin,
+                    failure = failure,
+                    sourceIdentity = updated.sourceIdentity(pageKey),
+                )
+                manifest = when (persisted) {
+                    is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
+                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
+                        }
+                        return reject("candidate persist rejected: ${persisted.reason}")
+                    }
+                }
+                artifactManifest = manifest
+            }
+            ArtifactMutation.TerminalPromotion -> {
+                // Promote the candidate at the terminal-page commit point.
+                flushStagedMutationsLocked(CommitPoint.PAGE_TERMINAL_PROMOTION)
+                val current = artifactManifest ?: manifest
+                val currentCand = current.pages[pageKey]?.candidate ?: currentCandidate
+                val promoted = store.promoteLiveCandidate(
+                    manifest = current,
+                    pageKey = pageKey,
+                    generationId = currentCand.generationId,
+                    expectedPageVersion = current.pages[pageKey]?.pageVersion ?: expectedPageVersion,
+                    expectedDependencyFingerprint = currentCand.dependencyFingerprint.orEmpty(),
                     pageSnapshot = updated,
                     origin = origin,
                     sourceIdentity = updated.sourceIdentity(pageKey),
@@ -2618,6 +2572,82 @@ class ChapterTranslationStore(
                     }
                 }
                 artifactManifest = manifest
+            }
+            ArtifactMutation.ManualEdit -> {
+                // Tier 1: User manual edits are immediately persisted without staging
+                flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+                val current = artifactManifest ?: manifest
+                val currentCand = current.pages[pageKey]?.candidate ?: currentCandidate
+                val persisted = store.persistLiveCandidate(
+                    manifest = current,
+                    pageKey = pageKey,
+                    generationId = currentCand.generationId,
+                    expectedPageVersion = current.pages[pageKey]?.pageVersion ?: expectedPageVersion,
+                    expectedDependencyFingerprint = currentCand.dependencyFingerprint.orEmpty(),
+                    pageSnapshot = updated,
+                    origin = origin,
+                    sourceIdentity = updated.sourceIdentity(pageKey),
+                )
+                manifest = when (persisted) {
+                    is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
+                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
+                        }
+                        return reject("manual candidate persist rejected: ${persisted.reason}")
+                    }
+                }
+                artifactManifest = manifest
+                return true
+            }
+            ArtifactMutation.Intermediate -> {
+                // Buffer intermediate, non-terminal stage writes for a grouped commit.
+                stagePageMutationLocked(pageKey, updated)
+                return true
+            }
+            ArtifactMutation.Legacy -> {
+                val persisted = store.persistLiveCandidate(
+                    manifest = manifest,
+                    pageKey = pageKey,
+                    generationId = currentCandidate.generationId,
+                    expectedPageVersion = expectedPageVersion,
+                    expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                    pageSnapshot = updated,
+                    origin = origin,
+                    sourceIdentity = updated.sourceIdentity(pageKey),
+                )
+                manifest = when (persisted) {
+                    is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
+                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
+                        }
+                        return reject("candidate persist rejected: ${persisted.reason}")
+                    }
+                }
+                artifactManifest = manifest
+                if (updated.hasRenderedResult || updated.isTextlessTerminal) {
+                    val promoted = store.promoteLiveCandidate(
+                        manifest = manifest,
+                        pageKey = pageKey,
+                        generationId = currentCandidate.generationId,
+                        expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion,
+                        expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                        pageSnapshot = updated,
+                        origin = origin,
+                        sourceIdentity = updated.sourceIdentity(pageKey),
+                    )
+                    manifest = when (promoted) {
+                        is ChapterArtifactEngine.TransactionOutcome.Committed -> promoted.manifest
+                        is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
+                            }
+                            return reject("candidate promotion rejected: ${promoted.reason}")
+                        }
+                    }
+                    artifactManifest = manifest
+                }
             }
         }
         artifactManifest = manifest
