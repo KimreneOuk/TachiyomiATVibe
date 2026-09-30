@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-private const val REQUIRED_CONTROL_COMMAND_SLOTS = 4
+private const val REQUIRED_CONTROL_COMMAND_SLOTS = 5
 
 /** Immutable reference snapshot handed to the journal writer after a legacy commit succeeds. */
 @Serializable
@@ -349,8 +349,8 @@ internal class ChapterJournalWriter(
     private val creditAdmissionLock = Any()
 
     // Appends are bounded by the 8+1 credit window. The channel separately reserves
-    // regular + foreground credits plus four control commands (inventory wake,
-    // DEFUNCT, TERMINAL_LAG, and CLOSE), so producer paths never wait under the mutex.
+    // regular + foreground credits plus five control commands (inventory wake,
+    // DEFUNCT, TERMINAL_LAG, capture barrier, and CLOSE), so producer paths never wait under the mutex.
     private val commands = Channel<Command>(channelCapacity)
     private val timerWake = Channel<Unit>(Channel.CONFLATED)
     private val assignedCommitSequence = AtomicLong(0L)
@@ -392,7 +392,52 @@ internal class ChapterJournalWriter(
     val offersRejectedAfterTerminalCount: Long get() = offersRejectedAfterTerminal.get()
     val inFlightCount: Int get() = outstanding.get()
     val isWriterStopped: Boolean get() = writerDone.isCompleted
+    val isTerminallyClosed: Boolean get() = writerDone.isCompleted
+    val epochCoverage: ChapterJournalEpochCoverage
+        get() = ChapterJournalEpochCoverage(
+            storeGeneration = storeGeneration,
+            epochOrdinal = epochOrdinal,
+            ackedFrameSeq = ackedHighWaterSeq,
+            terminallyClosed = isTerminallyClosed,
+        )
     val isShadowCaptureActive: Boolean get() = captureAcceptanceOpen.get()
+
+    /** Coordinator keeps this writer in its live set until this callback proves it cannot append. */
+    internal fun invokeOnTerminal(callback: (ChapterJournalEpochCoverage) -> Unit) {
+        writerDone.invokeOnCompletion { callback(epochCoverage) }
+    }
+
+    /**
+     * Force the current accepted frame prefix durable and return this epoch's physical watermark.
+     * The store capture gate must already be closed so no producer can append across this command.
+     */
+    suspend fun flushToCaptureBarrier(): Long {
+        if (writerDone.isCompleted || (!started.get() && !hasJournalEvent.get())) {
+            if (writerFailures.get() > 0L) throw IOException("journal writer failed before capture barrier")
+            return ackedHighWaterSeq
+        }
+        if (!awaitReady()) {
+            writerDone.await()
+            if (writerFailures.get() > 0L) throw IOException("journal writer failed before capture barrier")
+            return ackedHighWaterSeq
+        }
+        val done = CompletableDeferred<Long>()
+        val enqueueResult = synchronized(creditAdmissionLock) {
+            when {
+                writerDone.isCompleted || closed.get() -> false
+                else -> commands.trySend(Command.CaptureBarrier(done)).isSuccess
+            }
+        }
+        if (!enqueueResult) {
+            if (!writerDone.isCompleted && !closed.get()) {
+                throw IOException("journal capture barrier control slot was unavailable")
+            }
+            writerDone.await()
+            if (writerFailures.get() > 0L) throw IOException("journal writer failed before capture barrier")
+            return ackedHighWaterSeq
+        }
+        return done.await()
+    }
 
     /** Credit admission is non-blocking and does not create an empty epoch on disk. */
     suspend fun tryAcquireShadowCredit(foreground: Boolean): ChapterJournalCredit? {
@@ -811,6 +856,7 @@ internal class ChapterJournalWriter(
         var terminalEndingInProgress = false
         var activeCredit: ChapterJournalCredit? = null
         var activeClose: CompletableDeferred<Unit>? = null
+        var activeCaptureBarrier: CompletableDeferred<Long>? = null
 
         suspend fun syncFreePrefix() {
             if (!hadUnsyncedFreeWork) return
@@ -1030,6 +1076,16 @@ internal class ChapterJournalWriter(
                         }
                     }
 
+                    is Command.CaptureBarrier -> {
+                        activeCaptureBarrier = command.done
+                        sink?.flush()
+                        sink?.sync()
+                        clearFreeSync()
+                        if (sink != null) highWater.set(nextFrameSeq - 1L)
+                        command.done.complete(highWater.get())
+                        activeCaptureBarrier = null
+                    }
+
                     is Command.TerminalLag -> {
                         if (terminalCaptureHalted) {
                             droppedControlRecords.incrementAndGet()
@@ -1110,6 +1166,8 @@ internal class ChapterJournalWriter(
             activeCredit = null
             activeClose?.completeExceptionally(failure)
             activeClose = null
+            activeCaptureBarrier?.completeExceptionally(failure)
+            activeCaptureBarrier = null
             ready.complete(false)
             // Every accepted command still owns exactly one credit until this terminal disposition.
             while (true) {
@@ -1120,6 +1178,7 @@ internal class ChapterJournalWriter(
                     lostTerminalRecords.incrementAndGet()
                 }
                 if (pending is Command.Close) pending.done.completeExceptionally(failure)
+                if (pending is Command.CaptureBarrier) pending.done.completeExceptionally(failure)
             }
         } finally {
             freeSyncTimer?.cancel()
@@ -1279,6 +1338,8 @@ internal class ChapterJournalWriter(
         ) : Command
 
         data object InventoryWake : Command
+
+        data class CaptureBarrier(val done: CompletableDeferred<Long>) : Command
 
         data class TerminalLag(
             val starvedAtCommitSeq: Long,
