@@ -117,6 +117,12 @@ data class PageTranslation(
 
     override val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: errorMessage
 
+    override fun equals(other: Any?): Boolean = pageTranslationValueEquals(this, other)
+
+    override fun hashCode(): Int = pageTranslationValueHashCode(this)
+
+    override fun toString(): String = pageTranslationValueToString(this)
+
     /**
      * number of DISTINCT page translation attempts that have ended
      * in a terminal failure for this page. NOT serialized — it is an in-memory
@@ -355,4 +361,10 @@ data class TranslationBlock(
      */
     override val segmentationMask: eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle? = null,
     override var userEditedAt: Long? = null,
-) : TranslationBlockView
+) : TranslationBlockView {
+    override fun equals(other: Any?): Boolean = translationBlockValueEquals(this, other)
+
+    override fun hashCode(): Int = translationBlockValueHashCode(this)
+
+    override fun toString(): String = translationBlockValueToString(this)
+}

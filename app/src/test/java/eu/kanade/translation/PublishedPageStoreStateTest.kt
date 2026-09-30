@@ -1,9 +1,11 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.model.Detection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -14,10 +16,53 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 
 class PublishedPageStoreStateTest {
+
+    @Test
+    fun `published wrappers preserve draft value equality`() {
+        val draft = PageTranslation(
+            blocks = mutableListOf(
+                TranslationBlock(
+                    blockId = "b1",
+                    text = "source",
+                    translation = "target",
+                    width = 10f,
+                    height = 12f,
+                    x = 3f,
+                    y = 4f,
+                    symHeight = 5f,
+                    symWidth = 6f,
+                    angle = 0f,
+                ),
+            ),
+        ).apply {
+            allTextDetections = listOf(
+                Detection(
+                    bbox = intArrayOf(1, 2, 3, 4),
+                    label = 7,
+                    score = 0.75f,
+                    className = "text",
+                ),
+            )
+        }
+        val published = draft.toPublishedPage()
+
+        published shouldBe draft
+        draft shouldBe published
+        published.hashCode() shouldBe draft.hashCode()
+        published.toString() shouldBe draft.toString()
+        published.blocks shouldBe draft.blocks
+        draft.blocks shouldBe published.blocks
+        published.blocks.single().toString() shouldBe draft.blocks.single().toString()
+        published.allTextDetections shouldBe draft.allTextDetections
+        draft.allTextDetections shouldBe published.allTextDetections
+        published.allTextDetections.single().toString() shouldBe draft.allTextDetections.single().toString()
+        assertEquals(published.allTextDetections.hashCode(), draft.allTextDetections.hashCode())
+    }
 
     @Test
     fun `draft materialization preserves stale error text without re-routing it`() {
