@@ -121,8 +121,12 @@ internal class StorePersistenceScheduler(
             }
         }
         store.reservePendingLazyJournalCredits()
-        mutex.withLock {
-            flushDirtyLocked()
+        // A barrier parks this final flush before staged/lazy mutations are drained. Queued
+        // writer frames are drained by the barrier itself; retained credits remain producer state.
+        store.withJournalCapturePermit {
+            mutex.withLock {
+                flushDirtyLocked()
+            }
         }
     }
 
