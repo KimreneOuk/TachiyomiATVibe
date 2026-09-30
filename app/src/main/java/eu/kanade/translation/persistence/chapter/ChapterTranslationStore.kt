@@ -446,7 +446,8 @@ class ChapterTranslationStore(
     private data class BulkJournalCapture(
         val kind: ChapterJournalFormat.RecordKind,
         val operation: String,
-        val mapping: Map<String, String?>,
+        /** Rekey request mapping; replace mappings are derived from successful captured mutations. */
+        val rekeyMapping: Map<String, String?> = emptyMap(),
         val mutations: LinkedHashMap<String, ChapterJournalRecord> = LinkedHashMap(),
     )
 
@@ -612,7 +613,6 @@ class ChapterTranslationStore(
         credit: ChapterJournalCredit?,
         artifactContentHash: String? = null,
     ) {
-        val paid = durableFailure != null || page.hasRenderedResult || page.isTextlessTerminal
         val record = ChapterJournalRecord(
             pageKey = pageKey,
             generation = generation,
@@ -632,13 +632,14 @@ class ChapterTranslationStore(
             return
         }
         val wasAccepting = writer.isShadowCaptureActive
+        val paid = durableFailure != null || page.hasRenderedResult || page.isTextlessTerminal
         writer.captureLegacyPersisted(
             commitSeq = writer.nextCommitSeq(),
             credit = credit,
             pageKey = pageKey,
             generation = record.generation,
             fencingToken = record.fencingToken,
-            page = record.state ?: page,
+            page = page,
             durableFailure = durableFailure,
             paid = paid,
             artifactContentHash = record.artifactContentHash,
@@ -712,7 +713,7 @@ class ChapterTranslationStore(
             ChapterJournalFormat.RecordKind.BULK_REPLACE -> bulk.mutations.mapValues { (_, record) ->
                 record.pageKey.takeUnless { record.state == null }
             }
-            ChapterJournalFormat.RecordKind.BULK_REKEY -> bulk.mapping.filter { (oldKey, newKey) ->
+            ChapterJournalFormat.RecordKind.BULK_REKEY -> bulk.rekeyMapping.filter { (oldKey, newKey) ->
                 newKey != null &&
                     bulk.mutations[oldKey]?.let { it.state == null } == true &&
                     bulk.mutations[newKey]?.state != null
@@ -2455,18 +2456,15 @@ class ChapterTranslationStore(
                         return@withLock
                     }
                 }
-                // Keep earlier staged commits outside this atomic replace record.
-                flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
-                check(activeBulkJournalCapture == null) { "nested bulk journal capture" }
-                val oldKeys = (pages.keys + artifactManifest?.pages?.keys.orEmpty()).distinct()
-                val mapping = buildMap<String, String?> {
-                    oldKeys.forEach { put(it, null) }
-                    updatedPages.keys.forEach { put(it, it) }
+                // Keep earlier staged commits outside this aggregate record without
+                // forcing an empty-staging manifest sync under the mutex.
+                if (persistenceScheduler.stagedPageKeys.isNotEmpty()) {
+                    flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
                 }
+                check(activeBulkJournalCapture == null) { "nested bulk journal capture" }
                 val bulk = BulkJournalCapture(
                     kind = ChapterJournalFormat.RecordKind.BULK_REPLACE,
                     operation = "replace_all",
-                    mapping = mapping,
                 )
                 activeBulkJournalCapture = bulk
                 try {
@@ -2495,8 +2493,10 @@ class ChapterTranslationStore(
                         }
                     }
                     // Intermediate page writes are staged by the unchanged legacy classifier;
-                    // flush them before the single aggregate shadow record is handed off.
-                    flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+                    // flush only when present before the single aggregate shadow record is handed off.
+                    if (persistenceScheduler.stagedPageKeys.isNotEmpty()) {
+                        flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+                    }
                     persistenceScheduler.dirty = !persistLocked()
                     _state.value = snapshotPages()
                     _display.value = displaySnapshotLocked()
@@ -2569,7 +2569,7 @@ class ChapterTranslationStore(
                 val bulk = BulkJournalCapture(
                     kind = ChapterJournalFormat.RecordKind.BULK_REKEY,
                     operation = "rekey_pages",
-                    mapping = moveByOldKey,
+                    rekeyMapping = moveByOldKey,
                 )
                 activeBulkJournalCapture = bulk
                 try {

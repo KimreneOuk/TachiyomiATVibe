@@ -84,7 +84,11 @@ internal data class ChapterJournalInventoryRecord(
     }
 }
 
-/** One atomic bulk legacy transition, represented by one journal frame and one commit sequence. */
+/**
+ * One legacy bulk transition in one journal frame and one commit sequence. Replay applies [mutations] as authoritative;
+ * [mapping] is a derived summary of successful durable outcomes, never an independent state source. Oversized aggregates
+ * are represented by a terminal-payload ending; the shadow writer does not chunk one operation across frames.
+ */
 @Serializable
 internal data class ChapterJournalBulkRecord(
     val schemaVersion: Int = SCHEMA_VERSION,
@@ -344,9 +348,9 @@ internal class ChapterJournalWriter(
     // lifecycle transition wins, the permit is returned before any credit escapes.
     private val creditAdmissionLock = Any()
 
-    // Appends are bounded by the 8+1 credit window. Inventory updates coalesce
-    // to one queued wakeup; capacity also reserves room for DEFUNCT, TERMINAL_LAG,
-    // and CLOSE, so producer paths never wait while holding the store mutex.
+    // Appends are bounded by the 8+1 credit window. The channel separately reserves
+    // regular + foreground credits plus four control commands (inventory wake,
+    // DEFUNCT, TERMINAL_LAG, and CLOSE), so producer paths never wait under the mutex.
     private val commands = Channel<Command>(channelCapacity)
     private val timerWake = Channel<Unit>(Channel.CONFLATED)
     private val assignedCommitSequence = AtomicLong(0L)
@@ -485,7 +489,8 @@ internal class ChapterJournalWriter(
             pageKey = "<${record.operation}>",
             traceRuns = TranslationTrace.currentRuns(),
             syncImmediately = immutableRecord.mutations.any { mutation ->
-                mutation.durableFailure != null || mutation.state?.hasRenderedResult == true ||
+                mutation.durableFailure != null ||
+                    mutation.state?.hasRenderedResult == true ||
                     mutation.state?.isTextlessTerminal == true
             },
         )
