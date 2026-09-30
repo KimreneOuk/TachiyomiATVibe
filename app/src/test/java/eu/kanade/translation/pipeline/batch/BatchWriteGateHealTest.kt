@@ -16,6 +16,7 @@ import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.matchers.types.shouldNotBeInstanceOf
 import kotlinx.coroutines.test.runTest
@@ -58,6 +59,7 @@ class BatchWriteGateHealTest {
     private fun newGate(
         store: ChapterTranslationStore,
         identities: ConcurrentHashMap<String, BatchWriteIdentity>,
+        beforeSameLeaseRetry: (suspend (String, ChapterTranslationStore.PageSnapshot) -> Unit)? = null,
     ) = BatchWriteGate(
         store = store,
         batchWriteIdentities = identities,
@@ -66,6 +68,7 @@ class BatchWriteGateHealTest {
         stampBatchProvenance = { page, _ -> page },
         releaseBatchPageLeaseFn = { s, pageKey -> s.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         persistPageWithOomRecoveryFn = { _, _, _, _ -> error("not used by the heal tests") },
+        beforeSameLeaseRetryHook = beforeSameLeaseRetry,
     )
 
     /** Acquires the BATCH translation lease and registers the gate identity exactly like the lane does. */
@@ -116,6 +119,46 @@ class BatchWriteGateHealTest {
         healed.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
         // The healed accept also re-syncs the cached identity.
         store.snapshot("001.jpg").pageVersion shouldBe identities["001.jpg"]!!.pageVersion
+    }
+
+    @Test
+    fun `lease mismatch after same-lease retry enters owner-proof heal`() {
+        runTest {
+            val store = lazyStore()
+            val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            acquireBatchIdentity(store, identities, "001.jpg")
+            val identity = identities.getValue("001.jpg")
+            val originalPageVersion = identity.pageVersion
+
+            // Force the first guarded update to reject on pageVersion while the
+            // batch still owns its original lease token.
+            store.updatePageFromCurrentSnapshot("001.jpg", "ungated page-version drift") { page ->
+                page ?: PageTranslation(sourceFileName = "001.jpg")
+            }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+            store.snapshot("001.jpg").pageVersion shouldBe (identity.pageVersion + 1)
+
+            val gate = newGate(store, identities) { pageKey, refreshed ->
+                pageKey shouldBe "001.jpg"
+                refreshed.leaseToken shouldBe identity.leaseToken
+
+                // This suspending seam runs after the same-token snapshot and
+                // before the gate's retry acquires the store mutex.
+                store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+                store.tryAcquirePageStageLease(
+                    pageKey,
+                    PageStage.Translation,
+                    PageWriteOrigin.MANUAL,
+                ).shouldBeInstanceOf<LeaseAcquisition.Granted>()
+            }
+
+            gate.guardedBatchUpdate("001.jpg", "batch translation retry", BatchStage.TRANSLATION) { page ->
+                page!!.apply { translationStatus = StageStatus.RUNNING }
+            }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+
+            val diagnostic = store.lastBatchWriteGateRejectionDiagnostic.shouldNotBeNull()
+            diagnostic shouldContain "leaseTokenMismatchHeal=denied owner=MANUAL"
+            diagnostic shouldContain "firstRejectionReason=pageVersion expected=$originalPageVersion actual=${originalPageVersion + 1}"
+        }
     }
 
     @Test
