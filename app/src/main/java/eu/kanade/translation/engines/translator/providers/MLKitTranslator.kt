@@ -1,18 +1,29 @@
 package eu.kanade.translation.engines.translator.providers
+
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.util.await
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 class MLKitTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
 ) : BaseTranslator() {
 
+    // A small fixed bound keeps the on-device client responsive while avoiding
+    // unbounded line fan-out. Tune after line-count measurements are available.
+    private val lineWorkerPool = LineTranslationWorkerPool()
+
+    @Volatile
     private var translator = Translation.getClient(
         TranslatorOptions.Builder().setSourceLanguage(fromLang.code)
             .setTargetLanguage(TranslateLanguage.fromLanguageTag(toLang.code) ?: TranslateLanguage.ENGLISH)
@@ -37,17 +48,33 @@ class MLKitTranslator(
         }
         val activeTranslator = translator
         activeTranslator.downloadModelIfNeeded(conditions).await()
-        pages.forEach { (_, v) ->
-            v.blocks.forEach { b ->
-                b.translation = b.text.split("\n").map { line ->
-                    if (line.isNotEmpty()) {
-                        activeTranslator.translate(line).await()
-                    } else {
-                        ""
-                    }
-                }.joinToString("\n")
+        pages.forEach { (_, page) ->
+            page.blocks.forEach { block ->
+                block.translation = translateBlockLines(activeTranslator, block.text)
             }
         }
+    }
+
+    private suspend fun translateBlockLines(activeTranslator: Translator, source: String): String {
+        val lines = source.split("\n")
+        val nonEmptyLines = lines.mapIndexedNotNull { index, line ->
+            if (line.isNotEmpty()) index to line else null
+        }
+
+        // Snapshot line strings before suspension; E17a's immutable page-data boundary can then
+        // remain separate from this fan-out, with the joined result applied after each block drains.
+        val translatedLines = lineWorkerPool.mapOrdered(nonEmptyLines) { (_, line) ->
+            currentCoroutineContext().ensureActive()
+            val task = activeTranslator.translate(line)
+            // Task.await does not cancel ML Kit work; hold the permit until that task drains.
+            withContext(NonCancellable) { task.await() }
+        }
+
+        val result = lines.toMutableList()
+        nonEmptyLines.forEachIndexed { translatedIndex, (lineIndex, _) ->
+            result[lineIndex] = translatedLines[translatedIndex]
+        }
+        return result.joinToString("\n")
     }
 
     override fun close() {
