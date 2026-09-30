@@ -1,7 +1,7 @@
 package eu.kanade.translation.persistence.internal
 
 import eu.kanade.translation.model.PageDisplayState
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasCommittedDisplay
 import eu.kanade.translation.model.hasRenderedResult
@@ -27,8 +27,8 @@ import kotlinx.coroutines.flow.StateFlow
  */
 internal class StoreStatusInputs(
     val manifest: ChapterArtifactManifest?,
-    val state: StateFlow<Map<String, PageTranslation>>,
-    val display: StateFlow<Map<String, PageTranslation>>,
+    val state: StateFlow<Map<String, PageTranslationView>>,
+    val display: StateFlow<Map<String, PageTranslationView>>,
 )
 
 // Durable status and failure views are projected from one store snapshot.

@@ -3,7 +3,8 @@ package eu.kanade.tachiyomi.ui.reader.loader
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.toDraft
 import mihon.core.archive.ArchiveReader
 import tachiyomi.core.common.util.system.ImageUtil
 
@@ -12,8 +13,8 @@ import tachiyomi.core.common.util.system.ImageUtil
  */
 internal class ArchivePageLoader(
     private val reader: ArchiveReader,
-    private val translations: Map<String, PageTranslation>,
-    private val resolveTranslatedStream: ((PageTranslation) -> (() -> java.io.InputStream)?)? = null,
+    private val translations: Map<String, PageTranslationView>,
+    private val resolveTranslatedStream: ((PageTranslationView) -> (() -> java.io.InputStream)?)? = null,
 ) : PageLoader() {
     override var isLocal: Boolean = true
 
@@ -29,7 +30,7 @@ internal class ArchivePageLoader(
                 val stream = pageTranslation?.let { resolveTranslatedStream?.invoke(it) }
                 ReaderPage(i).apply {
                     sourceFileName = entry.name
-                    translation = pageTranslation
+                    translation = pageTranslation?.toDraft()
                     if (stream != null) {
                         translatedStream = stream
                         showTranslatedImage = true

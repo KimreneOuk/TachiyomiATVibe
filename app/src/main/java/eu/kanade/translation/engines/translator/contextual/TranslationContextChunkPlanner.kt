@@ -1,6 +1,7 @@
 package eu.kanade.translation.engines.translator.contextual
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 
 /**
  * Conservative AI-request chunking for pre-translation.
@@ -111,7 +112,7 @@ object TranslationContextChunkPlanner {
         ).withOutputCap(requestedOutputTokens, constraints)
     }
 
-    fun updateRollingContext(previous: String, translatedPages: Map<String, PageTranslation>): String {
+    fun updateRollingContext(previous: String, translatedPages: Map<String, PageTranslationView>): String {
         val pairs = translatedPages.values
             .flatMap { page ->
                 page.blocks.mapNotNull { block ->

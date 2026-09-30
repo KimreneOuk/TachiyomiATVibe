@@ -7,7 +7,7 @@ import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
@@ -1191,7 +1191,7 @@ class TranslationManager private constructor(
         scanlator: String?,
         title: String,
         source: Source,
-    ): Map<String, PageTranslation> {
+    ): Map<String, PageTranslationView> {
         try {
             val file = provider.findTranslationFile(
                 chapterName,
@@ -1214,7 +1214,7 @@ class TranslationManager private constructor(
         scanlator: String?,
         mangaTitle: String,
         source: Source,
-    ): Map<String, PageTranslation> {
+    ): Map<String, PageTranslationView> {
         val entryStage = ReaderEntryTrace.begin("translation.getForReader", chapterId)
         return try {
             withContext(Dispatchers.IO) {
@@ -1242,7 +1242,7 @@ class TranslationManager private constructor(
 
     fun getChapterTranslation(
         file: UniFile,
-    ): Map<String, PageTranslation> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+    ): Map<String, PageTranslationView> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
         if (manifestProbe.exists) {
             val parent = file.parentFile ?: return@runBlocking emptyMap()
@@ -1633,14 +1633,14 @@ class TranslationManager private constructor(
     }
 
     /** Reader-facing projection with the committed display pointer applied. */
-    fun observeActiveDisplayStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? =
+    fun observeActiveDisplayStore(chapterId: Long): StateFlow<Map<String, PageTranslationView>>? =
         activeStores.get(chapterId)?.display
 
     /**
      * Chapter-keyed active page source for reader state. Unlike a global active-store stream,
      * this never emits another chapter's pages and becomes empty when this chapter is removed.
      */
-    fun selectActiveStore(chapterId: Long): Flow<Map<String, PageTranslation>> = activeStores.select(chapterId)
+    fun selectActiveStore(chapterId: Long): Flow<Map<String, PageTranslationView>> = activeStores.select(chapterId)
 
     fun createBatchTracker(
         chapterId: Long,

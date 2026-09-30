@@ -6,6 +6,7 @@ import eu.kanade.translation.model.BatchPhase
 import eu.kanade.translation.model.BatchRebuildProgress
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -14,6 +15,7 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
@@ -199,8 +201,12 @@ class TranslationBatchProgressTracker(
             // Persisted leftovers may be useful diagnostically, but must never
             // inflate progress totals.
             pageMap = orderedPageKeys.distinct().associateWith { pageKey ->
-                val stored = storePages[pageKey] ?: PageTranslation(sourceFileName = pageKey)
-                state.pagePhases[pageKey]?.entries?.fold(stored) { current, (phase, status) ->
+                val stored = storePages[pageKey]
+                // This is a progress-only overlay. The temporary draft is never
+                // sent back to the authoritative store.
+                val base = stored?.toDraft() ?: PageTranslation(sourceFileName = pageKey)
+                // TODO(E17b): project phase statuses directly from the read-only view and drop this draft.
+                state.pagePhases[pageKey]?.entries?.fold(base) { current, (phase, status) ->
                     when (phase) {
                         BatchPhase.OCR -> current.copy(ocrStatus = status)
                         BatchPhase.TRANSLATE -> current.copy(translationStatus = status)
@@ -210,7 +216,7 @@ class TranslationBatchProgressTracker(
                         // derived from hasRenderedResult in count().
                         BatchPhase.DISPLAY -> current
                     }
-                } ?: stored
+                } ?: base
             },
             displayPageMap = store.display.value.let { displayPages ->
                 orderedPageKeys.distinct().mapNotNull { pageKey ->
@@ -332,7 +338,7 @@ class TranslationBatchProgressTracker(
         }
 
         fun computeSnapshot(
-            pageMap: Map<String, PageTranslation>,
+            pageMap: Map<String, PageTranslationView>,
             chapterState: Translation.State,
             forcedPartialCount: Int = -1,
             forcedFailedCount: Int = -1,
@@ -355,7 +361,7 @@ class TranslationBatchProgressTracker(
             },
             chapterId: Long = 0,
             /** Reader-facing committed pages; defaults to the live map for pure callers. */
-            displayPageMap: Map<String, PageTranslation>? = null,
+            displayPageMap: Map<String, PageTranslationView>? = null,
             /**
              * Keys the batch settled as
              * cancelled — counted as cancelled terminal work unless the page
@@ -479,9 +485,9 @@ class TranslationBatchProgressTracker(
         }
 
         private fun count(
-            pages: Map<String, PageTranslation>,
+            pages: Map<String, PageTranslationView>,
             phase: BatchPhase,
-            displayPages: Map<String, PageTranslation> = pages,
+            displayPages: Map<String, PageTranslationView> = pages,
         ): StageCount {
             // TachiyomiAT bug 2 fix: RENDER (color estimation) and DISPLAY are
             // reported separately so the indicator stops claiming a page is
@@ -519,13 +525,16 @@ class TranslationBatchProgressTracker(
                 statuses.size,
             )
         }
-        private fun runningStages(page: PageTranslation) = buildSet {
+        private fun runningStages(page: PageTranslationView) = buildSet {
             if (page.ocrStatus == StageStatus.RUNNING) add(TranslationProgressStage.OCR)
             if (page.inpaintStatus == StageStatus.RUNNING) add(TranslationProgressStage.INPAINT)
             if (page.translationStatus == StageStatus.RUNNING) add(TranslationProgressStage.TRANSLATE)
             if (page.renderStatus == StageStatus.RUNNING) add(TranslationProgressStage.RENDER)
         }
-        private fun progressStage(page: PageTranslation, committed: PageTranslation? = null): TranslationProgressStage = when {
+        private fun progressStage(
+            page: PageTranslationView,
+            committed: PageTranslationView? = null,
+        ): TranslationProgressStage = when {
             page.toPageDisplayProjection(committed).displayReady || page.isTextlessTerminal -> TranslationProgressStage.DONE
             page.isStageFailed -> TranslationProgressStage.FAILED
             //  : both surviving lanes commit translations
@@ -545,7 +554,7 @@ class TranslationBatchProgressTracker(
             else -> TranslationProgressStage.QUEUED
         }
 
-        private fun inferAiState(page: PageTranslation): AiPageProgressState = when {
+        private fun inferAiState(page: PageTranslationView): AiPageProgressState = when {
             page.translationStatus == StageStatus.READY ||
                 page.translationStatus == StageStatus.PARTIAL ||
                 page.translationStatus == StageStatus.SKIPPED -> AiPageProgressState.SUCCEEDED

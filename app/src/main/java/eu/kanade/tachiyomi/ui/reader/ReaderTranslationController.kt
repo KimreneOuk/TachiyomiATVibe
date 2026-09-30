@@ -31,13 +31,14 @@ import eu.kanade.translation.engines.translator.providers.AiModelFetcher
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageStage
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
@@ -1276,7 +1277,7 @@ internal class ReaderTranslationController(
                 if (lease !is LeaseAcquisition.Granted) return@withStrandedSweepTrace false
                 try {
                     store.updatePageFromCurrentSnapshot(pageKey, "reader stranded-page sweep") { existing ->
-                        val safe = existing ?: return@updatePageFromCurrentSnapshot pt
+                        val safe = existing ?: return@updatePageFromCurrentSnapshot pt.toDraft()
                         if (safe.runGeneration != store.currentGeneration) return@updatePageFromCurrentSnapshot safe
                         val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
                             safe.inpaintStatus == StageStatus.FAILED ||
@@ -1473,7 +1474,7 @@ internal class ReaderTranslationController(
                     // nulls the committed translated page.
                     if (display.displayReady || display.isTextless) translatedCount++
                     if (isFailed && !display.displayReady && !display.isTextless) translatedCount++
-                    readerPage.translation = resolvedDisplay
+                    readerPage.translation = resolvedDisplay?.toDraft()
                 }
                 state.value.viewerChapters?.currChapter?.let { current ->
                     val targetIndex = if (chapterPageIndex >= 0) chapterPageIndex else current.requestedPage
@@ -1593,7 +1594,7 @@ internal class ReaderTranslationController(
                 }
                 val tier2Finished = updated.displayImageName != null && page.translatedStream == null
                 val wantsToShowOverlay = updated.toPageDisplayProjection().displayReady && !page.showTranslatedImage
-                page.translation = updated
+                page.translation = updated.toDraft()
                 attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
                 if (translationPreferences.translationEnabled().get()) {
                     if (tier2Finished || wantsToShowOverlay) {
@@ -1673,7 +1674,7 @@ internal class ReaderTranslationController(
     }
 
     /** Reader-side FP-07 recompute for the stored-fingerprint comparison; null skips it. */
-    private fun persistedLayoutExpectedFingerprint(page: PageTranslation): String? {
+    private fun persistedLayoutExpectedFingerprint(page: PageTranslationView): String? {
         val fontDigest = PersistedLayoutRuntime.productionFontSha256() ?: return null
         return LayoutPlanPublication.compatibilityFingerprint(
             compatInputs = LayoutPlanPublication.CompatInputs(

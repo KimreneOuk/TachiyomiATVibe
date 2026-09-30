@@ -12,8 +12,8 @@ import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
@@ -306,7 +306,7 @@ class StandardPipelineCoordinatorTest {
             )
             identities[pageKey] = identity
             try {
-                val p = store.state.value[pageKey]?.detachedCopy()
+                val p = store.state.value[pageKey]?.toDraft()
                     ?: return TranslationCompletionOutcome.Completed(emptySet())
                 val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
                 if (sourceBlocks == 0) {

@@ -15,7 +15,7 @@ data class PageView(
     }
 }
 
-fun PageTranslation?.toPageView(): PageView {
+fun PageTranslationView?.toPageView(): PageView {
     if (this == null) {
         return PageView(
             imageName = null,
@@ -42,5 +42,5 @@ fun PageTranslation?.toPageView(): PageView {
     )
 }
 
-val PageTranslation.overlayContentFingerprint: String
+val PageTranslationView.overlayContentFingerprint: String
     get() = blocks.joinToString(separator = ":") { it.stableFingerprint() }

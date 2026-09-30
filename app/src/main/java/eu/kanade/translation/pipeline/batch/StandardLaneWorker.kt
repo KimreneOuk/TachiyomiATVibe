@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
@@ -101,7 +101,7 @@ internal class StandardLaneWorker(
     private fun orderedSourceDigest(pairs: List<Pair<String, String>>): String =
         ChapterProfileBatchCoordinator.orderedSourceDigest(pairs)
 
-    private fun standardPageTerminalAtTranslate(page: PageTranslation): Boolean =
+    private fun standardPageTerminalAtTranslate(page: PageTranslationView): Boolean =
         ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(page)
 
     suspend fun runPhase(

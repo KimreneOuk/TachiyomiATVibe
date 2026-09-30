@@ -2,7 +2,8 @@ package eu.kanade.translation.persistence.chapter
 
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import java.security.MessageDigest
 
@@ -185,7 +186,7 @@ sealed interface LeaseAcquisition {
 }
 
 /** OCR identity excludes mutable translation, render colors, revision flags, and edits. */
-fun TranslationBlock.ocrFingerprint(): String {
+fun TranslationBlockView.ocrFingerprint(): String {
     val canonical = buildString {
         appendField(text)
         appendField(width.toRawBits())
@@ -219,9 +220,9 @@ fun TranslationBlock.ocrFingerprint(): String {
         .joinToString("") { byte -> "%02x".format(byte) }
 }
 
-fun PageTranslation.ocrBlockFingerprints(): List<String> = blocks.map { it.ocrFingerprint() }
+fun PageTranslationView.ocrBlockFingerprints(): List<String> = blocks.map { it.ocrFingerprint() }
 
-fun PageTranslation.inpaintMaskFingerprint(): String =
+fun PageTranslationView.inpaintMaskFingerprint(): String =
     fingerprint(
         inpaintMaskBoxes.joinToString("|") { box ->
             "${box.x1},${box.y1},${box.x2},${box.y2},${box.label}"

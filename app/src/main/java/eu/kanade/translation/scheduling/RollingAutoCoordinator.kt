@@ -16,7 +16,7 @@ import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.PreparedPage
@@ -1265,7 +1265,7 @@ class RollingAutoCoordinator(
         return storeState == null || !storeState.isTranslationDisplayReady
     }
 
-    private fun storePage(spec: WindowSpec, idx: Int): PageTranslation? {
+    private fun storePage(spec: WindowSpec, idx: Int): PageTranslationView? {
         val key = spec.pageResolver(idx)?.pageKey ?: return null
         return spec.session.store.state.value[key]
     }

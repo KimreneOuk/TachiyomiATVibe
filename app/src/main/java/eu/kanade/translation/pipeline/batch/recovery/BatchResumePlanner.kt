@@ -3,6 +3,7 @@ package eu.kanade.translation.pipeline.batch.recovery
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.isTextlessTerminal
@@ -53,7 +54,7 @@ internal class BatchResumePlanner(
 
     fun recordContextPage(
         pageKey: String,
-        page: PageTranslation,
+        page: PageTranslationView,
         terminalFailure: Boolean = false,
     ) {
         contextFrontier.record(pageKey, page, terminalFailure)
@@ -137,7 +138,7 @@ internal class BatchResumePlanner(
     private fun plannedTranslationDecision(pageKey: String) =
         batchPagePlans[pageKey]?.stages?.firstOrNull { it.stage == BatchStage.TRANSLATION }?.decision
 
-    fun recordReusableContextPage(pageKey: String, page: PageTranslation) {
+    fun recordReusableContextPage(pageKey: String, page: PageTranslationView) {
         if (!isAi ||
             plannedTranslationDecision(pageKey) !in setOf(
                 eu.kanade.translation.pipeline.planning.StageDecision.REUSE,
@@ -199,7 +200,7 @@ internal class BatchResumePlanner(
             }
         } == true
 
-    suspend fun resumeGate(page: PageTranslation?): BatchResumeGate {
+    suspend fun resumeGate(page: PageTranslationView?): BatchResumeGate {
         val planned = page?.sourceFileName?.let(batchPagePlans::get)
         if (planned != null) {
             val ocr = planned.stages.first { it.stage == BatchStage.OCR }

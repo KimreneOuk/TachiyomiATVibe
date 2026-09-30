@@ -8,6 +8,7 @@ import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -433,7 +434,7 @@ class P5HonestOutcomeTypingTest {
     // helpers
     // ------------------------------------------------------------------
 
-    private fun PageTranslation.hasRenderedResult(): Boolean = renderStatus == StageStatus.READY
+    private fun PageTranslationView.hasRenderedResult(): Boolean = renderStatus == StageStatus.READY
 
     private fun readManualOutcome(h: TranslationCoexistenceHarness, key: String): Any? {
         var cls: Class<*>? = h.scheduler.javaClass

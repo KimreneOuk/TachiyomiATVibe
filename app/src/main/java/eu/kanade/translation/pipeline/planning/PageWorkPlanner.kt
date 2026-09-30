@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.planning
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toPageDisplayProjection
@@ -27,7 +27,7 @@ object PageWorkPlanner {
      * match; inpaint readiness is checked separately.
      */
     fun plan(
-        page: PageTranslation?,
+        page: PageTranslationView?,
         force: Boolean = false,
         expectedFingerprints: BatchExpectedFingerprints = BatchExpectedFingerprints(),
         sourceFingerprint: String? = null,
@@ -383,7 +383,7 @@ object PageWorkPlanner {
      * status/payload evidence exactly as before.
      */
     private fun forceOcrEvidenceMatches(
-        page: PageTranslation,
+        page: PageTranslationView,
         expected: BatchExpectedFingerprints,
         sourceFingerprint: String?,
     ): Boolean {
@@ -414,7 +414,7 @@ object PageWorkPlanner {
 
     private fun stageEvidence(
         stage: BatchStage,
-        page: PageTranslation?,
+        page: PageTranslationView?,
         artifact: PageArtifactRecord?,
         expected: BatchExpectedFingerprints,
         translationOrigin: ArtifactOrigin?,

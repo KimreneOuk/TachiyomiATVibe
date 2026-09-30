@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch.recovery
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.hasExhaustedRetries
@@ -28,12 +28,12 @@ internal object BatchResumePolicy {
      * I/O; an invalid/missing file should be passed as false.
      *
      * [inpaintModeMatches] is likewise caller-supplied: true when the page's
-     * [PageTranslation.inpaintingModeUsed] matches the current preference (or is
+     * [PageTranslationView.inpaintingModeUsed] matches the current preference (or is
      * null/legacy). A FAST->QUALITY switch passes false so a stale FAST cleaned
      * image is re-inpainted under the new mode instead of being served as-is.
      */
     fun nextStage(
-        page: PageTranslation?,
+        page: PageTranslationView?,
         cleanedFileValid: Boolean,
         inpaintModeMatches: Boolean = true,
     ): NextStage {

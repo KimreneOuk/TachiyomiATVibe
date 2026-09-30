@@ -1,6 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageCancelled
@@ -26,7 +26,7 @@ internal object ChapterPageReconciler {
 
     /** Logs unexpected keys while keeping their identities out of log output. */
     fun findUnexpectedPageKeys(
-        pageMap: Map<String, PageTranslation>,
+        pageMap: Map<String, PageTranslationView>,
         orderedKeys: List<String>,
     ): Set<String> {
         val expectedKeys = orderedKeys.distinct().toSet()
@@ -40,7 +40,7 @@ internal object ChapterPageReconciler {
     }
 
     fun reconcile(
-        pageMap: Map<String, PageTranslation>,
+        pageMap: Map<String, PageTranslationView>,
         orderedKeys: List<String>,
         activeGeneration: Long,
         unexpectedPageKeys: Set<String>,
@@ -113,7 +113,7 @@ internal object ChapterPageReconciler {
         )
     }
 
-    private fun PageTranslation.isNonTerminalWithoutOutput(): Boolean {
+    private fun PageTranslationView.isNonTerminalWithoutOutput(): Boolean {
         return !isStageFailed &&
             !hasRenderedResult &&
             !isTextlessTerminal &&

@@ -24,7 +24,7 @@ data class PageDisplayProjection(
  * Project a live candidate against the reader-facing committed snapshot.
  * [committed] is normally the value from [ChapterTranslationStore.display].
  */
-fun PageTranslation.toPageDisplayProjection(committed: PageTranslation? = null): PageDisplayProjection {
+fun PageTranslationView.toPageDisplayProjection(committed: PageTranslationView? = null): PageDisplayProjection {
     if (committed == null) return singlePageProjection()
 
     val committedProjection = committed.singlePageProjection()
@@ -60,7 +60,7 @@ fun PageTranslation.toPageDisplayProjection(committed: PageTranslation? = null):
     )
 }
 
-private fun PageTranslation.singlePageProjection(): PageDisplayProjection {
+private fun PageTranslationView.singlePageProjection(): PageDisplayProjection {
     val displayReady = isTranslationDisplayShapeReady()
     val state =
         when {
@@ -83,13 +83,13 @@ private fun PageTranslation.singlePageProjection(): PageDisplayProjection {
     )
 }
 
-private fun PageTranslation.isTranslationDisplayShapeReady(): Boolean =
+private fun PageTranslationView.isTranslationDisplayShapeReady(): Boolean =
     (isCleanedImageReady || originalImageFallback) &&
         (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
         renderStatus == StageStatus.READY &&
         blocks.any { it.translation.isNotBlank() }
 
-private fun PageTranslation.differsFromCommitted(committed: PageTranslation): Boolean =
+private fun PageTranslationView.differsFromCommitted(committed: PageTranslationView): Boolean =
     pageVersion != committed.pageVersion ||
         updatedAt != committed.updatedAt ||
         ocrStatus != committed.ocrStatus ||
@@ -99,4 +99,10 @@ private fun PageTranslation.differsFromCommitted(committed: PageTranslation): Bo
         cleanedImageName != committed.cleanedImageName ||
         originalImageFallback != committed.originalImageFallback ||
         translationOrigin != committed.translationOrigin ||
-        blocks != committed.blocks
+        blocks.size != committed.blocks.size ||
+        blocks.indices.any { index ->
+            val candidateBlock = blocks[index]
+            val committedBlock = committed.blocks[index]
+            candidateBlock.blockId != committedBlock.blockId ||
+                candidateBlock.stableFingerprint() != committedBlock.stableFingerprint()
+        }

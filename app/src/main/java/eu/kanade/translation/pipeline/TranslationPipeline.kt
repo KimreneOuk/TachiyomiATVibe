@@ -24,8 +24,8 @@ import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
@@ -1048,7 +1048,7 @@ class TranslationPipeline private constructor(
             // The translate lane resolves the current store but writes page-level
             // results only; queue and chapter status remain owned by orchestration.
 
-            val pageTranslation = pageState.detachedCopy()
+            val pageTranslation = pageState.toDraft()
             pageTranslation.cleanedBitmap = null
 
             // The prepared-page boundary does not re-decode the source on the

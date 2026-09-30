@@ -11,8 +11,9 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.workflow.TranslationManager
 import logcat.LogPriority
@@ -122,7 +123,7 @@ internal class DownloadPageLoader(
 
     private suspend fun getPagesFromArchive(
         file: UniFile,
-        translations: Map<String, PageTranslation>,
+        translations: Map<String, PageTranslationView>,
     ): List<ReaderPage> {
         val loader = ArchivePageLoader(
             file.archiveReader(context),
@@ -136,7 +137,7 @@ internal class DownloadPageLoader(
 
     private fun getPagesFromDirectory(
         chapterDir: UniFile?,
-        translations: Map<String, PageTranslation>,
+        translations: Map<String, PageTranslationView>,
     ): DirectoryPagesResult {
         val buildPageListStartedAt = SystemClock.elapsedRealtimeNanos()
         val pages = downloadManager.buildPageList(chapterDir)
@@ -162,7 +163,7 @@ internal class DownloadPageLoader(
                 },
             ).apply {
                 sourceFileName = fileName
-                translation = pageTranslation
+                translation = pageTranslation?.toDraft()
                 if (stream != null) {
                     translatedStream = stream
                     showTranslatedImage = true
@@ -183,7 +184,7 @@ internal class DownloadPageLoader(
         val mappingNanos: Long,
     )
 
-    fun resolveTranslatedStream(pageTranslation: PageTranslation): (() -> java.io.InputStream)? {
+    fun resolveTranslatedStream(pageTranslation: PageTranslationView): (() -> java.io.InputStream)? {
         val displayImageName = pageTranslation.displayImageName
         if (displayImageName != null) {
             return translationManager.getCleanedImageStream(

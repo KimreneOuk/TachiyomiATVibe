@@ -15,6 +15,9 @@ fun PageTranslation.detachedCopy(): PageTranslation = copy(
     detached.attemptCharged = attemptCharged
 }
 
+/** Published values are deeply immutable, so the safest detached copy is identity. */
+fun PublishedPageTranslation.detachedCopy(): PublishedPageTranslation = this
+
 fun TranslationBlock.detachedCopy(): TranslationBlock = copy(
     segmentationMask = segmentationMask?.copy(
         bounds = segmentationMask.bounds.toList(),
@@ -23,33 +26,36 @@ fun TranslationBlock.detachedCopy(): TranslationBlock = copy(
 )
 
 /** Stable across processes and independent of data-class/list hash implementations. */
-fun TranslationBlock.stableFingerprint(): String {
+fun TranslationBlockView.stableFingerprint(): String =
+    if (this is PublishedTranslationBlock) cachedStableFingerprint else calculateStableFingerprint(this)
+
+internal fun calculateStableFingerprint(block: TranslationBlockView): String {
     val canonical = buildString {
-        appendField(text)
-        appendField(translation)
-        appendField(width.toRawBits())
-        appendField(height.toRawBits())
-        appendField(x.toRawBits())
-        appendField(y.toRawBits())
-        appendField(symHeight.toRawBits())
-        appendField(symWidth.toRawBits())
-        appendField(angle.toRawBits())
-        appendField(label)
-        appendField(score.toRawBits())
-        appendField(parentX.toRawBits())
-        appendField(parentY.toRawBits())
-        appendField(parentWidth.toRawBits())
-        appendField(parentHeight.toRawBits())
-        appendField(textColor)
-        appendField(strokeColor)
-        appendField(strokeWidth.toRawBits())
-        appendField(direction)
-        appendField(panelIndex)
-        appendField(panelAssignment)
-        appendField(panelContainment.toRawBits())
-        appendField(bubbleIndex)
-        appendField(userEditedAt)
-        segmentationMask?.let { mask ->
+        appendField(block.text)
+        appendField(block.translation)
+        appendField(block.width.toRawBits())
+        appendField(block.height.toRawBits())
+        appendField(block.x.toRawBits())
+        appendField(block.y.toRawBits())
+        appendField(block.symHeight.toRawBits())
+        appendField(block.symWidth.toRawBits())
+        appendField(block.angle.toRawBits())
+        appendField(block.label)
+        appendField(block.score.toRawBits())
+        appendField(block.parentX.toRawBits())
+        appendField(block.parentY.toRawBits())
+        appendField(block.parentWidth.toRawBits())
+        appendField(block.parentHeight.toRawBits())
+        appendField(block.textColor)
+        appendField(block.strokeColor)
+        appendField(block.strokeWidth.toRawBits())
+        appendField(block.direction)
+        appendField(block.panelIndex)
+        appendField(block.panelAssignment)
+        appendField(block.panelContainment.toRawBits())
+        appendField(block.bubbleIndex)
+        appendField(block.userEditedAt)
+        block.segmentationMask?.let { mask ->
             appendField(mask.width)
             appendField(mask.height)
             mask.bounds.forEach(::appendField)
@@ -62,7 +68,7 @@ fun TranslationBlock.stableFingerprint(): String {
         .joinToString("") { byte -> "%02x".format(byte) }
 }
 
-fun PageTranslation.blockFingerprints(): List<String> = blocks.map { it.stableFingerprint() }
+fun PageTranslationView.blockFingerprints(): List<String> = blocks.map { it.stableFingerprint() }
 
 private fun StringBuilder.appendField(value: Any?) {
     val text = value?.toString() ?: "<null>"

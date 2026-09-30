@@ -8,7 +8,7 @@ import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceStage
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
@@ -49,7 +49,7 @@ internal data class ChapterJournalRecord(
     val generation: Long,
     val fencingToken: Long,
     val pageVersion: Long,
-    val state: PageTranslation?,
+    val state: PublishedPageTranslation?,
     /**
      * Semantic SHA-256 identity of the page snapshot persisted by the legacy artifact; null only
      * when no snapshot exists. Replay verifies it by re-reading that artifact, re-deriving the
@@ -432,7 +432,7 @@ internal class ChapterJournalWriter(
         pageKey: String,
         generation: Long,
         fencingToken: Long,
-        page: PageTranslation?,
+        page: PublishedPageTranslation?,
         durableFailure: DurableFailureMetadata? = null,
         paid: Boolean = false,
         artifactContentHash: String? = null,
@@ -443,10 +443,9 @@ internal class ChapterJournalWriter(
             generation = generation,
             fencingToken = fencingToken,
             pageVersion = page?.pageVersion ?: 0L,
-            // The writer serializes on its own dispatcher later. Detach while the caller
-            // still holds ChapterTranslationStore.mutex so later in-place edits cannot
-            // rewrite the historical state associated with this commit sequence.
-            state = page?.detachedCopy(),
+            // PublishedPageTranslation is deeply immutable and contains no mutable draft alias.
+            // The journal writer can safely serialize this value on its dispatcher.
+            state = page,
             artifactContentHash = artifactContentHash,
             durableFailure = durableFailure,
         )

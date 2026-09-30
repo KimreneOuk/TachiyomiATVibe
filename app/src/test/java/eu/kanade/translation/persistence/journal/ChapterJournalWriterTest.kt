@@ -1,6 +1,8 @@
 package eu.kanade.translation.persistence.journal
 
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PublishedPageTranslation
+import eu.kanade.translation.model.toPublishedPage
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -73,12 +75,13 @@ class ChapterJournalWriterTest {
             },
         )
         try {
-            val source = page().apply { inpaintRevision = 7 }
+            val source = draftPage().apply { inpaintRevision = 7 }
+            val published = source.toPublishedPage()
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), credit, "page-a", 1L, 1L, source)
+            writer.captureLegacyPersisted(writer.nextCommitSeq(), credit, "page-a", 1L, 1L, published)
 
-            // Simulate checkpointOcrLocked mutating the live PageTranslation before the
-            // writer dispatcher gets a turn. The historical record must keep revision 7.
+            // Mutate the pipeline draft after the writer accepted the immutable publication.
+            // The historical record must keep revision 7 without a deferred defensive copy.
             source.inpaintRevision = 8
             runCurrent()
 
@@ -117,7 +120,7 @@ class ChapterJournalWriterTest {
                             generation = 1L,
                             fencingToken = 0L,
                             pageVersion = index.toLong() + 1L,
-                            state = page().apply { sourceFileName = key },
+                            state = page(key),
                         )
                     },
                 ),
@@ -147,7 +150,7 @@ class ChapterJournalWriterTest {
                                 generation = 1L,
                                 fencingToken = 0L,
                                 pageVersion = index.toLong() + 2L,
-                                state = page().apply { sourceFileName = newKey },
+                                state = page(newKey),
                             ),
                         )
                     },
@@ -853,7 +856,10 @@ class ChapterJournalWriterTest {
         return checkNotNull(result)
     }
 
-    private fun page() = PageTranslation(sourceFileName = "page.jpg", pageVersion = 1L)
+    private fun draftPage() = PageTranslation(sourceFileName = "page.jpg", pageVersion = 1L)
+
+    private fun page(pageKey: String = "page.jpg"): PublishedPageTranslation =
+        PageTranslation(sourceFileName = pageKey, pageVersion = 1L).toPublishedPage()
 
     private class MemoryStorage(
         private val maxWriteBytes: Int = Int.MAX_VALUE,

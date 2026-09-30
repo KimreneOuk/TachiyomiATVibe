@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch.progress
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
@@ -30,7 +30,7 @@ data class ReconciliationResult(
 object BatchProgressReconciler {
 
     fun reconcile(
-        pageMap: Map<String, PageTranslation>,
+        pageMap: Map<String, PageTranslationView>,
         orderedKeys: List<String>,
         activeGeneration: Long,
         pauseOutcome: BatchPass1Outcome? = null,
@@ -103,7 +103,7 @@ object BatchProgressReconciler {
      * by definition.
      */
     fun reconcileFlaggedCompleted(
-        pageMap: Map<String, PageTranslation>,
+        pageMap: Map<String, PageTranslationView>,
         orderedKeys: List<String>,
         activeGeneration: Long,
     ): ReconciliationResult {
@@ -154,7 +154,7 @@ object BatchProgressReconciler {
     }
 
     private fun reconcilePaused(
-        pageMap: Map<String, PageTranslation>,
+        pageMap: Map<String, PageTranslationView>,
         expectedKeys: List<String>,
         outcome: BatchPass1Outcome,
         unexpectedPageKeys: Set<String>,

@@ -23,6 +23,7 @@ import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.resetAttemptCharge
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
 import eu.kanade.translation.persistence.chapter.StagePatchResult
@@ -267,7 +268,7 @@ internal class SinglePageOnnxPhase(
         // where the cleaned bitmap crosses the permit boundary.
         var needsHttpRender = false
         try {
-            val resumeTranslation = store.state.value[pageKey]?.copyForResume()
+            val resumeTranslation = store.state.value[pageKey]?.toDraft()?.copyForResume()
             val desiredModeName = inpaintingModeFromPref().name
             val modeMatches = resumeTranslation?.inpaintingModeUsed == null || resumeTranslation.inpaintingModeUsed == desiredModeName
             val adjustedResume = if (resumeTranslation != null && !modeMatches && resumeTranslation.isCleanedImageReady) {

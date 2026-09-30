@@ -17,10 +17,10 @@ sealed interface PageLifecycle {
     data class Failed(val stage: PageStage, val retryCount: Int, val reason: String?) : PageLifecycle
 }
 
-val PageTranslation.displayImageName: String?
+val PageTranslationView.displayImageName: String?
     get() = cleanedImageName?.takeIf { isTranslationDisplayReady }
 
-val PageTranslation.hasCurrentInpaintResult: Boolean
+val PageTranslationView.hasCurrentInpaintResult: Boolean
     get() = blocks.isEmpty() || inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
 
 /**
@@ -28,7 +28,7 @@ val PageTranslation.hasCurrentInpaintResult: Boolean
  * a current-revision file. A filename in the translation store is metadata, not
  * proof that the reader can safely open the file.
  */
-val PageTranslation.isCleanedImageReady: Boolean
+val PageTranslationView.isCleanedImageReady: Boolean
     get() = cleanedImageName != null &&
         inpaintStatus == StageStatus.READY &&
         hasCurrentInpaintResult
@@ -38,10 +38,10 @@ val PageTranslation.isCleanedImageReady: Boolean
  * must use this gate so a late translation/store emission can never draw text
  * over the original image while inpaint is still pending or failed.
  */
-val PageTranslation.isTranslationDisplayReady: Boolean
+val PageTranslationView.isTranslationDisplayReady: Boolean
     get() = toPageDisplayProjection().displayReady
 
-val PageTranslation.shouldShowTranslationOverlay: Boolean
+val PageTranslationView.shouldShowTranslationOverlay: Boolean
     get() = blocks.any { it.translation.isNotBlank() }
 
 /**
@@ -64,25 +64,25 @@ val PageTranslation.shouldShowTranslationOverlay: Boolean
  * a current mask but a stale cleaned image (OCR'd, interrupted before inpaint)
  * — that page skips re-OCR but still runs inpaint.
  */
-val PageTranslation.hasCurrentInpaintMask: Boolean
+val PageTranslationView.hasCurrentInpaintMask: Boolean
     get() = blocks.isEmpty() || inpaintMaskBoxes.isNotEmpty()
 
-val PageTranslation.hasRenderedResult: Boolean
+val PageTranslationView.hasRenderedResult: Boolean
     get() = isTranslationDisplayReady
 
-val PageTranslation.isStageRunning: Boolean
+val PageTranslationView.isStageRunning: Boolean
     get() = ocrStatus == StageStatus.RUNNING ||
         translationStatus == StageStatus.RUNNING ||
         inpaintStatus == StageStatus.RUNNING ||
         renderStatus == StageStatus.RUNNING
 
-val PageTranslation.isStageCancelled: Boolean
+val PageTranslationView.isStageCancelled: Boolean
     get() = ocrStatus == StageStatus.CANCELLED ||
         translationStatus == StageStatus.CANCELLED ||
         inpaintStatus == StageStatus.CANCELLED ||
         renderStatus == StageStatus.CANCELLED
 
-val PageTranslation.isStageFailed: Boolean
+val PageTranslationView.isStageFailed: Boolean
     get() = ocrStatus == StageStatus.FAILED ||
         translationStatus == StageStatus.FAILED ||
         inpaintStatus == StageStatus.FAILED ||
@@ -159,22 +159,22 @@ fun PageTranslation.resetAttemptCharge() {
     attemptCharged = false
 }
 
-val PageTranslation.isTextlessTerminal: Boolean
+val PageTranslationView.isTextlessTerminal: Boolean
     get() = ocrStatus == StageStatus.READY &&
         blocks.isEmpty() &&
         translationStatus == StageStatus.SKIPPED &&
         renderStatus == StageStatus.SKIPPED &&
         (inpaintStatus == StageStatus.SKIPPED || inpaintStatus == StageStatus.READY)
 
-val PageTranslation.hasRecognizedTranslation: Boolean
+val PageTranslationView.hasRecognizedTranslation: Boolean
     get() = ocrStatus == StageStatus.READY &&
         (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
         blocks.isNotEmpty()
 
-val PageTranslation.hasExhaustedRetries: Boolean
+val PageTranslationView.hasExhaustedRetries: Boolean
     get() = isStageFailed && attemptCount >= StageStatus.MAX_STAGE_RETRIES
 
-val PageTranslation.lifecycle: PageLifecycle
+val PageTranslationView.lifecycle: PageLifecycle
     get() = when {
         hasRenderedResult -> PageLifecycle.Done
         isTextlessTerminal -> PageLifecycle.Textless
@@ -208,7 +208,7 @@ val PageTranslation.lifecycle: PageLifecycle
  * all suppress the error — the user sees either the translated image or
  * nothing, never a stale/misleading red message.
  */
-val PageTranslation.shouldSurfaceError: Boolean
+val PageTranslationView.shouldSurfaceError: Boolean
     get() = !isCleanedImageReady &&
         !isTextlessTerminal &&
         !isStageCancelled &&

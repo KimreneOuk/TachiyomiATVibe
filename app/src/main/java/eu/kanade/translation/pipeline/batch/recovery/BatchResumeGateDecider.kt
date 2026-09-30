@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch.recovery
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageRunning
 
@@ -23,7 +23,7 @@ internal object BatchResumeGateDecider {
     internal enum class Decision { SKIP_ALL, INPAINT_ONLY, FULL }
 
     internal fun decide(
-        page: PageTranslation?,
+        page: PageTranslationView?,
         cleanedFileValid: Boolean = true,
         inpaintModeMatches: Boolean = true,
     ): Decision {
