@@ -11,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -30,7 +31,8 @@ internal class StorePersistenceScheduler(
     dispatcher: CoroutineDispatcher,
 ) {
 
-    val persistScope = CoroutineScope(SupervisorJob() + dispatcher)
+    private val persistScopeJob = SupervisorJob()
+    val persistScope = CoroutineScope(persistScopeJob + dispatcher)
 
     internal companion object {
         internal const val PERSIST_JOIN_TIMEOUT_MS = 2_000L
@@ -134,6 +136,11 @@ internal class StorePersistenceScheduler(
         }
     }
 
+    /**
+     * Flushes accepted work, runs [afterFlush], then cancels and joins all
+     * scheduler work before returning. Callers use this as a teardown barrier
+     * after preventing new producers from entering the store.
+     */
     suspend fun closeAndFlush(afterFlush: suspend () -> Unit = {}) {
         // Skip retention sweeps here as well. closeAndFlush runs on
         // the caller's coroutine — for probe stores that is the reader-entry
@@ -148,23 +155,36 @@ internal class StorePersistenceScheduler(
         // close barrier. Probe stores stay synchronous; active stores must not
         // be closed with a live StateFlow that has never reached the artifact
         // bridge.
-        flush()
         try {
+            flush()
             withContext(NonCancellable) { afterFlush() }
         } finally {
-            persistScope.cancel()
+            // Teardown callers rely on this as a real barrier: retention and
+            // delayed persistence children must not outlive the store close.
+            withContext(NonCancellable) {
+                persistScopeJob.cancelAndJoin()
+            }
         }
     }
 
+    /**
+     * Starts a fire-and-forget close. It cancels the scope after its close
+     * coroutine finishes, but returns before scheduler children are joined;
+     * callers needing a teardown barrier must use [closeAndFlush].
+     */
     fun close(afterFlush: suspend () -> Unit = {}) {
         persistScope.launch {
             flush()
             withContext(NonCancellable) { afterFlush() }
             reconcileArtifactRetention()
         }.invokeOnCompletion {
+            // This legacy API intentionally remains asynchronous; unlike
+            // closeAndFlush, it does not wait for the scope's children.
             persistScope.cancel()
         }
     }
+
+    internal fun hasActiveChildren(): Boolean = persistScopeJob.children.any { it.isActive }
 
     /**
      * Performs the bounded artifact-tree sweep at a serialized chapter
