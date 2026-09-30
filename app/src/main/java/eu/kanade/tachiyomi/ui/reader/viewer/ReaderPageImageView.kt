@@ -263,7 +263,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     // Cached until the selected image has decoded, then bound against the live
     // SSIV. Keeping this separate from the image lifecycle prevents a stale
     // overlay from surviving an original/translated image swap.
-    private var pendingTranslationBlocks: List<eu.kanade.translation.model.TranslationBlock> = emptyList()
+    private var pendingTranslationBlocks: List<eu.kanade.translation.model.TranslationBlockView> = emptyList()
     private var pendingPageWidth = 0
     private var pendingPageHeight = 0
 
@@ -300,7 +300,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     fun setTranslationBlocks(
-        blocks: List<eu.kanade.translation.model.TranslationBlock>,
+        blocks: List<eu.kanade.translation.model.TranslationBlockView>,
         pageWidth: Int,
         pageHeight: Int,
         //  Stage 7: the translation page key, propagated to the

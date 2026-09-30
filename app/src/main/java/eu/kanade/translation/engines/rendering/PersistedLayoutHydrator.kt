@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.rendering
 
 import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.SidecarRead
@@ -72,7 +72,7 @@ class PersistedLayoutHydrator(
      */
     fun hydrate(
         pageKey: String,
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         pageWidth: Float,
         pageHeight: Float,
         bindPageWidth: Int,
@@ -246,7 +246,7 @@ object PersistedLayoutReaderBridge {
     fun interface PageKeyedSource {
         fun hydrate(
             pageKey: String,
-            blocks: List<TranslationBlock>,
+            blocks: List<TranslationBlockView>,
             pageWidth: Int,
             pageHeight: Int,
         ): List<BlockLayout>?
@@ -272,7 +272,7 @@ object PersistedLayoutReaderBridge {
      */
     fun hydrate(
         pageKey: String?,
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         pageWidth: Int,
         pageHeight: Int,
     ): List<BlockLayout>? {

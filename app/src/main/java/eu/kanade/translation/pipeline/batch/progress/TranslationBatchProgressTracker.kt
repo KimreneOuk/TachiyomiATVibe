@@ -15,7 +15,6 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
@@ -201,22 +200,9 @@ class TranslationBatchProgressTracker(
             // Persisted leftovers may be useful diagnostically, but must never
             // inflate progress totals.
             pageMap = orderedPageKeys.distinct().associateWith { pageKey ->
-                val stored = storePages[pageKey]
-                // This is a progress-only overlay. The temporary draft is never
-                // sent back to the authoritative store.
-                val base = stored?.toDraft() ?: PageTranslation(sourceFileName = pageKey)
-                // TODO(E17b): project phase statuses directly from the read-only view and drop this draft.
-                state.pagePhases[pageKey]?.entries?.fold(base) { current, (phase, status) ->
-                    when (phase) {
-                        BatchPhase.OCR -> current.copy(ocrStatus = status)
-                        BatchPhase.TRANSLATE -> current.copy(translationStatus = status)
-                        BatchPhase.INPAINT -> current.copy(inpaintStatus = status)
-                        BatchPhase.RENDER -> current.copy(renderStatus = status)
-                        // DISPLAY has no per-page status override: it is
-                        // derived from hasRenderedResult in count().
-                        BatchPhase.DISPLAY -> current
-                    }
-                } ?: base
+                val base: PageTranslationView = storePages[pageKey] ?: PageTranslation(sourceFileName = pageKey)
+                val statuses = state.pagePhases[pageKey].orEmpty()
+                if (statuses.isEmpty()) base else PagePhaseStatusView(base, statuses)
             },
             displayPageMap = store.display.value.let { displayPages ->
                 orderedPageKeys.distinct().mapNotNull { pageKey ->
@@ -576,4 +562,15 @@ class TranslationBatchProgressTracker(
             next
         }
     }
+}
+
+/** A read-only progress overlay; the page and block payloads remain shared. */
+private class PagePhaseStatusView(
+    private val page: PageTranslationView,
+    private val statuses: Map<BatchPhase, String>,
+) : PageTranslationView by page {
+    override val ocrStatus: String get() = statuses[BatchPhase.OCR] ?: page.ocrStatus
+    override val translationStatus: String get() = statuses[BatchPhase.TRANSLATE] ?: page.translationStatus
+    override val inpaintStatus: String get() = statuses[BatchPhase.INPAINT] ?: page.inpaintStatus
+    override val renderStatus: String get() = statuses[BatchPhase.RENDER] ?: page.renderStatus
 }

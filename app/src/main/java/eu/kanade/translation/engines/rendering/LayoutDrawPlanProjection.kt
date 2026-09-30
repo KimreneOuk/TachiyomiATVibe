@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.rendering
 
 import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.DrawPlanAlign
 import eu.kanade.translation.persistence.artifact.DrawPlanBlock
@@ -17,7 +17,7 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
  * runtime layout result ([PageLayoutPlan] / [BlockLayout] /
  * [PositionedLine]) and the landed durable DTO
  * [PageLayoutDrawPlan]. `BlockLayout` itself is deliberately NOT serializable
- * (it embeds a mutable `TranslationBlock`, page-local `planGeometryId`, and
+ * (it embeds its caller-supplied `TranslationBlockView`, page-local `planGeometryId`, and
  * planner occupancy/debug structures); this object is the ONLY serialization
  * boundary of the layout track.
  *
@@ -26,7 +26,7 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
  * has no Int truncation anywhere; kotlinx emits round-trippable decimal float
  * literals). Excluded from the durable format and NOT restored
  * bit-exactly here:
- *  - `TranslationBlock` payloads (colors, translation, masks) — rehydrated by
+ *  - `TranslationBlockView` payloads (colors, translation, masks) — rehydrated by
  *    reference from the caller-supplied input blocks, exactly like the
  *    planner received them;
  *  - planner occupancy structures (`PositionedLine.conservativeOccupancy`,
@@ -138,7 +138,7 @@ object LayoutDrawPlanProjection {
      */
     fun rehydrate(
         plan: PageLayoutDrawPlan,
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         maskGeometryResolver: ((DrawPlanMaskComponentRef) -> MaskGeometry?)? = null,
     ): List<BlockLayout> {
         val resolved = plan.blocks.mapNotNull { planBlock ->
@@ -146,13 +146,13 @@ object LayoutDrawPlanProjection {
         }
         return resolved
             .sortedWith(
-                compareByDescending<Pair<DrawPlanBlock, TranslationBlock>> { (_, block) -> block.score }
+                compareByDescending<Pair<DrawPlanBlock, TranslationBlockView>> { (_, block) -> block.score }
                     .thenBy { (planBlock, _) -> planBlock.inputIndex },
             )
             .map { (planBlock, input) -> rehydrateBlock(planBlock, input, maskGeometryResolver) }
     }
 
-    private fun resolveInput(planBlock: DrawPlanBlock, blocks: List<TranslationBlock>): TranslationBlock? {
+    private fun resolveInput(planBlock: DrawPlanBlock, blocks: List<TranslationBlockView>): TranslationBlockView? {
         if (planBlock.stableBlockId.isEmpty()) return blocks.getOrNull(planBlock.inputIndex)
         // Index-validated id match first (duplicate-id safe), then the first id
         // match anywhere; an unmatched id means the inputs changed — skip and
@@ -164,7 +164,7 @@ object LayoutDrawPlanProjection {
 
     private fun rehydrateBlock(
         planBlock: DrawPlanBlock,
-        input: TranslationBlock,
+        input: TranslationBlockView,
         maskGeometryResolver: ((DrawPlanMaskComponentRef) -> MaskGeometry?)?,
     ): BlockLayout {
         val positionedLines = planBlock.positionedLines?.map { line ->

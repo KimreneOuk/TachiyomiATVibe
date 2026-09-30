@@ -11,8 +11,8 @@ class InsertPage(val parent: ReaderPage) : ReaderPage(parent.index, parent.url, 
         showTranslatedImage = parent.showTranslatedImage
         sourceFileName = parent.sourceFileName
         translationStorageKey = parent.translationStorageKey
-        // TachiyomiAT: copy the PageTranslation so the split-page half also gets
-        // the text overlay — refreshTranslation() gates the overlay on
+        // TachiyomiAT: share the read-only translation view so the split-page
+        // half also gets the text overlay — refreshTranslation() gates the overlay on
         // page.translation != null, and without this the InsertPage half of a
         // wide page never shows translated text.
         translation = parent.translation

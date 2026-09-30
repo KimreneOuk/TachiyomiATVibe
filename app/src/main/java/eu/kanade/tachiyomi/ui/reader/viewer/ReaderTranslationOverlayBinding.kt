@@ -1,15 +1,15 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.model.toPageDisplayProjection
 
 data class ReaderTranslationOverlayBinding(
-    val blocks: List<TranslationBlock>,
+    val blocks: List<TranslationBlockView>,
     val pageWidth: Int,
     val pageHeight: Int,
     /**
-     *  Stage 7: the translation page key (`PageTranslation
+     *  Stage 7: the translation page key (`PageTranslationView
      * .sourceFileName`). Propagated to the overlay bind so the
      * chapter hydration source can resolve the page's persisted draw plan.
      * Null/empty keeps the byte-identical legacy planner path.
@@ -24,7 +24,7 @@ data class ReaderTranslationOverlayBinding(
  */
 fun selectReaderTranslationOverlayBinding(
     showTranslatedImage: Boolean,
-    translation: PageTranslation?,
+    translation: PageTranslationView?,
 ): ReaderTranslationOverlayBinding {
     if (translation == null) {
         return ReaderTranslationOverlayBinding(emptyList(), 0, 0)

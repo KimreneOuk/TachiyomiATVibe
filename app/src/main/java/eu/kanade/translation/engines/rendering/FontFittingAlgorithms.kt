@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -64,7 +64,7 @@ internal object FontFittingAlgorithms {
     internal fun shouldRenderVertical(text: String): Boolean = cjkRatio(text) > 0.5f
 
     internal fun computeRects(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         sampleSize: Int = 1,
         regionOverride: FloatRect? = null,
     ): RectResult {

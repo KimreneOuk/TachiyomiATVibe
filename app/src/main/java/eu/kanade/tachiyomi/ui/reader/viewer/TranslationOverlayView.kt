@@ -24,7 +24,7 @@ import eu.kanade.translation.engines.rendering.TextLayoutBindResult
 import eu.kanade.translation.engines.rendering.TextLayoutCoordinator
 import eu.kanade.translation.engines.rendering.TextLayoutPlanner
 import eu.kanade.translation.engines.rendering.TextMeasurer
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import kotlin.math.max
@@ -120,7 +120,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     }
 
     private var imageView: SubsamplingScaleImageView? = null
-    private var blocks: List<TranslationBlock> = emptyList()
+    private var blocks: List<TranslationBlockView> = emptyList()
     private var pageWidth = 0
     private var pageHeight = 0
 
@@ -148,7 +148,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
      * always dropped immediately so foreign text can never appear over a page
      * while its own layout is in flight.
      */
-    fun bind(imageView: SubsamplingScaleImageView?, blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) {
+    fun bind(imageView: SubsamplingScaleImageView?, blocks: List<TranslationBlockView>, pageWidth: Int, pageHeight: Int) {
         bind(imageView, blocks, pageWidth, pageHeight, pageKey = null)
     }
 
@@ -160,7 +160,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
      */
     fun bind(
         imageView: SubsamplingScaleImageView?,
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         pageWidth: Int,
         pageHeight: Int,
         pageKey: String?,

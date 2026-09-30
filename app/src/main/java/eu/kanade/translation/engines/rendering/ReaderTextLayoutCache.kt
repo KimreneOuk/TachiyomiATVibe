@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 
 /**
  * Content identity of one overlay text-layout planning
@@ -8,14 +8,14 @@ import eu.kanade.translation.model.TranslationBlock
  * field content), so a rebind carrying equal block content in a fresh list
  * instance still hits, while any content/size/page-dimension change misses.
  *
- * Because [TranslationBlock] is mutable, [hashCode]/[equals] are evaluated
- * against the content LIVE at each cache operation. A block mutated after an
- * entry was stored can therefore only cause a false MISS (different hash bucket
- * or failed equals), never a stale hit — the failure mode is a re-plan, which
- * is fail-closed.
+ * A block view may refer to a mutable pipeline draft or an immutable published
+ * value. [hashCode]/[equals] are evaluated against the current content; a draft
+ * mutated after an entry was stored can only cause a false MISS (different hash
+ * bucket or failed equals), never a stale hit — the failure mode is a re-plan,
+ * which is fail-closed.
  */
 internal data class TextLayoutCacheKey(
-    val blocks: List<TranslationBlock>,
+    val blocks: List<TranslationBlockView>,
     val pageWidth: Int,
     val pageHeight: Int,
 )
