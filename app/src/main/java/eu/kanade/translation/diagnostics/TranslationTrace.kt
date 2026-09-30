@@ -811,6 +811,7 @@ class TranslationRunTrace internal constructor(
     private val plan: TranslationTracePlan,
 ) {
     private val closed = AtomicBoolean(false)
+
     @Volatile
     private var sourcePixelCount = 0L
     private val stageLock = Any()
@@ -1100,6 +1101,7 @@ class TranslationStageSpan internal constructor(
     internal val startNanos: Long,
 ) : AutoCloseable {
     private val done = AtomicBoolean(false)
+
     @Volatile
     private var currentNormalizationUnits = normalizationUnits
 

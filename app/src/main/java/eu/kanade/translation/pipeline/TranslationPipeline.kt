@@ -272,6 +272,7 @@ class TranslationPipeline private constructor(
     // E20a collects current signals but pins the applied output at one until E20b.
     private val adaptiveKnobController = AdaptiveKnobController()
     private val adaptiveKnobSignalAdapter = AdaptiveKnobSignalAdapter.forContext(context, adaptiveKnobController)
+
     @VisibleForTesting
     internal val devicePagePermitGate = DevicePagePermitGate(capacity = { adaptiveKnobController.appliedConcurrency })
 

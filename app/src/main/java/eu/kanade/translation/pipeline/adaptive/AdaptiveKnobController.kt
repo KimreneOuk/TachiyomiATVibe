@@ -158,8 +158,10 @@ class AdaptiveKnobController(
 
     companion object {
         const val DEFAULT_FLOOR = 1
+
         /** Conservative machinery ceiling; E21 measures the device-specific limit. */
         const val DEFAULT_CEILING = 4
+
         /** E20a selects the low end of the planned 8–16-sample range. */
         const val DEFAULT_ANCHOR_WINDOW_SIZE = 8
         const val DEFAULT_MINIMUM_ANCHOR_SAMPLES = 5

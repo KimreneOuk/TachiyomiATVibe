@@ -30,8 +30,10 @@ class DevicePagePermitGate(
 ) {
     private val lock = Mutex()
     private val waiters = mutableListOf<Waiter>()
+
     @Volatile
     private var activePermits = 0
+
     @Volatile
     private var queuedWaiterCount = 0
     private var nextSequence = 0L
