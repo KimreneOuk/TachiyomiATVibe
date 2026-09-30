@@ -34,8 +34,11 @@ import org.junit.jupiter.api.Test
  * honesty is preserved when the predecessor terminally failed (negative
  * control: the skip must remain when p0 durably failed, not unblock).
  */
-//  test-stability quarantine: load-ordering sensitive under full-suite JVM
-// churn; tracked for stabilization. Runs with -PincludeQuarantinedTests.
+// Retain quarantine after E22 characterization: a full-suite run rejected p1's
+// final write (`page lease token expected=5 actual=null`,
+// `leaseTokenMismatchHeal=not attempted`) while its translation remained
+// non-durable. Retirement waits for the write-gate heal-path root cause or
+// E16c D1-A durable-state reconciliation. Runs with -PincludeQuarantinedTests.
 @Tag("quarantined-flaky")
 class StandardLaneMultiPageCompletionTest {
 
