@@ -30,6 +30,7 @@ import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.adaptive.DeviceStageNormalization
 import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
@@ -181,14 +182,20 @@ internal class SinglePageOnnxPhase(
     private suspend fun decodePageBitmapForTranslation(fileName: String, streamFn: () -> InputStream): DecodedPage? {
         val decodeSpan = TranslationTrace.beginStage(TranslationTraceStage.SOURCE_DECODE)
         val decoded = try {
-            PageDecode.decodePageBitmapForTranslation(context, { recognitionEngine }, fileName, streamFn)
+            PageDecode.decodePageBitmapForTranslation(
+                context = context,
+                recognitionEngine = { recognitionEngine },
+                fileName = fileName,
+                streamFn = streamFn,
+                onSourceBounds = { width, height ->
+                    decodeSpan.setNormalizationUnits(DeviceStageNormalization.sourcePixels(width, height))
+                },
+            )
         } catch (t: Throwable) {
             decodeSpan.end(TranslationTraceOutcome.FAILURE, error = t)
             throw t
         }
-        decodeSpan.end(
-            if (decoded == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS,
-        )
+        decodeSpan.end(if (decoded == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS)
         return decoded
     }
 

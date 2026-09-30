@@ -48,6 +48,7 @@ internal object PageDecode {
         recognitionEngine: () -> PageRecognitionEngine,
         fileName: String,
         streamFn: () -> InputStream,
+        onSourceBounds: (width: Int, height: Int) -> Unit = { _, _ -> },
     ): DecodedPage? = withContext(Dispatchers.IO) {
         val buffered: ByteArray = try {
             streamFn().use { it.readBytes() }
@@ -75,6 +76,7 @@ internal object PageDecode {
             return@withContext null
         }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
+        onSourceBounds(bounds.outWidth, bounds.outHeight)
 
         var decision = TranslationMemoryBudget.chooseDecodeDecision(bounds.outWidth, bounds.outHeight, buffered.size.toLong())
         if (decision.kind == DecodeDecisionKind.HEAP_CONSTRAINED) {

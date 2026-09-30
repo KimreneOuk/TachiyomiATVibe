@@ -40,6 +40,7 @@ import eu.kanade.translation.model.Detection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.pipeline.adaptive.DeviceStageNormalization
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -401,10 +402,14 @@ class RoiPageRecognitionEngine(
                 localPaddlePageCoordinator = paddlePageOcrCoordinator
                 val pagePaddlePageCoordinator = localPaddlePageCoordinator
                 if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
+                val sourcePixels = TranslationTrace.currentRun()?.sourcePixels
+                    ?.takeIf { it > 0L }
+                    ?: bitmap.width.toLong() * bitmap.height.toLong()
                 val detectSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.DETECT,
                     provider = TranslationPipelineDiagnostics.providerFromLabel(localDetector.executionProviderLabel),
                     model = TranslationTraceModel.PAGE_DETECTOR,
+                    normalizationUnits = sourcePixels,
                 )
                 openRecognitionSpan = detectSpan
                 val detectStart = System.nanoTime()
@@ -430,6 +435,7 @@ class RoiPageRecognitionEngine(
                         TranslationTraceStage.SEGMENT,
                         provider = TranslationPipelineDiagnostics.providerFromLabel(segmenter.executionProviderLabel),
                         model = TranslationTraceModel.BUBBLE_SEGMENTER,
+                        normalizationUnits = sourcePixels,
                     )
                     openRecognitionSpan = segmentSpan
                     try {
@@ -485,6 +491,7 @@ class RoiPageRecognitionEngine(
                 val ocrSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.OCR,
                     provider = TranslationPipelineDiagnostics.providerFromLabel(localOcrEngine.executionProviderLabel),
+                    normalizationUnits = filteredDetections.size.toLong(),
                     model = when (localOcrEngine) {
                         is MangaOcrEngine -> TranslationTraceModel.MANGA_OCR
                         is PaddleOcrV6SmallEngine -> TranslationTraceModel.PADDLE_OCR
@@ -802,6 +809,7 @@ class RoiPageRecognitionEngine(
         // result to report.
         val inpaintSpan = TranslationTrace.beginStage(
             TranslationTraceStage.INPAINT,
+            normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
             model = if (inpainting != null) TranslationTraceModel.AOT_GAN else TranslationTraceModel.NONE,
         )
         val inpaintStart = System.nanoTime()

@@ -39,6 +39,11 @@ import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.SinglePageHttpRenderPhase
 import eu.kanade.translation.pipeline.SinglePageOnnxPhase
+import eu.kanade.translation.pipeline.adaptive.AdaptiveKnobController
+import eu.kanade.translation.pipeline.adaptive.AdaptiveKnobSignalAdapter
+import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
+import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
+import eu.kanade.translation.pipeline.adaptive.DeviceStageNormalization
 import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
@@ -127,6 +132,7 @@ class TranslationPipeline private constructor(
     )
 
     override fun close() {
+        adaptiveKnobSignalAdapter.close()
         nativeRunScope.cancel()
     }
 
@@ -263,6 +269,12 @@ class TranslationPipeline private constructor(
     @Volatile
     var batchTrackerFactory: ((chapterId: Long, store: ChapterTranslationStore, orderedPageKeys: List<String>) -> TranslationBatchProgressTracker?)? = null
 
+    // E20a collects current signals but pins the applied output at one until E20b.
+    private val adaptiveKnobController = AdaptiveKnobController()
+    private val adaptiveKnobSignalAdapter = AdaptiveKnobSignalAdapter.forContext(context, adaptiveKnobController)
+    @VisibleForTesting
+    internal val devicePagePermitGate = DevicePagePermitGate(capacity = { adaptiveKnobController.appliedConcurrency })
+
     // EngineLane owns engine construction and native-call drainage. Its short
     // drain grace is retried by epoch, and the drain runs off the main thread.
     internal val engines = testConstruction?.engines ?: EngineLane(
@@ -280,14 +292,26 @@ class TranslationPipeline private constructor(
         engines.warmUp()
     }
 
-    private suspend fun <T> withNativeLane(
+    @VisibleForTesting
+    internal suspend fun <T> withNativeLane(
         timeoutMs: Long,
         chapterId: Long?,
         chapterName: String,
         pageKey: String,
         onTimeout: suspend () -> Unit,
+        priority: DevicePermitPriority = DevicePermitPriority.BACKGROUND,
         block: suspend () -> T,
-    ): T? = engines.withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
+    ): T? {
+        val permit = devicePagePermitGate.acquire(priority) ?: run {
+            onTimeout()
+            return null
+        }
+        return try {
+            engines.withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
+        } finally {
+            permit.release()
+        }
+    }
 
     // EngineLane owns engine instances; these getters read their active configuration.
     private val currentOcrModel get() = engines.currentOcrModel
@@ -526,6 +550,11 @@ class TranslationPipeline private constructor(
                             deferredPublications.orphaned = true
                             markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs)
                         },
+                        priority = if (origin == PageWriteOrigin.MANUAL) {
+                            DevicePermitPriority.FOREGROUND
+                        } else {
+                            DevicePermitPriority.BACKGROUND
+                        },
                     ) {
                         // Queue behind the native lane settled: the span was
                         // begun at boundary entry, so its duration is the
@@ -553,7 +582,10 @@ class TranslationPipeline private constructor(
                         } finally {
                             inFlightPageKeys.remove(pageKey)
                         }
-                    }.also { nativeLaneToken?.close() }
+                    }.also {
+                        if (it == null) nativeQueueSpan?.end(TranslationTraceOutcome.PAUSE)
+                        nativeLaneToken?.close()
+                    }
                 } catch (_: NativePageAlreadyInFlightException) {
                     nativeLaneToken?.close()
                     return SinglePageOutcome.Rejected(null, "page already translating")
@@ -1141,7 +1173,7 @@ class TranslationPipeline private constructor(
                 pageKey: String,
                 onTimeout: suspend () -> Unit,
                 block: suspend () -> T,
-            ): T? = withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
+            ): T? = withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block = block)
         },
         engineRebuildMutex = engineRebuildMutex,
         ensureEnginesBuiltFor = this::ensureEnginesBuiltFor,
@@ -1356,7 +1388,16 @@ class TranslationPipeline private constructor(
         PageDecode.decodePageBitmapAtSize(fileName, sampleSize, streams)
 
     private suspend fun decodePageBitmapForTranslation(fileName: String, streamFn: () -> InputStream): DecodedPage? =
-        PageDecode.decodePageBitmapForTranslation(context, { recognitionEngine }, fileName, streamFn)
+        PageDecode.decodePageBitmapForTranslation(
+            context = context,
+            recognitionEngine = { recognitionEngine },
+            fileName = fileName,
+            streamFn = streamFn,
+            onSourceBounds = { width, height ->
+                val sourcePixels = DeviceStageNormalization.sourcePixels(width, height)
+                TranslationTrace.currentRun()?.recordSourcePixels(sourcePixels)
+            },
+        )
 
     private suspend fun computeSourceFingerprint(streamFn: () -> InputStream): String? =
         PageDecode.computeSourceFingerprint(streamFn)

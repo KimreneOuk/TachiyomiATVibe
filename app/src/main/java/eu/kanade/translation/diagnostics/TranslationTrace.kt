@@ -811,6 +811,8 @@ class TranslationRunTrace internal constructor(
     private val plan: TranslationTracePlan,
 ) {
     private val closed = AtomicBoolean(false)
+    @Volatile
+    private var sourcePixelCount = 0L
     private val stageLock = Any()
     private val stageNanos = EnumMap<TranslationTraceStage, Long>(TranslationTraceStage::class.java)
     private val retries = AtomicInteger(0)
@@ -821,6 +823,11 @@ class TranslationRunTrace internal constructor(
     private val planRef = AtomicReference(plan)
 
     val isClosed: Boolean get() = closed.get()
+    internal val sourcePixels: Long get() = sourcePixelCount
+
+    internal fun recordSourcePixels(value: Long) {
+        if (value > 0L) sourcePixelCount = value
+    }
 
     /**
      * Installs the resolved resume plan (fresh/resume/render_only/skip).
@@ -833,7 +840,8 @@ class TranslationRunTrace internal constructor(
     /**
      * Starts a stage span. Emits a detailed `stage_start` (suppressed when
      * detailed tracing is off). The returned span must be ended exactly once;
-     * double-end is a no-op. Ending after the run closed records nothing.
+     * double-end is a no-op. Ending after the run closes emits no trace output;
+     * observers still receive completion for resource cleanup.
      */
     fun beginStage(
         stage: TranslationTraceStage,
@@ -843,6 +851,7 @@ class TranslationRunTrace internal constructor(
         items: Int = 0,
         site: TranslationTraceSite? = null,
         leaseKind: TranslationTraceLeaseKind? = null,
+        normalizationUnits: Long = 0L,
     ): TranslationStageSpan {
         val span = TranslationStageSpan(
             run = this,
@@ -853,8 +862,10 @@ class TranslationRunTrace internal constructor(
             items = items,
             site = site,
             leaseKind = leaseKind,
+            normalizationUnits = normalizationUnits,
             startNanos = clock.nowNanos(),
         )
+        if (!closed.get()) TranslationTraceStageObserverRegistry.onStageStarted(span)
         TranslationPipelineDiagnostics.emitStageStart(
             identity = identity,
             lane = lane,
@@ -884,8 +895,7 @@ class TranslationRunTrace internal constructor(
     /**
      * Settles one stage interval (called exactly once by the span). Repeated
      * intervals for the same stage sum in the stage map. Stage ends after the
-     * run terminal are dropped: the terminal
-     * summary already fired.
+     * run terminal do not emit trace output because the terminal summary fired.
      */
     internal fun finishStage(
         span: TranslationStageSpan,
@@ -897,10 +907,18 @@ class TranslationRunTrace internal constructor(
         queueMs: Long,
         registeredProvider: TranslationTraceProvider? = null,
         provenProvider: TranslationTraceProvider? = null,
+        normalizationUnits: Long,
     ) {
         val now = clock.nowNanos()
         val durationNanos = (now - span.startNanos).coerceAtLeast(0)
         recordStage(span.stage, durationNanos)
+        TranslationTraceStageObserverRegistry.onStageCompleted(
+            span = span,
+            durationNanos = durationNanos,
+            outcome = outcome,
+            error = error,
+            normalizationUnits = normalizationUnits,
+        )
         if (closed.get()) return
         val durationMs = durationNanos / 1_000_000
         val effectiveQueueMs = if (TranslationPipelineDiagnostics.isQueueStage(span.stage)) {
@@ -1000,6 +1018,69 @@ class TranslationRunTrace internal constructor(
     )
 }
 
+/** Read-only consumer of existing stage spans; listeners must remain fail-open. */
+internal interface TranslationTraceStageObserver {
+    fun onStageStarted(span: TranslationStageSpan)
+
+    fun onStageCompleted(
+        span: TranslationStageSpan,
+        durationNanos: Long,
+        outcome: TranslationTraceOutcome,
+        error: Throwable?,
+        normalizationUnits: Long,
+    )
+}
+
+/** Process-local immutable observer snapshot; the event path allocates no collection. */
+internal object TranslationTraceStageObserverRegistry {
+    private val lock = Any()
+
+    @Volatile
+    private var observers: Array<TranslationTraceStageObserver> = emptyArray()
+
+    fun register(observer: TranslationTraceStageObserver): AutoCloseable {
+        synchronized(lock) {
+            if (observers.none { it === observer }) observers = observers + observer
+        }
+        val registered = AtomicBoolean(true)
+        return AutoCloseable {
+            if (registered.compareAndSet(true, false)) {
+                synchronized(lock) {
+                    observers = observers.filterNot { it === observer }.toTypedArray()
+                }
+            }
+        }
+    }
+
+    fun onStageStarted(span: TranslationStageSpan) {
+        val snapshot = observers
+        for (observer in snapshot) {
+            try {
+                observer.onStageStarted(span)
+            } catch (_: Throwable) {
+                // Observation must never fail pipeline work.
+            }
+        }
+    }
+
+    fun onStageCompleted(
+        span: TranslationStageSpan,
+        durationNanos: Long,
+        outcome: TranslationTraceOutcome,
+        error: Throwable?,
+        normalizationUnits: Long,
+    ) {
+        val snapshot = observers
+        for (observer in snapshot) {
+            try {
+                observer.onStageCompleted(span, durationNanos, outcome, error, normalizationUnits)
+            } catch (_: Throwable) {
+                // Observation must never fail pipeline work.
+            }
+        }
+    }
+}
+
 /**
  * One timed stage interval. Ended exactly once; double-end is a no-op.
  * Queue-class stages auto-report their duration as queueMs; non-queue stages
@@ -1015,11 +1096,22 @@ class TranslationStageSpan internal constructor(
     val items: Int,
     val site: TranslationTraceSite? = null,
     val leaseKind: TranslationTraceLeaseKind? = null,
+    normalizationUnits: Long = 0L,
     internal val startNanos: Long,
 ) : AutoCloseable {
     private val done = AtomicBoolean(false)
+    @Volatile
+    private var currentNormalizationUnits = normalizationUnits
 
+    internal val runId: String? get() = run?.identity?.rid
+    internal val normalizationUnits: Long get() = currentNormalizationUnits
     val isFinished: Boolean get() = done.get()
+
+    internal fun setNormalizationUnits(value: Long) {
+        val normalized = value.coerceAtLeast(0L)
+        currentNormalizationUnits = normalized
+        if (stage == TranslationTraceStage.SOURCE_DECODE) run?.recordSourcePixels(normalized)
+    }
 
     /**
      * Settles the interval: sums into the run's stage map, emits
@@ -1042,6 +1134,7 @@ class TranslationStageSpan internal constructor(
         queueMs: Long = 0,
         registeredProvider: TranslationTraceProvider? = null,
         provenProvider: TranslationTraceProvider? = null,
+        normalizationUnits: Long? = null,
     ): Boolean {
         if (!done.compareAndSet(false, true)) return false
         if (run != null) {
@@ -1055,6 +1148,7 @@ class TranslationStageSpan internal constructor(
                 queueMs = queueMs,
                 registeredProvider = registeredProvider,
                 provenProvider = provenProvider,
+                normalizationUnits = normalizationUnits ?: currentNormalizationUnits,
             )
         }
         return true
@@ -1089,6 +1183,7 @@ class TranslationStageSpan internal constructor(
             items: Int,
             site: TranslationTraceSite? = null,
             leaseKind: TranslationTraceLeaseKind? = null,
+            normalizationUnits: Long = 0L,
         ): TranslationStageSpan = TranslationStageSpan(
             run = null,
             stage = stage,
@@ -1098,6 +1193,7 @@ class TranslationStageSpan internal constructor(
             items = items,
             site = site,
             leaseKind = leaseKind,
+            normalizationUnits = normalizationUnits,
             startNanos = 0,
         )
     }
@@ -1135,6 +1231,7 @@ object TranslationTrace {
         items: Int = 0,
         site: TranslationTraceSite? = null,
         leaseKind: TranslationTraceLeaseKind? = null,
+        normalizationUnits: Long = 0L,
     ): TranslationStageSpan {
         val run = currentRun() ?: return TranslationStageSpan.createNoOp(
             stage = stage,
@@ -1144,8 +1241,9 @@ object TranslationTrace {
             items = items,
             site = site,
             leaseKind = leaseKind,
+            normalizationUnits = normalizationUnits,
         )
-        return run.beginStage(stage, lane, provider, model, items, site, leaseKind)
+        return run.beginStage(stage, lane, provider, model, items, site, leaseKind, normalizationUnits)
     }
 
     /** Times one suspend-capable page-lease acquisition on the current page run. */

@@ -216,6 +216,8 @@ internal class TranslationCoexistenceHarness private constructor(
             val context = mockk<Context> {
                 every { getSharedPreferences(any(), any()) } returns InMemorySharedPreferences()
             }
+            // AdaptiveKnobSignalAdapter.forContext reads the app context during pipeline construction.
+            every { context.applicationContext } returns context
             val preferences = harnessPreferences()
             val provider = mockk<eu.kanade.translation.persistence.chapter.TranslationFileProvider>(relaxed = true)
             if (cleanedImagesOnDisk.isNotEmpty()) {
@@ -1158,7 +1160,7 @@ internal class TranslationCoexistenceHarness private constructor(
             pageDecodeShimInstalled = true
             mockkObject(PageDecode)
             coEvery {
-                PageDecode.decodePageBitmapForTranslation(any(), any(), any(), any())
+                PageDecode.decodePageBitmapForTranslation(any(), any(), any(), any(), any())
             } coAnswers {
                 val pageKey = thirdArg<String>()
                 barrier.arrive(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, pageKey)

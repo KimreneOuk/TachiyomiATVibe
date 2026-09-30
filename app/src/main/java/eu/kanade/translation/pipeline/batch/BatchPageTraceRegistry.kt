@@ -62,18 +62,21 @@ internal class BatchPageTraceRegistry(
         provider: TranslationTraceProvider = TranslationTraceProvider.NONE,
         site: TranslationTraceSite? = null,
         leaseKind: TranslationTraceLeaseKind? = null,
+        normalizationUnits: Long = 0L,
     ) = runs[pageKey]?.beginStage(
         stage = stage,
         lane = lane,
         provider = provider,
         site = site,
         leaseKind = leaseKind,
+        normalizationUnits = normalizationUnits,
     ) ?: TranslationTrace.beginStage(
         stage = stage,
         lane = lane,
         provider = provider,
         site = site,
         leaseKind = leaseKind,
+        normalizationUnits = normalizationUnits,
     )
 
     suspend fun <T> withLeaseWait(
