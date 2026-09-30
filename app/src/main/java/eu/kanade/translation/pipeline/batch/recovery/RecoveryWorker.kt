@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch.recovery
 
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -19,6 +21,7 @@ import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.pipeline.batch.BatchPageTraceRegistry
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
@@ -37,6 +40,7 @@ internal class RecoveryWorkerContext(
         String,
         Map<String, Int>,
     ) -> BatchPass1Outcome,
+    val pageTraceRegistry: BatchPageTraceRegistry? = null,
 )
 
 internal class RecoveryWorker(
@@ -240,7 +244,15 @@ internal class RecoveryWorker(
         pageKey: String,
         description: String,
     ): RenderStampOutcome {
-        when (store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)) {
+        when (
+            context.pageTraceRegistry?.withLeaseWait(
+                pageKey = pageKey,
+                site = TranslationTraceSite.BATCH_RECOVERY_RENDER,
+                leaseKind = TranslationTraceLeaseKind.RENDER,
+            ) {
+                store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)
+            } ?: store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)
+        ) {
             is LeaseAcquisition.Granted -> Unit
             else -> return RenderStampOutcome.Blocked(
                 "render-terminal stamp could not acquire the Render lease " +

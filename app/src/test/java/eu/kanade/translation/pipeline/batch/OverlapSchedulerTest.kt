@@ -3,6 +3,12 @@ package eu.kanade.translation.pipeline.batch
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.diagnostics.TranslationIdentityKeys
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
+import eu.kanade.translation.diagnostics.TranslationTraceMode
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceSink
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -25,6 +31,7 @@ import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -230,12 +237,14 @@ class OverlapSchedulerTest {
         worker: NativeLaneWorker,
         pageKeys: List<String>,
         identities: ConcurrentHashMap<String, BatchWriteIdentity>,
+        pageTraceRegistry: BatchPageTraceRegistry? = null,
     ): OverlapScheduler = OverlapScheduler(
         store = store,
         nativeWorker = worker,
         orderedPageKeys = pageKeys,
         batchWriteIdentities = identities,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+        pageTraceRegistry = pageTraceRegistry,
     )
 
     // ------------------------------------------------------------------
@@ -475,6 +484,60 @@ class OverlapSchedulerTest {
         (store.snapshot("p1").page?.inpaintStatus != StageStatus.READY) shouldBe true
         // Teardown discipline still holds for the yielded page.
         store.snapshot("p1").leaseToken shouldBe null
+    }
+
+    @Test
+    fun `overlap slot busy defer reaches the page run terminal record`() = runTest {
+        val captured = mutableListOf<String>()
+        val oldSink = TranslationPipelineDiagnostics.sink
+        val oldDetailed = TranslationPipelineDiagnostics.detailedTracingEnabled
+        val oldIds = TranslationPipelineDiagnostics.idGenerator
+        val oldKeys = TranslationPipelineDiagnostics.identityKeys
+        TranslationPipelineDiagnostics.sink = TranslationTraceSink { _, line -> captured += line }
+        TranslationPipelineDiagnostics.detailedTracingEnabled = true
+        TranslationPipelineDiagnostics.idGenerator = TranslationTraceIdGenerator(processPrefix = "overlapdefer")
+        TranslationPipelineDiagnostics.identityKeys = TranslationIdentityKeys(ByteArray(32) { 44 })
+
+        val pageKey = "p-deferred"
+        val store = lazyStore()
+        store.preRegisterPages(listOf(pageKey))
+        seedTranslatedPage(store, pageKey)
+        val heldLease = store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val schedule = TranslationPipelineDiagnostics.startSchedule(
+            mode = TranslationTraceMode.BATCH,
+            origin = TranslationTraceMode.BATCH,
+            chapterRaw = "overlap-defer-test",
+            pages = 1,
+        )
+        val registry = BatchPageTraceRegistry(schedule, mapOf(pageKey to 0))
+        registry.startPages(listOf(pageKey))
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val scheduler = scheduler(store, FailingInpaintLane(), listOf(pageKey), identities, registry)
+
+        try {
+            val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                scheduler.runOverlapLoop()
+            }
+            scheduler.onRemoteWindowOpened()
+            testScheduler.advanceUntilIdle()
+            scheduler.onRemoteWindowClosed()
+            scheduler.stopOverlap()
+            loopJob.cancel()
+
+            registry.finishOpenRuns { TranslationTraceOutcome.SUCCESS }
+            schedule.end(TranslationTraceOutcome.PAUSE)
+        } finally {
+            store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+            TranslationPipelineDiagnostics.sink = oldSink
+            TranslationPipelineDiagnostics.detailedTracingEnabled = oldDetailed
+            TranslationPipelineDiagnostics.idGenerator = oldIds
+            TranslationPipelineDiagnostics.identityKeys = oldKeys
+        }
+
+        val runEnd = captured.single { it.contains("event=run_end ") }
+        runEnd shouldContain "outcome=pause"
+        runEnd shouldContain "reason=write_slot_busy"
     }
 
     // ------------------------------------------------------------------

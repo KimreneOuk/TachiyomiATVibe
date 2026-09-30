@@ -19,6 +19,18 @@ class TranslationFileProvider(
     private val storageManager: StorageManager = Injekt.get(),
 ) {
 
+    /** Journal bytes are kept on internal app storage even for SAF-backed artifacts. */
+    internal val privateJournalRoot get() = context.filesDir
+
+    /** Stable artifact-path identity; the value is hashed before becoming a path. */
+    internal fun privateJournalIdentity(source: Source, mangaTitle: String, fileName: String): String =
+        "${getSourceDirName(source)}:${getMangaDirName(mangaTitle)}:$fileName"
+
+    /** Mirrors the source-based form using the artifact's containing directory names. */
+    internal fun privateJournalIdentity(file: UniFile): String =
+        "${file.parentFile?.parentFile?.name ?: "<unknown>"}:" +
+            "${file.parentFile?.name ?: "<unknown>"}:${file.name ?: "translation.json"}"
+
     private val translationDir: UniFile?
         get() = storageManager.getTranslationsDirectory()
 

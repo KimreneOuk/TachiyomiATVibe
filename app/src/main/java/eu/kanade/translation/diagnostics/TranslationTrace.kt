@@ -1,5 +1,6 @@
 package eu.kanade.translation.diagnostics
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ThreadContextElement
 import java.security.SecureRandom
 import java.util.EnumMap
@@ -57,6 +58,37 @@ enum class TranslationTraceLane : TraceToken {
     override val token: String get() = name.lowercase(Locale.ROOT)
 }
 
+/** Bounded call sites for page-stage lease admission spans. */
+enum class TranslationTraceSite : TraceToken {
+    BATCH_OCR,
+    BATCH_STANDARD_TRANSLATION,
+    BATCH_ENVELOPE_TRANSLATION,
+    BATCH_TERMINAL_ADOPTION,
+    BATCH_CHECKPOINT_HYDRATION,
+    BATCH_WRITE_GATE,
+    BATCH_OVERLAP_RENDER,
+    BATCH_OVERLAP_INPAINT,
+    BATCH_RECOVERY_RENDER,
+    READER_SINGLE_PAGE,
+    ROLLING_AUTO_PREPARED,
+    ROLLING_AUTO_TRANSLATION,
+    READER_STRANDED_SWEEP,
+    ;
+
+    override val token: String get() = name.lowercase(Locale.ROOT)
+}
+
+/** Stage kind being admitted by a page lease. */
+enum class TranslationTraceLeaseKind : TraceToken {
+    OCR,
+    TRANSLATION,
+    INPAINT,
+    RENDER,
+    ;
+
+    override val token: String get() = name.lowercase(Locale.ROOT)
+}
+
 /**
  * Canonical stages. Exact tokens are part of the log contract;
  * do not rename.
@@ -78,6 +110,7 @@ enum class TranslationTraceStage : TraceToken {
     INPAINT,
     CLEANED_PERSIST,
     PREPARED_QUEUE,
+    PROVIDER_WINDOW_WAIT,
     PROVIDER_GOVERNOR_WAIT,
     TRANSLATE,
     RENDER_JOIN,
@@ -85,6 +118,9 @@ enum class TranslationTraceStage : TraceToken {
     RENDER,
     STORE_COMMIT,
     STORE_FLUSH,
+    JOURNAL_CREDIT_WAIT,
+    JOURNAL_TERMINAL_LAG,
+    JOURNAL_TERMINAL_PAYLOAD,
     ;
 
     override val token: String get() = name.lowercase(Locale.ROOT)
@@ -165,8 +201,8 @@ enum class TranslationScheduleState : TraceToken {
 }
 
 /**
- * Bounded reason-token vocabulary for the `reason=` field of `schedule_state`
- * and `route_change` events.
+ * Bounded reason-token vocabulary for the `reason=` field of `schedule_state`,
+ * `route_change`, and selected terminal `run_end` events.
  *
  * Free-form reason strings are not accepted anywhere in the schema. Callers
  * must pass one of these tokens (via [token]); the formatter collapses
@@ -187,6 +223,9 @@ enum class TranslationTraceReason(val token: String) {
     ADMITTED("admitted"),
     LEASE_GRANTED("lease_granted"),
     LEASE_UNAVAILABLE("lease_unavailable"),
+    WRITE_SLOT_BUSY("write_slot_busy"),
+    SIBLING_ATTACH("sibling_attach"),
+    CONCURRENT_WRITER("concurrent_writer"),
     SOURCE_UNAVAILABLE("source_unavailable"),
     MEMORY_PRESSURE("memory_pressure"),
     PROVIDER_PAUSE("provider_pause"),
@@ -802,6 +841,8 @@ class TranslationRunTrace internal constructor(
         provider: TranslationTraceProvider = TranslationTraceProvider.NONE,
         model: TranslationTraceModel = TranslationTraceModel.NONE,
         items: Int = 0,
+        site: TranslationTraceSite? = null,
+        leaseKind: TranslationTraceLeaseKind? = null,
     ): TranslationStageSpan {
         val span = TranslationStageSpan(
             run = this,
@@ -810,6 +851,8 @@ class TranslationRunTrace internal constructor(
             provider = provider,
             model = model,
             items = items,
+            site = site,
+            leaseKind = leaseKind,
             startNanos = clock.nowNanos(),
         )
         TranslationPipelineDiagnostics.emitStageStart(
@@ -820,6 +863,8 @@ class TranslationRunTrace internal constructor(
             provider = provider,
             model = model,
             items = items,
+            site = site,
+            leaseKind = leaseKind,
         )
         return span
     }
@@ -877,6 +922,8 @@ class TranslationRunTrace internal constructor(
             error = TranslationPipelineDiagnostics.resolveError(error, errorType, errorCode),
             registeredProvider = registeredProvider,
             provenProvider = provenProvider,
+            site = span.site,
+            leaseKind = span.leaseKind,
         )
     }
 
@@ -893,6 +940,7 @@ class TranslationRunTrace internal constructor(
         error: Throwable? = null,
         errorType: String? = null,
         errorCode: Long? = null,
+        reason: TranslationTraceReason? = null,
     ): Boolean {
         if (!closed.compareAndSet(false, true)) return false
         val now = clock.nowNanos()
@@ -911,6 +959,7 @@ class TranslationRunTrace internal constructor(
             retries = retries.get(),
             outcome = outcome,
             error = resolvedError,
+            reason = reason,
         )
         return true
     }
@@ -964,6 +1013,8 @@ class TranslationStageSpan internal constructor(
     val provider: TranslationTraceProvider,
     val model: TranslationTraceModel,
     val items: Int,
+    val site: TranslationTraceSite? = null,
+    val leaseKind: TranslationTraceLeaseKind? = null,
     internal val startNanos: Long,
 ) : AutoCloseable {
     private val done = AtomicBoolean(false)
@@ -1036,6 +1087,8 @@ class TranslationStageSpan internal constructor(
             provider: TranslationTraceProvider,
             model: TranslationTraceModel,
             items: Int,
+            site: TranslationTraceSite? = null,
+            leaseKind: TranslationTraceLeaseKind? = null,
         ): TranslationStageSpan = TranslationStageSpan(
             run = null,
             stage = stage,
@@ -1043,6 +1096,8 @@ class TranslationStageSpan internal constructor(
             provider = provider,
             model = model,
             items = items,
+            site = site,
+            leaseKind = leaseKind,
             startNanos = 0,
         )
     }
@@ -1056,9 +1111,14 @@ class TranslationStageSpan internal constructor(
  */
 object TranslationTrace {
     private val threadLocal = ThreadLocal<TranslationRunTrace?>()
+    private val groupedThreadLocal = ThreadLocal<List<TranslationRunTrace>?>()
 
     /** The run installed on the current thread, or null outside a trace. */
     fun currentRun(): TranslationRunTrace? = threadLocal.get()
+
+    /** Every page run represented by a multi-page provider envelope, if present. */
+    fun currentRuns(): List<TranslationRunTrace> =
+        groupedThreadLocal.get() ?: listOfNotNull(threadLocal.get())
 
     /**
      * Begins a stage on the current run, or returns a fresh fail-open no-op
@@ -1073,6 +1133,8 @@ object TranslationTrace {
         provider: TranslationTraceProvider = TranslationTraceProvider.NONE,
         model: TranslationTraceModel = TranslationTraceModel.NONE,
         items: Int = 0,
+        site: TranslationTraceSite? = null,
+        leaseKind: TranslationTraceLeaseKind? = null,
     ): TranslationStageSpan {
         val run = currentRun() ?: return TranslationStageSpan.createNoOp(
             stage = stage,
@@ -1080,21 +1142,82 @@ object TranslationTrace {
             provider = provider,
             model = model,
             items = items,
+            site = site,
+            leaseKind = leaseKind,
         )
-        return run.beginStage(stage, lane, provider, model, items)
+        return run.beginStage(stage, lane, provider, model, items, site, leaseKind)
+    }
+
+    /** Times one suspend-capable page-lease acquisition on the current page run. */
+    suspend fun <T> withLeaseWait(
+        site: TranslationTraceSite,
+        leaseKind: TranslationTraceLeaseKind,
+        block: suspend () -> T,
+    ): T {
+        val span = beginStage(
+            stage = TranslationTraceStage.LEASE_WAIT,
+            lane = TranslationTraceLane.SCHEDULER,
+            site = site,
+            leaseKind = leaseKind,
+        )
+        return try {
+            block().also { span.end(TranslationTraceOutcome.SUCCESS) }
+        } catch (cancelled: CancellationException) {
+            span.end(TranslationTraceOutcome.CANCELLED, error = cancelled)
+            throw cancelled
+        } catch (failure: Throwable) {
+            span.end(TranslationTraceOutcome.FAILURE, error = failure)
+            throw failure
+        }
+    }
+
+    /** Times one suspending page stage without retaining trace data after completion. */
+    suspend fun <T> withStage(
+        stage: TranslationTraceStage,
+        lane: TranslationTraceLane = TranslationPipelineDiagnostics.defaultLane(stage),
+        provider: TranslationTraceProvider = TranslationTraceProvider.NONE,
+        resultOutcome: (T) -> TranslationTraceOutcome = { TranslationTraceOutcome.SUCCESS },
+        failureOutcome: (Throwable) -> TranslationTraceOutcome = {
+            if (it is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE
+        },
+        block: suspend () -> T,
+    ): T {
+        val span = beginStage(stage = stage, lane = lane, provider = provider)
+        return try {
+            block().also { span.end(resultOutcome(it)) }
+        } catch (failure: Throwable) {
+            span.end(failureOutcome(failure), error = failure)
+            throw failure
+        }
     }
 
     /** A coroutine context element carrying [run] across dispatcher hops. */
     fun elementFor(run: TranslationRunTrace): TranslationTraceElement = TranslationTraceElement(run)
 
-    internal fun install(run: TranslationRunTrace?) {
-        threadLocal.set(run)
+    /** Carries all page runs for one multi-page provider admission and request. */
+    fun elementFor(runs: List<TranslationRunTrace>): TranslationTraceRunsElement =
+        TranslationTraceRunsElement(runs.distinct())
+
+    internal fun install(run: TranslationRunTrace?): TranslationTraceContextState =
+        installRuns(listOfNotNull(run))
+
+    internal fun installRuns(runs: List<TranslationRunTrace>): TranslationTraceContextState {
+        val previous = TranslationTraceContextState(threadLocal.get(), groupedThreadLocal.get())
+        threadLocal.set(runs.singleOrNull())
+        groupedThreadLocal.set(runs.takeIf { it.size > 1 })
+        return previous
     }
 
-    internal fun restore(previous: TranslationRunTrace?) {
-        threadLocal.set(previous)
+    internal fun restore(previous: TranslationTraceContextState) {
+        threadLocal.set(previous.singleRun)
+        groupedThreadLocal.set(previous.groupedRuns)
     }
 }
+
+data class TranslationTraceContextState(
+    val singleRun: TranslationRunTrace?,
+    val groupedRuns: List<TranslationRunTrace>?,
+)
 
 /**
  * Immutable ThreadContextElement: carries the current
@@ -1104,17 +1227,30 @@ object TranslationTrace {
  */
 class TranslationTraceElement internal constructor(
     private val run: TranslationRunTrace,
-) : AbstractCoroutineContextElement(TranslationTraceElement), ThreadContextElement<TranslationRunTrace?> {
+) : AbstractCoroutineContextElement(TranslationTraceElement), ThreadContextElement<TranslationTraceContextState> {
 
     companion object Key : CoroutineContext.Key<TranslationTraceElement>
 
-    override fun updateThreadContext(context: CoroutineContext): TranslationRunTrace? {
-        val previous = TranslationTrace.currentRun()
+    override fun updateThreadContext(context: CoroutineContext): TranslationTraceContextState =
         TranslationTrace.install(run)
-        return previous
-    }
 
-    override fun restoreThreadContext(context: CoroutineContext, oldState: TranslationRunTrace?) {
+    override fun restoreThreadContext(context: CoroutineContext, oldState: TranslationTraceContextState) {
+        TranslationTrace.restore(oldState)
+    }
+}
+
+/** Thread-context element for provider envelopes whose one request represents several pages. */
+class TranslationTraceRunsElement internal constructor(
+    private val runs: List<TranslationRunTrace>,
+) : AbstractCoroutineContextElement(TranslationTraceRunsElement),
+    ThreadContextElement<TranslationTraceContextState> {
+
+    companion object Key : CoroutineContext.Key<TranslationTraceRunsElement>
+
+    override fun updateThreadContext(context: CoroutineContext): TranslationTraceContextState =
+        TranslationTrace.installRuns(runs)
+
+    override fun restoreThreadContext(context: CoroutineContext, oldState: TranslationTraceContextState) {
         TranslationTrace.restore(oldState)
     }
 }

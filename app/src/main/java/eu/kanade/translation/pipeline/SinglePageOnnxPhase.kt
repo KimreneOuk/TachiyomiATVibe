@@ -7,8 +7,10 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
@@ -253,7 +255,12 @@ internal class SinglePageOnnxPhase(
             val mangaDir = provider.getMangaDir(manga.title, source)
             val saveFile = provider.getTranslationFileName(chapter.name, chapter.scanlator)
             val parent = mangaDir ?: return null
-            ChapterTranslationStore.openArtifact(parent, saveFile).also { ownStore = it }
+            ChapterTranslationStore.openArtifact(
+                parent,
+                saveFile,
+                provider.privateJournalRoot,
+                provider.privateJournalIdentity(source, manga.title, saveFile),
+            ).also { ownStore = it }
         }
 
         // Cleanup runs here for resume/error paths; deferred to the fresh path
@@ -527,7 +534,14 @@ internal class SinglePageOnnxPhase(
                         adjustedResume.inpaintStatus = StageStatus.RUNNING
                         updatePageFromCurrentSnapshot(store, pageKey, "single-page inpaint resume start") { adjustedResume }
                         stageListener?.onStageEntered(pageKey, TranslationStageEvent.CLEANING)
-                        adjustedResume.cleanedBitmap = recognitionEngine.inpaint(bitmap, adjustedResume)
+                        adjustedResume.cleanedBitmap = TranslationTrace.withStage(
+                            stage = TranslationTraceStage.INPAINT,
+                            lane = TranslationTraceLane.NATIVE,
+                            provider = TranslationTraceProvider.CPU,
+                            resultOutcome = { cleaned ->
+                                if (cleaned == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS
+                            },
+                        ) { recognitionEngine.inpaint(bitmap, adjustedResume) }
 
                         needsHttpRender = true
                         return OnnxPhaseResult(
@@ -674,7 +688,12 @@ internal class SinglePageOnnxPhase(
         }
 
         val cleaned = try {
-            recognitionEngine.inpaint(bitmap, pageTranslation)
+            TranslationTrace.withStage(
+                stage = TranslationTraceStage.INPAINT,
+                lane = TranslationTraceLane.NATIVE,
+                provider = TranslationTraceProvider.CPU,
+                resultOutcome = { if (it == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS },
+            ) { recognitionEngine.inpaint(bitmap, pageTranslation) }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             pageTranslation.inpaintStatus = StageStatus.FAILED
@@ -1054,7 +1073,14 @@ internal class SinglePageOnnxPhase(
         // for the rolling coordinator's slot model.
         try {
             preflightAnalyzeGate(bitmap, fileName)
-            pageTranslation = recognitionEngine.analyze(bitmap)
+            pageTranslation = TranslationTrace.withStage(
+                stage = TranslationTraceStage.OCR,
+                lane = TranslationTraceLane.NATIVE,
+                provider = TranslationTraceProvider.CPU,
+                resultOutcome = {
+                    if (it.ocrStatus == StageStatus.FAILED) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS
+                },
+            ) { recognitionEngine.analyze(bitmap) }
             consecutiveOomCount = 0
         } catch (deferred: LowMemoryRecognitionDeferredException) {
             logcat(LogPriority.WARN) {
@@ -1130,7 +1156,12 @@ internal class SinglePageOnnxPhase(
             stageListener?.onStageEntered(fileName, TranslationStageEvent.CLEANING)
             try {
                 preflightInpaintGate(bitmap, fileName)
-                pageTranslation.cleanedBitmap = recognitionEngine.inpaint(bitmap, pageTranslation)
+                pageTranslation.cleanedBitmap = TranslationTrace.withStage(
+                    stage = TranslationTraceStage.INPAINT,
+                    lane = TranslationTraceLane.NATIVE,
+                    provider = TranslationTraceProvider.CPU,
+                    resultOutcome = { if (it == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS },
+                ) { recognitionEngine.inpaint(bitmap, pageTranslation) }
                 pageTranslation.cleanedBitmap?.let { cleaned ->
                     try {
                         RenderColorEstimator.recomputeFor(cleaned, pageTranslation.blocks)

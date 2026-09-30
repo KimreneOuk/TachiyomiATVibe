@@ -7,7 +7,6 @@ import androidx.core.content.res.ResourcesCompat
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
-import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceStage
@@ -59,6 +58,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 internal class BatchRenderJoin(
     private val store: ChapterTranslationStore,
+    private val pageTraceRegistry: BatchPageTraceRegistry,
     private val manga: Manga,
     private val chapter: Chapter,
     private val source: HttpSource,
@@ -86,12 +86,16 @@ internal class BatchRenderJoin(
         description: String,
         stage: BatchStage?,
         update: (PageTranslation?) -> PageTranslation,
-    ) = writeGate.guardedBatchUpdate(pageKey, description, stage, update)
+    ) = pageTraceRegistry.withPageRun(pageKey) {
+        writeGate.guardedBatchUpdate(pageKey, description, stage, update)
+    }
 
     private suspend fun persistBatchPageWithOomRecovery(
         pageKey: String,
         pageTranslation: PageTranslation,
-    ) = writeGate.persistBatchPageWithOomRecovery(pageKey, pageTranslation)
+    ) = pageTraceRegistry.withPageRun(pageKey) {
+        writeGate.persistBatchPageWithOomRecovery(pageKey, pageTranslation)
+    }
 
     private suspend fun loadPersistedCleanedBitmap(
         manga: Manga,
@@ -183,6 +187,7 @@ internal class BatchRenderJoin(
                 return@withLock
             }
             var renderPersisted = false
+            var renderLaneToken: AutoCloseable? = null
             try {
                 tracker?.markRenderRunning(pageKey)
                 val running = guardedBatchUpdate(pageKey, "batch render running", BatchStage.LAYOUT) {
@@ -203,21 +208,24 @@ internal class BatchRenderJoin(
                     )
                 }
                 val renderInput = store.snapshot(pageKey)
+                renderLaneToken = pageTraceRegistry.enterLane(TranslationTraceLane.RENDER)
                 // The layout stage outcome for the page run. The
                 // span settles even when the estimator throws (layout failure
                 // path below keeps its existing handling).
-                val layoutSpan = TranslationTrace.beginStage(
+                val layoutSpan = pageTraceRegistry.beginStage(
+                    pageKey,
                     TranslationTraceStage.LAYOUT,
-                    lane = TranslationTraceLane.RENDER,
+                    TranslationTraceLane.RENDER,
                 )
                 val patch: RenderStagePatch = try {
                     RenderColorEstimator.recomputeFor(bitmap, page.blocks)
                     layoutSpan.end(TranslationTraceOutcome.SUCCESS)
                     page.renderStatus = StageStatus.READY
                     page.updatedAt = System.currentTimeMillis()
-                    val renderSpan = TranslationTrace.beginStage(
+                    val renderSpan = pageTraceRegistry.beginStage(
+                        pageKey,
                         TranslationTraceStage.RENDER,
-                        lane = TranslationTraceLane.RENDER,
+                        TranslationTraceLane.RENDER,
                     )
                     try {
                         RenderStagePatch(
@@ -257,12 +265,13 @@ internal class BatchRenderJoin(
                 // settles in try/catch so a throw
                 // from mergeRender (cancellation while suspended, store error)
                 // cannot leave stage_start(store_commit) dangling.
-                val commitSpan = TranslationTrace.beginStage(
+                val commitSpan = pageTraceRegistry.beginStage(
+                    pageKey,
                     TranslationTraceStage.STORE_COMMIT,
-                    lane = TranslationTraceLane.STORAGE,
+                    TranslationTraceLane.STORAGE,
                 )
                 val renderResult = try {
-                    val result = store.mergeRender(patch)
+                    val result = pageTraceRegistry.withPageRun(pageKey) { store.mergeRender(patch) }
                     commitSpan.end(
                         if (result is StagePatchResult.Accepted) {
                             TranslationTraceOutcome.SUCCESS
@@ -318,6 +327,7 @@ internal class BatchRenderJoin(
                 tracker?.markRenderFailed(pageKey, e.message ?: e::class.java.simpleName)
                 logcat(LogPriority.ERROR, e) { "TachiyomiAT batch render failed: $pageKey" }
             } finally {
+                renderLaneToken?.close()
                 try {
                     bitmap?.recycle()
                 } catch (_: Exception) {}

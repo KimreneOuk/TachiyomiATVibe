@@ -3,6 +3,10 @@ package eu.kanade.translation.pipeline.batch.envelope
 import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.ProviderFailure
@@ -45,6 +49,7 @@ import eu.kanade.translation.persistence.chapter.TranslationStagePatch
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchContextFrontier
+import eu.kanade.translation.pipeline.batch.BatchPageTraceRegistry
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -105,6 +110,7 @@ internal class ProfileEnvelopeExecutor(
     private val onCommitSettled: () -> Unit = {},
     /** Advisory progress callback (per-envelope); the store stays authoritative. */
     private val onProgress: (Map<String, Int>) -> Unit = {},
+    private val pageTraceRegistry: BatchPageTraceRegistry? = null,
 ) {
 
     /** Mutable run-of-phase counters (operational only, never fingerprinted). */
@@ -337,7 +343,13 @@ internal class ProfileEnvelopeExecutor(
                     // The page may have been excluded between plan and dispatch
                     // by the replan path; treat as skipped.
                     ?: continue
-                val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
+                val lease = pageTraceRegistry?.withLeaseWait(
+                    pageKey = pageKey,
+                    site = TranslationTraceSite.BATCH_ENVELOPE_TRANSLATION,
+                    leaseKind = TranslationTraceLeaseKind.TRANSLATION,
+                ) {
+                    store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
+                } ?: store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
                 val leaseToken = when (lease) {
                     is LeaseAcquisition.Granted -> lease.lease.token
                     is LeaseAcquisition.Denied -> {
@@ -593,6 +605,12 @@ internal class ProfileEnvelopeExecutor(
                 nextEligibleRetryAtEpochMs = null,
             )
         }
+        val traceProvider = if (work.providerBackend.startsWith("lmstudio", ignoreCase = true)) {
+            TranslationTraceProvider.LOCAL
+        } else {
+            TranslationTraceProvider.REMOTE
+        }
+        val traceRuns = held.mapNotNull { page -> pageTraceRegistry?.runForOrStart(page.pageKey) }
         val metadata = ProviderRequestMetadata(
             key = ProviderRequestKey(
                 backend = work.providerBackend,
@@ -604,45 +622,80 @@ internal class ProfileEnvelopeExecutor(
             operation = "translation_envelope",
             envelopeId = envelope.envelopeId,
             priority = AdmissionPriority.BACKGROUND,
+            traceRuns = traceRuns,
+            traceProvider = traceProvider,
         )
-        val outcome = try {
-            sublimitGate.executeBatch(metadata) {
-                held.forEach { page ->
-                    runCatching {
-                        store.recordAttemptStart(
-                            pageKey = page.pageKey,
-                            providerKeyHash = ShortHash.hash(textTranslator.javaClass.name),
-                            origin = AttemptOrigin.BATCH,
-                            generation = store.currentGeneration,
-                            requestContextFingerprint = prepared.contextFingerprint,
-                        )
-                    }.onFailure {
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT D9: batch attempt-ledger record failed (fail-open): " +
-                                "pageHash=${ShortHash.hash(page.pageKey)}"
+        suspend fun executeProviderRequest(): AiChunkOutcome {
+            val traceRegistry = pageTraceRegistry
+            suspend fun executeAdmitted(markAdmitted: () -> Unit): AiChunkOutcome =
+                sublimitGate.executeBatch(metadata) {
+                    markAdmitted()
+                    held.forEach { page ->
+                        runCatching {
+                            store.recordAttemptStart(
+                                pageKey = page.pageKey,
+                                providerKeyHash = ShortHash.hash(textTranslator.javaClass.name),
+                                origin = AttemptOrigin.BATCH,
+                                generation = store.currentGeneration,
+                                requestContextFingerprint = prepared.contextFingerprint,
+                            )
+                        }.onFailure {
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT D9: batch attempt-ledger record failed (fail-open): " +
+                                    "pageHash=${ShortHash.hash(page.pageKey)}"
+                            }
                         }
                     }
+                    try {
+                        val request = suspend {
+                            translateAiChunkWithAdaptiveRetry(
+                                translator = textTranslator,
+                                chunk = prepared.chunk,
+                                requestedOutputTokens = prepared.chunk.maxOutputTokens,
+                                profile = providerProfile,
+                                label = "t924-${envelope.envelopeId}#$batchIndex",
+                                retryDepth = 0,
+                                retryPolicy = retryPolicy,
+                                clock = clock,
+                            )
+                        }
+                        val result = if (traceRegistry == null) {
+                            request()
+                        } else {
+                            traceRegistry.withProviderWindow(
+                                pageKeys = held.map { it.pageKey },
+                                block = request,
+                            )
+                        }
+                        held.forEach { page -> runCatching { store.resolveAttempt(page.pageKey) } }
+                        result
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        held.forEach { page -> runCatching { store.resolveAttempt(page.pageKey) } }
+                        throw t
+                    }
                 }
-                try {
-                    val result = translateAiChunkWithAdaptiveRetry(
-                        translator = textTranslator,
-                        chunk = prepared.chunk,
-                        requestedOutputTokens = prepared.chunk.maxOutputTokens,
-                        profile = providerProfile,
-                        label = "t924-${envelope.envelopeId}#$batchIndex",
-                        retryDepth = 0,
-                        retryPolicy = retryPolicy,
-                        clock = clock,
-                    )
-                    held.forEach { page -> runCatching { store.resolveAttempt(page.pageKey) } }
-                    result
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (t: Throwable) {
-                    held.forEach { page -> runCatching { store.resolveAttempt(page.pageKey) } }
-                    throw t
+            return if (traceRegistry == null) {
+                executeAdmitted {}
+            } else {
+                traceRegistry.withProviderWindowAdmissionWait(
+                    pageKeys = held.map { it.pageKey },
+                    provider = traceProvider,
+                    failureOutcome = { failure ->
+                        when (failure) {
+                            is CancellationException -> TranslationTraceOutcome.CANCELLED
+                            is ProviderRequestPausedException -> TranslationTraceOutcome.PAUSE
+                            else -> TranslationTraceOutcome.FAILURE
+                        }
+                    },
+                ) { markAdmitted ->
+                    executeAdmitted(markAdmitted)
                 }
             }
+        }
+        val outcome = try {
+            executeProviderRequest()
         } catch (e: CancellationException) {
             throw e
         } catch (e: ProviderRequestPausedException) {
@@ -1001,7 +1054,14 @@ internal class ProfileEnvelopeExecutor(
                 expectedArtifactPageVersion = page.snapshot.artifactPageVersion,
                 envelopePlanFingerprint = work.planFingerprint,
             )
-            when (val result = store.mergeTranslation(patch, description = "t924 translation envelope commit")) {
+            val mergeResult = if (pageTraceRegistry == null) {
+                store.mergeTranslation(patch, description = "t924 translation envelope commit")
+            } else {
+                pageTraceRegistry.withPageRun(page.pageKey) {
+                    store.mergeTranslation(patch, description = "t924 translation envelope commit")
+                }
+            }
+            when (val result = mergeResult) {
                 is StagePatchResult.Accepted -> {
                     counters.pagesTranslated++
                     committedAnyPage = true

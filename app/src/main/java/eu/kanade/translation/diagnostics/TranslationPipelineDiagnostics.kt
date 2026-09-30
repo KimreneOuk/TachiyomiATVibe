@@ -88,7 +88,9 @@ object TranslationTraceBudgets {
         TranslationTraceStage.LEASE_WAIT,
         TranslationTraceStage.NATIVE_QUEUE,
         TranslationTraceStage.PREPARED_QUEUE,
+        TranslationTraceStage.PROVIDER_WINDOW_WAIT,
         TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+        TranslationTraceStage.JOURNAL_CREDIT_WAIT,
     )
 
     fun isQueueStage(stage: TranslationTraceStage): Boolean = stage in QUEUE_STAGES
@@ -106,7 +108,9 @@ object TranslationTraceBudgets {
         TranslationTraceStage.LEASE_WAIT,
         TranslationTraceStage.NATIVE_QUEUE,
         TranslationTraceStage.PREPARED_QUEUE,
+        TranslationTraceStage.PROVIDER_WINDOW_WAIT,
         TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+        TranslationTraceStage.JOURNAL_CREDIT_WAIT,
         TranslationTraceStage.RENDER_JOIN,
         -> QUEUE_WAIT_MS
 
@@ -130,6 +134,8 @@ object TranslationTraceBudgets {
         TranslationTraceStage.CLEANED_PERSIST,
         TranslationTraceStage.STORE_COMMIT,
         TranslationTraceStage.STORE_FLUSH,
+        TranslationTraceStage.JOURNAL_TERMINAL_LAG,
+        TranslationTraceStage.JOURNAL_TERMINAL_PAYLOAD,
         -> STORAGE_MS
     }
 }
@@ -322,7 +328,9 @@ object TranslationPipelineDiagnostics {
         TranslationTraceStage.LEASE_WAIT,
         TranslationTraceStage.NATIVE_QUEUE,
         TranslationTraceStage.PREPARED_QUEUE,
+        TranslationTraceStage.PROVIDER_WINDOW_WAIT,
         TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+        TranslationTraceStage.JOURNAL_CREDIT_WAIT,
         TranslationTraceStage.RENDER_JOIN,
         -> TranslationTraceLane.SCHEDULER
 
@@ -339,6 +347,8 @@ object TranslationPipelineDiagnostics {
         TranslationTraceStage.CLEANED_PERSIST,
         TranslationTraceStage.STORE_COMMIT,
         TranslationTraceStage.STORE_FLUSH,
+        TranslationTraceStage.JOURNAL_TERMINAL_LAG,
+        TranslationTraceStage.JOURNAL_TERMINAL_PAYLOAD,
         -> TranslationTraceLane.STORAGE
 
         TranslationTraceStage.LAYOUT,
@@ -413,6 +423,7 @@ object TranslationPipelineDiagnostics {
         retries: Int,
         outcome: TranslationTraceOutcome,
         error: TranslationTraceError,
+        reason: TranslationTraceReason?,
     ) {
         try {
             emit(
@@ -428,6 +439,7 @@ object TranslationPipelineDiagnostics {
                     outcome = outcome,
                     errorType = error.type,
                     errorCode = error.code,
+                    reason = reason,
                 ),
                 terminalPriority(outcome),
             )
@@ -443,6 +455,8 @@ object TranslationPipelineDiagnostics {
         provider: TranslationTraceProvider,
         model: TranslationTraceModel,
         items: Int,
+        site: TranslationTraceSite? = null,
+        leaseKind: TranslationTraceLeaseKind? = null,
     ) {
         if (!detailedTracingEnabled) return
         try {
@@ -456,6 +470,8 @@ object TranslationPipelineDiagnostics {
                     model = model,
                     items = items,
                     budgetMs = TranslationTraceBudgets.budgetMsFor(stage, provider),
+                    site = site,
+                    leaseKind = leaseKind,
                 ),
                 TranslationTraceLogPriority.INFO,
             )
@@ -478,6 +494,8 @@ object TranslationPipelineDiagnostics {
         registeredProvider: TranslationTraceProvider? = null,
         provenProvider: TranslationTraceProvider? = null,
         envelope: String? = null,
+        site: TranslationTraceSite? = null,
+        leaseKind: TranslationTraceLeaseKind? = null,
     ) {
         val budgetMs = TranslationTraceBudgets.budgetMsFor(stage, provider)
         val lag = durationMs > budgetMs || queueMs > TranslationTraceBudgets.QUEUE_WAIT_MS
@@ -504,6 +522,8 @@ object TranslationPipelineDiagnostics {
                     registeredProvider = registeredProvider,
                     provenProvider = provenProvider,
                     envelope = envelope,
+                    site = site,
+                    leaseKind = leaseKind,
                 ),
                 if (lag || outcome != TranslationTraceOutcome.SUCCESS) {
                     TranslationTraceLogPriority.WARN
@@ -720,6 +740,7 @@ object TranslationPipelineDiagnostics {
         outcome: TranslationTraceOutcome,
         errorType: String,
         errorCode: Long?,
+        reason: TranslationTraceReason? = null,
     ): String =
         identityPrefix(EVENT_RUN_END, identity) +
             " plan=${plan.token}" +
@@ -731,7 +752,11 @@ object TranslationPipelineDiagnostics {
             " retries=$retries" +
             " outcome=${outcome.token}" +
             " errorType=$errorType" +
-            " errorCode=${errorCode ?: NONE}"
+            " errorCode=${errorCode ?: NONE}" +
+            reasonSuffix(reason)
+
+    private fun reasonSuffix(reason: TranslationTraceReason?): String =
+        reason?.let { " reason=${it.token}" } ?: ""
 
     internal fun stageStartRecord(
         identity: TranslationRunIdentity,
@@ -742,6 +767,8 @@ object TranslationPipelineDiagnostics {
         model: TranslationTraceModel,
         items: Int,
         budgetMs: Long,
+        site: TranslationTraceSite? = null,
+        leaseKind: TranslationTraceLeaseKind? = null,
     ): String =
         identityPrefix(EVENT_STAGE_START, identity) +
             " lane=${lane.token}" +
@@ -754,7 +781,8 @@ object TranslationPipelineDiagnostics {
             " outcome=${TranslationTraceOutcome.STARTED.token}" +
             " lag=false" +
             " budgetMs=$budgetMs" +
-            " errorType=$NONE errorCode=$NONE"
+            " errorType=$NONE errorCode=$NONE" +
+            leaseSuffix(site, leaseKind)
 
     internal fun stageEndRecord(
         identity: TranslationRunIdentity,
@@ -774,6 +802,8 @@ object TranslationPipelineDiagnostics {
         registeredProvider: TranslationTraceProvider? = null,
         provenProvider: TranslationTraceProvider? = null,
         envelope: String? = null,
+        site: TranslationTraceSite? = null,
+        leaseKind: TranslationTraceLeaseKind? = null,
     ): String =
         identityPrefix(EVENT_STAGE_END, identity) +
             " lane=${lane.token}" +
@@ -790,7 +820,8 @@ object TranslationPipelineDiagnostics {
             " errorType=$errorType" +
             " errorCode=${errorCode ?: NONE}" +
             provenanceSuffix(registeredProvider, provenProvider) +
-            envelopeSuffix(envelope)
+            envelopeSuffix(envelope) +
+            leaseSuffix(site, leaseKind)
 
     /**
      * Optional trailing provenance fields:
@@ -813,6 +844,15 @@ object TranslationPipelineDiagnostics {
      */
     private fun envelopeSuffix(envelope: String?): String =
         envelope?.let { " envelope=${safeToken(it)}" } ?: ""
+
+    /** Optional trailing page-lease context; omitted from every other event. */
+    private fun leaseSuffix(
+        site: TranslationTraceSite?,
+        leaseKind: TranslationTraceLeaseKind?,
+    ): String = buildString {
+        site?.let { append(" site=${it.token}") }
+        leaseKind?.let { append(" leaseKind=${it.token}") }
+    }
 
     /** Optional trailing provider-attempt counter, emitted only when > 0. */
     private fun attemptSuffix(attempt: Int): String =
