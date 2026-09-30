@@ -32,6 +32,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
+import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,7 +51,6 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import tachiyomi.core.common.preference.Preference
@@ -78,12 +78,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Same fixture approach as MangaScreenModelTranslationDrawerTest: fully mocked
  * constructor, real resumed LifecycleRegistry, single-threaded main executor.
  */
-// ScreenModel boot await exceeds its wall-clock window on loaded 2-core CI
-// runners (passed on main run 36257403648, failed on 36259779265 with a 30s
-// budget + sleep-based polling). Same failure family as the drawer fixture;
-// include explicitly with -PincludeQuarantinedTests.
+// Retired after 10 isolated, 3 manga-package, and 3 forced full Dev Release
+// runs at HEAD 5d20b8d3 (2026-09-30): all 64 target test executions passed;
+// each full suite ran 1,946 tests with zero failures. The 2026-09-25 full-suite
+// boot timeout predates 4959b4a, which moved bootstrap launch after field init.
+// Evidence bundles are under %TEMP%\e22-manga-multiselect\ (isolated*, package*, full*).
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-@Tag("quarantined-flaky")
 class MangaScreenModelMultiSelectBatchTest {
 
     private val mainThreadSurrogate = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
@@ -281,30 +281,37 @@ class MangaScreenModelMultiSelectBatchTest {
 
     @AfterAll
     fun tearDown() {
-        if (::model.isInitialized) {
-            // Quiesce BEFORE dismantling the Looper-free main-thread fakes:
-            // the observeTranslationProgress collectors unwind on the REAL
-            // Dispatchers.IO, and their flowWithLifecycle/repeatOnLifecycle
-            // teardown calls LifecycleRegistry.removeObserver — a
-            // main-thread-enforced call. If that unwind lands after
-            // setDelegate(null) below, the check falls back to android.os.Looper
-            // (not mocked on the JVM) and the RuntimeException surfaces as an
-            // uncaught exception in whichever test class runs next. Destroying
-            // the lifecycle and JOINING the cancelled scope while the delegate
-            // is still installed pins the unwind inside this teardown.
-            //  the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
-            lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-            model.screenModelScope.cancel()
-            runBlocking {
-                withTimeout(30_000) {
-                    model.screenModelScope.coroutineContext[Job]?.join()
+        try {
+            if (::model.isInitialized) {
+                // Quiesce BEFORE dismantling the Looper-free main-thread fakes:
+                // the observeTranslationProgress collectors unwind on the REAL
+                // Dispatchers.IO, and their flowWithLifecycle/repeatOnLifecycle
+                // teardown calls LifecycleRegistry.removeObserver — a
+                // main-thread-enforced call. If that unwind lands after
+                // setDelegate(null) below, the check falls back to android.os.Looper
+                // (not mocked on the JVM) and the RuntimeException surfaces as an
+                // uncaught exception in whichever test class runs next. Destroying
+                // the lifecycle and JOINING the cancelled scope while the delegate
+                // is still installed pins the unwind inside this teardown.
+                //  the join is authoritative (no runCatching) — a >30s unwind fails THIS class with the real cause rather than leaking into the next fixture.
+                lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+                model.screenModelScope.cancel()
+                runBlocking {
+                    withTimeout(30_000) {
+                        model.screenModelScope.coroutineContext[Job]?.join()
+                    }
                 }
             }
+        } finally {
+            try {
+                unmockkStatic("eu.kanade.translation.presentation.TranslationSettingsSummaryKt")
+            } finally {
+                evictCachedScreenModelScope()
+                ArchTaskExecutor.getInstance().setDelegate(null)
+                Dispatchers.resetMain()
+                mainThreadSurrogate.close()
+            }
         }
-        evictCachedScreenModelScope()
-        ArchTaskExecutor.getInstance().setDelegate(null)
-        Dispatchers.resetMain()
-        mainThreadSurrogate.close()
     }
 
     // -- tests --------------------------------------------------------------
