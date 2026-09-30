@@ -118,6 +118,7 @@ internal class BatchWriteGate(
         ChapterTranslationStore.PatchPrecondition?,
     ) -> ChapterTranslationStore.PatchResult,
     private val pageTraceRegistry: BatchPageTraceRegistry? = null,
+    private val beforeSameLeaseRetryHook: (suspend (String, ChapterTranslationStore.PageSnapshot) -> Unit)? = null,
 ) {
 
     // Preserve named arguments at batch call sites; the injected callback is a
@@ -247,7 +248,9 @@ internal class BatchWriteGate(
             description = description,
             update = { current -> stampBatchProvenance(update(current), stage) },
         )
+        var firstRejectionReason: String? = null
         if (result is ChapterTranslationStore.PatchResult.Rejected) {
+            firstRejectionReason = result.reason
             //  device fix (Chapter-21 batch failure): the cached identity
             // can drift behind ungated store writes (reader stranded sweep,
             // OOM-recovery retries, reuse paths that skip the post-write
@@ -258,6 +261,9 @@ internal class BatchWriteGate(
             // ownership fence  must never be preempted here.
             val live = store.snapshot(pageKey)
             if (live.generation == identity.generation && live.leaseToken == identity.leaseToken) {
+                // Production leaves this null. Tests use it to hold the exact
+                // snapshot/retry boundary while a lease changes under the gate.
+                beforeSameLeaseRetryHook?.invoke(pageKey, live)
                 refreshBatchIdentity(pageKey, live)
                 result = store.updatePageGuarded(
                     pageKey = pageKey,
@@ -265,7 +271,11 @@ internal class BatchWriteGate(
                     description = description,
                     update = { current -> stampBatchProvenance(update(current), stage) },
                 )
-            } else if (result.isLeaseTokenMismatch()) {
+            }
+            // Reclassify after the optional stale-identity retry: that retry
+            // can lose its lease after the refresh snapshot even when the
+            // initial rejection was only a page-version/precondition drift.
+            if (result is ChapterTranslationStore.PatchResult.Rejected && result.isLeaseTokenMismatch()) {
                 //   owner-proof heal: the cached token no longer
                 // matches the lease table (the   residual flip — a
                 // sibling batch component re-minted the slot while this write
@@ -334,6 +344,7 @@ internal class BatchWriteGate(
                     "description" to description,
                     "stage" to stage,
                     "result" to result.reason,
+                    "firstRejectionReason" to firstRejectionReason,
                     "expected" to "{generation=${identity.generation}, pageVersion=${identity.pageVersion}, " +
                         "leaseToken=${identity.leaseToken}, candidateGenerationId=${identity.candidateGenerationId}, " +
                         "dependencyFingerprint=${identity.dependencyFingerprint}, " +
