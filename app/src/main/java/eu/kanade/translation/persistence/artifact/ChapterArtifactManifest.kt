@@ -281,6 +281,8 @@ data class CandidateGenerationMetadata(
     val priorDisplayState: PageDisplayState? = null,
     /** Complete live-store candidate snapshot; never used as the display pointer. */
     val pageSnapshotFileName: String? = null,
+    /** SHA-256 semantic identity of the exact snapshot named by [pageSnapshotFileName]. */
+    val pageSnapshotFingerprint: String? = null,
 )
 
 /**

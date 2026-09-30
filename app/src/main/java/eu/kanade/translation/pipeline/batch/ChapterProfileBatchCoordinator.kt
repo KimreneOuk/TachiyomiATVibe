@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.TextTranslator
@@ -218,6 +220,7 @@ internal class ChapterProfileBatchCoordinator(
      */
     private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> TranslationCompletionOutcome)? = null,
     private val envelopePlannerPolicy: EnvelopePlannerPolicy? = null,
+    private val pageTraceRegistry: BatchPageTraceRegistry? = null,
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -331,6 +334,7 @@ internal class ChapterProfileBatchCoordinator(
             renderJoin = renderJoin,
             envelopePlannerPolicy = envelopePlannerPolicy,
             nowEpochMs = nowEpochMs,
+            pageTraceRegistry = pageTraceRegistry,
             publishRecord = { recordArtifact, runRecord ->
                 publishRecord(recordArtifact, runRecord)
             },
@@ -373,6 +377,7 @@ internal class ChapterProfileBatchCoordinator(
         RecoveryWorkerContext(
             store = store,
             nowEpochMs = nowEpochMs,
+            pageTraceRegistry = pageTraceRegistry,
             drainFinalize = { recordArtifact, id, pages, fingerprint, counters ->
                 drainFinalizeAndComplete(recordArtifact, id, pages, fingerprint, counters)
             },
@@ -832,7 +837,15 @@ internal class ChapterProfileBatchCoordinator(
                 "all ${textBlocks.size} text blocks are user-authoritative"
             else -> "all ${textBlocks.size} text blocks already carry translations"
         }
-        when (store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)) {
+        when (
+            pageTraceRegistry?.withLeaseWait(
+                pageKey = pageKey,
+                site = TranslationTraceSite.BATCH_TERMINAL_ADOPTION,
+                leaseKind = TranslationTraceLeaseKind.TRANSLATION,
+            ) {
+                store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
+            } ?: store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
+        ) {
             is LeaseAcquisition.Granted -> Unit
             else -> {
                 logcat(LogPriority.WARN) {
@@ -936,7 +949,13 @@ internal class ChapterProfileBatchCoordinator(
         }
             ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.BUNDLE_MISSING)
         val lease = when (
-            val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+            val acquisition = pageTraceRegistry?.withLeaseWait(
+                pageKey = pageKey,
+                site = TranslationTraceSite.BATCH_CHECKPOINT_HYDRATION,
+                leaseKind = TranslationTraceLeaseKind.OCR,
+            ) {
+                store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+            } ?: store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
         ) {
             is LeaseAcquisition.Granted -> acquisition.lease
             else -> return CheckpointAdoption.Failed(CheckpointAdoptionFailure.LEASE_DENIED)

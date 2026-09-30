@@ -1129,6 +1129,7 @@ class ChapterArtifactEngine(
         }
         val fileName = page.candidate?.pageSnapshotFileName
             ?: layout.candidatePageSnapshotFile(pageKey, generationId)
+        val pageSnapshotFingerprint = StageFingerprints.pageSnapshot(pageSnapshot)
         if (!documents.publishJson(fileName, pageSnapshot.detachedCopy())) {
             return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
         }
@@ -1151,7 +1152,10 @@ class ChapterArtifactEngine(
         }
         val updatedPage = page.copy(
             source = sourceIdentity ?: page.source,
-            candidate = page.candidate.copy(pageSnapshotFileName = fileName),
+            candidate = page.candidate.copy(
+                pageSnapshotFileName = fileName,
+                pageSnapshotFingerprint = pageSnapshotFingerprint,
+            ),
             pageVersion = page.pageVersion + 1,
         ).let { candidatePage ->
             if (durableFailure == null) candidatePage else candidatePage.withStage(durableFailure.stage, failureRecord)
@@ -1301,6 +1305,7 @@ class ChapterArtifactEngine(
         if (!documents.publishJson(committedFile, pageSnapshot.detachedCopy())) {
             return TransactionOutcome.Rejected("committed page snapshot publication failed: pageKey=$pageKey")
         }
+        val pageSnapshotFingerprint = StageFingerprints.pageSnapshot(pageSnapshot)
         val displayBase = DisplayBaseReference(
             kind = if (pageSnapshot.cleanedImageName != null) DisplayBaseKind.CLEANED_IMAGE else DisplayBaseKind.ORIGINAL_SOURCE,
             fileName = pageSnapshot.cleanedImageName,
@@ -1312,11 +1317,11 @@ class ChapterArtifactEngine(
             bundleFingerprint = StageFingerprints.committedBundle(
                 sourceIdentity = resolvedPage.source,
                 displayBase = displayBase,
-                translationFingerprint = StageFingerprints.pageSnapshot(pageSnapshot),
+                translationFingerprint = pageSnapshotFingerprint,
                 layoutFingerprint = null,
             ),
             displayBase = displayBase,
-            translationFingerprint = StageFingerprints.pageSnapshot(pageSnapshot),
+            translationFingerprint = pageSnapshotFingerprint,
             origin = origin,
             provisional = false,
             hasManualEdits = pageSnapshot.blocks.any { it.userEditedAt != null },
@@ -1340,7 +1345,7 @@ class ChapterArtifactEngine(
             } else {
                 ArtifactStageStatus.READY
             },
-            fingerprint = StageFingerprints.pageSnapshot(pageSnapshot),
+            fingerprint = pageSnapshotFingerprint,
             origin = origin,
             generationId = null,
             artifactFileName = committedFile,
@@ -1351,7 +1356,7 @@ class ChapterArtifactEngine(
             } else {
                 ArtifactStageStatus.READY
             },
-            fingerprint = StageFingerprints.pageSnapshot(pageSnapshot),
+            fingerprint = pageSnapshotFingerprint,
             origin = origin,
             artifactFileName = committedFile,
             updatedAtEpochMs = nowEpochMs,

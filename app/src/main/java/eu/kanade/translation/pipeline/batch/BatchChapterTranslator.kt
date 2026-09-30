@@ -9,8 +9,10 @@ import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationScheduleTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.translator.ProviderFailure
@@ -288,6 +290,7 @@ internal class BatchChapterTranslator(
                 .mapIndexed { index, pageKey -> pageKey to index }
                 .toMap()
         }
+        val pageTraceRegistry = BatchPageTraceRegistry(scheduleTrace, resolvedNaturalPageIndexes)
         val batchGeneration = store.beginGeneration("batch start chapter=${chapter.name}")
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
@@ -421,6 +424,7 @@ internal class BatchChapterTranslator(
                         stampBatchProvenance = { page, stage -> resumePlanner.stampBatchProvenance(page, stage) },
                         releaseBatchPageLeaseFn = releaseBatchPageLease,
                         persistPageWithOomRecoveryFn = persistPageWithOomRecovery,
+                        pageTraceRegistry = pageTraceRegistry,
                     )
 
                     resumePlanner.seed()
@@ -506,6 +510,7 @@ internal class BatchChapterTranslator(
                     // coordinator publishes persisted layouts for completed pages.
                     val renderJoin = BatchRenderJoin(
                         store = store,
+                        pageTraceRegistry = pageTraceRegistry,
                         manga = manga,
                         chapter = chapter,
                         source = source,
@@ -580,6 +585,8 @@ internal class BatchChapterTranslator(
                         writeGate = batchWriteGate,
                         renderJoin = renderJoin,
                         heldBitmapRegistry = heldBitmapRegistry,
+                        scheduleTrace = scheduleTrace,
+                        pageTraceRegistry = pageTraceRegistry,
                         nativeLane = object : NativeLaneRunner {
                             override suspend fun <T> run(
                                 timeoutMs: Long,
@@ -627,11 +634,17 @@ internal class BatchChapterTranslator(
                         ): TranslationCompletionOutcome {
                             val pageKey = ref.pageKey
                             return when (
-                                val acquisition = store.tryAcquirePageStageLease(
-                                    pageKey,
-                                    PageStage.Translation,
-                                    PageWriteOrigin.BATCH,
-                                )
+                                val acquisition = batchLaneWorkers.pageTraceRegistry.withLeaseWait(
+                                    pageKey = pageKey,
+                                    site = TranslationTraceSite.BATCH_STANDARD_TRANSLATION,
+                                    leaseKind = TranslationTraceLeaseKind.TRANSLATION,
+                                ) {
+                                    store.tryAcquirePageStageLease(
+                                        pageKey,
+                                        PageStage.Translation,
+                                        PageWriteOrigin.BATCH,
+                                    )
+                                }
                             ) {
                                 is LeaseAcquisition.Denied -> {
                                     logcat(LogPriority.INFO) {
@@ -674,14 +687,18 @@ internal class BatchChapterTranslator(
                                         artifactPageVersion = lease.artifactPageVersion,
                                     )
                                     try {
-                                        batchLaneWorkers.translatorWorker.translateOutcome(
-                                            ref.copy(
-                                                leaseToken = lease.token,
-                                                candidateGenerationId = lease.candidateGenerationId,
-                                                dependencyFingerprint = lease.dependencyFingerprint,
-                                                artifactPageVersion = lease.artifactPageVersion,
-                                            ),
-                                        )
+                                        batchLaneWorkers.pageTraceRegistry.withProviderWindow(
+                                            pageKeys = listOf(pageKey),
+                                        ) {
+                                            batchLaneWorkers.translatorWorker.translateOutcome(
+                                                ref.copy(
+                                                    leaseToken = lease.token,
+                                                    candidateGenerationId = lease.candidateGenerationId,
+                                                    dependencyFingerprint = lease.dependencyFingerprint,
+                                                    artifactPageVersion = lease.artifactPageVersion,
+                                                ),
+                                            )
+                                        }
                                     } finally {
                                         releaseBatchPageLease(store, pageKey)
                                     }
@@ -718,6 +735,7 @@ internal class BatchChapterTranslator(
                                     orderedPageKeys = orderedPages.map { it.first },
                                     batchWriteIdentities = batchWriteIdentities,
                                     releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                                    pageTraceRegistry = pageTraceRegistry,
                                 )
                                 ChapterProfileBatchCoordinator(
                                     store = store,
@@ -741,6 +759,7 @@ internal class BatchChapterTranslator(
                                     textTranslator = contextualTranslator,
                                     overlapScheduler = overlapScheduler,
                                     renderJoin = renderJoin,
+                                    pageTraceRegistry = pageTraceRegistry,
                                 ).runPass1(orderedPages, computeClass)
                             }
                             ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
@@ -763,6 +782,7 @@ internal class BatchChapterTranslator(
                                     orderedPageKeys = orderedPages.map { it.first },
                                     batchWriteIdentities = batchWriteIdentities,
                                     releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                                    pageTraceRegistry = pageTraceRegistry,
                                 )
                                 ChapterProfileBatchCoordinator(
                                     store = store,
@@ -790,6 +810,7 @@ internal class BatchChapterTranslator(
                                     renderJoin = renderJoin,
                                     standardLane = true,
                                     standardTranslateOutcome = { ref -> standardTranslateOutcome(ref) },
+                                    pageTraceRegistry = pageTraceRegistry,
                                 ).runPass1(orderedPages, computeClass)
                             }
                         }
@@ -801,6 +822,7 @@ internal class BatchChapterTranslator(
                             val orderedPages = orderedStreams.mapIndexed { index, (pageKey, _) ->
                                 pageKey to (resolvedNaturalPageIndexes[pageKey] ?: index)
                             }
+                            pageTraceRegistry.startPages(orderedPages.map { it.first })
 
                             pass1Outcome = runBatchPass1(orderedPages, computeClass)
                         }
@@ -942,34 +964,52 @@ internal class BatchChapterTranslator(
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                     return@withGeneration reconciliation
                 } finally {
-                    // Cancellation, an unexpected worker exception, or a provider
-                    // failure must not strand a BATCH lease for the next run.
-                    batchWriteIdentities.keys.toList().forEach { pageKey ->
-                        if (pageKey in durableFailurePageKeys) {
-                            store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
-                        } else {
-                            store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
+                    try {
+                        // Cancellation, an unexpected worker exception, or a provider
+                        // failure must not strand a BATCH lease for the next run.
+                        batchWriteIdentities.keys.toList().forEach { pageKey ->
+                            if (pageKey in durableFailurePageKeys) {
+                                store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+                            } else {
+                                store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
+                            }
+                        }
+                        batchWriteIdentities.clear()
+                        store.releaseAllPageLeases(PageWriteOrigin.BATCH)
+                        withContext(NonCancellable) {
+                            // Settle the flush span even when persistence throws.
+                            val flushSpan = scheduleTrace.beginStage(
+                                TranslationTraceStage.STORE_FLUSH,
+                                lane = TranslationTraceLane.STORAGE,
+                            )
+                            try {
+                                store.flush()
+                            } finally {
+                                flushSpan.end()
+                            }
+                        }
+                        store.reconcileArtifactRetentionAsync()
+                        onBatchClosed?.invoke(manga, chapter, source, store)
+                    } finally {
+                        pageTraceRegistry.finishOpenRuns { pageKey ->
+                            batchTraceOutcome(store.state.value[pageKey])
                         }
                     }
-                    batchWriteIdentities.clear()
-                    store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                    withContext(NonCancellable) {
-                        // Settle the flush span even when persistence throws.
-                        val flushSpan = scheduleTrace.beginStage(
-                            TranslationTraceStage.STORE_FLUSH,
-                            lane = TranslationTraceLane.STORAGE,
-                        )
-                        try {
-                            store.flush()
-                        } finally {
-                            flushSpan.end()
-                        }
-                    }
-                    store.reconcileArtifactRetentionAsync()
-                    onBatchClosed?.invoke(manga, chapter, source, store)
                 }
             }
         }
+    }
+
+    private fun batchTraceOutcome(page: PageTranslation?): TranslationTraceOutcome = when {
+        page == null -> TranslationTraceOutcome.PAUSE
+        page.isStageFailed -> TranslationTraceOutcome.FAILURE
+        page.isTextlessTerminal ||
+            page.translationStatus in setOf(
+                StageStatus.READY,
+                StageStatus.PARTIAL,
+                StageStatus.SKIPPED,
+            ) -> TranslationTraceOutcome.SUCCESS
+        else -> TranslationTraceOutcome.PAUSE
     }
 
     /** Maps a pass-1 stop status to its schedule terminal outcome. */

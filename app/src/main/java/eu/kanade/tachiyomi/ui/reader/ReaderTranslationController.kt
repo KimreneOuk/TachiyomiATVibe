@@ -14,6 +14,13 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
+import eu.kanade.translation.diagnostics.TranslationTraceMode
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTracePlan
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.engines.rendering.HydratedLayout
 import eu.kanade.translation.engines.rendering.LayoutPlanPublication
 import eu.kanade.translation.engines.rendering.PersistedLayoutHydrator
@@ -1259,40 +1266,81 @@ internal class ReaderTranslationController(
             }
             //   the sweep is reader-side AUTOMATIC maintenance — its
             // lease is AUTO (never preempts; a reader tap evicts it).
-            val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.AUTO)
-            if (lease !is LeaseAcquisition.Granted) continue
-            try {
-                store.updatePageFromCurrentSnapshot(pageKey, "reader stranded-page sweep") { existing ->
-                    val safe = existing ?: return@updatePageFromCurrentSnapshot pt
-                    if (safe.runGeneration != store.currentGeneration) return@updatePageFromCurrentSnapshot safe
-                    val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
-                        safe.inpaintStatus == StageStatus.FAILED ||
-                        safe.translationStatus == StageStatus.FAILED ||
-                        safe.renderStatus == StageStatus.FAILED ||
-                        safe.displayImageName != null ||
-                        safe.isCleanedImageReady ||
-                        safe.isTextlessTerminal
-                    if (safeTerminal) return@updatePageFromCurrentSnapshot safe
-                    safe.apply {
-                        if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {
-                            ocrStatus = StageStatus.CANCELLED
-                        }
-                        if (inpaintStatus == StageStatus.RUNNING || inpaintStatus == StageStatus.PENDING) {
-                            inpaintStatus = StageStatus.CANCELLED
-                        }
-                        if (translationStatus == StageStatus.RUNNING || translationStatus == StageStatus.PENDING) {
-                            translationStatus = StageStatus.CANCELLED
-                        }
-                        if (renderStatus == StageStatus.RUNNING || renderStatus == StageStatus.PENDING) {
-                            renderStatus = StageStatus.CANCELLED
-                        }
-                        errorMessage = activeError ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
-                        updatedAt = System.currentTimeMillis()
-                    }
+            val repaired = withStrandedSweepTrace(chapterId, pageKey) {
+                val lease = TranslationTrace.withLeaseWait(
+                    site = TranslationTraceSite.READER_STRANDED_SWEEP,
+                    leaseKind = TranslationTraceLeaseKind.OCR,
+                ) {
+                    store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.AUTO)
                 }
-            } finally {
-                store.releasePageStageLease(pageKey, PageWriteOrigin.AUTO)
+                if (lease !is LeaseAcquisition.Granted) return@withStrandedSweepTrace false
+                try {
+                    store.updatePageFromCurrentSnapshot(pageKey, "reader stranded-page sweep") { existing ->
+                        val safe = existing ?: return@updatePageFromCurrentSnapshot pt
+                        if (safe.runGeneration != store.currentGeneration) return@updatePageFromCurrentSnapshot safe
+                        val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
+                            safe.inpaintStatus == StageStatus.FAILED ||
+                            safe.translationStatus == StageStatus.FAILED ||
+                            safe.renderStatus == StageStatus.FAILED ||
+                            safe.displayImageName != null ||
+                            safe.isCleanedImageReady ||
+                            safe.isTextlessTerminal
+                        if (safeTerminal) return@updatePageFromCurrentSnapshot safe
+                        safe.apply {
+                            if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {
+                                ocrStatus = StageStatus.CANCELLED
+                            }
+                            if (inpaintStatus == StageStatus.RUNNING || inpaintStatus == StageStatus.PENDING) {
+                                inpaintStatus = StageStatus.CANCELLED
+                            }
+                            if (translationStatus == StageStatus.RUNNING || translationStatus == StageStatus.PENDING) {
+                                translationStatus = StageStatus.CANCELLED
+                            }
+                            if (renderStatus == StageStatus.RUNNING || renderStatus == StageStatus.PENDING) {
+                                renderStatus = StageStatus.CANCELLED
+                            }
+                            errorMessage = activeError ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
+                            updatedAt = System.currentTimeMillis()
+                        }
+                    }
+                } finally {
+                    store.releasePageStageLease(pageKey, PageWriteOrigin.AUTO)
+                }
+                true
             }
+            if (!repaired) continue
+        }
+    }
+
+    private suspend fun <T> withStrandedSweepTrace(
+        chapterId: Long,
+        pageKey: String,
+        block: suspend () -> T,
+    ): T {
+        if (!TranslationPipelineDiagnostics.detailedTracingEnabled) return block()
+        val schedule = TranslationPipelineDiagnostics.startSchedule(
+            mode = TranslationTraceMode.AUTO,
+            origin = TranslationTraceMode.AUTO,
+            chapterRaw = chapterId.toString(),
+            pages = 1,
+        )
+        val run = TranslationPipelineDiagnostics.startRun(
+            schedule = schedule,
+            pageRaw = pageKey,
+            plan = TranslationTracePlan.RESUME,
+        )
+        var outcome = TranslationTraceOutcome.SUCCESS
+        return try {
+            withContext(TranslationTrace.elementFor(run)) { block() }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            outcome = TranslationTraceOutcome.CANCELLED
+            throw cancelled
+        } catch (failure: Throwable) {
+            outcome = TranslationTraceOutcome.FAILURE
+            throw failure
+        } finally {
+            run.end(outcome)
+            schedule.end(outcome)
         }
     }
 

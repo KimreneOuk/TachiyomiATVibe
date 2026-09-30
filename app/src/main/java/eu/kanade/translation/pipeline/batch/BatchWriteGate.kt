@@ -1,6 +1,8 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.model.PageStage
@@ -42,10 +44,27 @@ private suspend fun ChapterTranslationStore.acquireBatchPageLease(
     pageKey: String,
     stage: PageStage,
     onlyIfUnowned: Boolean = false,
-): LeaseAcquisition = if (onlyIfUnowned) {
-    tryAcquirePageStageLeaseIfUnowned(pageKey, stage, PageWriteOrigin.BATCH)
-} else {
-    tryAcquirePageStageLease(pageKey, stage, PageWriteOrigin.BATCH)
+    pageTraceRegistry: BatchPageTraceRegistry? = null,
+): LeaseAcquisition {
+    val acquire = suspend {
+        if (onlyIfUnowned) {
+            tryAcquirePageStageLeaseIfUnowned(pageKey, stage, PageWriteOrigin.BATCH)
+        } else {
+            tryAcquirePageStageLease(pageKey, stage, PageWriteOrigin.BATCH)
+        }
+    }
+    val leaseKind = when (stage) {
+        PageStage.Ocr -> TranslationTraceLeaseKind.OCR
+        PageStage.Translation -> TranslationTraceLeaseKind.TRANSLATION
+        PageStage.Inpaint -> TranslationTraceLeaseKind.INPAINT
+        PageStage.Render -> TranslationTraceLeaseKind.RENDER
+    }
+    return pageTraceRegistry?.withLeaseWait(
+        pageKey = pageKey,
+        site = TranslationTraceSite.BATCH_WRITE_GATE,
+        leaseKind = leaseKind,
+        block = acquire,
+    ) ?: acquire()
 }
 
 private fun leaseStageFor(stage: BatchStage?): PageStage = when (stage) {
@@ -98,6 +117,7 @@ internal class BatchWriteGate(
         PageTranslation,
         ChapterTranslationStore.PatchPrecondition?,
     ) -> ChapterTranslationStore.PatchResult,
+    private val pageTraceRegistry: BatchPageTraceRegistry? = null,
 ) {
 
     // Preserve named arguments at batch call sites; the injected callback is a
@@ -166,6 +186,7 @@ internal class BatchWriteGate(
                     pageKey,
                     leaseStageFor(stage),
                     onlyIfUnowned = true,
+                    pageTraceRegistry = pageTraceRegistry,
                 )
             ) {
                 is LeaseAcquisition.Granted -> acquisition.lease
@@ -255,7 +276,13 @@ internal class BatchWriteGate(
                 // today), and a grant whose run identity (generation +
                 // candidateGenerationId) differs is a resumed/re-planned run —
                 // never healed.
-                when (val acquisition = store.acquireBatchPageLease(pageKey, leaseStageFor(stage))) {
+                when (
+                    val acquisition = store.acquireBatchPageLease(
+                        pageKey = pageKey,
+                        stage = leaseStageFor(stage),
+                        pageTraceRegistry = pageTraceRegistry,
+                    )
+                ) {
                     is LeaseAcquisition.Denied -> {
                         leaseTokenMismatchHeal =
                             "denied owner=${acquisition.owner} reason=${acquisition.reason}"

@@ -10,6 +10,7 @@ import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.batch.BatchPageTraceRegistry
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import eu.kanade.translation.pipeline.batch.BatchRenderJoin
@@ -69,6 +70,7 @@ internal class EnvelopeDispatcherContext(
         String,
         Map<String, Int>,
     ) -> BatchPass1Outcome,
+    val pageTraceRegistry: BatchPageTraceRegistry? = null,
 )
 
 internal class EnvelopeDispatcher(
@@ -90,6 +92,8 @@ internal class EnvelopeDispatcher(
         get() = context.overlapScheduler
     private val renderJoin: BatchRenderJoin?
         get() = context.renderJoin
+    private val pageTraceRegistry: BatchPageTraceRegistry?
+        get() = context.pageTraceRegistry
     private val envelopePlannerPolicy: EnvelopePlannerPolicy?
         get() = context.envelopePlannerPolicy
     private val nowEpochMs: () -> Long
@@ -366,6 +370,7 @@ internal class EnvelopeDispatcher(
                     // the commit settle — deferred inpaint candidates no longer
                     // wait a whole envelope cycle for the next window's open.
                     onCommitSettled = { overlapScheduler?.notifyCandidatesChanged() },
+                    pageTraceRegistry = pageTraceRegistry,
                 )
                 val overlapLoop: suspend (suspend () -> ProfileEnvelopeExecutor.PhaseOutcome) -> ProfileEnvelopeExecutor.PhaseOutcome =
                     { runPhase ->

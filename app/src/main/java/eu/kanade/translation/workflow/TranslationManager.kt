@@ -1247,7 +1247,12 @@ class TranslationManager private constructor(
         if (manifestProbe.exists) {
             val parent = file.parentFile ?: return@runBlocking emptyMap()
             val store = activeStores.getOrCreateFile(file.registryKey()) {
-                ChapterTranslationStore.openArtifact(parent, file.name ?: "translation.json")
+                ChapterTranslationStore.openArtifact(
+                    parent,
+                    file.name ?: "translation.json",
+                    provider.privateJournalRoot,
+                    provider.privateJournalIdentity(file),
+                )
             }
             durableStatusResolver.clearDurableStatusCache()
             return@runBlocking store?.state?.value.orEmpty()
@@ -1279,11 +1284,21 @@ class TranslationManager private constructor(
         }
         val store = if (chapterId != null) {
             activeStores.getOrCreate(chapterId, document.registryKey) {
-                ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+                ChapterTranslationStore.openArtifact(
+                    document.parent,
+                    document.fileName,
+                    provider.privateJournalRoot,
+                    provider.privateJournalIdentity(source, mangaTitle, document.fileName),
+                )
             }
         } else {
             activeStores.getOrCreateFile(document.registryKey) {
-                ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+                ChapterTranslationStore.openArtifact(
+                    document.parent,
+                    document.fileName,
+                    provider.privateJournalRoot,
+                    provider.privateJournalIdentity(source, mangaTitle, document.fileName),
+                )
             }
         }
         if (!hadActive) {
@@ -1330,7 +1345,11 @@ class TranslationManager private constructor(
                 ?.takeIf { it.exists() }
                 ?: return
             activeStores.getOrCreate(chapterId, file.registryKey()) {
-                ChapterTranslationStore.open(file)
+                ChapterTranslationStore.open(
+                    file,
+                    provider.privateJournalRoot,
+                    provider.privateJournalIdentity(source, manga.title, file.name ?: "translation.json"),
+                )
             } ?: return
         }
         val pages = store.state.value
@@ -1443,7 +1462,12 @@ class TranslationManager private constructor(
             document?.registryKey,
         ) {
             if (manifestProbe?.exists == true) {
-                ChapterTranslationStore.openArtifact(document.parent, fileName)
+                ChapterTranslationStore.openArtifact(
+                    document.parent,
+                    fileName,
+                    provider.privateJournalRoot,
+                    provider.privateJournalIdentity(source, mangaTitle, fileName),
+                )
             } else {
                 // Create a lazy artifact store: opening a chapter never
                 // creates an empty manifest; the first real write materializes it.
@@ -1451,6 +1475,8 @@ class TranslationManager private constructor(
                     artifactParent = document?.parent,
                     artifactFileName = fileName,
                     fileCreator = { provider.getMangaDir(mangaTitle, source) },
+                    privateStorageRoot = provider.privateJournalRoot,
+                    privateStorageIdentity = provider.privateJournalIdentity(source, mangaTitle, fileName),
                 )
             }
         } ?: return null

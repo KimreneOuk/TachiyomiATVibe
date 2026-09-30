@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.model.PageStage
@@ -53,6 +55,7 @@ internal class OverlapScheduler(
     private val batchWriteIdentities: ConcurrentHashMap<String, BatchWriteIdentity>,
     /** Releases the BATCH page lease (the shell's `releaseBatchPageLease`). */
     private val releaseBatchLease: suspend (String) -> Unit,
+    private val pageTraceRegistry: BatchPageTraceRegistry? = null,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -366,7 +369,15 @@ internal class OverlapScheduler(
                     candidate.renderStatus == StageStatus.PENDING &&
                     candidate.blocks.any { it.translation.isNotBlank() }
             if (!displayComplete) continue
-            when (store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)) {
+            when (
+                pageTraceRegistry?.withLeaseWait(
+                    pageKey = pageKey,
+                    site = TranslationTraceSite.BATCH_OVERLAP_RENDER,
+                    leaseKind = TranslationTraceLeaseKind.RENDER,
+                ) {
+                    store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)
+                } ?: store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)
+            ) {
                 is LeaseAcquisition.Granted -> Unit
                 else -> continue
             }
@@ -514,7 +525,13 @@ internal class OverlapScheduler(
      * detach finds the record already moved on).
      */
     internal suspend fun tryClaimInpaintOwnership(pageKey: String): InpaintOwnership {
-        val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Inpaint, PageWriteOrigin.BATCH)
+        val lease = pageTraceRegistry?.withLeaseWait(
+            pageKey = pageKey,
+            site = TranslationTraceSite.BATCH_OVERLAP_INPAINT,
+            leaseKind = TranslationTraceLeaseKind.INPAINT,
+        ) {
+            store.tryAcquirePageStageLease(pageKey, PageStage.Inpaint, PageWriteOrigin.BATCH)
+        } ?: store.tryAcquirePageStageLease(pageKey, PageStage.Inpaint, PageWriteOrigin.BATCH)
         if (lease is LeaseAcquisition.Denied) {
             return InpaintOwnership.LeaseDenied(lease)
         }

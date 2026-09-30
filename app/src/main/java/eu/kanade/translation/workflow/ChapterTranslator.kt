@@ -239,13 +239,25 @@ class ChapterTranslator(
                     translation.chapter.scanlator,
                     translation.manga.title,
                     translation.source,
-                )?.takeIf { it.exists() }?.let(ChapterTranslationStore::open)
+                )?.takeIf { it.exists() }?.let { file ->
+                    ChapterTranslationStore.open(
+                        file,
+                        provider.privateJournalRoot,
+                        provider.privateJournalIdentity(translation.source, translation.manga.title, file.name ?: "translation.json"),
+                    )
+                }
                     ?: provider.findMangaDir(translation.manga.title, translation.source)?.let { parent ->
                         ChapterTranslationStore.openArtifact(
                             parent,
                             provider.getTranslationFileName(
                                 translation.chapter.name,
                                 translation.chapter.scanlator,
+                            ),
+                            provider.privateJournalRoot,
+                            provider.privateJournalIdentity(
+                                translation.source,
+                                translation.manga.title,
+                                provider.getTranslationFileName(translation.chapter.name, translation.chapter.scanlator),
                             ),
                         )
                     }
@@ -684,7 +696,12 @@ class ChapterTranslator(
                         translation.status = Translation.State.ERROR
                         return null
                     }
-                    store = ChapterTranslationStore.openArtifact(translationMangaDir, saveFile)
+                    store = ChapterTranslationStore.openArtifact(
+                        translationMangaDir,
+                        saveFile,
+                        provider.privateJournalRoot,
+                        provider.privateJournalIdentity(translation.source, translation.manga.title, saveFile),
+                    )
                     null
                 }
                 if (translationFile == null && store == null) {
@@ -694,7 +711,17 @@ class ChapterTranslator(
                     translation.status = Translation.State.ERROR
                     return null
                 }
-                if (store == null) store = ChapterTranslationStore.open(translationFile!!)
+                if (store == null) {
+                    store = ChapterTranslationStore.open(
+                        translationFile!!,
+                        provider.privateJournalRoot,
+                        provider.privateJournalIdentity(
+                            translation.source,
+                            translation.manga.title,
+                            translationFile!!.name ?: "translation.json",
+                        ),
+                    )
+                }
             }
 
             val chapterPath = downloadProvider.findChapterDir(

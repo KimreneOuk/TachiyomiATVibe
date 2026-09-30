@@ -1,4 +1,11 @@
 package eu.kanade.translation.engines.translator
+
+import eu.kanade.translation.diagnostics.TranslationRunTrace
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.translator.retry.RequestRetryBudgetExhaustedException
 import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.translator.retry.currentRequestRetryAttempt
@@ -56,6 +63,9 @@ data class ProviderRequestMetadata(
     val envelopeId: String? = null,
     val priority: AdmissionPriority = AdmissionPriority.BACKGROUND,
     val attempt: Int = 1,
+    /** Explicit page runs keep envelope admissions attributable when no single run is current. */
+    val traceRuns: List<TranslationRunTrace> = emptyList(),
+    val traceProvider: TranslationTraceProvider = TranslationTraceProvider.REMOTE,
 ) {
     val estimatedTokens: Int
         get() = estimatedInputTokens.coerceAtLeast(0).toLong()
@@ -284,7 +294,20 @@ class ProviderRequestGovernor(
     private var nextSequence = 0L
     private val releaseWakeupSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
+    private fun traceRuns(metadata: ProviderRequestMetadata): List<TranslationRunTrace> =
+        (metadata.traceRuns + TranslationTrace.currentRuns()).distinct()
+
     suspend fun admit(metadata: ProviderRequestMetadata): ProviderAdmissionDecision {
+        val waitSpans = traceRuns(metadata).map { run ->
+            run.beginStage(
+                stage = TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+                lane = TranslationTraceLane.SCHEDULER,
+                provider = metadata.traceProvider,
+            )
+        }
+        fun finishWait(outcome: TranslationTraceOutcome, failure: Throwable? = null) {
+            waitSpans.forEach { it.end(outcome, error = failure) }
+        }
         val normalizedMetadata = metadata.copy(
             key = metadata.key.normalized(),
             estimatedInputTokens = metadata.estimatedInputTokens.coerceAtLeast(0),
@@ -293,14 +316,22 @@ class ProviderRequestGovernor(
         )
         val key = normalizedMetadata.key
         val quota = policy(key)
-        val waiter = mutex.withLock {
-            val created = Waiter(
-                sequence = nextSequence++,
-                metadata = normalizedMetadata,
-                enqueuedAtEpochMs = clock.nowEpochMs(),
-            )
-            buckets.getOrPut(key) { Bucket() }.waiters += created
-            created
+        val waiter = try {
+            mutex.withLock {
+                val created = Waiter(
+                    sequence = nextSequence++,
+                    metadata = normalizedMetadata,
+                    enqueuedAtEpochMs = clock.nowEpochMs(),
+                )
+                buckets.getOrPut(key) { Bucket() }.waiters += created
+                created
+            }
+        } catch (cancelled: CancellationException) {
+            finishWait(TranslationTraceOutcome.CANCELLED, cancelled)
+            throw cancelled
+        } catch (failure: Throwable) {
+            finishWait(TranslationTraceOutcome.FAILURE, failure)
+            throw failure
         }
 
         try {
@@ -315,6 +346,7 @@ class ProviderRequestGovernor(
                             cooldownSource = null,
                             outcome = "admitted",
                         )
+                        finishWait(TranslationTraceOutcome.SUCCESS)
                         return ProviderAdmissionDecision.Admitted(result.permit)
                     }
 
@@ -326,6 +358,7 @@ class ProviderRequestGovernor(
                             cooldownSource = null,
                             outcome = "deferred",
                         )
+                        finishWait(TranslationTraceOutcome.PAUSE)
                         return result.decision
                     }
 
@@ -342,7 +375,11 @@ class ProviderRequestGovernor(
             }
         } catch (e: CancellationException) {
             mutex.withLock { removeWaiter(key, waiter) }
+            finishWait(TranslationTraceOutcome.CANCELLED, e)
             throw e
+        } catch (failure: Throwable) {
+            finishWait(TranslationTraceOutcome.FAILURE, failure)
+            throw failure
         }
     }
 
@@ -382,22 +419,51 @@ class ProviderRequestGovernor(
             currentRequestRetryAttempt()?.recordAttempt()
         }
         var result: ProviderHttpResult<T>? = null
+        val requestRuns = traceRuns(metadata)
+        val translationSpans = if (metadata.operation.contains("translation", ignoreCase = true)) {
+            requestRuns.map { run ->
+                run.beginStage(
+                    stage = TranslationTraceStage.TRANSLATE,
+                    lane = TranslationTraceLane.PROVIDER,
+                    provider = metadata.traceProvider,
+                    items = 1,
+                )
+            }
+        } else {
+            emptyList()
+        }
+        val providerLaneTokens = requestRuns.mapNotNull { run ->
+            run.schedule?.enterLane(TranslationTraceLane.PROVIDER)
+        }
+        var traceOutcome = TranslationTraceOutcome.FAILURE
         return try {
             result = block()
             result!!.retryAfterMillis?.let { retryAfter ->
                 applyCooldown(metadata.key, retryAfter, "response")
             }
+            traceOutcome = TranslationTraceOutcome.SUCCESS
             result!!
         } catch (e: CancellationException) {
+            traceOutcome = TranslationTraceOutcome.CANCELLED
             throw e
         } catch (e: ProviderFailureException) {
             recordFailure(metadata, e.failure)
             throw e
         } catch (e: Exception) {
+            traceOutcome = if (e is ProviderRequestPausedException) {
+                TranslationTraceOutcome.PAUSE
+            } else {
+                TranslationTraceOutcome.FAILURE
+            }
             recordFailure(metadata, classifyProviderFailure(e, metadata.key.backend, clock.nowEpochMs()))
             throw e
         } finally {
-            release(permit, result?.usage, metadata)
+            try {
+                release(permit, result?.usage, metadata)
+            } finally {
+                providerLaneTokens.forEach { it.close() }
+                translationSpans.forEach { it.end(traceOutcome) }
+            }
         }
     }
 

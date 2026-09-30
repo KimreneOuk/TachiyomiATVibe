@@ -6,9 +6,13 @@ import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
+import eu.kanade.translation.diagnostics.TranslationScheduleTrace
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
@@ -111,6 +115,8 @@ internal class BatchLaneWorkers(
     private val renderJoin: BatchRenderJoin,
     private val heldBitmapRegistry: HeldBitmapRegistry,
     private val nativeLane: NativeLaneRunner,
+    private val scheduleTrace: TranslationScheduleTrace,
+    internal val pageTraceRegistry: BatchPageTraceRegistry,
     private val markPageTimedOutFn: suspend (Manga, Chapter, HttpSource, String) -> Unit,
     private val analyzePageFn: suspend (String, Bitmap, DecodedPage, ChapterTranslationStore, BatchExpectedFingerprints) -> PageTranslation,
     private val decodePageBitmapForTranslationFn: suspend (String, () -> InputStream) -> DecodedPage?,
@@ -198,7 +204,9 @@ internal class BatchLaneWorkers(
         description: String,
         stage: BatchStage?,
         update: (PageTranslation?) -> PageTranslation,
-    ) = writeGate.guardedBatchUpdate(pageKey, description, stage, update)
+    ) = pageTraceRegistry.withPageRun(pageKey) {
+        writeGate.guardedBatchUpdate(pageKey, description, stage, update)
+    }
 
     private fun refreshBatchIdentity(pageKey: String, snapshot: ChapterTranslationStore.PageSnapshot) =
         writeGate.refreshBatchIdentity(pageKey, snapshot)
@@ -239,7 +247,40 @@ internal class BatchLaneWorkers(
         pageKey: String,
         onTimeout: suspend () -> Unit,
         block: suspend () -> T,
-    ): T? = nativeLane.run(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
+    ): T? {
+        val run = pageTraceRegistry.runForOrStart(pageKey)
+        val queueSpan = run.beginStage(
+            stage = TranslationTraceStage.NATIVE_QUEUE,
+            lane = TranslationTraceLane.SCHEDULER,
+        )
+        var laneToken: AutoCloseable? = null
+        return try {
+            val result = withContext(TranslationTrace.elementFor(run)) {
+                nativeLane.run(timeoutMs, chapterId, chapterName, pageKey, onTimeout) {
+                    queueSpan.end()
+                    laneToken = scheduleTrace.enterLane(TranslationTraceLane.NATIVE)
+                    try {
+                        block()
+                    } finally {
+                        laneToken?.close()
+                        laneToken = null
+                    }
+                }
+            }
+            if (result == null) {
+                queueSpan.end(TranslationTraceOutcome.TIMEOUT)
+            }
+            result
+        } catch (cancelled: CancellationException) {
+            queueSpan.end(TranslationTraceOutcome.CANCELLED, error = cancelled)
+            throw cancelled
+        } catch (failure: Throwable) {
+            queueSpan.end(TranslationTraceOutcome.FAILURE, error = failure)
+            throw failure
+        } finally {
+            laneToken?.close()
+        }
+    }
 
     private suspend fun markPageTimedOut(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) =
         markPageTimedOutFn(manga, chapter, source, pageKey)
@@ -320,7 +361,15 @@ internal class BatchLaneWorkers(
             // this batch worker. A defensive foreign-owner denial remains a
             // fail-closed skip; the coordinator publishes the incomplete
             // OCR corpus and pauses rather than rescan another session.
-            val batchLease = when (val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)) {
+            val batchLease = when (
+                val acquisition = pageTraceRegistry.withLeaseWait(
+                    pageKey = pageKey,
+                    site = TranslationTraceSite.BATCH_OCR,
+                    leaseKind = TranslationTraceLeaseKind.OCR,
+                ) {
+                    store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+                }
+            ) {
                 is LeaseAcquisition.Denied -> {
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT batch skips ${acquisition.owner}-owned page under session exclusion: " +
@@ -452,55 +501,53 @@ internal class BatchLaneWorkers(
             }
             producedDecoded = decoded
 
-            // Page queueing on the pipeline native lane. The
-            // span settles when admission grants (first statement inside the
-            // lane) and is re-settled (idempotently) on timeout/failure.
-            val nativeQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
-            val ocrLaneResult: Unit? = try {
-                withNativeLane(
-                    timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
-                    chapterId = chapter.id,
-                    chapterName = chapter.name,
-                    pageKey = pageKey,
-                    onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
-                ) {
-                    nativeQueueSpan.end()
-                    try {
-                        tracker?.markOcrRunning(pageKey)
-                        val analyzed = analyzePage(
+            // The page run starts before native admission so both its queue span
+            // and active native-lane time contribute to the schedule summary.
+            val ocrLaneResult: Unit? = withNativeLane(
+                timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
+                chapterId = chapter.id,
+                chapterName = chapter.name,
+                pageKey = pageKey,
+                onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
+            ) {
+                try {
+                    tracker?.markOcrRunning(pageKey)
+                    val analyzed = pageTraceRegistry.withStage(
+                        pageKey = pageKey,
+                        stage = TranslationTraceStage.OCR,
+                        lane = TranslationTraceLane.NATIVE,
+                        provider = TranslationTraceProvider.CPU,
+                        failureOutcome = { failure ->
+                            when (failure) {
+                                is CancellationException -> TranslationTraceOutcome.CANCELLED
+                                is LowMemoryRecognitionDeferredException -> TranslationTraceOutcome.PAUSE
+                                else -> TranslationTraceOutcome.FAILURE
+                            }
+                        },
+                    ) {
+                        analyzePage(
                             pageKey,
                             decoded.bitmap,
                             decoded,
                             store,
                             expectedBatchFingerprints,
                         )
-                        tracker?.markOcrDone(pageKey)
-                        translationRegistry[pageKey] = analyzed
-                        producedTarget = translationRegistry[pageKey]
-                    } catch (deferred: LowMemoryRecognitionDeferredException) {
-                        val t = translationRegistry[pageKey]
-                        if (t != null) {
-                            t.inpaintStatus = StageStatus.FAILED
-                            t.errorMessage = deferred.message
-                        }
-                        tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
-                    } catch (rejected: BatchPersistenceRejectedException) {
-                        tracker?.markOcrFailed(pageKey, rejected.message ?: "OCR persistence rejected")
-                        abortBatchCandidate(pageKey, rejected.message ?: "OCR persistence rejected")
-                        throw rejected
                     }
+                    tracker?.markOcrDone(pageKey)
+                    translationRegistry[pageKey] = analyzed
+                    producedTarget = translationRegistry[pageKey]
+                } catch (deferred: LowMemoryRecognitionDeferredException) {
+                    val t = translationRegistry[pageKey]
+                    if (t != null) {
+                        t.inpaintStatus = StageStatus.FAILED
+                        t.errorMessage = deferred.message
+                    }
+                    tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
+                } catch (rejected: BatchPersistenceRejectedException) {
+                    tracker?.markOcrFailed(pageKey, rejected.message ?: "OCR persistence rejected")
+                    abortBatchCandidate(pageKey, rejected.message ?: "OCR persistence rejected")
+                    throw rejected
                 }
-            } catch (t: Throwable) {
-                nativeQueueSpan.end(
-                    if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
-                    error = t,
-                )
-                throw t
-            }
-            if (ocrLaneResult == null) {
-                // Timeout path: admission never granted (or onTimeout ran);
-                // the queue span settles exactly once via CAS.
-                nativeQueueSpan.end(TranslationTraceOutcome.TIMEOUT)
             }
             val target = producedTarget ?: run {
                 releaseDecodedPage(producedDecoded)
@@ -596,11 +643,8 @@ internal class BatchLaneWorkers(
                 return
             }
 
-            // Page queueing on the pipeline native lane for the
-            // inpaint pass. The span settles on admission (first statement in
-            // the lane) and is re-settled (idempotently) on timeout/failure.
-            val inpaintQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
-            val inpaintLaneResult: Unit?
+            // withNativeLane owns the page run, queue span, and active time.
+            val inpaintLaneResult: Boolean?
             try {
                 inpaintLaneResult = withNativeLane(
                     timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
@@ -609,69 +653,80 @@ internal class BatchLaneWorkers(
                     pageKey = pageKey,
                     onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                 ) {
-                    inpaintQueueSpan.end()
-                    try {
-                        tracker?.markInpaintRunning(pageKey)
-                        preflightInpaintGate(decoded.bitmap, pageKey)
-                        inpaintPage(
-                            fileName = pageKey,
-                            bitmap = decoded.bitmap,
-                            pageTranslation = target,
-                            batchFingerprint = expectedBatchFingerprints.inpaint,
-                            guardedWrite = { description, update ->
-                                val result = guardedBatchUpdate(pageKey, description, BatchStage.INPAINT, update)
-                                if (result is ChapterTranslationStore.PatchResult.Rejected) {
-                                    throw BatchPersistenceRejectedException(
-                                        pageKey = pageKey,
-                                        stage = BatchDiagnosticStage.INPAINT,
-                                    )
-                                }
-                                result
-                            },
-                        )
-                        if (target.inpaintStatus == StageStatus.FAILED &&
-                            target.cleanedBitmap == null &&
-                            target.blocks.isNotEmpty()
-                        ) {
-                            // One bounded recovery pass reclaims memory and re-runs
-                            // recognition/inpaint at a larger sample size. It never
-                            // changes OCR engines or models.
-                            retryInpaintDownscaled(
-                                manga,
-                                chapter,
-                                source,
-                                pageKey,
-                                orderedStreams,
-                                decoded,
-                                target,
+                    pageTraceRegistry.withStage(
+                        pageKey = pageKey,
+                        stage = TranslationTraceStage.INPAINT,
+                        lane = TranslationTraceLane.NATIVE,
+                        provider = TranslationTraceProvider.CPU,
+                        resultOutcome = { ready ->
+                            if (ready) TranslationTraceOutcome.SUCCESS else TranslationTraceOutcome.FAILURE
+                        },
+                        failureOutcome = { failure ->
+                            when (failure) {
+                                is CancellationException -> TranslationTraceOutcome.CANCELLED
+                                is LowMemoryRecognitionDeferredException -> TranslationTraceOutcome.PAUSE
+                                else -> TranslationTraceOutcome.FAILURE
+                            }
+                        },
+                    ) {
+                        try {
+                            tracker?.markInpaintRunning(pageKey)
+                            preflightInpaintGate(decoded.bitmap, pageKey)
+                            inpaintPage(
+                                fileName = pageKey,
+                                bitmap = decoded.bitmap,
+                                pageTranslation = target,
+                                batchFingerprint = expectedBatchFingerprints.inpaint,
+                                guardedWrite = { description, update ->
+                                    val result = guardedBatchUpdate(pageKey, description, BatchStage.INPAINT, update)
+                                    if (result is ChapterTranslationStore.PatchResult.Rejected) {
+                                        throw BatchPersistenceRejectedException(
+                                            pageKey = pageKey,
+                                            stage = BatchDiagnosticStage.INPAINT,
+                                        )
+                                    }
+                                    result
+                                },
                             )
+                            if (target.inpaintStatus == StageStatus.FAILED &&
+                                target.cleanedBitmap == null &&
+                                target.blocks.isNotEmpty()
+                            ) {
+                                // One bounded recovery pass reclaims memory and re-runs
+                                // recognition/inpaint at a larger sample size. It never
+                                // changes OCR engines or models.
+                                retryInpaintDownscaled(
+                                    manga,
+                                    chapter,
+                                    source,
+                                    pageKey,
+                                    orderedStreams,
+                                    decoded,
+                                    target,
+                                )
+                            }
+                            if (target.inpaintStatus == StageStatus.READY) {
+                                tracker?.markInpaintDone(pageKey)
+                            } else {
+                                tracker?.markInpaintFailed(pageKey, target.errorMessage ?: "Inpaint failed")
+                            }
+                            target.inpaintStatus == StageStatus.READY
+                        } catch (deferred: LowMemoryRecognitionDeferredException) {
+                            target.inpaintStatus = StageStatus.FAILED
+                            target.errorMessage = deferred.message
+                            tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
+                            false
+                        } finally {
+                            if (handedOffDecoded == null) releaseDecodedPage(decoded)
                         }
-                        if (target.inpaintStatus == StageStatus.READY) {
-                            tracker?.markInpaintDone(pageKey)
-                        } else {
-                            tracker?.markInpaintFailed(pageKey, target.errorMessage ?: "Inpaint failed")
-                        }
-                    } catch (deferred: LowMemoryRecognitionDeferredException) {
-                        target.inpaintStatus = StageStatus.FAILED
-                        target.errorMessage = deferred.message
-                        tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
-                    } finally {
-                        if (handedOffDecoded == null) releaseDecodedPage(decoded)
                     }
                 }
             } catch (cancelled: CancellationException) {
-                inpaintQueueSpan.end(TranslationTraceOutcome.CANCELLED, error = cancelled)
                 throw cancelled
             } catch (rejected: BatchPersistenceRejectedException) {
-                inpaintQueueSpan.end(TranslationTraceOutcome.FAILURE, error = rejected)
                 tracker?.markInpaintFailed(pageKey, rejected.message ?: "Inpaint persistence rejected")
                 abortBatchCandidate(pageKey, rejected.message ?: "Inpaint persistence rejected")
                 throw rejected
-            }
-            if (inpaintLaneResult == null) {
-                // Timeout path: admission never granted (or onTimeout ran);
-                // the queue span settles exactly once via CAS.
-                inpaintQueueSpan.end(TranslationTraceOutcome.TIMEOUT)
             }
             // Persist the cleaned bitmap off the native permit (matches the prior
             // producer's post-inpaint publication step) and hand it to render.
@@ -680,9 +735,10 @@ internal class BatchLaneWorkers(
                 val companionDir = ensureCompanionDir()
                 // Cleaned-image publication substage with typed
                 // outcome; settles even when the persist call throws.
-                val persistSpan = TranslationTrace.beginStage(
+                val persistSpan = pageTraceRegistry.beginStage(
+                    pageKey,
                     TranslationTraceStage.CLEANED_PERSIST,
-                    lane = TranslationTraceLane.STORAGE,
+                    TranslationTraceLane.STORAGE,
                 )
                 suspend fun publishOnce(): ChapterTranslationStore.PageSnapshot? {
                     // Mirror guardedBatchUpdate's stale-cache recovery: the

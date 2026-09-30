@@ -8,7 +8,9 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.translator.AdmissionPriority
@@ -431,7 +433,15 @@ class TranslationPipeline private constructor(
         // denial is returned as a typed rejection without observing another
         // origin's terminal state.
         val acquisition = withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
-            leaseStore?.let { acquireReaderPageLease(it, chapter, pageKey, origin) }
+            leaseStore?.let {
+                acquireReaderPageLease(
+                    store = it,
+                    pageKey = pageKey,
+                    stage = PageStage.Ocr,
+                    origin = origin,
+                    site = TranslationTraceSite.READER_SINGLE_PAGE,
+                )
+            }
         }
         if (acquisition is LeaseAcquisition.Denied) {
             return SinglePageOutcome.Rejected(acquisition.owner, acquisition.reason)
@@ -671,11 +681,21 @@ class TranslationPipeline private constructor(
      */
     private suspend fun acquireReaderPageLease(
         store: ChapterTranslationStore,
-        chapter: Chapter,
         pageKey: String,
+        stage: PageStage,
         origin: PageWriteOrigin,
-    ): LeaseAcquisition =
-        store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, origin)
+        site: TranslationTraceSite,
+    ): LeaseAcquisition = TranslationTrace.withLeaseWait(
+        site = site,
+        leaseKind = when (stage) {
+            PageStage.Ocr -> TranslationTraceLeaseKind.OCR
+            PageStage.Translation -> TranslationTraceLeaseKind.TRANSLATION
+            PageStage.Inpaint -> TranslationTraceLeaseKind.INPAINT
+            PageStage.Render -> TranslationTraceLeaseKind.RENDER
+        },
+    ) {
+        store.tryAcquirePageStageLease(pageKey, stage, origin)
+    }
 
     private suspend fun releaseReaderPageLease(
         store: ChapterTranslationStore?,
@@ -770,7 +790,13 @@ class TranslationPipeline private constructor(
         // boundary — its leases are AUTO (never preemptive; MANUAL evicts it).
         // A denied lease lets the coordinator retry without waiting for another owner.
         if (leaseStore != null &&
-            acquireReaderPageLease(leaseStore, chapter, pageKey, PageWriteOrigin.AUTO) is LeaseAcquisition.Denied
+            acquireReaderPageLease(
+                store = leaseStore,
+                pageKey = pageKey,
+                stage = PageStage.Ocr,
+                origin = PageWriteOrigin.AUTO,
+                site = TranslationTraceSite.ROLLING_AUTO_PREPARED,
+            ) is LeaseAcquisition.Denied
         ) {
             return null
         }
@@ -978,7 +1004,15 @@ class TranslationPipeline private constructor(
         // cannot acquire the page in the handoff gap and then race the
         // prepared reference's writes. Denied is a stale/race "try again" for
         // the coordinator — no attach wait.
-        if (acquireReaderPageLease(store, chapter, prepared.pageKey, PageWriteOrigin.AUTO) is LeaseAcquisition.Denied) {
+        if (
+            acquireReaderPageLease(
+                store = store,
+                pageKey = prepared.pageKey,
+                stage = PageStage.Translation,
+                origin = PageWriteOrigin.AUTO,
+                site = TranslationTraceSite.ROLLING_AUTO_TRANSLATION,
+            ) is LeaseAcquisition.Denied
+        ) {
             return null
         }
         try {

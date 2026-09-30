@@ -2,6 +2,7 @@ package eu.kanade.translation.persistence.internal
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.journal.ChapterJournalCredit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +56,7 @@ internal class StorePersistenceScheduler(
     internal var dirty = false
     internal var persistJob: Job? = null
     internal val stagedPageKeys = LinkedHashSet<String>()
+    internal val stagedJournalCredits = LinkedHashMap<String, ChapterJournalCredit>()
     internal var stagedDebounceJob: Job? = null
     internal val pendingLazyMutations = LinkedHashMap<String, ChapterTranslationStore.PendingLazyMutation>()
     internal val pendingLazyTasks = java.util.ArrayDeque<ChapterTranslationStore.LazyPersistenceTask>()
@@ -118,6 +120,7 @@ internal class StorePersistenceScheduler(
                 task.result.complete(false)
             }
         }
+        store.reservePendingLazyJournalCredits()
         mutex.withLock {
             flushDirtyLocked()
         }
@@ -131,7 +134,7 @@ internal class StorePersistenceScheduler(
         }
     }
 
-    suspend fun closeAndFlush() {
+    suspend fun closeAndFlush(afterFlush: suspend () -> Unit = {}) {
         // Skip retention sweeps here as well. closeAndFlush runs on
         // the caller's coroutine — for probe stores that is the reader-entry
         // path itself (DurableChapterStatusResolver.withProbeStore's finally),
@@ -146,12 +149,17 @@ internal class StorePersistenceScheduler(
         // be closed with a live StateFlow that has never reached the artifact
         // bridge.
         flush()
-        persistScope.cancel()
+        try {
+            withContext(NonCancellable) { afterFlush() }
+        } finally {
+            persistScope.cancel()
+        }
     }
 
-    fun close() {
+    fun close(afterFlush: suspend () -> Unit = {}) {
         persistScope.launch {
             flush()
+            withContext(NonCancellable) { afterFlush() }
             reconcileArtifactRetention()
         }.invokeOnCompletion {
             persistScope.cancel()

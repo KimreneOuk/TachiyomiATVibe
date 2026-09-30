@@ -1,5 +1,7 @@
 package eu.kanade.translation.engines.translator.providers
 import eu.kanade.tachiyomi.network.await
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.engines.translator.InputAccountingContract
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
@@ -224,6 +226,12 @@ abstract class OpenAiCompatibleTranslator(
             operation = operation,
             envelopeId = envelopeId,
             priority = currentProviderRequestPriority(),
+            traceRuns = TranslationTrace.currentRuns(),
+            traceProvider = if (providerBackend.startsWith("lmstudio", ignoreCase = true)) {
+                TranslationTraceProvider.LOCAL
+            } else {
+                TranslationTraceProvider.REMOTE
+            },
         )
         val response = requestGovernor.executeValue(metadata) {
             okHttpClient.newCall(request).await().use { response ->
