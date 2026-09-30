@@ -42,6 +42,7 @@ import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.persistence.chapter.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
+import eu.kanade.translation.pipeline.adaptive.DeviceStageNormalization
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
@@ -429,6 +430,7 @@ internal class SinglePageHttpRenderPhase(
                     } else {
                         TranslationTraceProvider.REMOTE
                     },
+                    normalizationUnits = DeviceStageNormalization.textVolume(pageTranslation.blocks),
                 )
                 BatchTranslationDiagnostics.stageDecision(
                     stage = BatchDiagnosticStage.TRANSLATION,
@@ -582,10 +584,12 @@ internal class SinglePageHttpRenderPhase(
                     val layoutSpan = TranslationTrace.beginStage(
                         TranslationTraceStage.LAYOUT,
                         lane = TranslationTraceLane.RENDER,
+                        normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
                     )
                     val renderSpan = TranslationTrace.beginStage(
                         TranslationTraceStage.RENDER,
                         lane = TranslationTraceLane.RENDER,
+                        normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
                     )
                     try {
                         pageTranslation.renderStatus = StageStatus.RUNNING
@@ -659,10 +663,12 @@ internal class SinglePageHttpRenderPhase(
                         val retryLayoutSpan = TranslationTrace.beginStage(
                             TranslationTraceStage.LAYOUT,
                             lane = TranslationTraceLane.RENDER,
+                            normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
                         )
                         val retryRenderSpan = TranslationTrace.beginStage(
                             TranslationTraceStage.RENDER,
                             lane = TranslationTraceLane.RENDER,
+                            normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
                         )
                         try {
                             if (published == null) {

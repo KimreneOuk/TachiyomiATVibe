@@ -33,6 +33,7 @@ import eu.kanade.translation.persistence.chapter.RenderStagePatch
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.pipeline.LayoutFailureException
+import eu.kanade.translation.pipeline.adaptive.DeviceStageNormalization
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
@@ -216,6 +217,7 @@ internal class BatchRenderJoin(
                     pageKey,
                     TranslationTraceStage.LAYOUT,
                     TranslationTraceLane.RENDER,
+                    normalizationUnits = DeviceStageNormalization.regionArea(page.blocks),
                 )
                 val patch: RenderStagePatch = try {
                     RenderColorEstimator.recomputeFor(bitmap, page.blocks)
@@ -226,6 +228,7 @@ internal class BatchRenderJoin(
                         pageKey,
                         TranslationTraceStage.RENDER,
                         TranslationTraceLane.RENDER,
+                        normalizationUnits = DeviceStageNormalization.regionArea(page.blocks),
                     )
                     try {
                         RenderStagePatch(
