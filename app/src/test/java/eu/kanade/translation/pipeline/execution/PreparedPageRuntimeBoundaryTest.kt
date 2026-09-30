@@ -6,6 +6,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
@@ -104,7 +105,7 @@ class PreparedPageRuntimeBoundaryTest {
 
         // The durable store entry MUST have the OCR blocks + ocrStatus=READY.
         // This is what translatePreparedPage reconstructs from.
-        val durablePage = store.state.value["p0"]!!
+        val durablePage = store.state.value["p0"]!!.toDraft()
         durablePage.blocks.size shouldBe 2
         durablePage.blocks[0].text shouldBe "こんにちは"
         durablePage.blocks[1].text shouldBe "ありがとう"

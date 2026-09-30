@@ -1,6 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 
 /**
  * Durable translation data that a chapter reset would affect. Counts are derived
@@ -16,7 +16,7 @@ data class ChapterResetPreflight(
         get() = ocrPages > 0 || inpaintPages > 0 || translatedBlocks > 0
 }
 
-fun chapterResetPreflight(pages: Collection<PageTranslation>): ChapterResetPreflight =
+fun chapterResetPreflight(pages: Collection<PageTranslationView>): ChapterResetPreflight =
     ChapterResetPreflight(
         ocrPages = pages.count { it.blocks.isNotEmpty() || it.inpaintMaskBoxes.isNotEmpty() },
         inpaintPages = pages.count { it.cleanedImageName != null },

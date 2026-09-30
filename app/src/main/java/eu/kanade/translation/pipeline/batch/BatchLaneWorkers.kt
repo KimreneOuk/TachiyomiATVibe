@@ -31,9 +31,10 @@ import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasCurrentInpaintResult
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -188,16 +189,16 @@ internal class BatchLaneWorkers(
     private fun translationFailureFence(pageKey: String): Boolean =
         resumePlanner.translationFailureFence(pageKey)
 
-    private fun recordReusableContextPage(pageKey: String, page: PageTranslation) =
+    private fun recordReusableContextPage(pageKey: String, page: PageTranslationView) =
         resumePlanner.recordReusableContextPage(pageKey, page)
 
     private fun recordContextPage(
         pageKey: String,
-        page: PageTranslation,
+        page: PageTranslationView,
         terminalFailure: Boolean = false,
     ) = resumePlanner.recordContextPage(pageKey, page, terminalFailure)
 
-    private suspend fun resumeGate(page: PageTranslation?) = resumePlanner.resumeGate(page)
+    private suspend fun resumeGate(page: PageTranslationView?) = resumePlanner.resumeGate(page)
 
     private suspend fun guardedBatchUpdate(
         pageKey: String,
@@ -392,7 +393,7 @@ internal class BatchLaneWorkers(
             if (gate == BatchResumeGate.SKIP_ALL) {
                 // Fully durable (OCR+inpaint done): no decode/slot; render reloads disk.
                 val p = existing!!
-                translationRegistry[pageKey] = p
+                translationRegistry[pageKey] = p.toDraft()
                 val translationNeedsWork = plannedTranslationNeedsWork(pageKey)
                 if (!translationNeedsWork && !translationFailureFence(pageKey)) {
                     tryRender(pageKey)
@@ -422,7 +423,7 @@ internal class BatchLaneWorkers(
             val innerGate = resumeGate(latest)
             if (innerGate == BatchResumeGate.SKIP_ALL) {
                 val p = latest!!
-                translationRegistry[pageKey] = p
+                translationRegistry[pageKey] = p.toDraft()
                 if (!plannedTranslationNeedsWork(pageKey) && !translationFailureFence(pageKey)) {
                     tryRender(pageKey)
                     recordReusableContextPage(pageKey, p)
@@ -441,7 +442,7 @@ internal class BatchLaneWorkers(
                 )
             }
             if (innerGate == BatchResumeGate.INPAINT_ONLY) {
-                val p = latest ?: PageTranslation(sourceFileName = pageKey)
+                val p = latest?.toDraft() ?: PageTranslation(sourceFileName = pageKey)
                 translationRegistry[pageKey] = p
                 val persisted = store.snapshot(pageKey)
                 refreshBatchIdentity(pageKey, persisted)
@@ -575,7 +576,9 @@ internal class BatchLaneWorkers(
 
         override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
             val latest = store.state.value[pageKey] ?: return
-            val target = translationRegistry[pageKey] ?: latest
+            val target = translationRegistry[pageKey] ?: latest.toDraft().also {
+                translationRegistry[pageKey] = it
+            }
             val plannedInpaint = batchPagePlans[pageKey]?.stages?.firstOrNull {
                 it.stage == BatchStage.INPAINT
             }
@@ -930,7 +933,7 @@ internal class BatchLaneWorkers(
                 }
                 return
             }
-            val p = translationRegistry[pageKey] ?: store.state.value[pageKey]?.detachedCopy()?.also {
+            val p = translationRegistry[pageKey] ?: store.state.value[pageKey]?.toDraft()?.also {
                 translationRegistry[pageKey] = it
             } ?: return
             val plannedTranslation = batchPagePlans[pageKey]?.stages?.firstOrNull {

@@ -9,6 +9,8 @@ import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
@@ -20,6 +22,8 @@ import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.model.toDraft
+import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.ArtifactStage
@@ -64,7 +68,6 @@ import eu.kanade.translation.persistence.journal.ChapterJournalWriter
 import eu.kanade.translation.persistence.journal.FileChapterJournalStorage
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
-import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
@@ -74,6 +77,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -296,8 +300,10 @@ class ChapterTranslationStore(
     internal fun artifactChapterKey(): String? = artifactEngine?.layout?.chapterKey
 
     @Volatile
-    internal var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
-    private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
+    internal var pages: PersistentMap<String, PublishedPageTranslation> = persistentMapOf()
+    private val _state = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
+    internal var publishedPageCopyCount: Int = 0
+        private set
 
     /**
      * The last-known-good committed display bundle per
@@ -326,7 +332,7 @@ class ChapterTranslationStore(
     private var pendingExpectedPageCount: Int? = null
     private var pendingExpectedPageCountTrusted = false
 
-    private val _display = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
+    private val _display = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
 
     // Lease ownership stays in one table so the store and lease APIs share the
     // same map and synchronization boundary.
@@ -340,7 +346,7 @@ class ChapterTranslationStore(
     private var nextPageVersion = 0L
 
     /** Live candidate progress; readers that need display safety use [display]. */
-    val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
+    val state: StateFlow<Map<String, PageTranslationView>> = _state.asStateFlow()
 
     /**
      * Committed-pointer display projection: each page resolves to
@@ -348,7 +354,7 @@ class ChapterTranslationStore(
      * live candidate entry. Candidate emissions can replace live entries but
      * never null or mutate a committed bundle.
      */
-    val display: StateFlow<Map<String, PageTranslation>> = _display.asStateFlow()
+    val display: StateFlow<Map<String, PageTranslationView>> = _display.asStateFlow()
 
     val currentGeneration: Long get() = generation
 
@@ -357,7 +363,7 @@ class ChapterTranslationStore(
      * that lets the store decide when a promotion supersedes an older bundle.
      */
     data class CommittedPageDisplay(
-        val page: PageTranslation,
+        val page: PublishedPageTranslation,
         val pageVersion: Long,
         val displayFingerprint: String,
         val promotedAtEpochMs: Long,
@@ -607,19 +613,23 @@ class ChapterTranslationStore(
     /** Non-suspending lock-held snapshot handoff after the legacy transaction commits. */
     private fun captureLegacyPersistedLocked(
         pageKey: String,
-        page: PageTranslation,
+        page: PageTranslationView,
         expected: PatchPrecondition?,
         durableFailure: DurableFailureMetadata?,
         credit: ChapterJournalCredit?,
         artifactContentHash: String? = null,
     ) {
+        // Capture only the exact immutable value already installed in the store map.
+        // The draft argument documents which successful legacy mutation reached this point;
+        // it is intentionally never retained by the asynchronous writer.
+        val published = pages[pageKey] ?: return
         val record = ChapterJournalRecord(
             pageKey = pageKey,
             generation = generation,
             fencingToken = expected?.leaseToken ?: pageLeases[pageKey]?.token ?: 0L,
-            pageVersion = page.pageVersion,
-            state = page,
-            artifactContentHash = artifactContentHash ?: pageArtifactContentHash(artifactManifest, pageKey, page),
+            pageVersion = published.pageVersion,
+            state = published,
+            artifactContentHash = artifactContentHash ?: pageArtifactContentHash(artifactManifest, pageKey, published),
             durableFailure = durableFailure,
         )
         activeBulkJournalCapture?.let { bulk ->
@@ -632,14 +642,14 @@ class ChapterTranslationStore(
             return
         }
         val wasAccepting = writer.isShadowCaptureActive
-        val paid = durableFailure != null || page.hasRenderedResult || page.isTextlessTerminal
+        val paid = durableFailure != null || published.hasRenderedResult || published.isTextlessTerminal
         writer.captureLegacyPersisted(
             commitSeq = writer.nextCommitSeq(),
             credit = credit,
             pageKey = pageKey,
             generation = record.generation,
             fencingToken = record.fencingToken,
-            page = page,
+            page = published,
             durableFailure = durableFailure,
             paid = paid,
             artifactContentHash = record.artifactContentHash,
@@ -749,7 +759,7 @@ class ChapterTranslationStore(
     private fun pageArtifactContentHash(
         manifest: ChapterArtifactManifest?,
         pageKey: String,
-        fallbackSnapshot: PageTranslation? = null,
+        fallbackSnapshot: PageTranslationView? = null,
     ): String? = manifest?.pages?.get(pageKey)?.candidate?.pageSnapshotFingerprint
         ?.takeIf(String::isNotBlank)
         ?: fallbackSnapshot?.let(StageFingerprints::pageSnapshot)
@@ -956,7 +966,7 @@ class ChapterTranslationStore(
             for (key in keys) {
                 val credit = persistenceScheduler.stagedJournalCredits.remove(key)
                 try {
-                    val page = pages[key]
+                    val page = pages[key]?.toDraft()
                     if (page == null) continue
                     val candidate = current.pages[key]?.candidate
                     if (candidate == null) continue
@@ -1113,14 +1123,12 @@ class ChapterTranslationStore(
         }
         initialPages.forEach { (pageKey, page) ->
             val version = nextVersion()
-            pages = pages.put(
-                pageKey,
-                page.detachedCopy().apply {
-                    sourceFileName = sourceFileName ?: pageKey
-                    runGeneration = generation
-                    pageVersion = version
-                },
-            )
+            val owned = page.detachedCopy().apply {
+                sourceFileName = sourceFileName ?: pageKey
+                runGeneration = generation
+                pageVersion = version
+            }
+            pages = pages.put(pageKey, publishPage(owned))
         }
         // Seed the last-known-good display pointers from durable artifact
         // snapshots first. The mutable live map may be an incomplete candidate
@@ -1129,7 +1137,7 @@ class ChapterTranslationStore(
             committedDisplay = committedDisplay.put(
                 pageKey,
                 CommittedPageDisplay(
-                    page = page.detachedCopy(),
+                    page = publishPage(page),
                     pageVersion = page.pageVersion,
                     displayFingerprint = displayFingerprintOf(page),
                     promotedAtEpochMs = page.updatedAt,
@@ -1145,7 +1153,7 @@ class ChapterTranslationStore(
                 committedDisplay = committedDisplay.put(
                     pageKey,
                     CommittedPageDisplay(
-                        page = page.detachedCopy(),
+                        page = page,
                         pageVersion = page.pageVersion,
                         displayFingerprint = displayFingerprintOf(page),
                         promotedAtEpochMs = page.updatedAt,
@@ -1154,7 +1162,7 @@ class ChapterTranslationStore(
             }
         }
         _state.value = snapshotPages()
-        _display.value = displaySnapshotLocked()
+        displaySnapshotLocked(pages.keys + committedDisplay.keys)
     }
 
     suspend fun snapshot(pageKey: String): PageSnapshot = mutex.withLock {
@@ -1293,7 +1301,7 @@ class ChapterTranslationStore(
         if (artifact.publishManifest(updated)) {
             artifactManifest = updated
             _state.value = snapshotPages()
-            _display.value = displaySnapshotLocked()
+            displaySnapshotLocked(emptyList())
         } else {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT D9: cap-failure clear publish failed (fail-open): pageKey=$pageKey"
@@ -1434,7 +1442,7 @@ class ChapterTranslationStore(
                         "${admission.code}: ${admission.message}",
                     )
                 }
-                val current = pages[pageKey]
+                val current = pages[pageKey]?.toDraft()
                 val rejection = when {
                     expected.generation != generation -> "generation expected=${expected.generation} actual=$generation"
                     expected.pageVersion != (current?.pageVersion ?: 0L) ->
@@ -1489,7 +1497,7 @@ class ChapterTranslationStore(
                         )
                     }
                     val updated = ownedPage(pageKey, candidate)
-                    pages = pages.put(pageKey, updated)
+                    pages = pages.put(pageKey, publishPage(updated))
                     if (!publishLocked(current, updated, expected, journalCredit = journalCredit)) {
                         restorePageLocked(pageKey, current)
                         return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
@@ -1558,9 +1566,9 @@ class ChapterTranslationStore(
                     )
                     rejected(pageKey, description, rejection, leaseTokenMismatch)
                 } else {
-                    val previous = pages[pageKey]
+                    val previous = pages[pageKey]?.toDraft()
                     val updated = ownedPage(pageKey, update(previous?.detachedCopy()))
-                    pages = pages.put(pageKey, updated)
+                    pages = pages.put(pageKey, publishPage(updated))
                     if (!publishLocked(previous, updated, expected, journalCredit = journalCredit)) {
                         restorePageLocked(pageKey, previous)
                         val actual = snapshotLocked(pageKey)
@@ -1615,7 +1623,7 @@ class ChapterTranslationStore(
                 if (rejection != null) {
                     return@withLock rejected(pageKey, description, rejection)
                 }
-                val previous = pages[pageKey]
+                val previous = pages[pageKey]?.toDraft()
                 val updated = try {
                     ownedPage(pageKey, update(previous?.detachedCopy()))
                 } catch (error: IllegalArgumentException) {
@@ -1623,7 +1631,7 @@ class ChapterTranslationStore(
                 } catch (error: IllegalStateException) {
                     return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
                 }
-                pages = pages.put(pageKey, updated)
+                pages = pages.put(pageKey, publishPage(updated))
                 val persisted = persistArtifactMutationLocked(
                     pageKey = pageKey,
                     previous = previous,
@@ -1639,7 +1647,7 @@ class ChapterTranslationStore(
                 // A retryable/terminal candidate is deliberately not promoted. The
                 // prior committed display remains the reader authority.
                 _state.value = snapshotPages()
-                _display.value = displaySnapshotLocked()
+                displaySnapshotLocked(listOf(pageKey))
                 PatchResult.Accepted(snapshotLocked(pageKey))
             }
         } finally {
@@ -1675,45 +1683,38 @@ class ChapterTranslationStore(
         cancellationReason: String = "Translation cancelled",
     ): Int {
         var flipped = 0
-        val current = _state.value
-        val hasRunning = current.values.any { it?.isStageRunning == true }
+        val current = pages
+        val hasRunning = current.values.any { it.isStageRunning }
         if (!hasRunning) return 0
-        val updatedPages = buildMap {
-            current.forEach { (pageKey, page) ->
-                if (page != null && page.isStageRunning && !page.hasRenderedResult && !page.isStageFailed) {
-                    if (origin != null && pageLeaseOwner(pageKey)?.let { it != origin } == true) {
-                        put(pageKey, page)
-                        return@forEach
+        var updatedPages = current
+        val changedPageKeys = mutableSetOf<String>()
+        current.forEach { (pageKey, page) ->
+            if (page.isStageRunning && !page.hasRenderedResult && !page.isStageFailed) {
+                if (origin != null && pageLeaseOwner(pageKey)?.let { it != origin } == true) return@forEach
+                if (hasActiveBatchStageLease(pageKey)) {
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT cancel skipped: page holds an active BATCH stage lease " +
+                            "writer=fastCancelInFlightStagesInMemory pageKey=$pageKey"
                     }
-                    if (hasActiveBatchStageLease(pageKey)) {
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT cancel skipped: page holds an active BATCH stage lease " +
-                                "writer=fastCancelInFlightStagesInMemory pageKey=$pageKey"
-                        }
-                        // Preserve the page UNCHANGED — the batch owns its state.
-                        put(pageKey, page)
-                    } else {
-                        flipped++
-                        put(
-                            pageKey,
-                            page.detachedCopy().apply {
-                                cancelInFlightStages()
-                                ocrError = cancellationReason
-                                updatedAt = System.currentTimeMillis()
-                            },
-                        )
+                    // Preserve the page UNCHANGED — the batch owns its state.
+                } else {
+                    flipped++
+                    val updated = page.toDraft().apply {
+                        cancelInFlightStages()
+                        ocrError = cancellationReason
+                        updatedAt = System.currentTimeMillis()
                     }
-                } else if (page != null) {
-                    put(pageKey, page)
+                    updatedPages = updatedPages.put(pageKey, publishPage(updated))
+                    changedPageKeys += pageKey
                 }
             }
         }
         // Every running page was batch-leased: nothing flipped, keep the
         // current map/state as-is instead of republishing identical values.
         if (flipped == 0) return 0
-        pages = updatedPages.toPersistentMap()
+        pages = updatedPages
         _state.value = snapshotPages()
-        _display.value = displaySnapshotLocked()
+        displaySnapshotLocked(changedPageKeys)
         return flipped
     }
 
@@ -1757,7 +1758,7 @@ class ChapterTranslationStore(
                         "${admission.code}: ${admission.message}",
                     )
                 }
-                val current = pages[patch.pageKey]
+                val current = pages[patch.pageKey]?.toDraft()
                 when (patch) {
                     is StagePatch.Ocr -> mergeOcrLocked(current, patch.value, description, journalCredit)
                     is StagePatch.Translation -> mergeTranslationLocked(current, patch.value, description, journalCredit)
@@ -1879,7 +1880,7 @@ class ChapterTranslationStore(
             patch.errorMessage?.let { updated.errorMessage = it }
         }
         val owned = ownedPage(patch.pageKey, updated)
-        pages = pages.put(patch.pageKey, owned)
+        pages = pages.put(patch.pageKey, publishPage(owned))
         if (!publishLocked(current, owned, patch.toPrecondition(), journalCredit = journalCredit)) {
             restorePageLocked(patch.pageKey, current)
             return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
@@ -1974,7 +1975,7 @@ class ChapterTranslationStore(
                     else -> null
                 }
                 if (rejection != null) return@withLock rejectedCheckpoint(description, rejection)
-                val live = current ?: return@withLock rejectedCheckpoint(description, "page missing")
+                val live = current?.toDraft() ?: return@withLock rejectedCheckpoint(description, "page missing")
                 // A never-inpainted page's revision stays at its 0 default (the OCR
                 // preflight never inpaints), but the checkpoint gate requires
                 // CURRENT_INPAINT_REVISION. The stamp must precede the snapshot
@@ -1984,6 +1985,7 @@ class ChapterTranslationStore(
                 // (CleanedPublication stamps the same field at inpaint publication).
                 if (live.inpaintRevision < PageTranslation.CURRENT_INPAINT_REVISION) {
                     live.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+                    pages = pages.put(pageKey, publishPage(live))
                 }
                 val resolvedSourceSha256 = sourceSha256 ?: live.sourceFingerprint
                 val sourceIdentity = SourceIdentity(
@@ -2037,7 +2039,7 @@ class ChapterTranslationStore(
                     is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                         artifactManifest = outcome.manifest
                         _state.value = snapshotPages()
-                        _display.value = displaySnapshotLocked()
+                        displaySnapshotLocked(listOf(pageKey))
                         captureLegacyPersistedLocked(
                             pageKey = pageKey,
                             page = live,
@@ -2078,7 +2080,7 @@ class ChapterTranslationStore(
      */
     private fun pageOcrContentFingerprint(
         pageKey: String,
-        page: PageTranslation,
+        page: PageTranslationView,
         naturalPageIndex: Int?,
         sourceOrientation: String?,
     ): String = StageFingerprints.pageOcrContentFingerprint(
@@ -2167,7 +2169,7 @@ class ChapterTranslationStore(
         page.translationStatus = patch.translationStatus
         page.errorMessage = patch.errorMessage
         val updated = ownedPage(patch.pageKey, page)
-        pages = pages.put(patch.pageKey, updated)
+        pages = pages.put(patch.pageKey, publishPage(updated))
         if (!publishLocked(current, updated, patch.toPrecondition(), journalCredit = journalCredit)) {
             restorePageLocked(patch.pageKey, current)
             return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
@@ -2243,7 +2245,7 @@ class ChapterTranslationStore(
         patch.layoutFingerprint?.let { page.layoutFingerprint = it }
         page.errorMessage = patch.errorMessage
         val updated = ownedPage(patch.pageKey, page)
-        pages = pages.put(patch.pageKey, updated)
+        pages = pages.put(patch.pageKey, publishPage(updated))
         if (!publishLocked(current, updated, patch.toPrecondition(), journalCredit = journalCredit)) {
             restorePageLocked(patch.pageKey, current)
             return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
@@ -2428,7 +2430,7 @@ class ChapterTranslationStore(
                     pageLeases.remove(pageKey)
                     schedulePersist()
                     _state.value = snapshotPages()
-                    _display.value = displaySnapshotLocked()
+                    displaySnapshotLocked(listOf(pageKey))
                 }
             }
         } finally {
@@ -2468,6 +2470,7 @@ class ChapterTranslationStore(
                 )
                 activeBulkJournalCapture = bulk
                 try {
+                    val changedDisplayKeys = pages.keys + updatedPages.keys
                     if (artifactManifest != null) {
                         artifactManifest?.pages?.keys?.toList().orEmpty().forEach { pageKey ->
                             val pageVersion = pages[pageKey]?.pageVersion ?: artifactManifest?.pages?.get(pageKey)?.pageVersion ?: 0L
@@ -2487,7 +2490,7 @@ class ChapterTranslationStore(
                     retiredCleanedImages.clear()
                     updatedPages.forEach { (pageKey, page) ->
                         val owned = ownedPage(pageKey, page)
-                        pages = pages.put(pageKey, owned)
+                        pages = pages.put(pageKey, publishPage(owned))
                         if (persistArtifactMutationLocked(pageKey, null, owned)) {
                             promoteDisplayIfReadyLocked(pageKey, owned)
                         }
@@ -2499,7 +2502,7 @@ class ChapterTranslationStore(
                     }
                     persistenceScheduler.dirty = !persistLocked()
                     _state.value = snapshotPages()
-                    _display.value = displaySnapshotLocked()
+                    displaySnapshotLocked(changedDisplayKeys)
                 } finally {
                     finishBulkJournalCaptureLocked(bulk, bulkCredit)
                 }
@@ -2542,20 +2545,17 @@ class ChapterTranslationStore(
                 if (moves.isEmpty()) return@withLock emptyList()
 
                 val previousPages = pages
+                val changedDisplayKeys = previousPages.keys + onDiskKeys
                 val moveByOldKey = moves.toMap()
                 val oldArtifactContentHashes = moveByOldKey.keys.associateWith {
                     pageArtifactContentHash(artifactManifest, it, previousPages[it])
                 }
-                var updatedPages = persistentMapOf<String, PageTranslation>()
+                var updatedPages: PersistentMap<String, PublishedPageTranslation> = persistentMapOf()
                 var updatedCommitted = persistentMapOf<String, CommittedPageDisplay>()
                 pages.forEach { (oldKey, page) ->
                     val newKey = moveByOldKey[oldKey] ?: oldKey
-                    val updated = if (newKey == oldKey) {
-                        page
-                    } else {
-                        page.detachedCopy().apply { sourceFileName = newKey }
-                    }
-                    updatedPages = updatedPages.put(newKey, ownedPage(newKey, updated))
+                    val updated = page.toDraft().apply { sourceFileName = newKey }
+                    updatedPages = updatedPages.put(newKey, publishPage(ownedPage(newKey, updated)))
                     committedDisplay[oldKey]?.let { committed ->
                         updatedCommitted = updatedCommitted.put(newKey, committed)
                     }
@@ -2599,7 +2599,7 @@ class ChapterTranslationStore(
                     persistenceScheduler.dirty = true
                     schedulePersist()
                     _state.value = snapshotPages()
-                    _display.value = displaySnapshotLocked()
+                    displaySnapshotLocked(changedDisplayKeys)
                     moves
                 } finally {
                     finishBulkJournalCaptureLocked(bulk, bulkCredit)
@@ -2689,16 +2689,17 @@ class ChapterTranslationStore(
             val targetCount = if (crossCheckKnown) maxOf(foundCount, probedSourcePageCount!!) else foundCount
             pendingExpectedPageCount = maxOf(pendingExpectedPageCount ?: 0, targetCount)
             pendingExpectedPageCountTrusted = !crossCheckUnknown
-            var changed = false
+            val changedPageKeys = mutableSetOf<String>()
             pageKeys.forEach { pageKey ->
                 if (!pages.containsKey(pageKey)) {
-                    pages = pages.put(pageKey, ownedPage(pageKey, PageTranslation(sourceFileName = pageKey)))
+                    pages = pages.put(pageKey, publishPage(ownedPage(pageKey, PageTranslation(sourceFileName = pageKey))))
                     pendingArtifactPageRegistrations += pageKey
-                    changed = true
+                    changedPageKeys += pageKey
                 }
             }
-            if (changed) {
+            if (changedPageKeys.isNotEmpty()) {
                 _state.value = snapshotPages()
+                displaySnapshotLocked(changedPageKeys)
             }
             if (engineMode !is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable &&
                 artifactParent != null &&
@@ -2790,31 +2791,30 @@ class ChapterTranslationStore(
             logcat(LogPriority.INFO) {
                 "TachiyomiAT store generation invalidated: generation=$generation reason=${reason ?: "clear transient queue"}"
             }
-            var changed = false
+            val changedPageKeys = mutableSetOf<String>()
             val now = System.currentTimeMillis()
-            pages = pages.mapValues { (_, page) ->
+            var updatedPages = pages
+            pages.forEach { (pageKey, page) ->
                 if (page.hasRenderedResult || !page.isQueueVisibleTransient()) {
-                    page
                 } else {
-                    changed = true
-                    ownedPage(
-                        page.sourceFileName.orEmpty(),
-                        page.copy(
-                            ocrStatus = page.ocrStatus.cancelIfTransient(),
-                            translationStatus = page.translationStatus.cancelIfTransient(),
-                            inpaintStatus = page.inpaintStatus.cancelIfTransient(),
-                            renderStatus = page.renderStatus.cancelIfTransient(),
-                            updatedAt = now,
-                        ).also {
-                            it.ocrError = reason
-                            it.translationError = reason
-                            it.inpaintError = reason
-                            it.renderError = reason
-                        },
-                    )
+                    val draft = page.toDraft().copy(
+                        ocrStatus = page.ocrStatus.cancelIfTransient(),
+                        translationStatus = page.translationStatus.cancelIfTransient(),
+                        inpaintStatus = page.inpaintStatus.cancelIfTransient(),
+                        renderStatus = page.renderStatus.cancelIfTransient(),
+                        updatedAt = now,
+                    ).also {
+                        it.ocrError = reason
+                        it.translationError = reason
+                        it.inpaintError = reason
+                        it.renderError = reason
+                    }
+                    updatedPages = updatedPages.put(pageKey, publishPage(ownedPage(pageKey, draft)))
+                    changedPageKeys += pageKey
                 }
-            }.toPersistentMap()
-            if (changed) {
+            }
+            if (changedPageKeys.isNotEmpty()) {
+                pages = updatedPages
                 // Cancel semantics: cancelled pages release their writer
                 // leases; committed display bundles survive untouched.
                 synchronized(pageLeases) {
@@ -2827,7 +2827,7 @@ class ChapterTranslationStore(
                 }
                 persistenceScheduler.dirty = !persistLocked()
                 _state.value = snapshotPages()
-                _display.value = displaySnapshotLocked()
+                displaySnapshotLocked(changedPageKeys)
             }
         }
     }
@@ -2862,7 +2862,7 @@ class ChapterTranslationStore(
         // before staging into memory; durable results keep persist-first.
         if (GroupCommitConfiguration.enabled && !isDurable) {
             _state.value = snapshotPages()
-            _display.value = displaySnapshotLocked()
+            displaySnapshotLocked(listOf(pageKey))
         }
         val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
             persistArtifactMutationLocked(
@@ -2880,7 +2880,7 @@ class ChapterTranslationStore(
         promoteDisplayIfReadyLocked(pageKey, updated)
         if (!GroupCommitConfiguration.enabled || isDurable) {
             _state.value = snapshotPages()
-            _display.value = displaySnapshotLocked()
+            displaySnapshotLocked(listOf(pageKey))
         }
         return true
     }
@@ -2923,15 +2923,15 @@ class ChapterTranslationStore(
         promoteDisplayIfReadyLocked(pageKey, updated)
         if (shouldQueueArtifact) persistenceScheduler.dirty = true
         _state.value = snapshotPages()
-        _display.value = displaySnapshotLocked()
+        displaySnapshotLocked(listOf(pageKey))
         if (shouldQueueArtifact) persistenceScheduler.schedulePersist(markPageDirty = false)
         return true
     }
 
     private fun restorePageLocked(pageKey: String, previous: PageTranslation?) {
-        pages = if (previous == null) pages.remove(pageKey) else pages.put(pageKey, previous)
+        pages = if (previous == null) pages.remove(pageKey) else pages.put(pageKey, publishPage(previous))
         _state.value = snapshotPages()
-        _display.value = displaySnapshotLocked()
+        displaySnapshotLocked(listOf(pageKey))
     }
 
     /**
@@ -3340,7 +3340,7 @@ class ChapterTranslationStore(
         return true
     }
 
-    private fun PageTranslation.sourceIdentity(pageKey: String): SourceIdentity? =
+    private fun PageTranslationView.sourceIdentity(pageKey: String): SourceIdentity? =
         sourceFingerprint?.let { fingerprint ->
             SourceIdentity(
                 pageKey = pageKey,
@@ -3359,13 +3359,14 @@ class ChapterTranslationStore(
      * the pipeline drains it, never deleted under a live committed pointer.
      */
     private fun promoteDisplayIfReadyLocked(pageKey: String, updated: PageTranslation) {
-        if (pageKey.isEmpty() || (!updated.hasRenderedResult && !updated.isTextlessTerminal)) return
-        val fingerprint = displayFingerprintOf(updated)
+        val published = pages[pageKey] ?: return
+        if (pageKey.isEmpty() || (!published.hasRenderedResult && !published.isTextlessTerminal)) return
+        val fingerprint = displayFingerprintOf(published)
         val existing = committedDisplay[pageKey]
         if (existing != null && existing.displayFingerprint == fingerprint) return
         if (existing != null) {
             existing.page.cleanedImageName
-                ?.takeIf { it != updated.cleanedImageName && it.isNotEmpty() }
+                ?.takeIf { it != published.cleanedImageName && it.isNotEmpty() }
                 ?.let {
                     retiredCleanedImages
                         .computeIfAbsent(pageKey) { ConcurrentHashMap.newKeySet() }
@@ -3375,25 +3376,37 @@ class ChapterTranslationStore(
         committedDisplay = committedDisplay.put(
             pageKey,
             CommittedPageDisplay(
-                page = updated.detachedCopy(),
-                pageVersion = updated.pageVersion,
+                page = published,
+                pageVersion = published.pageVersion,
                 displayFingerprint = fingerprint,
-                promotedAtEpochMs = updated.updatedAt,
+                promotedAtEpochMs = published.updatedAt,
             ),
         )
     }
 
-    private fun displaySnapshotLocked(): Map<String, PageTranslation> {
-        if (committedDisplay.isEmpty()) return _state.value
-        val live = snapshotPages()
-        return buildMap {
-            live.forEach { (pageKey, page) ->
-                put(pageKey, committedDisplay[pageKey]?.page?.detachedCopy() ?: page)
+    /**
+     * Atomically updates only changed display keys; all other immutable values are shared.
+     * The fast-cancel path also calls this off-mutex, so the flow update must stay retry-safe.
+     */
+    private fun displaySnapshotLocked(
+        changedPageKeys: Iterable<String>,
+    ) {
+        val keys = changedPageKeys.toList()
+        _display.update { current ->
+            var updated = current
+            keys.forEach { pageKey ->
+                val page = pages[pageKey]
+                updated = if (page == null) {
+                    updated.remove(pageKey)
+                } else {
+                    updated.put(pageKey, committedDisplay[pageKey]?.page ?: page)
+                }
             }
+            updated
         }
     }
 
-    private fun displayFingerprintOf(page: PageTranslation): String {
+    private fun displayFingerprintOf(page: PageTranslationView): String {
         val canonical = buildString {
             appendField(page.cleanedImageName)
             appendField(page.inpaintRevision)
@@ -3411,7 +3424,7 @@ class ChapterTranslationStore(
 
     /** Resolves the reader-facing page state: committed bundle first, live candidate otherwise. */
     fun resolveDisplayPage(pageKey: String): PageTranslation? =
-        committedDisplay[pageKey]?.page?.detachedCopy() ?: pages[pageKey]?.detachedCopy()
+        committedDisplay[pageKey]?.page?.toDraft() ?: pages[pageKey]?.toDraft()
 
     /**
      * Lazily loads full page snapshot (including text blocks) from durable storage
@@ -3420,7 +3433,7 @@ class ChapterTranslationStore(
     suspend fun getOrLoadPageSnapshot(pageKey: String): PageTranslation? = mutex.withLock {
         val current = pages[pageKey]
         if (current != null && current.blocks.isNotEmpty()) {
-            return@withLock current
+            return@withLock current.toDraft()
         }
         val record = artifactManifest?.pages?.get(pageKey)
         val snapshotFileName = record?.candidate?.pageSnapshotFileName
@@ -3429,29 +3442,30 @@ class ChapterTranslationStore(
         if (snapshotFileName != null && store != null) {
             val loaded = store.readPageSnapshot(snapshotFileName)
             if (loaded != null) {
-                pages = pages.put(pageKey, loaded)
+                val published = publishPage(loaded)
+                pages = pages.put(pageKey, published)
                 _state.value = snapshotPages()
                 if (record?.committed != null) {
                     committedDisplay = committedDisplay.put(
                         pageKey,
                         CommittedPageDisplay(
-                            page = loaded.detachedCopy(),
+                            page = published,
                             pageVersion = loaded.pageVersion,
                             displayFingerprint = displayFingerprintOf(loaded),
                             promotedAtEpochMs = loaded.updatedAt,
                         ),
                     )
-                    _display.value = displaySnapshotLocked()
                 }
+                displaySnapshotLocked(listOf(pageKey))
                 return@withLock loaded
             }
         }
-        current
+        current?.toDraft()
     }
 
     /** The frozen committed display bundle for [pageKey], if one exists. */
     internal fun committedDisplayPage(pageKey: String): PageTranslation? =
-        committedDisplay[pageKey]?.page?.detachedCopy()
+        committedDisplay[pageKey]?.page?.toDraft()
 
     /**
      * True while [name] still backs the committed display bundle (or its
@@ -3505,7 +3519,7 @@ class ChapterTranslationStore(
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT committed display demoted: pageKey=$pageKey reason=$reason"
                 }
-                _display.value = displaySnapshotLocked()
+                displaySnapshotLocked(listOf(pageKey))
             }
         }
     }
@@ -3621,7 +3635,7 @@ class ChapterTranslationStore(
         val page = pages[pageKey]
         val artifactPage = artifactManifest?.pages?.get(pageKey)
         return PageSnapshot(
-            page = page?.detachedCopy(),
+            page = page?.toDraft(),
             generation = generation,
             pageVersion = page?.pageVersion ?: 0L,
             blockFingerprints = page?.blockFingerprints().orEmpty(),
@@ -3656,8 +3670,13 @@ class ChapterTranslationStore(
         return PatchResult.Rejected(reason, detail)
     }
 
-    private fun snapshotPages(): Map<String, PageTranslation> =
-        pages.entries.associate { (key, page) -> key to page.detachedCopy() }
+    /** The authoritative values are immutable, so StateFlow snapshots share the persistent map. */
+    private fun snapshotPages(): PersistentMap<String, PublishedPageTranslation> = pages
+
+    private fun publishPage(draft: PageTranslation): PublishedPageTranslation {
+        publishedPageCopyCount++
+        return draft.toPublishedPage()
+    }
 
     /** Durable translation status derived from the committed artifact state. */
     fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
@@ -3688,7 +3707,7 @@ class ChapterTranslationStore(
         return profile
     }
 
-    private fun PageTranslation.isQueueVisibleTransient(): Boolean {
+    private fun PageTranslationView.isQueueVisibleTransient(): Boolean {
         return ocrStatus.isQueueTransient() ||
             translationStatus.isQueueTransient() ||
             inpaintStatus.isQueueTransient() ||

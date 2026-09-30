@@ -1,6 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -183,13 +183,13 @@ internal class ActiveChapterStoreRegistry {
         chapterIds.mapNotNull(stores::get)
 
     /** The currently selected chapter source, or null when that chapter is not active. */
-    fun observe(chapterId: Long): StateFlow<Map<String, PageTranslation>>? = get(chapterId)?.state
+    fun observe(chapterId: Long): StateFlow<Map<String, PageTranslationView>>? = get(chapterId)?.state
 
     /**
      * Rebinds only when this [chapterId]'s source changes. Updates from another chapter's store
      * cannot be emitted through this flow.
      */
-    fun select(chapterId: Long): Flow<Map<String, PageTranslation>> = snapshots.flatMapLatest { map ->
+    fun select(chapterId: Long): Flow<Map<String, PageTranslationView>> = snapshots.flatMapLatest { map ->
         map[chapterId]?.state ?: flowOf(emptyMap())
     }
 

@@ -7,38 +7,38 @@ import kotlinx.serialization.Transient
 
 @Serializable
 data class PageTranslation(
-    var blocks: MutableList<TranslationBlock> = mutableListOf(),
-    var imgWidth: Float = 0f,
-    var imgHeight: Float = 0f,
-    var cleanedImageName: String? = null,
-    var ocrArtifactId: String? = null,
-    var recognitionEngine: String? = null,
-    var detectionCount: Int = 0,
-    var ocrBlockCount: Int = 0,
-    var decodeSampleSize: Int = 1,
-    var originalImgWidth: Float = 0f,
-    var originalImgHeight: Float = 0f,
-    var ocrStatus: String = StageStatus.PENDING,
-    var translationStatus: String = StageStatus.PENDING,
-    var inpaintStatus: String = StageStatus.PENDING,
-    var renderStatus: String = StageStatus.PENDING,
-    var ocrError: String? = null,
-    var translationError: String? = null,
-    var inpaintError: String? = null,
-    var renderError: String? = null,
-    var updatedAt: Long = 0L,
-    var sourceFileName: String? = null,
+    override var blocks: MutableList<TranslationBlock> = mutableListOf(),
+    override var imgWidth: Float = 0f,
+    override var imgHeight: Float = 0f,
+    override var cleanedImageName: String? = null,
+    override var ocrArtifactId: String? = null,
+    override var recognitionEngine: String? = null,
+    override var detectionCount: Int = 0,
+    override var ocrBlockCount: Int = 0,
+    override var decodeSampleSize: Int = 1,
+    override var originalImgWidth: Float = 0f,
+    override var originalImgHeight: Float = 0f,
+    override var ocrStatus: String = StageStatus.PENDING,
+    override var translationStatus: String = StageStatus.PENDING,
+    override var inpaintStatus: String = StageStatus.PENDING,
+    override var renderStatus: String = StageStatus.PENDING,
+    override var ocrError: String? = null,
+    override var translationError: String? = null,
+    override var inpaintError: String? = null,
+    override var renderError: String? = null,
+    override var updatedAt: Long = 0L,
+    override var sourceFileName: String? = null,
     // Defaults preserve compatibility with translation JSON written before
     // generation/version race preconditions were introduced.
-    var runGeneration: Long = 0L,
-    var pageVersion: Long = 0L,
+    override var runGeneration: Long = 0L,
+    override var pageVersion: Long = 0L,
     // Persisted raw per-failure count for diagnostics/back-compat. Do NOT gate
     // exhaustion on this: a single attempt can fail multiple cascading stages
     // (inpaint→render) and double-count. hasExhaustedRetries keys off attemptCount.
-    var retryCount: Int = 0,
+    override var retryCount: Int = 0,
     // Incremented when the rendered file's bytes are rewritten. The file name is
     // stable, so UI dedup must not key on the name alone.
-    var inpaintRevision: Int = 0,
+    override var inpaintRevision: Int = 0,
     /**
      * The inpainting mode name ("QUALITY" / "FAST") that produced the current
      * cleaned image, or null for pages persisted before this field existed.
@@ -49,22 +49,22 @@ data class PageTranslation(
      * and forces a re-inpaint on mismatch. Null (legacy) is treated as a match
      * so existing chapters are not mass re-translated on the first QUALITY open.
      */
-    var inpaintingModeUsed: String? = null,
+    override var inpaintingModeUsed: String? = null,
     /** Deterministic stage provenance used by ordered batch resume planning. */
-    var sourceFingerprint: String? = null,
-    var detectionFingerprint: String? = null,
-    var ocrFingerprint: String? = null,
-    var inpaintFingerprint: String? = null,
-    var translationFingerprint: String? = null,
-    var layoutFingerprint: String? = null,
+    override var sourceFingerprint: String? = null,
+    override var detectionFingerprint: String? = null,
+    override var ocrFingerprint: String? = null,
+    override var inpaintFingerprint: String? = null,
+    override var translationFingerprint: String? = null,
+    override var layoutFingerprint: String? = null,
     /** Reader-ad-hoc output is displayable but lacks full-chapter context. */
-    var translationOrigin: String? = null,
+    override var translationOrigin: String? = null,
     /**
      * The translated blocks are ready, but the cleaned-image publication was
      * unavailable. The reader keeps the original image and draws the overlay
      * instead of poisoning inpaint/render truth with a storage failure.
      */
-    var originalImageFallback: Boolean = false,
+    override var originalImageFallback: Boolean = false,
     /**
      * SERIALIZABLE inpaint mask captured at OCR time.
      *
@@ -83,14 +83,17 @@ data class PageTranslation(
      * Bumping [CURRENT_INPAINT_REVISION] invalidates pre-existing chapters whose
      * persisted mask predates this field (they re-inpaint from a fresh OCR pass).
      */
-    var inpaintMaskBoxes: List<InpaintMaskBox> = emptyList(),
-) {
+    override var inpaintMaskBoxes: List<InpaintMaskBox> = emptyList(),
+) : PageTranslationView {
     @Transient
     var cleanedBitmap: Bitmap? = null
 
-    var errorMessage: String? = null
+    private var errorMessageValue: String? = null
+
+    override var errorMessage: String?
+        get() = errorMessageValue
         set(value) {
-            field = value
+            errorMessageValue = value
             if (value != null) {
                 when {
                     ocrStatus == StageStatus.FAILED -> ocrError = value
@@ -107,7 +110,18 @@ data class PageTranslation(
             }
         }
 
-    val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: errorMessage
+    /** Restores a copied value without re-running the status-based routing setter. */
+    internal fun setErrorMessageRaw(value: String?) {
+        errorMessageValue = value
+    }
+
+    override val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: errorMessage
+
+    override fun equals(other: Any?): Boolean = pageTranslationValueEquals(this, other)
+
+    override fun hashCode(): Int = pageTranslationValueHashCode(this)
+
+    override fun toString(): String = pageTranslationValueToString(this)
 
     /**
      * number of DISTINCT page translation attempts that have ended
@@ -134,7 +148,7 @@ data class PageTranslation(
      * budget. Diagnostics still see raw per-failure counts via [retryCount].
      */
     @Transient
-    var attemptCount: Int = 0
+    override var attemptCount: Int = 0
 
     /**
      * per-attempt idempotency flag for [recordAttemptFailure].
@@ -145,7 +159,7 @@ data class PageTranslation(
      * (callers set the stage FAILED before calling the helper).
      */
     @Transient
-    var attemptCharged: Boolean = false
+    override var attemptCharged: Boolean = false
 
     /**
      * all text detections from the recognition stage, carried
@@ -159,7 +173,7 @@ data class PageTranslation(
      * (non-resumed) path where this field is still populated.
      */
     @Transient
-    var allTextDetections: List<Detection> = emptyList()
+    override var allTextDetections: List<Detection> = emptyList()
 
     companion object {
         /**
@@ -283,28 +297,28 @@ object StageStatus {
 
 @Serializable
 data class TranslationBlock(
-    var blockId: String? = null,
-    var text: String,
-    var translation: String = "",
-    var width: Float,
-    var height: Float,
-    var x: Float,
-    var y: Float,
-    var symHeight: Float,
-    var symWidth: Float,
-    val angle: Float,
-    val label: Int = 1,
-    val score: Float = 1f,
-    val parentX: Float = 0f,
-    val parentY: Float = 0f,
-    val parentWidth: Float = 0f,
-    val parentHeight: Float = 0f,
+    override var blockId: String? = null,
+    override var text: String,
+    override var translation: String = "",
+    override var width: Float,
+    override var height: Float,
+    override var x: Float,
+    override var y: Float,
+    override var symHeight: Float,
+    override var symWidth: Float,
+    override val angle: Float,
+    override val label: Int = 1,
+    override val score: Float = 1f,
+    override val parentX: Float = 0f,
+    override val parentY: Float = 0f,
+    override val parentWidth: Float = 0f,
+    override val parentHeight: Float = 0f,
     // textColor is re-derived after inpainting; strokeColor/strokeWidth are
     // retained only for serialization backward-compat and are NOT read at render.
-    var textColor: Long = 0xFF000000,
-    var strokeColor: Long = 0xFFFFFFFF,
-    var strokeWidth: Float = 0f,
-    val direction: String = "LTR",
+    override var textColor: Long = 0xFF000000,
+    override var strokeColor: Long = 0xFFFFFFFF,
+    override var strokeWidth: Float = 0f,
+    override val direction: String = "LTR",
     /**
      * reading-order index of the panel (comic frame) this block
      * was assigned to, or null when the block is spanning / free-floating /
@@ -314,7 +328,7 @@ data class TranslationBlock(
      * null so serialized blocks from older chapters (pre-panel-detector)
      * deserialize cleanly as page-level.
      */
-    val panelIndex: Int? = null,
+    override val panelIndex: Int? = null,
     /**
      * human-readable panel-assignment category
      * (PanelAssignment.Category.asString(): "owned" / "spanning" /
@@ -322,7 +336,7 @@ data class TranslationBlock(
      * the pre-panel-detector behaviour where the prompt layer treats every
      * block as page-level.
      */
-    val panelAssignment: String = "none",
+    override val panelAssignment: String = "none",
     /**
      * containment fraction (0..1) of this block's box within its
      * best-matching panel — how much of the block lives inside that panel.
@@ -330,7 +344,7 @@ data class TranslationBlock(
      * (low-containment) assignments. Default 0f for serialized blocks without
      * panel context.
      */
-    val panelContainment: Float = 0f,
+    override val panelContainment: Float = 0f,
     /**
      * stable index of the parent speech bubble this block belongs
      * to, assigned by a parent-bubble grouping pass after panel assignment.
@@ -339,12 +353,18 @@ data class TranslationBlock(
      * for speaker/voice continuity. Null until assigned (default null for
      * serialized blocks from older chapters).
      */
-    val bubbleIndex: Int? = null,
+    override val bubbleIndex: Int? = null,
     /**
      * precise YOLO11 segmentation mask for this block.
      * Encoded as RLE for compact persistence. Used by the inpainter
      * (Interior Median Solid Fill) and the layout planner (Symmetrical Growth).
      */
-    val segmentationMask: eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle? = null,
-    var userEditedAt: Long? = null,
-)
+    override val segmentationMask: eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle? = null,
+    override var userEditedAt: Long? = null,
+) : TranslationBlockView {
+    override fun equals(other: Any?): Boolean = translationBlockValueEquals(this, other)
+
+    override fun hashCode(): Int = translationBlockValueHashCode(this)
+
+    override fun toString(): String = translationBlockValueToString(this)
+}

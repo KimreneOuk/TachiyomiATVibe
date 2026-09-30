@@ -27,6 +27,7 @@ import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
@@ -1000,7 +1001,7 @@ internal class BatchChapterTranslator(
         }
     }
 
-    private fun batchTraceOutcome(page: PageTranslation?): TranslationTraceOutcome = when {
+    private fun batchTraceOutcome(page: PageTranslationView?): TranslationTraceOutcome = when {
         page == null -> TranslationTraceOutcome.PAUSE
         page.isStageFailed -> TranslationTraceOutcome.FAILURE
         page.isTextlessTerminal ||

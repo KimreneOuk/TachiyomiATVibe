@@ -1,6 +1,7 @@
 package eu.kanade.translation.persistence.journal
 
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
@@ -44,7 +45,7 @@ class ChapterJournalLagCrashTest {
                 "a.jpg",
                 0L,
                 0L,
-                legacyPages.getValue("a.jpg"),
+                legacyPages.getValue("a.jpg").toPublishedPage(),
                 artifactContentHash = StageFingerprints.pageSnapshot(legacyPages.getValue("a.jpg")),
             )
 

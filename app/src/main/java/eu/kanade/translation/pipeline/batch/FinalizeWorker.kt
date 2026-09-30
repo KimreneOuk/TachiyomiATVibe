@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
@@ -34,8 +34,8 @@ internal class FinalizeWorkerContext(
     val drainDisplayTailBeforeComplete: suspend (
         List<String>,
     ) -> RecoveryWorker.DisplayTailDrain,
-    val t924PageTerminalAtFinalize: (PageTranslation?, Long) -> Boolean,
-    val strandedPageReason: (PageTranslation?) -> String,
+    val t924PageTerminalAtFinalize: (PageTranslationView?, Long) -> Boolean,
+    val strandedPageReason: (PageTranslationView?) -> String,
     val persistEnvelopeStructuralFailure: suspend (String, String, String) -> Unit,
 )
 
@@ -81,11 +81,11 @@ internal class FinalizeWorker(
         context.drainDisplayTailBeforeComplete(orderedPageKeys)
 
     private fun t924PageTerminalAtFinalize(
-        page: PageTranslation?,
+        page: PageTranslationView?,
         activeGeneration: Long,
     ): Boolean = context.t924PageTerminalAtFinalize(page, activeGeneration)
 
-    private fun strandedPageReason(page: PageTranslation?): String =
+    private fun strandedPageReason(page: PageTranslationView?): String =
         context.strandedPageReason(page)
 
     private suspend fun persistEnvelopeStructuralFailure(

@@ -18,6 +18,7 @@ import eu.kanade.translation.engines.translator.contextual.OcrCorpusPageEntry
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
@@ -530,7 +531,7 @@ internal class ChapterProfileBatchCoordinator(
     ): Boolean = recoveryWorker().pageWorkProductResolvable(artifact, pageKey, durableManifest)
 
     private fun t924PageTerminalAtFinalize(
-        page: PageTranslation?,
+        page: PageTranslationView?,
         activeGeneration: Long,
     ): Boolean = recoveryWorker().t924PageTerminalAtFinalize(page, activeGeneration)
 
@@ -1005,7 +1006,7 @@ internal class ChapterProfileBatchCoordinator(
         orderedPageKeys: List<String>,
     ): RecoveryWorker.DisplayTailDrain = recoveryWorker().drainDisplayTailBeforeComplete(orderedPageKeys)
 
-    private fun strandedPageReason(page: PageTranslation?): String =
+    private fun strandedPageReason(page: PageTranslationView?): String =
         recoveryWorker().strandedPageReason(page)
 
     private suspend fun persistEnvelopeStructuralFailure(
@@ -1245,7 +1246,7 @@ internal class ChapterProfileBatchCoordinator(
          * acquisition, and an already-terminal page is never re-paid (
          * exactly-once).
          */
-        internal fun standardPageTerminalAtTranslate(page: PageTranslation): Boolean =
+        internal fun standardPageTerminalAtTranslate(page: PageTranslationView): Boolean =
             page.hasRenderedResult ||
                 page.isTextlessTerminal ||
                 page.translationStatus == StageStatus.READY ||

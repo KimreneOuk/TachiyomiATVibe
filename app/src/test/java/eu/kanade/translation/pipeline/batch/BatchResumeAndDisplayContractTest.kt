@@ -8,6 +8,7 @@ import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumeGateDecider
 import io.kotest.matchers.shouldBe
@@ -81,7 +82,7 @@ class BatchResumeAndDisplayContractTest {
                     displayReadiness += page.isTranslationDisplayReady
                     val binding = selectReaderTranslationOverlayBinding(
                         showTranslatedImage = true,
-                        translation = page,
+                        translation = page.toDraft(),
                     )
                     overlaySizes += binding.blocks.size
                     if (page.isTranslationDisplayReady) {

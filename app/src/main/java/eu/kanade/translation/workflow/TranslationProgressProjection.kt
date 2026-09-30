@@ -2,7 +2,7 @@ package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.BatchRebuildProgress
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
@@ -253,7 +253,7 @@ internal class TranslationProgressProjection(
         source: Source,
         mangaId: Long?,
     ) -> ChapterTranslationStore?,
-    private val observeActiveDisplayStore: (Long) -> StateFlow<Map<String, PageTranslation>>?,
+    private val observeActiveDisplayStore: (Long) -> StateFlow<Map<String, PageTranslationView>>?,
     /** Read-only terminal reconstruction after registry eviction/process death; it never opens or caches a store. */
     private val reconstructDurableTerminalSnapshot: suspend (chapterId: Long) -> TranslationProgressSnapshot? = { null },
 ) {

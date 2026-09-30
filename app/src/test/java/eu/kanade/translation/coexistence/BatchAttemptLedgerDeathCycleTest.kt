@@ -378,7 +378,7 @@ class BatchAttemptLedgerDeathCycleTest {
                 }
 
                 // Explicit user force clears the counter and the durable failure.
-                capped.state.value.getValue("p0").prepareForcedRetry()
+                capped.updatePage("p0") { page -> page!!.apply { prepareForcedRetry() } }
                 withClue("D9: explicit user force clears the cap bookkeeping") {
                     invokeSuspending(capped, "clearAttemptCapForManualRetry", "p0") shouldBe true
                 }

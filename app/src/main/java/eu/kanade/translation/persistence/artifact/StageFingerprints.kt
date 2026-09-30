@@ -1,7 +1,7 @@
 package eu.kanade.translation.persistence.artifact
 
 import eu.kanade.translation.model.InpaintMaskBox
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.stableFingerprint
 import java.security.MessageDigest
 import java.text.Normalizer
@@ -125,7 +125,7 @@ object StageFingerprints {
     )
 
     /** Fingerprint of the complete live-store page snapshot. */
-    fun pageSnapshot(page: PageTranslation): String = fingerprintIndexed(
+    fun pageSnapshot(page: PageTranslationView): String = fingerprintIndexed(
         "page-snapshot",
         page.sourceFileName,
         page.cleanedImageName,
@@ -544,7 +544,7 @@ object StageFingerprints {
         sha256Hex(canonicalPlanJson.toByteArray(Charsets.UTF_8))
 
     /** Convenience mapping of a live OCR snapshot onto [OcrBlockContent] order. */
-    fun pageOcrContentBlocks(page: PageTranslation): List<OcrBlockContent> =
+    fun pageOcrContentBlocks(page: PageTranslationView): List<OcrBlockContent> =
         page.blocks.map { block ->
             OcrBlockContent(
                 stableBlockId = block.blockId,

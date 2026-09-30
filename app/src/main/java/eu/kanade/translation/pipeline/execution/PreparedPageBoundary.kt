@@ -1,6 +1,7 @@
 package eu.kanade.translation.pipeline.execution
 
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
@@ -98,7 +99,7 @@ internal suspend fun publishPreparedPageFromOcr(
  * [TranslationPipeline.prepareSinglePage] returns null for them so failure
  * cannot be mistaken for a prepared page.
  */
-internal fun isPreparedPageTerminal(page: PageTranslation): Boolean {
+internal fun isPreparedPageTerminal(page: PageTranslationView): Boolean {
     val failed = page.ocrStatus == StageStatus.FAILED ||
         page.inpaintStatus == StageStatus.FAILED ||
         page.translationStatus == StageStatus.FAILED

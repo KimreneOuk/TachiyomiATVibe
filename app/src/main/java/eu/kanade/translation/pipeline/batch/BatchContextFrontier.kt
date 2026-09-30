@@ -1,10 +1,11 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.toPublishedPage
 
 /**
  * Natural-order rolling-context state for a fragmented batch resume.
@@ -19,7 +20,7 @@ class BatchContextFrontier(
     naturalPageIndexes: Map<String, Int>,
 ) {
     private val indexes = naturalPageIndexes.toMap()
-    private val completed = linkedMapOf<Int, Pair<String, PageTranslation>>()
+    private val completed = linkedMapOf<Int, Pair<String, PublishedPageTranslation>>()
     private val failures = mutableSetOf<Int>()
 
     var rollingContext: String = ""
@@ -32,9 +33,9 @@ class BatchContextFrontier(
         private set
 
     fun seed(
-        pages: Map<String, PageTranslation>,
-        eligible: (pageKey: String, page: PageTranslation) -> Boolean = { _, _ -> true },
-        terminalFailure: (pageKey: String, page: PageTranslation) -> Boolean = { _, page ->
+        pages: Map<String, PageTranslationView>,
+        eligible: (pageKey: String, page: PageTranslationView) -> Boolean = { _, _ -> true },
+        terminalFailure: (pageKey: String, page: PageTranslationView) -> Boolean = { _, page ->
             page.translationStatus == StageStatus.FAILED
         },
     ) {
@@ -49,7 +50,7 @@ class BatchContextFrontier(
 
     fun record(
         pageKey: String,
-        page: PageTranslation,
+        page: PageTranslationView,
         terminalFailure: Boolean = false,
     ) {
         val pageIndex = indexes[pageKey] ?: return
@@ -65,7 +66,7 @@ class BatchContextFrontier(
             }
             return
         }
-        completed[pageIndex] = pageKey to page.detachedCopy()
+        completed[pageIndex] = pageKey to page.toPublishedPage()
         if (terminalFailure && !isTextless(page)) failures += pageIndex
         if (gapIndex != null) return
 
@@ -90,7 +91,7 @@ class BatchContextFrontier(
         return (indexes[pageKey] ?: Int.MAX_VALUE) > gap
     }
 
-    private fun isTerminal(page: PageTranslation): Boolean =
+    private fun isTerminal(page: PageTranslationView): Boolean =
         page.ocrStatus in setOf(StageStatus.READY, StageStatus.TEXTLESS) &&
             (
                 page.translationStatus == StageStatus.READY ||
@@ -98,12 +99,12 @@ class BatchContextFrontier(
                     page.translationStatus == StageStatus.FAILED
                 )
 
-    private fun isTextless(page: PageTranslation): Boolean =
+    private fun isTextless(page: PageTranslationView): Boolean =
         page.ocrStatus == StageStatus.TEXTLESS ||
             page.isTextlessTerminal ||
             (page.blocks.none { it.text.isNotBlank() } && page.translationStatus == StageStatus.SKIPPED)
 
-    private fun isContextReady(page: PageTranslation): Boolean =
+    private fun isContextReady(page: PageTranslationView): Boolean =
         page.ocrStatus in setOf(StageStatus.READY, StageStatus.TEXTLESS) &&
             (page.translationStatus == StageStatus.READY || isTextless(page))
 }

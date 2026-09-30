@@ -50,7 +50,7 @@ import eu.kanade.translation.engines.translator.NativeStallState
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageIndexResolver
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
@@ -303,7 +303,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * pages are omitted to keep the list focused on active work.
      */
     private fun buildQueuedPageInfo(
-        pages: Map<String, PageTranslation>,
+        pages: Map<String, PageTranslationView>,
         indexResolver: Map<String, Int> = emptyMap(),
     ): List<QueuedPageInfo> {
         if (pages.isEmpty()) return emptyList()
@@ -327,7 +327,7 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     /** Derives the display stage from a page's four stage statuses. */
-    private fun stageOf(pt: PageTranslation): QueueStage? {
+    private fun stageOf(pt: PageTranslationView): QueueStage? {
         // The store is persisted history. Only active work and actionable
         // failures belong in the queue view; old pending/cancelled/textless/done
         // rows are not live queue reservations.

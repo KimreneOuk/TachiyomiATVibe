@@ -5,6 +5,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCommittedDisplay
 import eu.kanade.translation.model.hasRecognizedTranslation
@@ -156,7 +157,7 @@ internal class RecoveryWorker(
         // AND the OCR-side finalizePostOcrStage both set it): a committed
         // snapshot carrying no translatable text is exactly as durable as a
         // translated one (the standard lane's textless evidence shape).
-        fun isNoTextTerminal(page: PageTranslation): Boolean =
+        fun isNoTextTerminal(page: PageTranslationView): Boolean =
             page.isTextlessTerminal || page.translationStatus == StageStatus.SKIPPED
         val liveTextless = store.state.value[pageKey]?.let(::isNoTextTerminal) == true
         val record = durableManifest?.pages?.get(pageKey) ?: return liveTextless
@@ -185,7 +186,7 @@ internal class RecoveryWorker(
         return liveTextless
     }
 
-    fun t924PageTerminalAtFinalize(page: PageTranslation?, activeGeneration: Long): Boolean {
+    fun t924PageTerminalAtFinalize(page: PageTranslationView?, activeGeneration: Long): Boolean {
         if (page == null) return false
         if (page.hasRenderedResult || page.isTextlessTerminal) return true
         //  : a COMMITTED terminal stage is durable
@@ -325,7 +326,7 @@ internal class RecoveryWorker(
      * genuinely unfinished pages and already-stamped pages are NOT tail: they
      * belong to the stranded sweep / the healthy COMPLETE path.
      */
-    private fun displayTailPending(page: PageTranslation?): Boolean =
+    private fun displayTailPending(page: PageTranslationView?): Boolean =
         page != null &&
             page.renderStatus == StageStatus.PENDING &&
             (page.translationStatus == StageStatus.READY || page.translationStatus == StageStatus.PARTIAL) &&
@@ -421,7 +422,7 @@ internal class RecoveryWorker(
      * the bounded drain. Names the blocking evidence so the durable failure is
      * actionable instead of a bare stage status.
      */
-    private fun displayTailFailureReason(page: PageTranslation?): String {
+    private fun displayTailFailureReason(page: PageTranslationView?): String {
         if (page == null) return "expected page is missing from the store"
         return when {
             page.renderStatus == StageStatus.READY -> "display commit landed after the drain gave up"
@@ -510,7 +511,7 @@ internal class RecoveryWorker(
         }
     }
 
-    fun strandedPageReason(page: PageTranslation?): String {
+    fun strandedPageReason(page: PageTranslationView?): String {
         if (page == null) return "expected page is missing from the store"
         val textBlocks = page.blocks.filter { it.text.isNotBlank() }
         val resolved = textBlocks.count { block ->

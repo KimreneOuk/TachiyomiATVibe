@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.planning
 
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
@@ -84,7 +84,7 @@ data class BatchExpectedFingerprints(
 /** Input to the pure chapter planner. [pages] must already be natural order. */
 data class BatchPlannerInput(
     val pageKey: String,
-    val page: PageTranslation? = null,
+    val page: PageTranslationView? = null,
     val artifact: PageArtifactRecord? = null,
     val expectedFingerprints: BatchExpectedFingerprints = BatchExpectedFingerprints(),
     /** Current source bytes hash, when the batch could read the page source. */
