@@ -3765,6 +3765,9 @@ class ChapterTranslationStore(
         journalWriter?.drainAndClose()
     }
 
+    /** Test seam for verifying that closeAndFlush joins all scheduler children. */
+    internal fun hasActivePersistenceChildrenForTests(): Boolean = persistenceScheduler.hasActiveChildren()
+
     fun close() = persistenceScheduler.close {
         journalWriter?.drainAndClose()
     }
