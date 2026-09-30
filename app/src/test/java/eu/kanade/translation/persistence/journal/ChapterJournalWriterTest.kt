@@ -61,6 +61,193 @@ class ChapterJournalWriterTest {
     }
 
     @Test
+    fun `capture detaches page state before delayed writer serialization`() = runTest {
+        val storage = MemoryStorage()
+        val encodedRevisions = mutableListOf<Int?>()
+        val writer = writer(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { record ->
+                encodedRevisions += record.state?.inpaintRevision
+                (record.state?.inpaintRevision?.toString() ?: "tombstone").encodeToByteArray()
+            },
+        )
+        try {
+            val source = page().apply { inpaintRevision = 7 }
+            val credit = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyPersisted(writer.nextCommitSeq(), credit, "page-a", 1L, 1L, source)
+
+            // Simulate checkpointOcrLocked mutating the live PageTranslation before the
+            // writer dispatcher gets a turn. The historical record must keep revision 7.
+            source.inpaintRevision = 8
+            runCurrent()
+
+            encodedRevisions shouldContainExactly listOf(7)
+            scan(storage).frames.last().payload.decodeToString() shouldBe "7"
+        } finally {
+            writer.drainAndClose()
+        }
+    }
+
+    @Test
+    fun `bulk replace and rekey each use one frame and one legacy sequence`() = runTest {
+        val storage = MemoryStorage()
+        val encodedBulk = mutableListOf<ChapterJournalBulkRecord>()
+        val writer = writer(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeBulkRecord = { record ->
+                encodedBulk += record
+                "${record.operation}:${record.mutations.size}".encodeToByteArray()
+            },
+        )
+        try {
+            val replaceKeys = (1..12).map { "page-$it" }
+            val replaceCredit = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyBulkMutation(
+                commitSeq = writer.nextCommitSeq(),
+                credit = replaceCredit,
+                kind = ChapterJournalFormat.RecordKind.BULK_REPLACE,
+                record = ChapterJournalBulkRecord(
+                    operation = "replace_all",
+                    mapping = replaceKeys.associateWith { it },
+                    mutations = replaceKeys.mapIndexed { index, key ->
+                        ChapterJournalRecord(
+                            pageKey = key,
+                            generation = 1L,
+                            fencingToken = 0L,
+                            pageVersion = index.toLong() + 1L,
+                            state = page().apply { sourceFileName = key },
+                        )
+                    },
+                ),
+            )
+
+            val rekeyMapping = replaceKeys.associateWith { "disk-$it" }
+            val rekeyCredit = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyBulkMutation(
+                commitSeq = writer.nextCommitSeq(),
+                credit = rekeyCredit,
+                kind = ChapterJournalFormat.RecordKind.BULK_REKEY,
+                record = ChapterJournalBulkRecord(
+                    operation = "rekey_pages",
+                    mapping = rekeyMapping,
+                    mutations = replaceKeys.flatMapIndexed { index, oldKey ->
+                        val newKey = rekeyMapping.getValue(oldKey)
+                        listOf(
+                            ChapterJournalRecord(
+                                pageKey = oldKey,
+                                generation = 1L,
+                                fencingToken = 0L,
+                                pageVersion = index.toLong() + 1L,
+                                state = null,
+                            ),
+                            ChapterJournalRecord(
+                                pageKey = newKey,
+                                generation = 1L,
+                                fencingToken = 0L,
+                                pageVersion = index.toLong() + 2L,
+                                state = page().apply { sourceFileName = newKey },
+                            ),
+                        )
+                    },
+                ),
+            )
+            runCurrent()
+
+            val frames = scan(storage).frames
+            frames.map { it.kind } shouldContainExactly listOf(
+                ChapterJournalFormat.RecordKind.INVENTORY,
+                ChapterJournalFormat.RecordKind.BULK_REPLACE,
+                ChapterJournalFormat.RecordKind.BULK_REKEY,
+            )
+            frames.map { it.commitSeq } shouldContainExactly listOf(null, 1L, 2L)
+            encodedBulk.map { it.mutations.size } shouldContainExactly listOf(12, 24)
+            encodedBulk.first().mapping.size shouldBe 12
+            encodedBulk.last().mapping shouldBe rekeyMapping
+            writer.shadowLaggedCount shouldBe 0L
+            writer.inFlightCount shouldBe 0
+        } finally {
+            writer.drainAndClose()
+        }
+    }
+
+    @Test
+    fun `oversize bulk payload becomes a terminal payload record`() = runTest {
+        val storage = MemoryStorage()
+        var terminalDiagnostic: String? = null
+        val writer = writer(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeBulkRecord = { ByteArray(ChapterJournalFormat.MAX_PAYLOAD_BYTES + 1) },
+            encodeTerminalPayload = { pageKey, bytes, seq ->
+                terminalDiagnostic = "$pageKey:$bytes:$seq"
+                "terminal_payload:$pageKey:$bytes:$seq".encodeToByteArray()
+            },
+        )
+        try {
+            val credit = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyBulkMutation(
+                commitSeq = writer.nextCommitSeq(),
+                credit = credit,
+                kind = ChapterJournalFormat.RecordKind.BULK_REPLACE,
+                record = ChapterJournalBulkRecord(
+                    operation = "replace_all",
+                    mapping = emptyMap(),
+                    mutations = emptyList(),
+                ),
+            )
+            runCurrent()
+
+            scan(storage).frames.map { it.kind } shouldContainExactly listOf(
+                ChapterJournalFormat.RecordKind.INVENTORY,
+                ChapterJournalFormat.RecordKind.TERMINAL_PAYLOAD,
+            )
+            terminalDiagnostic shouldBe "<replace_all>:${ChapterJournalFormat.MAX_PAYLOAD_BYTES + 1}:1"
+            writer.terminalPayloadCount shouldBe 1L
+            writer.shadowLaggedCount shouldBe 0L
+        } finally {
+            writer.drainAndClose()
+        }
+    }
+
+    @Test
+    fun `lost ending records have a counter separate from credit starvation`() = runTest {
+        val storage = MemoryStorage(failOnSync = 1)
+        val writer = writer(storage, StandardTestDispatcher(testScheduler))
+        val credit = writer.tryAcquireShadowCredit(foreground = false)!!
+        writer.captureLegacyPersisted(
+            commitSeq = writer.nextCommitSeq(),
+            credit = credit,
+            pageKey = "paid-page",
+            generation = 1L,
+            fencingToken = 0L,
+            page = page(),
+            paid = true,
+        )
+        runCurrent()
+        writer.requestDefunctMarker()
+
+        writer.writerFailureCount shouldBe 1L
+        writer.lostTerminalRecordCount shouldBe 1L
+        writer.shadowLaggedCount shouldBe 0L
+        writer.drainAndClose()
+    }
+
+    @Test
+    fun `channel capacity must reserve every outstanding credit and control command`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            writer(
+                storage = MemoryStorage(),
+                dispatcher = StandardTestDispatcher(kotlinx.coroutines.test.TestCoroutineScheduler()),
+                regularCreditLimit = 2,
+                foregroundCreditLimit = 1,
+                channelCapacity = 6,
+            )
+        }
+    }
+
+    @Test
     fun `registration inventory is the first durable frame without consuming commit sequence`() = runTest {
         val storage = MemoryStorage()
         val writer = writer(storage, StandardTestDispatcher(testScheduler))
@@ -604,11 +791,15 @@ class ChapterJournalWriterTest {
         encodeRecord: (ChapterJournalRecord) -> ByteArray = {
             "${it.pageKey}:${it.pageVersion}".encodeToByteArray()
         },
+        encodeBulkRecord: (ChapterJournalBulkRecord) -> ByteArray = {
+            "${it.operation}:${it.mutations.size}".encodeToByteArray()
+        },
         encodeTerminalPayload: (String, Int, Long) -> ByteArray = { pageKey, bytes, seq ->
             "terminal_payload:$pageKey:$bytes:$seq".encodeToByteArray()
         },
         regularCreditLimit: Int = 8,
         foregroundCreditLimit: Int = 1,
+        channelCapacity: Int = regularCreditLimit + foregroundCreditLimit + 4,
         segmentByteLimit: Long = ChapterJournalFormat.SEGMENT_BYTE_LIMIT,
         durabilityIntervalMs: Long = ChapterJournalWriter.DEFAULT_FREE_DURABILITY_INTERVAL_MS,
         storeGeneration: Long = 0L,
@@ -618,6 +809,7 @@ class ChapterJournalWriterTest {
         storage = storage,
         dispatcher = dispatcher,
         encodeRecord = encodeRecord,
+        encodeBulkRecord = encodeBulkRecord,
         encodeInventory = { "inventory:${it.sourceFingerprint}".encodeToByteArray() },
         encodeTerminalLag = { count, commitSeq -> "terminal:$count:$commitSeq".encodeToByteArray() },
         encodeTerminalPayload = encodeTerminalPayload,
@@ -626,6 +818,7 @@ class ChapterJournalWriterTest {
         sessionId = sessionId,
         regularCreditLimit = regularCreditLimit,
         foregroundCreditLimit = foregroundCreditLimit,
+        channelCapacity = channelCapacity,
         segmentByteLimit = segmentByteLimit,
         durabilityIntervalMs = durabilityIntervalMs,
     )

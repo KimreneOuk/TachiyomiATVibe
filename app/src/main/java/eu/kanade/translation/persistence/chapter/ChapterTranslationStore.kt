@@ -55,7 +55,9 @@ import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
 import eu.kanade.translation.persistence.internal.StoreStatusInputs
 import eu.kanade.translation.persistence.internal.StoreStatusProjector
 import eu.kanade.translation.persistence.internal.formatWriteDiagnostic
+import eu.kanade.translation.persistence.journal.ChapterJournalBulkRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalCredit
+import eu.kanade.translation.persistence.journal.ChapterJournalFormat
 import eu.kanade.translation.persistence.journal.ChapterJournalInventorySnapshot
 import eu.kanade.translation.persistence.journal.ChapterJournalRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalWriter
@@ -438,6 +440,16 @@ class ChapterTranslationStore(
     @Volatile
     private var journalWriterForTests: ChapterJournalWriter? = null
 
+    /** Bulk store mutations collect their successful page commits into one journal frame. Store mutex only. */
+    private var activeBulkJournalCapture: BulkJournalCapture? = null
+
+    private data class BulkJournalCapture(
+        val kind: ChapterJournalFormat.RecordKind,
+        val operation: String,
+        val mapping: Map<String, String?>,
+        val mutations: LinkedHashMap<String, ChapterJournalRecord> = LinkedHashMap(),
+    )
+
     /** Injects a virtual-storage writer before the first page write in JVM tests. */
     internal fun attachJournalWriterForTests(writer: ChapterJournalWriter) {
         check(journalWriterForTests == null) { "journal writer already attached" }
@@ -477,6 +489,7 @@ class ChapterTranslationStore(
                         storage = FileChapterJournalStorage(epoch.directory, durableRoot = root),
                         dispatcher = persistenceDispatcher,
                         encodeRecord = { record -> JOURNAL_JSON.encodeToString(record).encodeToByteArray() },
+                        encodeBulkRecord = { record -> JOURNAL_JSON.encodeToString(record).encodeToByteArray() },
                         encodeInventory = { record -> JOURNAL_JSON.encodeToString(record).encodeToByteArray() },
                         encodeTerminalLag = { count, starvedAtCommitSeq ->
                             JOURNAL_JSON.encodeToString(
@@ -599,24 +612,37 @@ class ChapterTranslationStore(
         credit: ChapterJournalCredit?,
         artifactContentHash: String? = null,
     ) {
+        val paid = durableFailure != null || page.hasRenderedResult || page.isTextlessTerminal
+        val record = ChapterJournalRecord(
+            pageKey = pageKey,
+            generation = generation,
+            fencingToken = expected?.leaseToken ?: pageLeases[pageKey]?.token ?: 0L,
+            pageVersion = page.pageVersion,
+            state = page,
+            artifactContentHash = artifactContentHash ?: pageArtifactContentHash(artifactManifest, pageKey, page),
+            durableFailure = durableFailure,
+        )
+        activeBulkJournalCapture?.let { bulk ->
+            bulk.mutations[pageKey] = record
+            credit?.releaseIfUnqueued()
+            return
+        }
         val writer = journalWriter ?: run {
             credit?.releaseIfUnqueued()
             return
         }
         val wasAccepting = writer.isShadowCaptureActive
-        val sequence = writer.nextCommitSeq()
-        val manifest = artifactManifest
         writer.captureLegacyPersisted(
-            commitSeq = sequence,
+            commitSeq = writer.nextCommitSeq(),
             credit = credit,
             pageKey = pageKey,
-            generation = generation,
-            fencingToken = expected?.leaseToken ?: pageLeases[pageKey]?.token ?: 0L,
-            page = page,
+            generation = record.generation,
+            fencingToken = record.fencingToken,
+            page = record.state ?: page,
             durableFailure = durableFailure,
-            paid = durableFailure != null || page.hasRenderedResult || page.isTextlessTerminal,
-            artifactContentHash = artifactContentHash ?: pageArtifactContentHash(manifest, pageKey, page),
-            inventory = journalInventorySnapshot(manifest),
+            paid = paid,
+            artifactContentHash = record.artifactContentHash,
+            inventory = journalInventorySnapshot(artifactManifest),
         )
         if (credit == null && wasAccepting) {
             reportTerminalJournalLag()
@@ -630,6 +656,19 @@ class ChapterTranslationStore(
         credit: ChapterJournalCredit?,
         artifactContentHash: String? = null,
     ) {
+        val record = ChapterJournalRecord(
+            pageKey = pageKey,
+            generation = generation,
+            fencingToken = pageLeases[pageKey]?.token ?: 0L,
+            pageVersion = pageVersion,
+            state = null,
+            artifactContentHash = artifactContentHash,
+        )
+        activeBulkJournalCapture?.let { bulk ->
+            bulk.mutations[pageKey] = record
+            credit?.releaseIfUnqueued()
+            return
+        }
         val writer = journalWriter ?: run {
             credit?.releaseIfUnqueued()
             return
@@ -639,10 +678,56 @@ class ChapterTranslationStore(
             commitSeq = writer.nextCommitSeq(),
             credit = credit,
             pageKey = pageKey,
-            generation = generation,
-            fencingToken = pageLeases[pageKey]?.token ?: 0L,
-            pageVersion = pageVersion,
-            artifactContentHash = artifactContentHash,
+            generation = record.generation,
+            fencingToken = record.fencingToken,
+            pageVersion = record.pageVersion,
+            artifactContentHash = record.artifactContentHash,
+            inventory = journalInventorySnapshot(artifactManifest),
+        )
+        if (credit == null && wasAccepting) reportTerminalJournalLag()
+    }
+
+    /** Caller holds [mutex]. One bulk API operation consumes one writer credit and one commit sequence. */
+    private fun finishBulkJournalCaptureLocked(
+        bulk: BulkJournalCapture,
+        credit: ChapterJournalCredit?,
+    ) {
+        check(activeBulkJournalCapture === bulk) { "bulk journal capture context changed while store mutex was held" }
+        activeBulkJournalCapture = null
+        if (bulk.mutations.isEmpty()) {
+            credit?.releaseIfHeld()
+            return
+        }
+        val writer = journalWriter ?: run {
+            credit?.releaseIfHeld()
+            return
+        }
+        val wasAccepting = writer.isShadowCaptureActive
+        // The aggregate describes the durable subset that actually committed.
+        // replaceAll can partially commit legacy page operations before a later
+        // page is rejected, so its emitted mapping comes from captured outcomes,
+        // not the requested input map. A successful prior deletion remains a
+        // null mapping when the replacement write for that key was rejected.
+        val successfulMapping = when (bulk.kind) {
+            ChapterJournalFormat.RecordKind.BULK_REPLACE -> bulk.mutations.mapValues { (_, record) ->
+                record.pageKey.takeUnless { record.state == null }
+            }
+            ChapterJournalFormat.RecordKind.BULK_REKEY -> bulk.mapping.filter { (oldKey, newKey) ->
+                newKey != null &&
+                    bulk.mutations[oldKey]?.let { it.state == null } == true &&
+                    bulk.mutations[newKey]?.state != null
+            }
+            else -> error("unsupported bulk journal kind: ${bulk.kind}")
+        }
+        writer.captureLegacyBulkMutation(
+            commitSeq = writer.nextCommitSeq(),
+            credit = credit,
+            kind = bulk.kind,
+            record = ChapterJournalBulkRecord(
+                operation = bulk.operation,
+                mapping = successfulMapping,
+                mutations = bulk.mutations.values.toList(),
+            ),
             inventory = journalInventorySnapshot(artifactManifest),
         )
         if (credit == null && wasAccepting) reportTerminalJournalLag()
@@ -790,8 +875,10 @@ class ChapterTranslationStore(
             mutex.withLock {
                 reservations.forEach { (pageKey, expectedGeneration, credit) ->
                     val current = persistenceScheduler.pendingLazyMutations[pageKey]
-                    if (current != null && current.generation == expectedGeneration &&
-                        current.journalCredit == null && isLazyGenerationCurrent(expectedGeneration) &&
+                    if (current != null &&
+                        current.generation == expectedGeneration &&
+                        current.journalCredit == null &&
+                        isLazyGenerationCurrent(expectedGeneration) &&
                         credit?.retain() == true
                     ) {
                         persistenceScheduler.pendingLazyMutations[pageKey] = current.copy(journalCredit = credit)
@@ -2355,12 +2442,8 @@ class ChapterTranslationStore(
             }
             return
         }
-        val deleteKeys = (pages.keys + artifactManifest?.pages?.keys.orEmpty()).distinct()
-        val deleteCredits = linkedMapOf<String, ChapterJournalCredit?>()
-        val updateCredits = linkedMapOf<String, ChapterJournalCredit?>()
+        val bulkCredit = reserveJournalCredit("<bulk_replace>")
         try {
-            deleteKeys.forEach { key -> deleteCredits[key] = reserveJournalCredit(key) }
-            updatedPages.keys.forEach { key -> updateCredits[key] = reserveJournalCredit(key) }
             mutex.withLock {
                 when (val admission = admitMutationLocked()) {
                     MutationAdmission.Granted -> Unit
@@ -2372,37 +2455,57 @@ class ChapterTranslationStore(
                         return@withLock
                     }
                 }
-                if (artifactManifest != null) {
-                    artifactManifest?.pages?.keys?.toList().orEmpty().forEach { pageKey ->
-                        val pageVersion = pages[pageKey]?.pageVersion ?: artifactManifest?.pages?.get(pageKey)?.pageVersion ?: 0L
-                        val priorArtifactContentHash = pageArtifactContentHash(artifactManifest, pageKey, pages[pageKey])
-                        if (deleteArtifactPageLocked(pageKey)) {
-                            captureLegacyDeletionLocked(
-                                pageKey,
-                                pageVersion,
-                                deleteCredits[pageKey],
-                                artifactContentHash = priorArtifactContentHash,
-                            )
+                // Keep earlier staged commits outside this atomic replace record.
+                flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+                check(activeBulkJournalCapture == null) { "nested bulk journal capture" }
+                val oldKeys = (pages.keys + artifactManifest?.pages?.keys.orEmpty()).distinct()
+                val mapping = buildMap<String, String?> {
+                    oldKeys.forEach { put(it, null) }
+                    updatedPages.keys.forEach { put(it, it) }
+                }
+                val bulk = BulkJournalCapture(
+                    kind = ChapterJournalFormat.RecordKind.BULK_REPLACE,
+                    operation = "replace_all",
+                    mapping = mapping,
+                )
+                activeBulkJournalCapture = bulk
+                try {
+                    if (artifactManifest != null) {
+                        artifactManifest?.pages?.keys?.toList().orEmpty().forEach { pageKey ->
+                            val pageVersion = pages[pageKey]?.pageVersion ?: artifactManifest?.pages?.get(pageKey)?.pageVersion ?: 0L
+                            val priorArtifactContentHash = pageArtifactContentHash(artifactManifest, pageKey, pages[pageKey])
+                            if (deleteArtifactPageLocked(pageKey)) {
+                                captureLegacyDeletionLocked(
+                                    pageKey,
+                                    pageVersion,
+                                    credit = null,
+                                    artifactContentHash = priorArtifactContentHash,
+                                )
+                            }
                         }
                     }
-                }
-                pages = persistentMapOf()
-                committedDisplay = persistentMapOf()
-                retiredCleanedImages.clear()
-                updatedPages.forEach { (pageKey, page) ->
-                    val owned = ownedPage(pageKey, page)
-                    pages = pages.put(pageKey, owned)
-                    if (persistArtifactMutationLocked(pageKey, null, owned, journalCredit = updateCredits[pageKey])) {
-                        promoteDisplayIfReadyLocked(pageKey, owned)
+                    pages = persistentMapOf()
+                    committedDisplay = persistentMapOf()
+                    retiredCleanedImages.clear()
+                    updatedPages.forEach { (pageKey, page) ->
+                        val owned = ownedPage(pageKey, page)
+                        pages = pages.put(pageKey, owned)
+                        if (persistArtifactMutationLocked(pageKey, null, owned)) {
+                            promoteDisplayIfReadyLocked(pageKey, owned)
+                        }
                     }
+                    // Intermediate page writes are staged by the unchanged legacy classifier;
+                    // flush them before the single aggregate shadow record is handed off.
+                    flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
+                    persistenceScheduler.dirty = !persistLocked()
+                    _state.value = snapshotPages()
+                    _display.value = displaySnapshotLocked()
+                } finally {
+                    finishBulkJournalCaptureLocked(bulk, bulkCredit)
                 }
-                persistenceScheduler.dirty = !persistLocked()
-                _state.value = snapshotPages()
-                _display.value = displaySnapshotLocked()
             }
         } finally {
-            deleteCredits.values.forEach { it?.releaseIfHeld() }
-            updateCredits.values.forEach { it?.releaseIfHeld() }
+            bulkCredit?.releaseIfHeld()
         }
     }
 
@@ -2412,11 +2515,8 @@ class ChapterTranslationStore(
         onDiskKeys: List<String>,
     ): List<Pair<String, String>> {
         if (defunct || onlineKeys.size != onDiskKeys.size) return emptyList()
-        val oldCredits = ArrayList<ChapterJournalCredit?>(onlineKeys.size)
-        val newCredits = ArrayList<ChapterJournalCredit?>(onDiskKeys.size)
+        val bulkCredit = reserveJournalCredit("<bulk_rekey>")
         return try {
-            onlineKeys.forEach { key -> oldCredits += reserveJournalCredit(key) }
-            onDiskKeys.forEach { key -> newCredits += reserveJournalCredit(key) }
             mutex.withLock {
                 when (val admission = admitMutationLocked()) {
                     MutationAdmission.Granted -> Unit
@@ -2465,39 +2565,48 @@ class ChapterTranslationStore(
                 }
                 pages = updatedPages
                 committedDisplay = updatedCommitted
-                val rekeyed = rekeyArtifactPagesLocked(moveByOldKey)
-                if (rekeyed) {
-                    moves.forEach { (oldKey, newKey) ->
-                        val index = onlineKeys.indexOf(oldKey)
-                        captureLegacyDeletionLocked(
-                            pageKey = oldKey,
-                            pageVersion = previousPages[oldKey]?.pageVersion ?: 0L,
-                            credit = oldCredits.getOrNull(index),
-                            artifactContentHash = oldArtifactContentHashes[oldKey],
-                        )
-                        updatedPages[newKey]?.let { page ->
-                            captureLegacyPersistedLocked(
-                                pageKey = newKey,
-                                page = page,
-                                expected = null,
-                                durableFailure = null,
-                                credit = newCredits.getOrNull(index),
+                check(activeBulkJournalCapture == null) { "nested bulk journal capture" }
+                val bulk = BulkJournalCapture(
+                    kind = ChapterJournalFormat.RecordKind.BULK_REKEY,
+                    operation = "rekey_pages",
+                    mapping = moveByOldKey,
+                )
+                activeBulkJournalCapture = bulk
+                try {
+                    val rekeyed = rekeyArtifactPagesLocked(moveByOldKey)
+                    if (rekeyed) {
+                        moves.forEach { (oldKey, newKey) ->
+                            captureLegacyDeletionLocked(
+                                pageKey = oldKey,
+                                pageVersion = previousPages[oldKey]?.pageVersion ?: 0L,
+                                credit = null,
+                                artifactContentHash = oldArtifactContentHashes[oldKey],
                             )
+                            updatedPages[newKey]?.let { page ->
+                                captureLegacyPersistedLocked(
+                                    pageKey = newKey,
+                                    page = page,
+                                    expected = null,
+                                    durableFailure = null,
+                                    credit = null,
+                                )
+                            }
                         }
                     }
+                    retiredCleanedImages.keys.toList().forEach { pageKey ->
+                        if (pageKey !in updatedPages) retiredCleanedImages.remove(pageKey)
+                    }
+                    persistenceScheduler.dirty = true
+                    schedulePersist()
+                    _state.value = snapshotPages()
+                    _display.value = displaySnapshotLocked()
+                    moves
+                } finally {
+                    finishBulkJournalCaptureLocked(bulk, bulkCredit)
                 }
-                retiredCleanedImages.keys.toList().forEach { pageKey ->
-                    if (pageKey !in updatedPages) retiredCleanedImages.remove(pageKey)
-                }
-                persistenceScheduler.dirty = true
-                schedulePersist()
-                _state.value = snapshotPages()
-                _display.value = displaySnapshotLocked()
-                moves
             }
         } finally {
-            oldCredits.forEach { it?.releaseIfHeld() }
-            newCredits.forEach { it?.releaseIfHeld() }
+            bulkCredit?.releaseIfHeld()
         }
     }
 

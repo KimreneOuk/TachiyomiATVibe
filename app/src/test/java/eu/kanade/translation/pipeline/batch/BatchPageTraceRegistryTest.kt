@@ -34,7 +34,7 @@ class BatchPageTraceRegistryTest {
     }
 
     @Test
-    fun `synthetic page trace separates each lease wait from busy lanes`() = runBlocking {
+    fun `synthetic page trace separates each lease wait from busy lanes`() = runBlocking<Unit> {
         val captured = mutableListOf<String>()
         val oldSink = TranslationPipelineDiagnostics.sink
         val oldDetailed = TranslationPipelineDiagnostics.detailedTracingEnabled
@@ -217,7 +217,7 @@ class BatchPageTraceRegistryTest {
     }
 
     @Test
-    fun `multi-page envelope provider admission waits and busy time reach each page run`() = runBlocking {
+    fun `multi-page envelope provider admission waits and busy time reach each page run`() = runBlocking<Unit> {
         val captured = mutableListOf<String>()
         val oldSink = TranslationPipelineDiagnostics.sink
         val oldDetailed = TranslationPipelineDiagnostics.detailedTracingEnabled
@@ -296,7 +296,7 @@ class BatchPageTraceRegistryTest {
     }
 
     @Test
-    fun `overlap deferral is distinct from a completed skipped page`() = runBlocking {
+    fun `overlap deferral is distinct from a completed skipped page`() = runBlocking<Unit> {
         val captured = mutableListOf<String>()
         val oldSink = TranslationPipelineDiagnostics.sink
         val oldDetailed = TranslationPipelineDiagnostics.detailedTracingEnabled

@@ -9,6 +9,9 @@ import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import kotlinx.coroutines.CompletableDeferred
@@ -35,6 +38,8 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+
+private const val REQUIRED_CONTROL_COMMAND_SLOTS = 4
 
 /** Immutable reference snapshot handed to the journal writer after a legacy commit succeeds. */
 @Serializable
@@ -73,6 +78,21 @@ internal data class ChapterJournalInventoryRecord(
     val expectedPageKeys: List<String>,
     val expectedPageCount: Int,
     val sourceFingerprint: String,
+) {
+    companion object {
+        const val SCHEMA_VERSION = 1
+    }
+}
+
+/** One atomic bulk legacy transition, represented by one journal frame and one commit sequence. */
+@Serializable
+internal data class ChapterJournalBulkRecord(
+    val schemaVersion: Int = SCHEMA_VERSION,
+    val operation: String,
+    /** Applied mapping from successful legacy commits only; rejected updates are absent or remain tombstones. */
+    val mapping: Map<String, String?>,
+    /** Successful page states and tombstones that make up this legacy transaction. */
+    val mutations: List<ChapterJournalRecord>,
 ) {
     companion object {
         const val SCHEMA_VERSION = 1
@@ -282,6 +302,7 @@ internal class ChapterJournalWriter(
     private val storage: ChapterJournalStorage,
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val encodeRecord: (ChapterJournalRecord) -> ByteArray,
+    private val encodeBulkRecord: (ChapterJournalBulkRecord) -> ByteArray = { it.toString().encodeToByteArray() },
     private val encodeInventory: (ChapterJournalInventoryRecord) -> ByteArray = { record ->
         (
             "inventory:${record.chapterIdentityHash}:${record.expectedPageCount}:${record.sourceFingerprint}:" +
@@ -299,12 +320,17 @@ internal class ChapterJournalWriter(
     private val chapterIdentityHash: String = DEFAULT_CHAPTER_IDENTITY_HASH,
     private val regularCreditLimit: Int = DEFAULT_REGULAR_CREDITS,
     private val foregroundCreditLimit: Int = DEFAULT_FOREGROUND_CREDITS,
+    private val channelCapacity: Int = regularCreditLimit + foregroundCreditLimit + REQUIRED_CONTROL_COMMAND_SLOTS,
     private val segmentByteLimit: Long = ChapterJournalFormat.SEGMENT_BYTE_LIMIT,
     private val durabilityIntervalMs: Long = DEFAULT_FREE_DURABILITY_INTERVAL_MS,
 ) {
     init {
         require(regularCreditLimit >= 1) { "regularCreditLimit must be at least 1" }
         require(foregroundCreditLimit >= 1) { "foregroundCreditLimit must be at least 1" }
+        val worstCaseChannelCapacity = regularCreditLimit + foregroundCreditLimit + REQUIRED_CONTROL_COMMAND_SLOTS
+        require(channelCapacity >= worstCaseChannelCapacity) {
+            "channelCapacity=$channelCapacity must reserve all credits and $REQUIRED_CONTROL_COMMAND_SLOTS control commands"
+        }
         require(epochOrdinal >= 0L) { "epochOrdinal must be non-negative" }
     }
 
@@ -321,7 +347,7 @@ internal class ChapterJournalWriter(
     // Appends are bounded by the 8+1 credit window. Inventory updates coalesce
     // to one queued wakeup; capacity also reserves room for DEFUNCT, TERMINAL_LAG,
     // and CLOSE, so producer paths never wait while holding the store mutex.
-    private val commands = Channel<Command>(regularCreditLimit + foregroundCreditLimit + 4)
+    private val commands = Channel<Command>(channelCapacity)
     private val timerWake = Channel<Unit>(Channel.CONFLATED)
     private val assignedCommitSequence = AtomicLong(0L)
     private val highWater = AtomicLong(0L)
@@ -329,6 +355,7 @@ internal class ChapterJournalWriter(
     private val outstandingCredits = LinkedHashSet<ChapterJournalCredit>()
     private val laggedRecords = AtomicLong(0L)
     private val droppedControlRecords = AtomicLong(0L)
+    private val lostTerminalRecords = AtomicLong(0L)
     private val writerFailures = AtomicLong(0L)
     private val terminalPayloadRecords = AtomicLong(0L)
     private val offersRejectedAfterTerminal = AtomicLong(0L)
@@ -353,6 +380,9 @@ internal class ChapterJournalWriter(
     val ackedHighWaterSeq: Long get() = highWater.get()
     val shadowLaggedCount: Long get() = laggedRecords.get()
     val droppedControlRecordCount: Long get() = droppedControlRecords.get()
+
+    /** Terminal endings that could not be queued or written, separate from credit-starvation counts. */
+    val lostTerminalRecordCount: Long get() = lostTerminalRecords.get()
     val writerFailureCount: Long get() = writerFailures.get()
     val terminalPayloadCount: Long get() = terminalPayloadRecords.get()
     val offersRejectedAfterTerminalCount: Long get() = offersRejectedAfterTerminal.get()
@@ -409,7 +439,10 @@ internal class ChapterJournalWriter(
             generation = generation,
             fencingToken = fencingToken,
             pageVersion = page?.pageVersion ?: 0L,
-            state = page,
+            // The writer serializes on its own dispatcher later. Detach while the caller
+            // still holds ChapterTranslationStore.mutex so later in-place edits cannot
+            // rewrite the historical state associated with this commit sequence.
+            state = page?.detachedCopy(),
             artifactContentHash = artifactContentHash,
             durableFailure = durableFailure,
         )
@@ -421,6 +454,40 @@ internal class ChapterJournalWriter(
             credit = credit,
             pageKey = pageKey,
             traceRuns = TranslationTrace.currentRuns(),
+            syncImmediately = paid,
+        )
+        return commitSeq
+    }
+
+    /** Caller holds the store mutex. Captures an atomic replace/rekey as a single bounded event. */
+    fun captureLegacyBulkMutation(
+        commitSeq: Long,
+        credit: ChapterJournalCredit?,
+        kind: ChapterJournalFormat.RecordKind,
+        record: ChapterJournalBulkRecord,
+        inventory: ChapterJournalInventorySnapshot = ChapterJournalInventorySnapshot.EMPTY,
+    ): Long {
+        require(kind == ChapterJournalFormat.RecordKind.BULK_REPLACE || kind == ChapterJournalFormat.RecordKind.BULK_REKEY) {
+            "bulk mutation requires a bulk record kind"
+        }
+        val immutableRecord = record.copy(
+            mapping = record.mapping.toMap(),
+            mutations = record.mutations.map { mutation ->
+                mutation.copy(state = mutation.state?.detachedCopy())
+            },
+        )
+        offer(
+            commitSeq,
+            kind,
+            encode = { encodeBulkRecord(immutableRecord) },
+            inventory = inventory,
+            credit = credit,
+            pageKey = "<${record.operation}>",
+            traceRuns = TranslationTrace.currentRuns(),
+            syncImmediately = immutableRecord.mutations.any { mutation ->
+                mutation.durableFailure != null || mutation.state?.hasRenderedResult == true ||
+                    mutation.state?.isTextlessTerminal == true
+            },
         )
         return commitSeq
     }
@@ -496,6 +563,7 @@ internal class ChapterJournalWriter(
             creditAdmissionOpen.set(false)
             if (closed.get() || !captureAcceptanceOpen.get()) {
                 droppedControlRecords.incrementAndGet()
+                lostTerminalRecords.incrementAndGet()
                 return
             }
             // Empty sessions have no journal. A held credit means the marker may
@@ -513,11 +581,13 @@ internal class ChapterJournalWriter(
         if (closed.get()) {
             defunctMarkerQueued.set(false)
             droppedControlRecords.incrementAndGet()
+            lostTerminalRecords.incrementAndGet()
             return false
         }
         if (commands.trySend(Command.Defunct(encodeTerminalDefunct)).isFailure) {
             defunctMarkerQueued.set(false)
             droppedControlRecords.incrementAndGet()
+            lostTerminalRecords.incrementAndGet()
             return false
         }
         return true
@@ -595,6 +665,7 @@ internal class ChapterJournalWriter(
         credit: ChapterJournalCredit?,
         pageKey: String,
         traceRuns: List<TranslationRunTrace>,
+        syncImmediately: Boolean = false,
     ) {
         synchronized(creditAdmissionLock) {
             if (closed.get() || !captureAcceptanceOpen.get()) {
@@ -621,7 +692,10 @@ internal class ChapterJournalWriter(
                     return
                 }
             }
-            if (commands.trySend(Command.Append(commitSeq, kind, encode, inventory, credit, pageKey, traceRuns)).isFailure) {
+            if (commands.trySend(
+                    Command.Append(commitSeq, kind, encode, inventory, credit, pageKey, traceRuns, syncImmediately),
+                ).isFailure
+            ) {
                 credit.releaseAfterTerminal()
                 markShadowLag(commitSeq, inventory, traceRuns)
                 return
@@ -663,6 +737,7 @@ internal class ChapterJournalWriter(
             )
             if (commands.trySend(terminalLag).isFailure) {
                 droppedControlRecords.incrementAndGet()
+                lostTerminalRecords.incrementAndGet()
             } else {
                 hasJournalEvent.set(true)
                 startWriter()
@@ -729,6 +804,7 @@ internal class ChapterJournalWriter(
         var freeSyncTimer: Job? = null
         var hadUnsyncedFreeWork = false
         var terminalError: Throwable? = null
+        var terminalEndingInProgress = false
         var activeCredit: ChapterJournalCredit? = null
         var activeClose: CompletableDeferred<Unit>? = null
 
@@ -791,6 +867,7 @@ internal class ChapterJournalWriter(
             failedCommitSeq: Long,
             traceRuns: List<TranslationRunTrace> = emptyList(),
         ) {
+            terminalEndingInProgress = true
             val payload = encodeTerminalPayload(pageKey, observedBytes, failedCommitSeq)
             if (payload.size > ChapterJournalFormat.MAX_PAYLOAD_BYTES) {
                 throw IOException("terminal payload marker exceeded the journal payload limit")
@@ -802,6 +879,7 @@ internal class ChapterJournalWriter(
             )
             sink?.flush()
             sink?.sync()
+            terminalEndingInProgress = false
             highWater.set(frameSeq)
             clearFreeSync()
             terminalPayloadRecords.incrementAndGet()
@@ -927,7 +1005,7 @@ internal class ChapterJournalWriter(
                         )
                         lastCommitSeq = command.commitSeq
                         nextCommitSeq = command.commitSeq + 1
-                        if (command.kind == ChapterJournalFormat.RecordKind.PAID_STATE) {
+                        if (command.kind == ChapterJournalFormat.RecordKind.PAID_STATE || command.syncImmediately) {
                             sink?.flush()
                             sink?.sync()
                             highWater.set(stateFrameSeq)
@@ -951,14 +1029,18 @@ internal class ChapterJournalWriter(
                     is Command.TerminalLag -> {
                         if (terminalCaptureHalted) {
                             droppedControlRecords.incrementAndGet()
+                            lostTerminalRecords.incrementAndGet()
                             continue
                         }
+                        terminalEndingInProgress = true
                         if (!terminalLagSeen && command.starvedAtCommitSeq != nextCommitSeq) {
                             throw IOException(
                                 "terminal lag sequence mismatch: expected=$nextCommitSeq actual=${command.starvedAtCommitSeq}",
                             )
                         }
                         if (!appendInventory(command.inventory, command.starvedAtCommitSeq)) {
+                            // The inventory path wrote its own terminal-payload ending.
+                            terminalEndingInProgress = false
                             continue
                         }
                         val frameSeq = appendFrame(
@@ -968,6 +1050,7 @@ internal class ChapterJournalWriter(
                         )
                         sink?.flush()
                         sink?.sync()
+                        terminalEndingInProgress = false
                         highWater.set(frameSeq)
                         terminalLagSeen = true
                         clearFreeSync()
@@ -976,8 +1059,10 @@ internal class ChapterJournalWriter(
                     is Command.Defunct -> {
                         if (terminalCaptureHalted) {
                             droppedControlRecords.incrementAndGet()
+                            lostTerminalRecords.incrementAndGet()
                             continue
                         }
+                        terminalEndingInProgress = true
                         val frameSeq = appendFrame(
                             ChapterJournalFormat.RecordKind.DEFUNCT,
                             commitSeq = null,
@@ -985,6 +1070,7 @@ internal class ChapterJournalWriter(
                         )
                         sink?.flush()
                         sink?.sync()
+                        terminalEndingInProgress = false
                         highWater.set(frameSeq)
                         clearFreeSync()
                     }
@@ -1004,6 +1090,11 @@ internal class ChapterJournalWriter(
         } catch (failure: Throwable) {
             terminalError = failure
             writerFailures.incrementAndGet()
+            if (terminalEndingInProgress) {
+                droppedControlRecords.incrementAndGet()
+                lostTerminalRecords.incrementAndGet()
+                terminalEndingInProgress = false
+            }
             val creditsToRelease = synchronized(creditAdmissionLock) {
                 creditAdmissionOpen.set(false)
                 captureAcceptanceOpen.set(false)
@@ -1020,7 +1111,10 @@ internal class ChapterJournalWriter(
             while (true) {
                 val pending = commands.tryReceive().getOrNull() ?: break
                 if (pending is Command.Append) pending.credit.releaseAfterTerminal()
-                if (pending is Command.Defunct) droppedControlRecords.incrementAndGet()
+                if (pending is Command.Defunct || pending is Command.TerminalLag) {
+                    droppedControlRecords.incrementAndGet()
+                    lostTerminalRecords.incrementAndGet()
+                }
                 if (pending is Command.Close) pending.done.completeExceptionally(failure)
             }
         } finally {
@@ -1177,6 +1271,7 @@ internal class ChapterJournalWriter(
             val credit: ChapterJournalCredit,
             val pageKey: String,
             val traceRuns: List<TranslationRunTrace>,
+            val syncImmediately: Boolean,
         ) : Command
 
         data object InventoryWake : Command

@@ -8,8 +8,9 @@ import java.util.zip.CRC32
 /**
  * Binary framing for the shadow journal. Payload meaning is intentionally owned by the caller.
  * Every physical frame, including metadata, consumes `frameSeq` and participates in the durable-prefix ACK.
- * Only state frames consume `commitSeq`; after TERMINAL_LAG the logical legacy sequence may advance without
- * frames, so later captured commits may have a gap while remaining strictly increasing.
+ * State frames, including one-frame BULK_REPLACE/BULK_REKEY transactions, consume `commitSeq`; after
+ * TERMINAL_LAG the logical legacy sequence may advance without frames, so later captured commits may have
+ * a gap while remaining strictly increasing.
  */
 internal object ChapterJournalFormat {
     const val FORMAT_VERSION = 2
@@ -40,6 +41,8 @@ internal object ChapterJournalFormat {
         DEFUNCT(4),
         INVENTORY(5),
         TERMINAL_PAYLOAD(6),
+        BULK_REPLACE(7, hasCommitSequence = true),
+        BULK_REKEY(8, hasCommitSequence = true),
     }
 
     data class Frame(
