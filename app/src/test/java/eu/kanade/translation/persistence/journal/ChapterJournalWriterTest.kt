@@ -479,6 +479,37 @@ class ChapterJournalWriterTest {
     }
 
     @Test
+    fun `capture barrier syncs accepted prefix without consuming parked credits`() = runTest {
+        val storage = MemoryStorage()
+        val writer = writer(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            regularCreditLimit = 2,
+        )
+        try {
+            val accepted = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyPersisted(
+                writer.nextCommitSeq(),
+                accepted,
+                "accepted-page",
+                1L,
+                1L,
+                page("accepted-page"),
+            )
+            val parked = writer.tryAcquireShadowCredit(foreground = false)!!
+
+            val coveredFrameSeq = writer.flushToCaptureBarrier()
+
+            coveredFrameSeq shouldBe 2L // INVENTORY plus the accepted page frame.
+            writer.ackedHighWaterSeq shouldBe 2L
+            writer.inFlightCount shouldBe 1
+            parked.releaseIfUnqueued() shouldBe true
+        } finally {
+            writer.drainAndClose()
+        }
+    }
+
+    @Test
     fun `shadow credit exhaustion records a terminal prefix without blocking legacy commits`() = runTest {
         val storage = MemoryStorage()
         val writer = writer(
@@ -587,6 +618,33 @@ class ChapterJournalWriterTest {
             writer.offersRejectedAfterTerminalCount shouldBe 1L
             writer.drainAndClose()
             storage.closedSinkCount shouldBe 1
+        } finally {
+            writer.drainAndClose()
+        }
+    }
+
+    @Test
+    fun `live coordinator keeps a defunct epoch open while a credited append can still arrive`() = runTest {
+        val storage = MemoryStorage()
+        val writer = writer(storage, StandardTestDispatcher(testScheduler))
+        val coordinator = ChapterJournalCaptureCoordinator()
+        coordinator.register(writer)
+        try {
+            val initial = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyPersisted(writer.nextCommitSeq(), initial, "page-a", 1L, 1L, page())
+            runCurrent()
+
+            val linger = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.requestDefunctMarker()
+            writer.flushToCaptureBarrier() shouldBe writer.ackedHighWaterSeq
+            writer.isWriterStopped shouldBe false
+            coordinator.coverageSnapshot().single().terminallyClosed shouldBe false
+            scan(storage).frames.last().kind shouldBe ChapterJournalFormat.RecordKind.DEFUNCT
+
+            linger.releaseIfHeld() shouldBe true
+            runCurrent()
+            writer.isWriterStopped shouldBe true
+            coordinator.coverageSnapshot().single().terminallyClosed shouldBe true
         } finally {
             writer.drainAndClose()
         }
@@ -802,7 +860,7 @@ class ChapterJournalWriterTest {
         },
         regularCreditLimit: Int = 8,
         foregroundCreditLimit: Int = 1,
-        channelCapacity: Int = regularCreditLimit + foregroundCreditLimit + 4,
+        channelCapacity: Int = regularCreditLimit + foregroundCreditLimit + 5,
         segmentByteLimit: Long = ChapterJournalFormat.SEGMENT_BYTE_LIMIT,
         durabilityIntervalMs: Long = ChapterJournalWriter.DEFAULT_FREE_DURABILITY_INTERVAL_MS,
         storeGeneration: Long = 0L,
