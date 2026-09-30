@@ -10,6 +10,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceReason
 import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import kotlinx.coroutines.CancellationException
@@ -23,12 +24,23 @@ internal class BatchPageTraceRegistry(
     private val clock: TranslationTraceClock = TranslationTraceClock.SYSTEM,
 ) {
     private val runs = ConcurrentHashMap<String, TranslationRunTrace>()
+    private val deferredReasons = ConcurrentHashMap<String, TranslationTraceReason>()
 
     fun startPages(pageKeys: Iterable<String>) {
         pageKeys.distinct().forEach(::runForOrStart)
     }
 
     fun runFor(pageKey: String): TranslationRunTrace? = runs[pageKey]
+
+    /** Records the overlap scheduler's reason when a page cannot run this pass. */
+    fun markDeferred(pageKey: String, reason: TranslationTraceReason) {
+        deferredReasons[pageKey] = reason
+    }
+
+    /** A later attempt owns the page again, so an earlier temporary deferral is settled. */
+    fun clearDeferred(pageKey: String) {
+        deferredReasons.remove(pageKey)
+    }
 
     fun enterLane(lane: TranslationTraceLane) = schedule.enterLane(lane)
 
@@ -160,8 +172,17 @@ internal class BatchPageTraceRegistry(
 
     fun finishOpenRuns(outcomeForPage: (String) -> TranslationTraceOutcome) {
         runs.entries.toList().forEach { (pageKey, run) ->
-            run.end(outcomeForPage(pageKey))
+            val reason = deferredReasons.remove(pageKey)
+            val outcome = outcomeForPage(pageKey).let { current ->
+                if (reason != null && current == TranslationTraceOutcome.SUCCESS) {
+                    TranslationTraceOutcome.PAUSE
+                } else {
+                    current
+                }
+            }
+            run.end(outcome, reason = reason)
             runs.remove(pageKey, run)
         }
+        deferredReasons.clear()
     }
 }

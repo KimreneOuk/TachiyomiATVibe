@@ -9,6 +9,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceReason
 import eu.kanade.translation.diagnostics.TranslationTraceSink
 import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
@@ -292,5 +293,55 @@ class BatchPageTraceRegistryTest {
         translations.forEach { it shouldContain "durationMs=31" }
         val scheduleEnd = captured.single { it.contains("event=schedule_end ") }
         scheduleEnd shouldContain "providerBusyMs=31"
+    }
+
+    @Test
+    fun `overlap deferral is distinct from a completed skipped page`() = runBlocking {
+        val captured = mutableListOf<String>()
+        val oldSink = TranslationPipelineDiagnostics.sink
+        val oldDetailed = TranslationPipelineDiagnostics.detailedTracingEnabled
+        val oldIds = TranslationPipelineDiagnostics.idGenerator
+        val oldKeys = TranslationPipelineDiagnostics.identityKeys
+        TranslationPipelineDiagnostics.sink = TranslationTraceSink { _, line -> captured += line }
+        TranslationPipelineDiagnostics.detailedTracingEnabled = true
+        TranslationPipelineDiagnostics.idGenerator = TranslationTraceIdGenerator(processPrefix = "e16adefer")
+        TranslationPipelineDiagnostics.identityKeys = TranslationIdentityKeys(ByteArray(32) { 43 })
+
+        try {
+            val clock = FakeClock()
+            val deferredPage = "deferred-page"
+            val completedSkipPage = "completed-skip-page"
+            val schedule = TranslationPipelineDiagnostics.startSchedule(
+                mode = TranslationTraceMode.BATCH,
+                origin = TranslationTraceMode.BATCH,
+                chapterRaw = "defer-vs-skip",
+                pages = 2,
+                clock = clock,
+            )
+            val registry = BatchPageTraceRegistry(
+                schedule,
+                mapOf(deferredPage to 0, completedSkipPage to 1),
+                clock,
+            )
+            registry.startPages(listOf(deferredPage, completedSkipPage))
+
+            // This is the marker installed by OverlapScheduler at its concrete
+            // deferral site. The finalizer fallback deliberately returns SUCCESS
+            // for both pages to model their SKIPPED page states.
+            registry.markDeferred(deferredPage, TranslationTraceReason.WRITE_SLOT_BUSY)
+            registry.finishOpenRuns { TranslationTraceOutcome.SUCCESS }
+            schedule.end(TranslationTraceOutcome.PAUSE)
+        } finally {
+            TranslationPipelineDiagnostics.sink = oldSink
+            TranslationPipelineDiagnostics.detailedTracingEnabled = oldDetailed
+            TranslationPipelineDiagnostics.idGenerator = oldIds
+            TranslationPipelineDiagnostics.identityKeys = oldKeys
+        }
+
+        val runEnds = captured.filter { it.contains("event=run_end ") }
+        runEnds.size shouldBe 2
+        runEnds.single { it.contains("reason=write_slot_busy") } shouldContain "outcome=pause"
+        val completedSkip = runEnds.single { !it.contains("reason=") }
+        completedSkip shouldContain "outcome=success"
     }
 }

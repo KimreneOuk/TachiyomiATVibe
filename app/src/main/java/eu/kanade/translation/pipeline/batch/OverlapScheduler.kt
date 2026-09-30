@@ -1,6 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
+import eu.kanade.translation.diagnostics.TranslationTraceReason
 import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.ProviderRequestMetadata
@@ -554,6 +555,9 @@ internal class OverlapScheduler(
 
     private suspend fun inpaintOne(pageKey: String, overlap: Boolean): InpaintOutcome {
         return inpaintMutex.withLock {
+            // A later retry takes ownership of the page again. If it is deferred
+            // again below, that defer site will install the new terminal reason.
+            pageTraceRegistry?.clearDeferred(pageKey)
             inFlightPage = pageKey
             try {
                 //  round 2 — BATCH write-slot exclusivity (admission pre-
@@ -578,6 +582,7 @@ internal class OverlapScheduler(
                 // is now DETECTED and cleanly skipped by the claim's stage
                 // proof (see [tryClaimInpaintOwnership]) instead of ridden.
                 if (store.snapshot(pageKey).leaseToken != null) {
+                    pageTraceRegistry?.markDeferred(pageKey, TranslationTraceReason.WRITE_SLOT_BUSY)
                     if (overlap) {
                         deferredUntilNextWindow += pageKey
                         // Count a serial fallback when the overlap window cannot
@@ -594,6 +599,7 @@ internal class OverlapScheduler(
                 }
                 when (val ownership = tryClaimInpaintOwnership(pageKey)) {
                     is InpaintOwnership.LeaseDenied -> {
+                        pageTraceRegistry?.markDeferred(pageKey, TranslationTraceReason.LEASE_UNAVAILABLE)
                         // Never preempt the owning origin: defer the page for
                         // the rest of the pass (a MANUAL/native owner's outcome
                         // is authoritative; a later run reconciles).
@@ -614,6 +620,7 @@ internal class OverlapScheduler(
                     // deferred exactly like a pre-check slot-busy hit (no
                     // write, no record removal, no wasted pass).
                     InpaintOwnership.SiblingAttach -> {
+                        pageTraceRegistry?.markDeferred(pageKey, TranslationTraceReason.SIBLING_ATTACH)
                         if (overlap) {
                             deferredUntilNextWindow += pageKey
                             counters.serialFallbacks.incrementAndGet()
@@ -681,6 +688,7 @@ internal class OverlapScheduler(
                             // of the pass; the owner (or a later run) reconciles it.
                             // Retrying here livelocked the whole ordered drain.
                             counters.overlapInpaintFailures.incrementAndGet()
+                            pageTraceRegistry?.markDeferred(pageKey, TranslationTraceReason.CONCURRENT_WRITER)
                             deferredByLeaseOwner += pageKey
                             logcat(LogPriority.WARN) {
                                 "TachiyomiAT t924 overlap inpaint yielded pageHash=${pageKey.hashCode()} " +

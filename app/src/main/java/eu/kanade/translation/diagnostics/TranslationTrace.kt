@@ -201,8 +201,8 @@ enum class TranslationScheduleState : TraceToken {
 }
 
 /**
- * Bounded reason-token vocabulary for the `reason=` field of `schedule_state`
- * and `route_change` events.
+ * Bounded reason-token vocabulary for the `reason=` field of `schedule_state`,
+ * `route_change`, and selected terminal `run_end` events.
  *
  * Free-form reason strings are not accepted anywhere in the schema. Callers
  * must pass one of these tokens (via [token]); the formatter collapses
@@ -223,6 +223,9 @@ enum class TranslationTraceReason(val token: String) {
     ADMITTED("admitted"),
     LEASE_GRANTED("lease_granted"),
     LEASE_UNAVAILABLE("lease_unavailable"),
+    WRITE_SLOT_BUSY("write_slot_busy"),
+    SIBLING_ATTACH("sibling_attach"),
+    CONCURRENT_WRITER("concurrent_writer"),
     SOURCE_UNAVAILABLE("source_unavailable"),
     MEMORY_PRESSURE("memory_pressure"),
     PROVIDER_PAUSE("provider_pause"),
@@ -937,6 +940,7 @@ class TranslationRunTrace internal constructor(
         error: Throwable? = null,
         errorType: String? = null,
         errorCode: Long? = null,
+        reason: TranslationTraceReason? = null,
     ): Boolean {
         if (!closed.compareAndSet(false, true)) return false
         val now = clock.nowNanos()
@@ -955,6 +959,7 @@ class TranslationRunTrace internal constructor(
             retries = retries.get(),
             outcome = outcome,
             error = resolvedError,
+            reason = reason,
         )
         return true
     }

@@ -423,6 +423,7 @@ object TranslationPipelineDiagnostics {
         retries: Int,
         outcome: TranslationTraceOutcome,
         error: TranslationTraceError,
+        reason: TranslationTraceReason?,
     ) {
         try {
             emit(
@@ -438,6 +439,7 @@ object TranslationPipelineDiagnostics {
                     outcome = outcome,
                     errorType = error.type,
                     errorCode = error.code,
+                    reason = reason,
                 ),
                 terminalPriority(outcome),
             )
@@ -738,6 +740,7 @@ object TranslationPipelineDiagnostics {
         outcome: TranslationTraceOutcome,
         errorType: String,
         errorCode: Long?,
+        reason: TranslationTraceReason? = null,
     ): String =
         identityPrefix(EVENT_RUN_END, identity) +
             " plan=${plan.token}" +
@@ -749,7 +752,11 @@ object TranslationPipelineDiagnostics {
             " retries=$retries" +
             " outcome=${outcome.token}" +
             " errorType=$errorType" +
-            " errorCode=${errorCode ?: NONE}"
+            " errorCode=${errorCode ?: NONE}" +
+            reasonSuffix(reason)
+
+    private fun reasonSuffix(reason: TranslationTraceReason?): String =
+        reason?.let { " reason=${it.token}" } ?: ""
 
     internal fun stageStartRecord(
         identity: TranslationRunIdentity,
