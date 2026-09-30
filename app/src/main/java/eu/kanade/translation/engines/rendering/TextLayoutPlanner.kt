@@ -3,7 +3,7 @@ package eu.kanade.translation.engines.rendering
 import eu.kanade.translation.engines.vision.segmentation.MaskConversionBudgets
 import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
 import eu.kanade.translation.engines.vision.segmentation.OrderedMaskResult
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -112,7 +112,7 @@ data class HardClip(
  *   overlap — the safety net making non-overlap structural, not best-effort.
  */
 data class BlockLayout(
-    val block: TranslationBlock,
+    val block: TranslationBlockView,
     val text: String,
     val isVertical: Boolean,
     val originX: Float,
@@ -201,7 +201,7 @@ sealed interface LayoutOutcome {
  */
 data class LayoutResult(
     val identity: InputIdentity,
-    val block: TranslationBlock,
+    val block: TranslationBlockView,
     val chosenText: String,
     val planningOrdinal: Int,
     val renderOrdinal: Int?,
@@ -405,7 +405,7 @@ internal object TextLayoutTuning {
  * measurement goes through the injected [TextMeasurer], so it is unit-testable
  * with a deterministic fake.
  *
- * **Ordering.** Blocks are placed highest-[TranslationBlock.score] first: the most
+ * **Ordering.** Blocks are placed highest-[TranslationBlockView.score] first: the most
  * confident box takes its preferred placement and lower-confidence boxes treat it
  * as a fixed obstacle. Ties keep reading order (stable sort).
  */
@@ -449,7 +449,7 @@ object TextLayoutPlanner {
      * existing callers ([TranslationOverlayView], tests) keep working unchanged.
      */
     fun plan(
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         pageWidth: Float,
         pageHeight: Float,
         sampleSize: Int,
@@ -462,14 +462,14 @@ object TextLayoutPlanner {
      * Full planner contract: exactly one explicit [LayoutResult] for
      * every nonblank input — [LayoutOutcome.Draw] with its finalized layout, or
      * [LayoutOutcome.NonDraw] with a reason. Blank chosen texts remain the only
-     * intentional absence. Blocks are placed highest-[TranslationBlock.score]
+     * intentional absence. Blocks are placed highest-[TranslationBlockView.score]
      * first (ties keep reading order); the most confident box takes its
      * preferred placement and lower-confidence boxes treat it as a fixed
      * obstacle. [PageLayoutPlan.drawableInRenderOrder] is the placement-ordered
      * Draw list the renderer consumes.
      */
     fun planPage(
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         pageWidth: Float,
         pageHeight: Float,
         sampleSize: Int,
@@ -615,7 +615,7 @@ object TextLayoutPlanner {
      * - Progressive aspect-ratio contraction fitting into bubble contours
      */
     internal fun planPageInternal(
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         pageWidth: Float,
         pageHeight: Float,
         sampleSize: Int,
@@ -626,7 +626,7 @@ object TextLayoutPlanner {
         val scale = 1f / sampleSize
 
         val ordered = blocks.withIndex().sortedWith(
-            compareByDescending<IndexedValue<TranslationBlock>> { it.value.score }
+            compareByDescending<IndexedValue<TranslationBlockView>> { it.value.score }
                 .thenBy { it.index },
         )
 
@@ -820,7 +820,7 @@ object TextLayoutPlanner {
      * exist only in the planned lines, never in persisted data.
      */
     internal fun adaptiveBlockLayout(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         slab: FloatRect,
         adaptive: AdaptiveResult,
@@ -900,7 +900,7 @@ object TextLayoutPlanner {
     private fun applySiblingFontHarmony(
         drawable: ArrayList<BlockLayout>,
         resultsByInput: Array<LayoutResult?>,
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         cellPlans: Map<Int, SharedCellPlan>,
         grouping: MaskGrouping,
         collisionGap: Int,
@@ -979,7 +979,7 @@ object TextLayoutPlanner {
      */
     internal fun harmonizedReplacement(
         layout: BlockLayout,
-        block: TranslationBlock,
+        block: TranslationBlockView,
         cellSpans: List<MaskGeometry.RowSpan>,
         slab: FloatRect?,
         fitRegion: FloatRect?,
@@ -1267,7 +1267,7 @@ object TextLayoutPlanner {
      * budget/fallback) — the caller keeps the legacy path for the block.
      */
     private fun rescueCeilingSpans(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         cellPlan: SharedCellPlan?,
         grouping: MaskGrouping,
         inputIndex: Int,
@@ -1324,7 +1324,7 @@ object TextLayoutPlanner {
      * allocation.
      */
     private fun containedReflowRescue(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         cellPlan: SharedCellPlan?,
         ceilingSpans: List<MaskGeometry.RowSpan>?,
@@ -1448,7 +1448,7 @@ object TextLayoutPlanner {
     }
 
     /** Resolver-entry-based masked relocation budget. */
-    internal fun maskedShiftCap(block: TranslationBlock, pageWidth: Float, pageHeight: Float): Float =
+    internal fun maskedShiftCap(block: TranslationBlockView, pageWidth: Float, pageHeight: Float): Float =
         min(
             TextLayoutTuning.MAX_MASK_SHIFT_REGION_FRACTION * min(block.width, block.height),
             TextLayoutTuning.MAX_MASK_SHIFT_PAGE_FRACTION * min(pageWidth, pageHeight),
@@ -1468,7 +1468,7 @@ object TextLayoutPlanner {
         layout: BlockLayout,
         occupancy: FloatRect,
         hardCell: FloatRect?,
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         isVertical: Boolean,
         rect: RectResult,
@@ -1520,7 +1520,7 @@ object TextLayoutPlanner {
     internal fun minLegibleFont(pageWidth: Float, pageHeight: Float, scale: Float): Float =
         max(LEGIBLE_FONT_ABS_PX * scale, min(pageWidth, pageHeight) * LEGIBLE_FONT_FRACTION)
 
-    private fun chosenText(block: TranslationBlock, renderSourceText: Boolean): String =
+    private fun chosenText(block: TranslationBlockView, renderSourceText: Boolean): String =
         if (renderSourceText) block.translation.ifBlank { block.text } else block.translation
 
     /**
@@ -1536,7 +1536,7 @@ object TextLayoutPlanner {
      * same fit/anchor/clip path). Every existing call defaults to true.
      */
     internal fun placeBlock(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         isVertical: Boolean,
         rect: RectResult,
@@ -1916,7 +1916,7 @@ object TextLayoutPlanner {
      * path. Final collision validation runs after placement.
      */
     private fun boundedFreeTextWideningPlan(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         isVertical: Boolean,
         sampleSize: Int,
@@ -2090,7 +2090,7 @@ object TextLayoutPlanner {
         val groupByIndex: Map<Int, Int>,
         val session: SharedMaskSession,
         /** Input-ordered members per group id (grouped and groupless). */
-        val groups: Map<Int, List<IndexedValue<TranslationBlock>>>,
+        val groups: Map<Int, List<IndexedValue<TranslationBlockView>>>,
     )
 
     /**
@@ -2105,10 +2105,10 @@ object TextLayoutPlanner {
      * below produces the SAME outputs as before for the production case of one
      * shared mask instance per bubble.
      */
-    private fun buildMaskRegions(blocks: List<TranslationBlock>): MaskGrouping {
+    private fun buildMaskRegions(blocks: List<TranslationBlockView>): MaskGrouping {
         val session = SharedMaskSession()
         val regions = HashMap<Int, FloatRect>()
-        val groups = LinkedHashMap<Int, MutableList<IndexedValue<TranslationBlock>>>()
+        val groups = LinkedHashMap<Int, MutableList<IndexedValue<TranslationBlockView>>>()
         val groupByIndex = HashMap<Int, Int>()
         for (item in blocks.withIndex()) {
             val mask = item.value.segmentationMask ?: continue
@@ -2255,7 +2255,7 @@ object TextLayoutPlanner {
      *    [buildMaskRegions] partition stays in force.
      */
     private fun buildSharedCellPlans(
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         grouping: MaskGrouping,
         pageWidth: Float,
         pageHeight: Float,
@@ -2395,7 +2395,7 @@ object TextLayoutPlanner {
      * for a standalone block.
      */
     private fun symmetricFitRegion(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         rawFit: FloatRect?,
     ): FloatRect? {
         if (rawFit == null) return null
@@ -2495,7 +2495,7 @@ object TextLayoutPlanner {
      * when all overlaps are zero, any) component with the bounds center
      * nearest the OCR center, then the lower component id.
      */
-    private fun resolveComponentId(geometry: MaskGeometry, block: TranslationBlock): Int? {
+    private fun resolveComponentId(geometry: MaskGeometry, block: TranslationBlockView): Int? {
         val left = floor(block.x).toInt().coerceAtLeast(0)
         val top = floor(block.y).toInt().coerceAtLeast(0)
         val right = ceil(block.x + block.width).toInt().coerceAtMost(geometry.width)
@@ -2504,7 +2504,7 @@ object TextLayoutPlanner {
     }
 
     /** Build the pure planner's member descriptor for one block. */
-    private fun plannerMember(block: TranslationBlock, inputIndex: Int): MaskTextRegionPlanner.Member {
+    private fun plannerMember(block: TranslationBlockView, inputIndex: Int): MaskTextRegionPlanner.Member {
         val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
         return MaskTextRegionPlanner.Member(
             inputIndex = inputIndex,
@@ -2562,7 +2562,7 @@ object TextLayoutPlanner {
         FontFittingAlgorithms.shouldRenderVertical(text)
 
     internal fun computeRects(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         sampleSize: Int = 1,
         regionOverride: FloatRect? = null,
     ): RectResult = FontFittingAlgorithms.computeRects(block, sampleSize, regionOverride)

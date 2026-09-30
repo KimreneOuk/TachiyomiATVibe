@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 import logcat.LogPriority
 import logcat.logcat
 import java.util.concurrent.Executor
@@ -51,7 +51,7 @@ internal class TextLayoutCoordinator<T : Any>(
     private val cache: ReaderTextLayoutCache<T>,
     private val backgroundExecutor: Executor,
     private val mainExecutor: Executor,
-    private val plan: (blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) -> T,
+    private val plan: (blocks: List<TranslationBlockView>, pageWidth: Int, pageHeight: Int) -> T,
     private val onPrepared: (T) -> Unit,
     /**
      * Optional persisted-layout hydration hook,
@@ -62,7 +62,7 @@ internal class TextLayoutCoordinator<T : Any>(
      * and missing/invalid/incompatible plans. The bind-generation
      * stale defense below applies to hydrated deliveries identically.
      */
-    private val hydrate: ((blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) -> T?)? = null,
+    private val hydrate: ((blocks: List<TranslationBlockView>, pageWidth: Int, pageHeight: Int) -> T?)? = null,
 ) {
     // Read from the planner thread as a fast-path superseded check; the
     // authoritative check runs on Main. @Volatile formalizes that cross-thread
@@ -73,7 +73,7 @@ internal class TextLayoutCoordinator<T : Any>(
     private var boundKey: TextLayoutCacheKey? = null
 
     fun bind(
-        blocks: List<TranslationBlock>,
+        blocks: List<TranslationBlockView>,
         pageWidth: Int,
         pageHeight: Int,
     ): TextLayoutBindResult<T> {

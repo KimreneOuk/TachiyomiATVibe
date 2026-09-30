@@ -3,7 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 import android.content.Context
 import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationSlotState
 import eu.kanade.translation.engines.translator.NativeStallState
-import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasExhaustedRetries
 import eu.kanade.translation.model.isCleanedImageReady
@@ -75,7 +75,7 @@ fun AutoSlotState.toReaderPageFeedback(): ReaderPageFeedbackState = when (this) 
  * wins over stage state so a late RUNNING emission cannot cover a translated
  * result.
  */
-fun PageTranslation.toReaderPageFeedback(): ReaderPageFeedbackState? = when {
+fun PageTranslationView.toReaderPageFeedback(): ReaderPageFeedbackState? = when {
     toPageDisplayProjection().displayReady -> ReaderPageFeedbackState.Translated
     isStageFailed -> ReaderPageFeedbackState.Failed(!hasExhaustedRetries)
     renderStatus == StageStatus.RUNNING -> ReaderPageFeedbackState.FinishingPage
@@ -125,7 +125,7 @@ internal fun readerManualOutcomeFeedback(
     attemptActive: Boolean,
     lookup: (chapterId: Long, pageKey: String) -> SinglePageOutcome?,
     nativeStall: NativeStallState?,
-    durable: PageTranslation?,
+    durable: PageTranslationView?,
 ): ReaderPageFeedbackState? {
     if (chapterId == null || pageKey == null) return null
     // A live durable attempt always owns the chip: the scheduler outcome being

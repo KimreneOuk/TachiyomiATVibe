@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -25,7 +25,7 @@ internal object CollisionRelaxation {
     private const val VERTICAL_CHAR_STEP = TextLayoutPlanner.VERTICAL_CHAR_STEP
     private const val VERTICAL_COL_STEP = TextLayoutPlanner.VERTICAL_COL_STEP
 
-    private fun maskedShiftCap(block: TranslationBlock, pageWidth: Float, pageHeight: Float): Float =
+    private fun maskedShiftCap(block: TranslationBlockView, pageWidth: Float, pageHeight: Float): Float =
         TextLayoutPlanner.maskedShiftCap(block, pageWidth, pageHeight)
 
     private fun relocationWithinCap(
@@ -57,7 +57,7 @@ internal object CollisionRelaxation {
     ): Boolean = TextLayoutPlanner.paintEnvelopeContainedInComponent(layout, cellPlan, measurer, scale)
 
     private fun adaptiveBlockLayout(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         slab: FloatRect,
         adaptive: AdaptiveResult,
@@ -65,7 +65,7 @@ internal object CollisionRelaxation {
     ): BlockLayout = TextLayoutPlanner.adaptiveBlockLayout(block, text, slab, adaptive, scale)
 
     private fun placeBlock(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         isVertical: Boolean,
         rect: RectResult,
@@ -109,7 +109,7 @@ internal object CollisionRelaxation {
     ): Float = TextLayoutPlanner.binarySearchFontSize(text, safeW, safeH, baseW, isVertical, scale, measurer)
 
     private fun computeRects(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         sampleSize: Int,
         regionOverride: FloatRect? = null,
     ): RectResult = TextLayoutPlanner.computeRects(block, sampleSize, regionOverride)
@@ -273,7 +273,7 @@ internal object CollisionRelaxation {
         layout: BlockLayout,
         occupancy: FloatRect,
         hardCell: FloatRect?,
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         isVertical: Boolean,
         rect: RectResult,
@@ -659,7 +659,7 @@ internal object CollisionRelaxation {
      * hard clip that makes the separation structural for unmasked layouts.
      */
     private fun fitIntoFreeRect(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         isVertical: Boolean,
         freeRect: FloatRect,
@@ -994,7 +994,7 @@ internal object CollisionRelaxation {
     }
 
     internal fun boundedFreeTextWideningPlan(
-        block: TranslationBlock,
+        block: TranslationBlockView,
         text: String,
         isVertical: Boolean,
         sampleSize: Int,

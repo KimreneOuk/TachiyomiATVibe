@@ -1,6 +1,7 @@
 package eu.kanade.translation.engines.rendering
 
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -43,7 +44,7 @@ class PersistedLayoutHydrationTest {
     /** Counts async planner invocations — must stay 0 on every hydrated bind. */
     private class Harness(
         maxCacheEntries: Int = 8,
-        hydrate: ((List<TranslationBlock>, Int, Int) -> String?)? = null,
+        hydrate: ((List<TranslationBlockView>, Int, Int) -> String?)? = null,
     ) {
         val background = QueueExecutor()
         val main = QueueExecutor()

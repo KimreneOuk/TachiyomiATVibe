@@ -1474,7 +1474,7 @@ internal class ReaderTranslationController(
                     // nulls the committed translated page.
                     if (display.displayReady || display.isTextless) translatedCount++
                     if (isFailed && !display.displayReady && !display.isTextless) translatedCount++
-                    readerPage.translation = resolvedDisplay?.toDraft()
+                    readerPage.translation = resolvedDisplay
                 }
                 state.value.viewerChapters?.currChapter?.let { current ->
                     val targetIndex = if (chapterPageIndex >= 0) chapterPageIndex else current.requestedPage
@@ -1594,7 +1594,7 @@ internal class ReaderTranslationController(
                 }
                 val tier2Finished = updated.displayImageName != null && page.translatedStream == null
                 val wantsToShowOverlay = updated.toPageDisplayProjection().displayReady && !page.showTranslatedImage
-                page.translation = updated.toDraft()
+                page.translation = updated
                 attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
                 if (translationPreferences.translationEnabled().get()) {
                     if (tier2Finished || wantsToShowOverlay) {

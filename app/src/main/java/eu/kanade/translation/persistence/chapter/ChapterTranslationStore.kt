@@ -3572,8 +3572,8 @@ class ChapterTranslationStore(
     }
 
     /** Resolves the reader-facing page state: committed bundle first, live candidate otherwise. */
-    fun resolveDisplayPage(pageKey: String): PageTranslation? =
-        committedDisplay[pageKey]?.page?.toDraft() ?: pages[pageKey]?.toDraft()
+    fun resolveDisplayPage(pageKey: String): PageTranslationView? =
+        committedDisplay[pageKey]?.page ?: pages[pageKey]
 
     /**
      * Lazily loads full page snapshot (including text blocks) from durable storage
@@ -3615,8 +3615,8 @@ class ChapterTranslationStore(
     }
 
     /** The frozen committed display bundle for [pageKey], if one exists. */
-    internal fun committedDisplayPage(pageKey: String): PageTranslation? =
-        committedDisplay[pageKey]?.page?.toDraft()
+    internal fun committedDisplayPage(pageKey: String): PageTranslationView? =
+        committedDisplay[pageKey]?.page
 
     /**
      * True while [name] still backs the committed display bundle (or its
@@ -3919,6 +3919,9 @@ class ChapterTranslationStore(
     suspend fun closeAndFlush() = persistenceScheduler.closeAndFlush {
         journalWriter?.drainAndClose()
     }
+
+    /** Test seam for verifying that closeAndFlush joins all scheduler children. */
+    internal fun hasActivePersistenceChildrenForTests(): Boolean = persistenceScheduler.hasActiveChildren()
 
     fun close() = persistenceScheduler.close {
         journalWriter?.drainAndClose()
