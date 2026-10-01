@@ -3,7 +3,23 @@ package eu.kanade.translation
 import com.hippo.unifile.FakeUniFile
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationProgressStage
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+import eu.kanade.translation.persistence.artifact.ArtifactOrigin
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.CandidateGenerationMetadata
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.CleanedImageIdentity
+import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
+import eu.kanade.translation.persistence.artifact.DisplayBaseKind
+import eu.kanade.translation.persistence.artifact.DisplayBaseReference
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.artifact.SourceIdentity
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
@@ -12,13 +28,19 @@ import eu.kanade.translation.persistence.journal.ChapterJournalBulkRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalFormat
 import eu.kanade.translation.persistence.journal.ChapterJournalInventoryRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalRecord
+import eu.kanade.translation.persistence.journal.ChapterJournalReplayEpoch
+import eu.kanade.translation.persistence.journal.ChapterJournalReplayReducer
+import eu.kanade.translation.persistence.journal.ChapterJournalReplaySegment
 import eu.kanade.translation.persistence.journal.ChapterJournalSink
 import eu.kanade.translation.persistence.journal.ChapterJournalStorage
 import eu.kanade.translation.persistence.journal.ChapterJournalWriter
+import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.toPrecondition
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
@@ -126,6 +148,275 @@ class ChapterTranslationStoreJournalCaptureTest {
     }
 
     @Test
+    fun `real captured journal prefix replays to the immutable published page snapshot`() = runTest {
+        val root = FakeUniFile(parent = null, backing = chapterDir)
+        val store = ChapterTranslationStore.openArtifact(root, "Replay parity chapter.json")
+        val cleanedImageName = "page.cleaned.legacy-token.jpg"
+        val cleanedImageBytes = "real-cleaned-image-bytes".encodeToByteArray()
+        val cleanedImageHash = StageFingerprints.sha256Hex(cleanedImageBytes)
+        val imageDirectory = checkNotNull(root.createDirectory("Replay parity chapter_images"))
+        checkNotNull(imageDirectory.createFile(cleanedImageName)).openOutputStream().use { output ->
+            output.write(cleanedImageBytes)
+        }
+        checkNotNull(imageDirectory.createFile(CleanedImageIdentity.sidecarName(cleanedImageName)))
+            .openOutputStream().use { output ->
+                output.write(
+                    CleanedImageIdentity.encode(
+                        CleanedImageIdentity.create("page.jpg", cleanedImageName, cleanedImageBytes.inputStream()),
+                    ),
+                )
+            }
+        val storage = MemoryStorage()
+        val journalJson = Json {
+            encodeDefaults = true
+            explicitNulls = true
+        }
+        val writer = ChapterJournalWriter(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
+            encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
+            encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
+        )
+        store.attachJournalWriterForTests(writer)
+        var closed = false
+
+        try {
+            store.updatePage("page.jpg") {
+                PageTranslation(
+                    sourceFileName = "page.jpg",
+                    cleanedImageName = cleanedImageName,
+                    cleanedImageContentHash = cleanedImageHash,
+                    blocks = mutableListOf(
+                        TranslationBlock(
+                            text = "source",
+                            translation = "durable output",
+                            width = 10f,
+                            height = 10f,
+                            x = 0f,
+                            y = 0f,
+                            symHeight = 1f,
+                            symWidth = 1f,
+                            angle = 0f,
+                        ),
+                    ),
+                )
+            }
+            runCurrent()
+            val expectedSnapshotPages = store.pages
+            (store.state.value.getValue("page.jpg") === expectedSnapshotPages.getValue("page.jpg")) shouldBe true
+
+            store.closeAndFlush()
+            writer.drainAndClose()
+            closed = true
+
+            val persistedEpoch = ChapterJournalReplayEpoch(
+                order = ChapterJournalFormat.EpochOrderKey(0L, 0L, UUID(0L, 0L)),
+                segments = storage.segmentIndexes().map { index ->
+                    ChapterJournalReplaySegment(index, storage.readSegment(index))
+                },
+            )
+            val artifactEngine = checkNotNull(store.artifactEngine)
+            val artifactManifest = checkNotNull(store.readArtifactManifest())
+            val replayed = ChapterJournalReplayReducer.replay(
+                epochs = listOf(persistedEpoch),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(artifactEngine, artifactManifest),
+            )
+
+            replayed.pages shouldBe expectedSnapshotPages
+            replayed.expectedPageKeys shouldContainExactly expectedSnapshotPages.keys
+            replayed.expectedPageCount shouldBe expectedSnapshotPages.size
+            replayed.missingPageKeys shouldBe emptySet()
+            replayed.hasCompleteInventory shouldBe true
+        } finally {
+            if (!closed) {
+                store.closeAndFlush()
+                writer.drainAndClose()
+            }
+        }
+    }
+
+    @Test
+    fun `stale version and released lease rejections never enter the replay prefix`() = runTest {
+        val root = FakeUniFile(parent = null, backing = chapterDir)
+        val store = ChapterTranslationStore.openArtifact(root, "Rejected writes chapter.json")
+        val storage = MemoryStorage()
+        val journalJson = Json {
+            encodeDefaults = true
+            explicitNulls = true
+        }
+        val writer = ChapterJournalWriter(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { journalJson.encodeToString(it).encodeToByteArray() },
+            encodeInventory = { journalJson.encodeToString(it).encodeToByteArray() },
+            encodeTerminalLag = { count, sequence -> "lag:$count:$sequence".encodeToByteArray() },
+        )
+        store.attachJournalWriterForTests(writer)
+        var closed = false
+
+        try {
+            store.updatePage("page.jpg") {
+                PageTranslation(sourceFileName = "page.jpg", pageVersion = 1L, translationStatus = StageStatus.PENDING)
+            }
+            runCurrent()
+            val staleVersion = store.snapshot("page.jpg").toPrecondition()
+
+            store.updatePage("page.jpg") { current ->
+                checkNotNull(current).copy(
+                    pageVersion = 2L,
+                    translationStatus = StageStatus.PENDING,
+                    blocks = mutableListOf(
+                        TranslationBlock(
+                            text = "accepted",
+                            translation = "accepted",
+                            width = 10f,
+                            height = 10f,
+                            x = 0f,
+                            y = 0f,
+                            symHeight = 1f,
+                            symWidth = 1f,
+                            angle = 0f,
+                        ),
+                    ),
+                )
+            }
+            runCurrent()
+            store.flush()
+            val versionRejected = store.updatePageGuarded(
+                pageKey = "page.jpg",
+                expected = staleVersion,
+                description = "stale-version replay regression",
+            ) { current ->
+                checkNotNull(current).copy(pageVersion = 99L, translationStatus = StageStatus.READY)
+            }
+            (versionRejected as ChapterTranslationStore.PatchResult.Rejected).detail
+                .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected.Detail.PageVersionMismatch>()
+
+            val lease = (
+                store.tryAcquirePageStageLease(
+                    "page.jpg",
+                    PageStage.Translation,
+                    PageWriteOrigin.BATCH,
+                ) as LeaseAcquisition.Granted
+                ).lease
+            val releasedLeasePrecondition = store.snapshot("page.jpg").toPrecondition()
+            releasedLeasePrecondition.leaseToken shouldBe lease.token
+            store.releasePageStageLease("page.jpg", PageWriteOrigin.BATCH)
+            val leaseRejected = store.updatePageGuarded(
+                pageKey = "page.jpg",
+                expected = releasedLeasePrecondition,
+                description = "released-lease replay regression",
+            ) { current ->
+                checkNotNull(current).copy(pageVersion = 100L, translationStatus = StageStatus.READY)
+            }
+            (leaseRejected as ChapterTranslationStore.PatchResult.Rejected).detail
+                .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected.Detail.PageLeaseTokenMismatch>()
+
+            runCurrent()
+            val frames = ChapterJournalFormat.scanSegment(
+                bytes = storage.readSegment(0L),
+                expectedSegmentIndex = 0L,
+                expectedGeneration = 0L,
+                expectedEpochOrdinal = 0L,
+                expectedSessionId = UUID(0L, 0L),
+                firstExpectedFrameSeq = 1L,
+                firstExpectedCommitSeq = 1L,
+            ).frames
+            frames.filter { it.commitSeq != null }.map { it.commitSeq } shouldContainExactly listOf(1L, 2L)
+            val stateFrames = frames.filter { frame ->
+                frame.kind == ChapterJournalFormat.RecordKind.FREE_STATE ||
+                    frame.kind == ChapterJournalFormat.RecordKind.PAID_STATE
+            }
+            stateFrames.map { journalJson.decodeFromString<ChapterJournalRecord>(it.payload.decodeToString()).pageVersion } shouldContainExactly
+                listOf(1L, 2L)
+
+            store.closeAndFlush()
+            writer.drainAndClose()
+            closed = true
+            val epoch = ChapterJournalReplayEpoch(
+                order = ChapterJournalFormat.EpochOrderKey(0L, 0L, UUID(0L, 0L)),
+                segments = storage.segmentIndexes().map { index ->
+                    ChapterJournalReplaySegment(index, storage.readSegment(index))
+                },
+            )
+            val replayed = ChapterJournalReplayReducer.replay(
+                epochs = listOf(epoch),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(
+                    checkNotNull(store.artifactEngine),
+                    checkNotNull(store.readArtifactManifest()),
+                ),
+            )
+            replayed.pages.getValue("page.jpg").pageVersion shouldBe 2L
+            replayed.pages.getValue("page.jpg").translationStatus shouldBe StageStatus.PENDING
+            replayed.appliedRecordCount shouldBe 2
+        } finally {
+            if (!closed) {
+                store.closeAndFlush()
+                writer.drainAndClose()
+            }
+        }
+    }
+
+    @Test
+    fun `failed progress projection does not replace pending durable state during replay`() = runTest {
+        val root = FakeUniFile(parent = null, backing = chapterDir)
+        val store = ChapterTranslationStore.openArtifact(root, "Projection truth chapter.json")
+        val storage = MemoryStorage()
+        val journalJson = Json {
+            encodeDefaults = true
+            explicitNulls = true
+        }
+        val writer = ChapterJournalWriter(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { journalJson.encodeToString(it).encodeToByteArray() },
+            encodeInventory = { journalJson.encodeToString(it).encodeToByteArray() },
+            encodeTerminalLag = { count, sequence -> "lag:$count:$sequence".encodeToByteArray() },
+        )
+        store.attachJournalWriterForTests(writer)
+        val tracker = TranslationBatchProgressTracker(1L, store, listOf("page.jpg"), this)
+        var closed = false
+
+        try {
+            store.updatePage("page.jpg") {
+                PageTranslation(sourceFileName = "page.jpg", translationStatus = StageStatus.PENDING)
+            }
+            runCurrent()
+            tracker.markTranslateFailed("page.jpg", "projection-only rejection")
+            runCurrent()
+
+            tracker.snapshot.value.pages.single().stage shouldBe TranslationProgressStage.FAILED
+            store.state.value.getValue("page.jpg").translationStatus shouldBe StageStatus.PENDING
+
+            store.closeAndFlush()
+            writer.drainAndClose()
+            closed = true
+            val epoch = ChapterJournalReplayEpoch(
+                order = ChapterJournalFormat.EpochOrderKey(0L, 0L, UUID(0L, 0L)),
+                segments = storage.segmentIndexes().map { index ->
+                    ChapterJournalReplaySegment(index, storage.readSegment(index))
+                },
+            )
+            val replayed = ChapterJournalReplayReducer.replay(
+                epochs = listOf(epoch),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(
+                    checkNotNull(store.artifactEngine),
+                    checkNotNull(store.readArtifactManifest()),
+                ),
+            )
+            replayed.pages.getValue("page.jpg").translationStatus shouldBe StageStatus.PENDING
+            replayed.invalidPageKeys shouldBe emptySet()
+        } finally {
+            tracker.close()
+            if (!closed) {
+                store.closeAndFlush()
+                writer.drainAndClose()
+            }
+        }
+    }
+
+    @Test
     fun `large replace and rekey operations remain one shadow event each`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
         val store = ChapterTranslationStore.openArtifact(root, "Bulk chapter.json")
@@ -203,6 +494,332 @@ class ChapterTranslationStoreJournalCaptureTest {
         } finally {
             store.closeAndFlush()
             writer.drainAndClose()
+        }
+    }
+
+    @Test
+    fun `rekey bulk prefix inventories valid and pointerless destinations before legacy flush`() = runTest {
+        val io = FakeChapterDocumentIo()
+        val documents = AtomicChapterDocuments(io)
+        val layout = ChapterArtifactLayout("Rekey immediate replay")
+        val artifactEngine = ChapterArtifactEngine(documents, layout)
+        val oldValidKey = "online-valid.jpg"
+        val newValidKey = "disk-valid.jpg"
+        val oldPointerlessKey = "online-textless.jpg"
+        val newPointerlessKey = "disk-textless.jpg"
+        val oldSourceOnlyKey = "online-unregistered-textless.jpg"
+        val newSourceOnlyKey = "disk-unregistered-textless.jpg"
+        val committedSnapshot = PageTranslation(
+            sourceFileName = oldValidKey,
+            blocks = mutableListOf(
+                TranslationBlock(
+                    text = "source",
+                    translation = "committed text",
+                    width = 10f,
+                    height = 10f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            ),
+            pageVersion = 4L,
+        )
+        val committedHash = StageFingerprints.pageSnapshot(committedSnapshot)
+        val sourceSha = "a".repeat(64)
+        val committedSnapshotName = layout.committedPageSnapshotFile(oldValidKey, "g-valid")
+        val pointerlessSnapshot = PageTranslation(
+            sourceFileName = oldPointerlessKey,
+            blocks = mutableListOf(),
+            ocrStatus = StageStatus.READY,
+            translationStatus = StageStatus.SKIPPED,
+            inpaintStatus = StageStatus.SKIPPED,
+            renderStatus = StageStatus.SKIPPED,
+        )
+        val sourceOnlySnapshot = PageTranslation(
+            sourceFileName = oldSourceOnlyKey,
+            blocks = mutableListOf(),
+            ocrStatus = StageStatus.READY,
+            translationStatus = StageStatus.SKIPPED,
+            inpaintStatus = StageStatus.SKIPPED,
+            renderStatus = StageStatus.SKIPPED,
+        )
+        val unverifiedSnapshotName = layout.committedPageSnapshotFile(oldPointerlessKey, "g-unverified")
+        documents.publishJson(committedSnapshotName, committedSnapshot) shouldBe true
+        documents.publishJson(unverifiedSnapshotName, pointerlessSnapshot) shouldBe true
+        val displayBase = DisplayBaseReference(DisplayBaseKind.ORIGINAL_SOURCE, validated = true)
+        val sourceIdentity = SourceIdentity(oldValidKey, sha256 = sourceSha, width = 20, height = 30)
+        val manifest = ChapterArtifactManifest(
+            chapterKey = layout.chapterKey,
+            pages = mapOf(
+                oldValidKey to PageArtifactRecord(
+                    pageKey = oldValidKey,
+                    pageVersion = 4L,
+                    source = sourceIdentity,
+                    committed = CommittedBundleMetadata(
+                        generationId = "g-valid",
+                        bundleFingerprint = StageFingerprints.committedBundle(
+                            sourceIdentity = sourceIdentity,
+                            displayBase = displayBase,
+                            translationFingerprint = committedHash,
+                            layoutFingerprint = null,
+                        ),
+                        displayBase = displayBase,
+                        translationFingerprint = committedHash,
+                        origin = ArtifactOrigin.UNKNOWN,
+                        pageSnapshotFileName = committedSnapshotName,
+                    ),
+                ),
+                oldPointerlessKey to PageArtifactRecord(
+                    pageKey = oldPointerlessKey,
+                    pageVersion = 2L,
+                    committed = CommittedBundleMetadata(
+                        generationId = "g-unverified",
+                        displayBase = displayBase,
+                        translationFingerprint = null,
+                        pageSnapshotFileName = unverifiedSnapshotName,
+                    ),
+                ),
+            ),
+            expectedPageCount = 3,
+            expectedPageCountTrusted = true,
+            sourceShaByPageKey = mapOf(
+                oldValidKey to sourceSha,
+                oldPointerlessKey to "b".repeat(64),
+                oldSourceOnlyKey to "c".repeat(64),
+            ),
+        )
+        artifactEngine.publishManifest(manifest) shouldBe true
+        val store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            initialPages = mapOf(
+                oldValidKey to committedSnapshot,
+                oldPointerlessKey to pointerlessSnapshot,
+                oldSourceOnlyKey to sourceOnlySnapshot,
+            ),
+            artifactStore = artifactEngine,
+            initialCommittedPages = mapOf(oldValidKey to committedSnapshot),
+            initialArtifactManifest = manifest,
+        )
+        store.enableLazyPersistence()
+        val storage = MemoryStorage()
+        val journalJson = Json {
+            encodeDefaults = true
+            explicitNulls = true
+        }
+        val writer = ChapterJournalWriter(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
+            encodeBulkRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
+            encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
+            encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
+        )
+        store.attachJournalWriterForTests(writer)
+
+        try {
+            store.rekeyPages(
+                onlineKeys = listOf(oldValidKey, oldPointerlessKey, oldSourceOnlyKey),
+                onDiskKeys = listOf(newValidKey, newPointerlessKey, newSourceOnlyKey),
+            ) shouldContainExactly listOf(
+                oldValidKey to newValidKey,
+                oldPointerlessKey to newPointerlessKey,
+                oldSourceOnlyKey to newSourceOnlyKey,
+            )
+            // Draining the journal writer deliberately does not flush the legacy store scheduler.
+            runCurrent()
+            writer.drainAndClose()
+
+            val currentManifest = checkNotNull(artifactEngine.readManifest())
+            currentManifest.pages.keys shouldBe setOf(newValidKey, newPointerlessKey)
+            currentManifest.expectedPageCount shouldBe 3
+            currentManifest.sourceShaByPageKey.keys shouldBe setOf(newValidKey, newPointerlessKey, newSourceOnlyKey)
+            val committedNew = checkNotNull(currentManifest.pages[newValidKey]?.committed)
+            val newCommittedSnapshot = checkNotNull(artifactEngine.readPageSnapshot(committedNew.pageSnapshotFileName))
+            newCommittedSnapshot.sourceFileName shouldBe newValidKey
+            newCommittedSnapshot.blocks.single().translation shouldBe "committed text"
+            StageFingerprints.pageSnapshot(newCommittedSnapshot) shouldBe committedNew.translationFingerprint
+            store.display.value.getValue(newValidKey).sourceFileName shouldBe newValidKey
+            store.display.value.getValue(newValidKey).blocks.single().translation shouldBe "committed text"
+            currentManifest.pages.getValue(newPointerlessKey).committed?.pageSnapshotFileName shouldBe null
+            currentManifest.pages.getValue(newPointerlessKey).committed?.translationFingerprint shouldBe null
+
+            val frames = ChapterJournalFormat.scanSegment(
+                bytes = storage.readSegment(0L),
+                expectedSegmentIndex = 0L,
+                expectedGeneration = 0L,
+                expectedEpochOrdinal = 0L,
+                expectedSessionId = UUID(0L, 0L),
+                firstExpectedFrameSeq = 1L,
+                firstExpectedCommitSeq = 1L,
+            ).frames
+            frames.map { it.kind } shouldContainExactly listOf(
+                ChapterJournalFormat.RecordKind.INVENTORY,
+                ChapterJournalFormat.RecordKind.BULK_REKEY,
+            )
+            val bulk = journalJson.decodeFromString<ChapterJournalBulkRecord>(frames.last().payload.decodeToString())
+            bulk.mapping shouldBe mapOf(
+                oldValidKey to newValidKey,
+                oldPointerlessKey to newPointerlessKey,
+                oldSourceOnlyKey to newSourceOnlyKey,
+            )
+            bulk.mutations.single { it.pageKey == oldValidKey }.state shouldBe null
+            val invalidation = bulk.mutations.single { it.pageKey == newPointerlessKey }
+            invalidation.state?.sourceFileName shouldBe newPointerlessKey
+            invalidation.state?.blocks shouldBe emptyList()
+            invalidation.artifactContentHash shouldBe null
+            bulk.mutations.single { it.pageKey == oldPointerlessKey }.state shouldBe null
+            val sourceOnlyInvalidation = bulk.mutations.single { it.pageKey == newSourceOnlyKey }
+            sourceOnlyInvalidation.state?.sourceFileName shouldBe newSourceOnlyKey
+            sourceOnlyInvalidation.state?.blocks shouldBe emptyList()
+            sourceOnlyInvalidation.artifactContentHash shouldBe null
+            bulk.mutations.single { it.pageKey == oldSourceOnlyKey }.state shouldBe null
+
+            val epoch = ChapterJournalReplayEpoch(
+                order = ChapterJournalFormat.EpochOrderKey(0L, 0L, UUID(0L, 0L)),
+                segments = storage.segmentIndexes().map { index ->
+                    ChapterJournalReplaySegment(index, storage.readSegment(index))
+                },
+            )
+            val replayed = ChapterJournalReplayReducer.replay(
+                epochs = listOf(epoch),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(artifactEngine, currentManifest),
+            )
+            replayed.expectedPageKeys shouldBe setOf(newValidKey, newPointerlessKey, newSourceOnlyKey)
+            replayed.expectedPageCount shouldBe 3
+            replayed.pages.keys shouldBe setOf(newValidKey)
+            replayed.invalidPageKeys shouldBe setOf(newPointerlessKey, newSourceOnlyKey)
+            replayed.missingPageKeys shouldBe emptySet()
+            (oldValidKey in replayed.pages || oldPointerlessKey in replayed.pages || oldSourceOnlyKey in replayed.pages) shouldBe false
+        } finally {
+            store.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `rekey manifest publication failure leaves legacy keys and writer prefix untouched`() = runTest {
+        val fixture = committedRekeyFixture(testScheduler, "Rekey publish failure")
+        val oldSnapshotBytes = checkNotNull(fixture.io.files[fixture.oldSnapshotName]).copyOf()
+        fixture.io.writeNamesToFail += fixture.layout.manifestFileName
+        try {
+            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey)) shouldBe emptyList()
+            fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
+            checkNotNull(fixture.engine.readManifest()).pages.keys shouldBe setOf(fixture.oldKey)
+            checkNotNull(fixture.io.files[fixture.oldSnapshotName]).contentEquals(oldSnapshotBytes) shouldBe true
+            runCurrent()
+            fixture.storage.segmentIndexes() shouldBe emptyList()
+        } finally {
+            fixture.store.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `stale rekey preparation cannot overwrite live referenced snapshot or move the page`() = runTest {
+        val fixture = committedRekeyFixture(testScheduler, "Rekey stale preparation")
+        val oldSnapshotBytes = checkNotNull(fixture.io.files[fixture.oldSnapshotName]).copyOf()
+        var injected = false
+        fixture.io.beforeOwnedRenameAttempt = { _, target ->
+            if (!injected && target.contains("rekey-committed")) {
+                injected = true
+                fixture.io.beforeOwnedRenameAttempt = null
+                fixture.engine.publishManifest(fixture.manifest.copy(updatedAtEpochMs = 1L)) shouldBe true
+            }
+        }
+        try {
+            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey)) shouldBe emptyList()
+            injected shouldBe true
+            fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
+            val durable = checkNotNull(fixture.engine.readManifest())
+            durable.pages.keys shouldBe setOf(fixture.oldKey)
+            durable.pages.getValue(fixture.oldKey).committed?.pageSnapshotFileName shouldBe fixture.oldSnapshotName
+            checkNotNull(fixture.io.files[fixture.oldSnapshotName]).contentEquals(oldSnapshotBytes) shouldBe true
+            runCurrent()
+            fixture.storage.segmentIndexes() shouldBe emptyList()
+        } finally {
+            fixture.store.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `rekey preserves candidate committed and previous artifact roles`() = runTest {
+        val fixture = committedRekeyFixture(
+            scheduler = testScheduler,
+            chapterName = "Rekey all roles",
+            includeCandidateAndPrevious = true,
+        )
+        try {
+            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey)) shouldBe
+                listOf(fixture.oldKey to fixture.newKey)
+            val pageRecord = checkNotNull(fixture.engine.readManifest()?.pages?.get(fixture.newKey))
+            val candidate = checkNotNull(pageRecord.candidate)
+            val committed = checkNotNull(pageRecord.committed)
+            val previous = checkNotNull(pageRecord.previousCommitted)
+
+            candidate.generationId shouldBe "candidate-generation"
+            val candidateSnapshot = checkNotNull(fixture.engine.readPageSnapshot(candidate.pageSnapshotFileName))
+            candidateSnapshot.sourceFileName shouldBe fixture.newKey
+            StageFingerprints.pageSnapshot(candidateSnapshot) shouldBe candidate.pageSnapshotFingerprint
+            candidateSnapshot.blocks.single().translation shouldBe "committed"
+
+            committed.generationId shouldBe "generation-one"
+            val committedSnapshot = checkNotNull(fixture.engine.readPageSnapshot(committed.pageSnapshotFileName))
+            committedSnapshot.sourceFileName shouldBe fixture.newKey
+            committedSnapshot.blocks.single().translation shouldBe "committed"
+
+            previous.generationId shouldBe "generation-zero"
+            val previousSnapshot = checkNotNull(fixture.engine.readPageSnapshot(previous.pageSnapshotFileName))
+            previousSnapshot.sourceFileName shouldBe fixture.newKey
+            previousSnapshot.blocks.single().translation shouldBe "previous"
+            StageFingerprints.pageSnapshot(previousSnapshot) shouldBe previous.translationFingerprint
+            fixture.engine.readPageSnapshot(fixture.manifest.pages.getValue(fixture.oldKey).committed?.pageSnapshotFileName)
+                ?.sourceFileName shouldBe fixture.oldKey
+            fixture.store.mayDeleteCleanedImage(fixture.oldKey, "shared-cleaned.jpg") shouldBe false
+            fixture.store.isCleanedImageReferencedByAnotherPage(fixture.oldKey, "shared-cleaned.jpg") shouldBe true
+            fixture.store.isCleanedImageReferencedByAnotherPage(fixture.newKey, "shared-cleaned.jpg") shouldBe false
+        } finally {
+            fixture.store.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `rekey preparation refuses a conflicting immutable destination`() = runTest {
+        val fixture = committedRekeyFixture(
+            scheduler = testScheduler,
+            chapterName = "Rekey destination collision",
+        )
+        try {
+            val oldSnapshotBytes = checkNotNull(fixture.io.files[fixture.oldSnapshotName]).copyOf()
+            val rekeyed = checkNotNull(fixture.engine.readPageSnapshot(fixture.oldSnapshotName)).apply {
+                sourceFileName = fixture.newKey
+            }
+            val fingerprint = StageFingerprints.pageSnapshot(rekeyed)
+            val operationId = "collision-test"
+            val collisionName = fixture.layout.rekeyedPageSnapshotFile(
+                pageKey = fixture.newKey,
+                role = "committed",
+                generationId = "generation-one",
+                operationId = "$operationId:${fixture.oldKey}:${fixture.newKey}:committed:$fingerprint",
+            )
+            val conflicting = rekeyed.copy(sourceFileName = "other-page.jpg")
+            val conflictingBytes = ArtifactDocumentJson.encodeToString(conflicting).encodeToByteArray()
+            fixture.io.files[collisionName] = conflictingBytes
+
+            val prepared = fixture.engine.preparePageSnapshotRekey(
+                manifest = fixture.manifest,
+                moves = mapOf(fixture.oldKey to fixture.newKey),
+                livePages = mapOf(fixture.oldKey to fixture.store.pages.getValue(fixture.oldKey)),
+                operationId = operationId,
+            )
+
+            prepared shouldBe null
+            checkNotNull(fixture.io.files[collisionName]).contentEquals(conflictingBytes) shouldBe true
+            checkNotNull(fixture.io.files[fixture.oldSnapshotName]).contentEquals(oldSnapshotBytes) shouldBe true
+            fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
+            checkNotNull(fixture.engine.readManifest()).pages.keys shouldBe setOf(fixture.oldKey)
+        } finally {
+            fixture.store.closeAndFlush()
         }
     }
 
@@ -322,5 +939,141 @@ class ChapterTranslationStoreJournalCaptureTest {
         }
 
         override fun syncDirectory() = Unit
+    }
+
+    private data class RekeyFixture(
+        val io: FakeChapterDocumentIo,
+        val layout: ChapterArtifactLayout,
+        val engine: ChapterArtifactEngine,
+        val manifest: ChapterArtifactManifest,
+        val store: ChapterTranslationStore,
+        val storage: MemoryStorage,
+        val oldKey: String,
+        val newKey: String,
+        val oldSnapshotName: String,
+    )
+
+    private fun committedRekeyFixture(
+        scheduler: TestCoroutineScheduler,
+        chapterName: String,
+        includeCandidateAndPrevious: Boolean = false,
+    ): RekeyFixture {
+        val io = FakeChapterDocumentIo()
+        val documents = AtomicChapterDocuments(io)
+        val layout = ChapterArtifactLayout(chapterName)
+        val engine = ChapterArtifactEngine(documents, layout)
+        val oldKey = "online-page.jpg"
+        val newKey = "disk-page.jpg"
+        val sourceSha = "c".repeat(64)
+        val page = PageTranslation(
+            sourceFileName = oldKey,
+            cleanedImageName = "shared-cleaned.jpg",
+            cleanedImageContentHash = StageFingerprints.sha256Hex("shared-cleaned-image".encodeToByteArray()),
+            blocks = mutableListOf(
+                TranslationBlock(
+                    text = "source",
+                    translation = "committed",
+                    width = 10f,
+                    height = 10f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            ),
+        )
+        val pageHash = StageFingerprints.pageSnapshot(page)
+        val displayBase = DisplayBaseReference(DisplayBaseKind.ORIGINAL_SOURCE, validated = true)
+        val sourceIdentity = SourceIdentity(oldKey, sha256 = sourceSha, width = 10, height = 10)
+        val oldSnapshotName = layout.committedPageSnapshotFile(oldKey, "generation-one")
+        documents.publishJson(oldSnapshotName, page)
+        val candidate = if (includeCandidateAndPrevious) {
+            val fileName = layout.candidatePageSnapshotFile(oldKey, "candidate-generation")
+            documents.publishJson(fileName, page)
+            CandidateGenerationMetadata(
+                generationId = "candidate-generation",
+                dependencyFingerprint = "candidate-dependency",
+                pageSnapshotFileName = fileName,
+                pageSnapshotFingerprint = pageHash,
+            )
+        } else {
+            null
+        }
+        val previousCommitted = if (includeCandidateAndPrevious) {
+            val previousPage = page.copy(
+                blocks = page.blocks.map { it.copy(translation = "previous") }.toMutableList(),
+            )
+            val previousHash = StageFingerprints.pageSnapshot(previousPage)
+            val previousFileName = layout.committedPageSnapshotFile(oldKey, "generation-zero")
+            documents.publishJson(previousFileName, previousPage)
+            CommittedBundleMetadata(
+                generationId = "generation-zero",
+                bundleFingerprint = StageFingerprints.committedBundle(
+                    sourceIdentity = sourceIdentity,
+                    displayBase = DisplayBaseReference(DisplayBaseKind.ORIGINAL_SOURCE, validated = true),
+                    translationFingerprint = previousHash,
+                    layoutFingerprint = null,
+                ),
+                displayBase = DisplayBaseReference(DisplayBaseKind.ORIGINAL_SOURCE, validated = true),
+                translationFingerprint = previousHash,
+                origin = ArtifactOrigin.UNKNOWN,
+                pageSnapshotFileName = previousFileName,
+            )
+        } else {
+            null
+        }
+        val manifest = ChapterArtifactManifest(
+            chapterKey = chapterName,
+            pages = mapOf(
+                oldKey to PageArtifactRecord(
+                    pageKey = oldKey,
+                    source = sourceIdentity,
+                    candidate = candidate,
+                    committed = CommittedBundleMetadata(
+                        generationId = "generation-one",
+                        bundleFingerprint = StageFingerprints.committedBundle(
+                            sourceIdentity = sourceIdentity,
+                            displayBase = displayBase,
+                            translationFingerprint = pageHash,
+                            layoutFingerprint = null,
+                        ),
+                        displayBase = displayBase,
+                        translationFingerprint = pageHash,
+                        origin = ArtifactOrigin.UNKNOWN,
+                        pageSnapshotFileName = oldSnapshotName,
+                    ),
+                    previousCommitted = previousCommitted,
+                ),
+            ),
+            expectedPageCount = 1,
+            expectedPageCountTrusted = true,
+            sourceShaByPageKey = mapOf(oldKey to sourceSha),
+        )
+        check(engine.publishManifest(manifest))
+        val store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            initialPages = mapOf(oldKey to page),
+            artifactStore = engine,
+            initialCommittedPages = mapOf(oldKey to page),
+            initialArtifactManifest = manifest,
+        )
+        store.enableLazyPersistence()
+        val storage = MemoryStorage()
+        val journalJson = Json {
+            encodeDefaults = true
+            explicitNulls = true
+        }
+        val writer = ChapterJournalWriter(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(scheduler),
+            encodeRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
+            encodeBulkRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
+            encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
+            encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
+        )
+        store.attachJournalWriterForTests(writer)
+        return RekeyFixture(io, layout, engine, manifest, store, storage, oldKey, newKey, oldSnapshotName)
     }
 }

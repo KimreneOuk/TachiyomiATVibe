@@ -143,7 +143,7 @@ class ResetRetiresActiveRunTest {
             streamRegistryProvider = { mockk<TranslationStreamRegistry>(relaxed = true) },
             providerProvider = { mockk<TranslationFileProvider>(relaxed = true) },
             retireChapterCompanionImagesFn = { _, _, _ -> },
-            retirePageCompanionImageFn = { _, _, _, _, _ -> },
+            retirePageCompanionImageFn = { _, _, _, _, _, _ -> },
             durableStatusResolverProvider = { mockk<DurableChapterStatusResolver>(relaxed = true) },
             activeStoresProvider = {
                 mockk<ActiveChapterStoreRegistry> {

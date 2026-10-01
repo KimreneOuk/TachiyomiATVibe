@@ -89,6 +89,23 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     fun candidatePageSnapshotFile(pageKey: String, generationId: String): String =
         "$artifactRootDirectoryName/pages/${pageSegment(pageKey)}/candidate-${generationSegment(generationId)}.json"
 
+    /**
+     * Unique immutable snapshot path used while re-keying a page. The operation
+     * token keeps concurrent/stale preparations from overwriting a path that a
+     * different transaction may already have published; the manifest pointer
+     * chooses the winner.
+     */
+    fun rekeyedPageSnapshotFile(
+        pageKey: String,
+        role: String,
+        generationId: String,
+        operationId: String,
+    ): String {
+        require(role in setOf("candidate", "committed", "previous"))
+        return "$pageSnapshotDirectoryName/${pageSegment(pageKey)}/" +
+            "rekey-$role-${generationSegment(generationId)}-${fingerprintSegment(operationId)}.json"
+    }
+
     val imagesRootDirectory: String get() = imageDirectoryName
     val stageArtifactsRootDirectory: String get() = artifactDirectoryName
     val generationsRootDirectory: String get() = generationDirectoryName

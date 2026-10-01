@@ -1,9 +1,13 @@
 package eu.kanade.translation.persistence.journal
 
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.toPublishedPage
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -136,6 +140,378 @@ class ChapterJournalSnapshotTest {
     }
 
     @Test
+    fun `real compacted journal selection agrees with full replay and preserves post-coverage append`() {
+        val json = Json {
+            encodeDefaults = true
+            explicitNulls = true
+            ignoreUnknownKeys = true
+        }
+        val oldEpochOrder = ChapterJournalFormat.EpochOrderKey(4L, 21L, UUID(0L, 21L))
+        val successorEpochOrder = ChapterJournalFormat.EpochOrderKey(5L, 22L, UUID(0L, 22L))
+        val oldInitial = replayPage("page.jpg", "old-epoch initial", pageVersion = 1L)
+        val oldLate = replayPage("page.jpg", "old-epoch late append", pageVersion = 2L)
+        val successor = replayPage("page.jpg", "successor epoch winner", pageVersion = 3L)
+        val initialOldEpoch = replayEpoch(
+            order = oldEpochOrder,
+            expectedKeys = listOf("page.jpg"),
+            records = listOf(
+                ChapterJournalRecord(
+                    pageKey = "page.jpg",
+                    generation = 0L,
+                    fencingToken = 0L,
+                    pageVersion = 1L,
+                    state = oldInitial,
+                    artifactContentHash = StageFingerprints.pageSnapshot(oldInitial),
+                ),
+            ),
+            json = json,
+        )
+        val oracleAtFirstCapture = ChapterJournalReplayReducer.replay(
+            epochs = listOf(initialOldEpoch),
+            artifactResolver = semanticResolver(),
+            json = json,
+        )
+        val oldEpochWithLateAppend = appendRecord(
+            epoch = initialOldEpoch,
+            record = ChapterJournalRecord(
+                pageKey = "page.jpg",
+                generation = 0L,
+                fencingToken = 0L,
+                pageVersion = 2L,
+                state = oldLate,
+                artifactContentHash = StageFingerprints.pageSnapshot(oldLate),
+            ),
+            commitSeq = 2L,
+            json = json,
+        )
+        val successorEpoch = replayEpoch(
+            order = successorEpochOrder,
+            expectedKeys = listOf("page.jpg"),
+            records = listOf(
+                ChapterJournalRecord(
+                    pageKey = "page.jpg",
+                    generation = 0L,
+                    fencingToken = 0L,
+                    pageVersion = 3L,
+                    state = successor,
+                    artifactContentHash = StageFingerprints.pageSnapshot(successor),
+                ),
+            ),
+            json = json,
+        )
+
+        val storage = MemorySnapshotStorage()
+        val oldEpochKey = ChapterJournalEpochKey(4L, 21L)
+        val successorEpochKey = ChapterJournalEpochKey(5L, 22L)
+        storage.epochDirectories += setOf(oldEpochKey, successorEpochKey)
+        val manager = ChapterJournalSnapshotManager(storage)
+        val firstFrontier = listOf(coverage(4L, 21L, acked = 2L, closed = false))
+        val firstSnapshot = manager.writeSnapshot(firstFrontier, oracleAtFirstCapture.pages)
+        firstSnapshot.state shouldBe ChapterJournalSnapshotState.DURABLE
+        snapshotPayload(storage, checkNotNull(manager.newestUsableCandidate())).pages shouldBe oracleAtFirstCapture.pages
+
+        // A later valid append in the covered epoch is above the snapshot's stamped frameSeq.
+        // The successor epoch is not yet in that vector and has unknown coverage for this GC.
+        manager.executeAuthorizedGc(
+            durableSnapshot = firstSnapshot,
+            epochStates = listOf(
+                ChapterJournalEpochGcState(
+                    key = oldEpochKey,
+                    ackedFrameSeq = 3L,
+                    terminallyClosed = true,
+                    coverageVerified = true,
+                ),
+                ChapterJournalEpochGcState(
+                    key = successorEpochKey,
+                    ackedFrameSeq = 2L,
+                    terminallyClosed = true,
+                    coverageVerified = false,
+                ),
+            ),
+        ) shouldBe emptyList()
+        storage.epochKeys() shouldBe setOf(oldEpochKey, successorEpochKey)
+
+        val fullReplayOracle = ChapterJournalReplayReducer.replay(
+            epochs = listOf(oldEpochWithLateAppend, successorEpoch),
+            artifactResolver = semanticResolver(),
+            json = json,
+        )
+        fullReplayOracle.pages.getValue("page.jpg").blocks.single().translation shouldBe "successor epoch winner"
+
+        val completeFrontier = listOf(
+            coverage(4L, 21L, acked = 3L, closed = true),
+            coverage(5L, 22L, acked = 2L, closed = false),
+        )
+        val compacted = manager.writeSnapshot(
+            frontier = completeFrontier,
+            pages = fullReplayOracle.pages,
+            gcMode = ChapterJournalGcMode.SHADOW_DORMANT,
+        )
+        compacted.state shouldBe ChapterJournalSnapshotState.DURABLE
+        compacted.frontier shouldBe completeFrontier
+        val selectedAtHighestGeneration = checkNotNull(manager.newestUsableCandidate())
+        selectedAtHighestGeneration.generation shouldBe compacted.generation
+        snapshotPayload(storage, selectedAtHighestGeneration).pages shouldBe fullReplayOracle.pages
+
+        // Equal usable vectors resolve deterministically to the highest generation.
+        storage.installSnapshot(snapshotPayload(storage, compacted).copy(generation = compacted.generation + 1L))
+        checkNotNull(manager.newestUsableCandidate()).generation shouldBe compacted.generation + 1L
+
+        // A torn successor is WRITING and selection falls back to the latest durable candidate.
+        storage.tearSnapshotOnWrite = true
+        assertThrows(IOException::class.java) {
+            manager.writeSnapshot(
+                frontier = completeFrontier + coverage(6L, 23L, acked = 0L, closed = false),
+                pages = fullReplayOracle.pages,
+            )
+        }
+        storage.tearSnapshotOnWrite = false
+        manager.newestUsableCandidate()?.generation shouldBe compacted.generation + 1L
+
+        // E16b production replay consumes epochs only. Snapshot presence, corruption, or deletion
+        // cannot seed, mask, or change the full-prefix replay result.
+        val replayWithSnapshotsPresent = ChapterJournalReplayReducer.replay(
+            epochs = listOf(oldEpochWithLateAppend, successorEpoch),
+            artifactResolver = semanticResolver(),
+            json = json,
+        )
+        replayWithSnapshotsPresent shouldBe fullReplayOracle
+        storage.corruptSnapshot(compacted.generation + 1L)
+        val replayWithCorruptSnapshot = ChapterJournalReplayReducer.replay(
+            epochs = listOf(oldEpochWithLateAppend, successorEpoch),
+            artifactResolver = semanticResolver(),
+            json = json,
+        )
+        replayWithCorruptSnapshot shouldBe fullReplayOracle
+        manager.newestUsableCandidate()?.generation shouldBe compacted.generation
+        storage.snapshotGenerations().toList().forEach(storage::deleteSnapshot)
+        val replayWithSnapshotsDeleted = ChapterJournalReplayReducer.replay(
+            epochs = listOf(oldEpochWithLateAppend, successorEpoch),
+            artifactResolver = semanticResolver(),
+            json = json,
+        )
+        replayWithSnapshotsDeleted shouldBe fullReplayOracle
+    }
+
+    @Test
+    fun `A6 rekey and schema v2 clean image records require snapshot coverage before epoch gc`() {
+        val json = Json {
+            encodeDefaults = true
+            explicitNulls = true
+            ignoreUnknownKeys = true
+        }
+        val oldKey = "source-page.jpg"
+        val newKey = "rekeyed-page.jpg"
+        val cleanedImageName = "page.cleaned.content-addressed.jpg"
+        val cleanedImageHash = StageFingerprints.sha256Hex("cleaned-v2-image".encodeToByteArray())
+        val oldState = replayPage(oldKey, "pre-rekey state", pageVersion = 4L)
+        val newState = PageTranslation(
+            sourceFileName = newKey,
+            pageVersion = 5L,
+            cleanedImageName = cleanedImageName,
+            cleanedImageContentHash = cleanedImageHash,
+            blocks = mutableListOf(
+                TranslationBlock(
+                    text = "source",
+                    translation = "post-rekey state",
+                    width = 10f,
+                    height = 10f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            ),
+        ).toPublishedPage()
+        val oldMutation = ChapterJournalRecord(
+            schemaVersion = ChapterJournalRecord.LEGACY_SCHEMA_VERSION,
+            pageKey = oldKey,
+            generation = 0L,
+            fencingToken = 0L,
+            pageVersion = oldState.pageVersion,
+            state = oldState,
+            artifactContentHash = StageFingerprints.pageSnapshot(oldState),
+        )
+        val oldTombstone = ChapterJournalRecord(
+            schemaVersion = ChapterJournalRecord.SCHEMA_VERSION,
+            pageKey = oldKey,
+            generation = 0L,
+            fencingToken = 1L,
+            pageVersion = oldState.pageVersion,
+            state = null,
+        )
+        val newMutation = ChapterJournalRecord(
+            schemaVersion = ChapterJournalRecord.SCHEMA_VERSION,
+            pageKey = newKey,
+            generation = 0L,
+            fencingToken = 1L,
+            pageVersion = newState.pageVersion,
+            state = newState,
+            cleanedImageName = cleanedImageName,
+            cleanedImageContentHash = cleanedImageHash,
+            artifactContentHash = StageFingerprints.pageSnapshot(newState),
+        )
+        val rekey = ChapterJournalBulkRecord(
+            operation = "rekey_pages",
+            mapping = mapOf(oldKey to newKey),
+            mutations = listOf(oldTombstone, newMutation),
+        )
+        val generation = 8L
+        val epochOrdinal = 31L
+        val sessionId = UUID(0L, 31L)
+        val epochOrder = ChapterJournalFormat.EpochOrderKey(generation, epochOrdinal, sessionId)
+        val firstInventory = ChapterJournalInventoryRecord(
+            chapterIdentityHash = "test-chapter-identity",
+            expectedPageKeys = listOf(oldKey),
+            expectedPageCount = 1,
+            sourceFingerprint = StageFingerprints.canonicalFingerprint(listOf(oldKey)),
+        )
+        val rekeyInventory = ChapterJournalInventoryRecord(
+            chapterIdentityHash = "test-chapter-identity",
+            expectedPageKeys = listOf(newKey),
+            expectedPageCount = 1,
+            sourceFingerprint = StageFingerprints.canonicalFingerprint(listOf(newKey)),
+        )
+        fun frame(frameSeq: Long, commitSeq: Long?, kind: ChapterJournalFormat.RecordKind, payload: ByteArray) =
+            ChapterJournalFormat.encodeFrame(frameSeq, commitSeq, kind, payload)
+
+        val segmentHeader = ChapterJournalFormat.segmentHeader(0L, generation, epochOrdinal, sessionId)
+        val initialInventoryFrame = frame(
+            frameSeq = 1L,
+            commitSeq = null,
+            kind = ChapterJournalFormat.RecordKind.INVENTORY,
+            payload = json.encodeToString(firstInventory).encodeToByteArray(),
+        )
+        val oldStateFrame = frame(
+            frameSeq = 2L,
+            commitSeq = 1L,
+            kind = ChapterJournalFormat.RecordKind.FREE_STATE,
+            payload = json.encodeToString(oldMutation).encodeToByteArray(),
+        )
+        val rekeyInventoryFrame = frame(
+            frameSeq = 3L,
+            commitSeq = null,
+            kind = ChapterJournalFormat.RecordKind.INVENTORY,
+            payload = json.encodeToString(rekeyInventory).encodeToByteArray(),
+        )
+        val bulkRekeyFrame = frame(
+            frameSeq = 4L,
+            commitSeq = 2L,
+            kind = ChapterJournalFormat.RecordKind.BULK_REKEY,
+            payload = json.encodeToString(rekey).encodeToByteArray(),
+        )
+        val prefixBytes = segmentHeader + initialInventoryFrame + oldStateFrame
+        val epochKey = ChapterJournalEpochKey(generation, epochOrdinal)
+        val storage = MemorySnapshotStorage().apply { epochDirectories += epochKey }
+        val manager = ChapterJournalSnapshotManager(storage)
+        val beforeRekeySnapshot = manager.writeSnapshot(
+            frontier = listOf(coverage(generation, epochOrdinal, acked = 2L, closed = false)),
+            pages = mapOf(oldKey to oldState),
+        )
+
+        val completeEpoch = ChapterJournalReplayEpoch(
+            order = epochOrder,
+            segments = listOf(
+                ChapterJournalReplaySegment(
+                    index = 0L,
+                    bytes = prefixBytes + rekeyInventoryFrame + bulkRekeyFrame,
+                ),
+            ),
+        )
+        val scanned = ChapterJournalFormat.scanSegment(
+            bytes = completeEpoch.segments.single().bytes,
+            expectedSegmentIndex = 0L,
+            expectedGeneration = generation,
+            expectedEpochOrdinal = epochOrdinal,
+            expectedSessionId = sessionId,
+            firstExpectedFrameSeq = 1L,
+            firstExpectedCommitSeq = 1L,
+        )
+        scanned.stoppedAtInvalidFrame shouldBe false
+        scanned.frames.map { it.kind } shouldContainExactly listOf(
+            ChapterJournalFormat.RecordKind.INVENTORY,
+            ChapterJournalFormat.RecordKind.FREE_STATE,
+            ChapterJournalFormat.RecordKind.INVENTORY,
+            ChapterJournalFormat.RecordKind.BULK_REKEY,
+        )
+        scanned.nextFrameSeq shouldBe 5L
+        scanned.nextCommitSeq shouldBe 3L
+        val decodedBulk = json.decodeFromString<ChapterJournalBulkRecord>(
+            bulkRekeyFrame.copyOfRange(
+                ChapterJournalFormat.FRAME_HEADER_BYTES,
+                bulkRekeyFrame.size - ChapterJournalFormat.FRAME_TRAILER_BYTES,
+            ).decodeToString(),
+        )
+        decodedBulk.schemaVersion shouldBe ChapterJournalBulkRecord.SCHEMA_VERSION
+        decodedBulk.mapping shouldBe mapOf(oldKey to newKey)
+        decodedBulk.mutations.single { it.pageKey == newKey }.apply {
+            schemaVersion shouldBe ChapterJournalRecord.SCHEMA_VERSION
+            this.cleanedImageName shouldBe cleanedImageName
+            this.cleanedImageContentHash shouldBe cleanedImageHash
+        }
+
+        val replayed = ChapterJournalReplayReducer.replay(
+            epochs = listOf(completeEpoch),
+            artifactResolver = ChapterJournalArtifactIdentityResolver { key, hash, state ->
+                StageFingerprints.pageSnapshot(state) == hash &&
+                    when (key) {
+                        oldKey -> state.cleanedImageName == null && state.cleanedImageContentHash == null
+                        newKey ->
+                            state.cleanedImageName == cleanedImageName &&
+                                state.cleanedImageContentHash == cleanedImageHash
+                        else -> false
+                    }
+            },
+            json = json,
+        )
+        replayed.pages.keys shouldBe setOf(newKey)
+        replayed.expectedPageKeys shouldBe setOf(newKey)
+        replayed.expectedPageCount shouldBe 1
+        replayed.invalidPageKeys shouldBe emptySet()
+        replayed.missingPageKeys shouldBe emptySet()
+        replayed.pages.getValue(newKey).cleanedImageName shouldBe cleanedImageName
+        replayed.pages.getValue(newKey).cleanedImageContentHash shouldBe cleanedImageHash
+
+        // The v2 bulk frame at frameSeq 4 is beyond the first snapshot's ACKed frontier (2),
+        // so E18 GC must retain it even though the writer is now closed and its coverage was scanned.
+        manager.executeAuthorizedGc(
+            durableSnapshot = beforeRekeySnapshot,
+            epochStates = listOf(
+                ChapterJournalEpochGcState(
+                    key = epochKey,
+                    ackedFrameSeq = scanned.nextFrameSeq - 1L,
+                    terminallyClosed = true,
+                    coverageVerified = true,
+                ),
+            ),
+        ) shouldBe emptyList()
+        storage.epochKeys() shouldBe setOf(epochKey)
+
+        // Once a durable snapshot contains the rekey winner and its identity envelope, full v2
+        // coverage can authorize GC; selection must return that exact oracle-equivalent snapshot.
+        val covered = coverage(generation, epochOrdinal, acked = scanned.nextFrameSeq - 1L, closed = true)
+        val compacted = manager.writeSnapshot(
+            frontier = listOf(covered),
+            pages = replayed.pages,
+            epochStatesAtGc = listOf(
+                ChapterJournalEpochGcState(
+                    key = epochKey,
+                    ackedFrameSeq = scanned.nextFrameSeq - 1L,
+                    terminallyClosed = true,
+                    coverageVerified = true,
+                ),
+            ),
+            gcMode = ChapterJournalGcMode.AUTHORITATIVE,
+        )
+        compacted.state shouldBe ChapterJournalSnapshotState.DURABLE
+        checkNotNull(manager.newestUsableCandidate()).generation shouldBe compacted.generation
+        snapshotPayload(storage, compacted).pages shouldBe replayed.pages
+        storage.deletedEpochs shouldBe listOf(epochKey)
+        storage.epochKeys() shouldBe emptySet()
+    }
+
+    @Test
     fun `disk scan reconstructs only the contiguous CRC-valid epoch prefix`() {
         val durableRoot = Files.createTempDirectory("journal-coverage").toFile()
         try {
@@ -265,6 +641,88 @@ class ChapterJournalSnapshotTest {
 
     private fun page(key: String) = PageTranslation(sourceFileName = key, pageVersion = 4L).toPublishedPage()
 
+    private fun replayPage(key: String, translation: String, pageVersion: Long) = PageTranslation(
+        sourceFileName = key,
+        pageVersion = pageVersion,
+        blocks = mutableListOf(
+            TranslationBlock(
+                text = "source",
+                translation = translation,
+                width = 10f,
+                height = 10f,
+                x = 0f,
+                y = 0f,
+                symHeight = 1f,
+                symWidth = 1f,
+                angle = 0f,
+            ),
+        ),
+    ).toPublishedPage()
+
+    private fun replayEpoch(
+        order: ChapterJournalFormat.EpochOrderKey,
+        expectedKeys: List<String>,
+        records: List<ChapterJournalRecord>,
+        json: Json,
+    ): ChapterJournalReplayEpoch {
+        val bytes = buildList {
+            add(ChapterJournalFormat.segmentHeader(0L, order.storeGeneration, order.epochOrdinal, order.sessionId))
+            add(
+                ChapterJournalFormat.encodeFrame(
+                    frameSeq = 1L,
+                    commitSeq = null,
+                    kind = ChapterJournalFormat.RecordKind.INVENTORY,
+                    payload = json.encodeToString(
+                        ChapterJournalInventoryRecord(
+                            chapterIdentityHash = "test-chapter-identity",
+                            expectedPageKeys = expectedKeys,
+                            expectedPageCount = expectedKeys.size,
+                            sourceFingerprint = StageFingerprints.canonicalFingerprint(expectedKeys),
+                        ),
+                    ).encodeToByteArray(),
+                ),
+            )
+            records.forEachIndexed { index, record ->
+                add(
+                    ChapterJournalFormat.encodeFrame(
+                        frameSeq = index + 2L,
+                        commitSeq = index + 1L,
+                        kind = ChapterJournalFormat.RecordKind.FREE_STATE,
+                        payload = json.encodeToString(record).encodeToByteArray(),
+                    ),
+                )
+            }
+        }.fold(byteArrayOf()) { result, frame -> result + frame }
+        return ChapterJournalReplayEpoch(order, listOf(ChapterJournalReplaySegment(0L, bytes)))
+    }
+
+    private fun appendRecord(
+        epoch: ChapterJournalReplayEpoch,
+        record: ChapterJournalRecord,
+        commitSeq: Long,
+        json: Json,
+    ): ChapterJournalReplayEpoch {
+        val segment = epoch.segments.single()
+        val appended = ChapterJournalFormat.encodeFrame(
+            frameSeq = 3L,
+            commitSeq = commitSeq,
+            kind = ChapterJournalFormat.RecordKind.FREE_STATE,
+            payload = json.encodeToString(record).encodeToByteArray(),
+        )
+        return epoch.copy(segments = listOf(segment.copy(bytes = segment.bytes + appended)))
+    }
+
+    private fun semanticResolver() = ChapterJournalArtifactIdentityResolver { _, hash, state ->
+        StageFingerprints.pageSnapshot(state) == hash
+    }
+
+    private fun snapshotPayload(
+        storage: MemorySnapshotStorage,
+        candidate: ChapterJournalSnapshotCandidate,
+    ): ChapterJournalSnapshotPayload = checkNotNull(
+        ChapterJournalSnapshotFormat.decode(checkNotNull(storage.readSnapshot(candidate.generation))),
+    ).payload
+
     private fun coverage(
         storeGeneration: Long,
         epochOrdinal: Long,
@@ -331,6 +789,23 @@ class ChapterJournalSnapshotTest {
             event("delete-snapshot:$generation")
             snapshots.remove(generation)
             markers.remove(generation)
+        }
+
+        fun installSnapshot(payload: ChapterJournalSnapshotPayload) {
+            val bytes = ChapterJournalSnapshotFormat.encode(payload)
+            val decoded = checkNotNull(ChapterJournalSnapshotFormat.decode(bytes))
+            snapshots[payload.generation] = bytes
+            markers[payload.generation] = ChapterJournalSnapshotFormat.encodeDurableMarker(
+                payload.generation,
+                decoded.payloadCrc,
+            )
+        }
+
+        fun corruptSnapshot(generation: Long) {
+            val bytes = snapshots[generation] ?: return
+            snapshots[generation] = bytes.copyOf().also { corrupted ->
+                corrupted[corrupted.lastIndex - 8] = (corrupted[corrupted.lastIndex - 8].toInt() xor 1).toByte()
+            }
         }
 
         private fun event(value: String, recorded: String = value) {

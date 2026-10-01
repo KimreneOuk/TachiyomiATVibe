@@ -50,6 +50,9 @@ internal data class ChapterJournalRecord(
     val fencingToken: Long,
     val pageVersion: Long,
     val state: PublishedPageTranslation?,
+    /** Exact cleaned filename and independently journal-anchored JPEG byte digest, when present. */
+    val cleanedImageName: String? = null,
+    val cleanedImageContentHash: String? = null,
     /**
      * Semantic SHA-256 identity of the page snapshot persisted by the legacy artifact; null only
      * when no snapshot exists. Replay verifies it by re-reading that artifact, re-deriving the
@@ -65,7 +68,10 @@ internal data class ChapterJournalRecord(
     val terminalObservedPayloadBytes: Int? = null,
 ) {
     companion object {
+        /** E16a records remain readable; absent cleaned-image digests are handled as page-local invalidity. */
+        const val LEGACY_SCHEMA_VERSION = 1
         const val SCHEMA_VERSION = 2
+        val SUPPORTED_SCHEMA_VERSIONS = setOf(LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
         const val TERMINAL_LAG_REASON_CREDIT_WINDOW = "shadow_credit_window_exhausted"
         const val TERMINAL_PAYLOAD_REASON_SIZE_LIMIT = "shadow_payload_size_limit"
     }
@@ -93,7 +99,10 @@ internal data class ChapterJournalInventoryRecord(
 internal data class ChapterJournalBulkRecord(
     val schemaVersion: Int = SCHEMA_VERSION,
     val operation: String,
-    /** Applied mapping from successful legacy commits only; rejected updates are absent or remain tombstones. */
+    /**
+     * Summary of actual key movements in the bulk operation. The authoritative mutations may carry a
+     * retryable invalidation state (no artifact hash); mapping membership does not certify completion.
+     */
     val mapping: Map<String, String?>,
     /** Successful page states and tombstones that make up this legacy transaction. */
     val mutations: List<ChapterJournalRecord>,
@@ -103,7 +112,7 @@ internal data class ChapterJournalBulkRecord(
     }
 }
 
-/** Immutable map/set references handed off in O(1); normalization and hashing run on the writer dispatcher. */
+/** Immutable point-in-time inventory; sorting, serialization, and hashing run on the writer dispatcher. */
 internal data class ChapterJournalInventorySnapshot(
     val expectedPageKeys: Set<String>,
     val expectedPageCount: Int,
@@ -481,6 +490,8 @@ internal class ChapterJournalWriter(
         durableFailure: DurableFailureMetadata? = null,
         paid: Boolean = false,
         artifactContentHash: String? = null,
+        cleanedImageName: String? = page?.cleanedImageName,
+        cleanedImageContentHash: String? = page?.cleanedImageContentHash,
         inventory: ChapterJournalInventorySnapshot = ChapterJournalInventorySnapshot.EMPTY,
     ): Long {
         val record = ChapterJournalRecord(
@@ -492,6 +503,8 @@ internal class ChapterJournalWriter(
             // The journal writer can safely serialize this value on its dispatcher.
             state = page,
             artifactContentHash = artifactContentHash,
+            cleanedImageName = cleanedImageName,
+            cleanedImageContentHash = cleanedImageContentHash,
             durableFailure = durableFailure,
         )
         offer(

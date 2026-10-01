@@ -8,6 +8,7 @@ import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.persistence.artifact.CleanedImageIdentity
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.CleanedImagePublisher
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
@@ -19,6 +20,9 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import java.io.OutputStream
+import java.security.MessageDigest
+import java.util.UUID
 
 /**
  * Publishes cleaned images and retires files superseded by committed display
@@ -55,13 +59,23 @@ internal class CleanedPublication(
                 imageName = name,
             ) {
                 if (!store.mayDeleteCleanedImage(pageKey, name)) return@retireCleanedImage
-                val deleted = provider.findPageCleanedImage(
+                val imageFile = provider.findPageCleanedImage(
                     manga.title,
                     source,
                     chapter.name,
                     chapter.scanlator,
                     name,
-                )?.delete() == true
+                )
+                val deleted = imageFile?.let { !it.exists() || it.delete() } ?: true
+                if (deleted) {
+                    provider.findPageCleanedImage(
+                        manga.title,
+                        source,
+                        chapter.name,
+                        chapter.scanlator,
+                        CleanedImageIdentity.sidecarName(name),
+                    )?.delete()
+                }
                 logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
                     "TachiyomiAT retired cleaned image drain: pageKey=$pageKey file=$name deleted=$deleted"
                 }
@@ -107,6 +121,7 @@ internal class CleanedPublication(
     ): ChapterTranslationStore.PageSnapshot? = withContext(Dispatchers.IO) {
         val directory = companionDir
         val previousName = pageTranslation.cleanedImageName
+        val expectedContentHash = jpegContentSha256(cleanedBitmap)
         val precondition = expectedPrecondition ?: store.snapshot(pageKey).let { snapshot ->
             ChapterTranslationStore.PatchPrecondition(
                 generation = snapshot.generation,
@@ -121,19 +136,15 @@ internal class CleanedPublication(
         val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
             override fun writeVerifiedVersionedFile(): String {
                 check(directory != null) { "translation output folder is unavailable" }
-                val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                val version = System.currentTimeMillis().toString(36) + "-" + System.nanoTime().toString(36).takeLast(6)
-                val finalName = "$safeName.cleaned.$version.jpg"
-                val finalFile = directory.findFile(finalName) ?: directory.createFile(finalName)
-                check(finalFile != null) { "could not create final cleaned image" }
-                finalFile.openOutputStream().use { output ->
-                    check(cleanedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) { "JPEG encoding returned false" }
-                }
-                check(finalFile.exists() && finalFile.length() > 0L) { "published cleaned image is unavailable" }
-                return finalName
+                return writeVerifiedCleanedImage(directory, pageKey, cleanedBitmap, expectedContentHash)
             }
 
-            override fun delete(name: String): Boolean = directory?.findFile(name)?.delete() ?: true
+            override fun delete(name: String): Boolean {
+                val imageFile = directory?.findFile(name)
+                val imageDeleted = imageFile == null || !imageFile.exists() || imageFile.delete()
+                if (imageDeleted) directory?.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
+                return imageDeleted
+            }
         })
         when (
             val result = publisher.publish(
@@ -141,9 +152,14 @@ internal class CleanedPublication(
                 pageKey,
                 previousName,
                 commit = { newName ->
-                    store.patchPage(pageKey, precondition, "publish cleaned image") { current ->
+                    store.patchPage(
+                        pageKey,
+                        precondition,
+                        "publish cleaned image",
+                    ) { current ->
                         (current ?: pageTranslation).apply {
                             cleanedImageName = newName
+                            cleanedImageContentHash = expectedContentHash
                             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                             inpaintingModeUsed = currentInpaintingMode().name
                             inpaintFingerprint = pageTranslation.inpaintFingerprint
@@ -184,6 +200,7 @@ internal class CleanedPublication(
         ) {
             is CleanedImagePublisher.Result.Published -> {
                 pageTranslation.cleanedImageName = result.name
+                pageTranslation.cleanedImageContentHash = expectedContentHash
                 pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                 pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
                 pageTranslation.inpaintStatus = StageStatus.READY
@@ -271,13 +288,17 @@ internal class CleanedPublication(
         val store = result.store
         val pageTranslation = result.pageTranslation
         val previousName = pageTranslation.cleanedImageName
+        val expectedContentHash = jpegContentSha256(cleanedBitmap)
         val precondition = result.commitPrecondition ?: store.snapshot(pageKey).toPrecondition()
-        val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val version = System.currentTimeMillis().toString(36) + "-" + System.nanoTime().toString(36).takeLast(6)
-        val finalName = "$safeName.cleaned.$version.jpg"
-        val livePatch = store.patchPage(pageKey, precondition, "publish cleaned image live") { current ->
+        val finalName = newCleanedImageName(pageKey)
+        val livePatch = store.patchPage(
+            pageKey,
+            precondition,
+            "publish cleaned image live",
+        ) { current ->
             (current ?: pageTranslation).apply {
                 cleanedImageName = finalName
+                cleanedImageContentHash = expectedContentHash
                 inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                 inpaintingModeUsed = currentInpaintingMode().name
                 inpaintFingerprint = pageTranslation.inpaintFingerprint
@@ -302,6 +323,7 @@ internal class CleanedPublication(
         val accepted = livePatch as? ChapterTranslationStore.PatchResult.Accepted
             ?: return null
         pageTranslation.cleanedImageName = finalName
+        pageTranslation.cleanedImageContentHash = expectedContentHash
         pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
         pageTranslation.inpaintStatus = StageStatus.READY
@@ -318,20 +340,22 @@ internal class CleanedPublication(
             val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
                 override fun writeVerifiedVersionedFile(): String {
                     check(companionDir != null) { "translation output folder is unavailable" }
-                    val finalFile = companionDir.findFile(finalName) ?: companionDir.createFile(finalName)
-                    check(finalFile != null) { "could not create final cleaned image" }
-                    finalFile.openOutputStream().use { output ->
-                        check(cleanedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) {
-                            "JPEG encoding returned false"
-                        }
-                    }
-                    check(finalFile.exists() && finalFile.length() > 0L) {
-                        "published cleaned image is unavailable"
-                    }
+                    writeVerifiedCleanedImage(
+                        companionDir,
+                        pageKey,
+                        cleanedBitmap,
+                        expectedContentHash,
+                        finalName,
+                    )
                     return finalName
                 }
 
-                override fun delete(name: String): Boolean = companionDir?.findFile(name)?.delete() ?: true
+                override fun delete(name: String): Boolean {
+                    val imageFile = companionDir?.findFile(name)
+                    val imageDeleted = imageFile == null || !imageFile.exists() || imageFile.delete()
+                    if (imageDeleted) companionDir?.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
+                    return imageDeleted
+                }
             })
             when (
                 val publication = publisher.publish(
@@ -382,6 +406,84 @@ internal class CleanedPublication(
             pendingCleanedPublication = completion,
         )
     }
+
+    private fun writeVerifiedCleanedImage(
+        directory: UniFile,
+        pageKey: String,
+        bitmap: Bitmap,
+        expectedContentSha256: String,
+        name: String = newCleanedImageName(pageKey),
+    ): String {
+        val identityName = CleanedImageIdentity.sidecarName(name)
+        val existingImage = directory.findFile(name)?.takeIf(UniFile::exists)
+        val existingIdentity = directory.findFile(identityName)?.takeIf(UniFile::exists)
+        if (existingImage != null || existingIdentity != null) {
+            val sidecarBytes = runCatching {
+                existingIdentity?.openInputStream()?.use { it.readBytes() }
+            }.getOrNull()
+            val matches = CleanedImageIdentity.verifyExisting(
+                sidecarBytes = sidecarBytes,
+                imageName = name,
+                expectedContentSha256 = expectedContentSha256,
+            ) { existingImage?.openInputStream() }
+            check(matches) { "cleaned image name is already bound to different or unverified bytes" }
+            return name
+        }
+        val imageFile = directory.createFile(name)
+        check(imageFile != null) { "could not create final cleaned image" }
+        var identityFile: UniFile? = null
+        try {
+            imageFile.openOutputStream().use { output ->
+                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) { "JPEG encoding returned false" }
+            }
+            check(imageFile.exists() && imageFile.length() > 0L) { "published cleaned image is unavailable" }
+            val identity = imageFile.openInputStream().use { input ->
+                CleanedImageIdentity.create(pageKey, name, input)
+            }
+            check(identity.contentSha256 == expectedContentSha256) {
+                "written cleaned image bytes differ from the captured publication identity"
+            }
+            val createdIdentityFile = directory.createFile(identityName)
+            check(createdIdentityFile != null) { "could not create cleaned image identity" }
+            identityFile = createdIdentityFile
+            createdIdentityFile.openOutputStream().use { output ->
+                output.write(CleanedImageIdentity.encode(identity))
+                output.flush()
+            }
+            check(createdIdentityFile.exists() && createdIdentityFile.length() > 0L) {
+                "cleaned image identity is unavailable"
+            }
+            return name
+        } catch (failure: Throwable) {
+            identityFile?.delete()
+            imageFile.delete()
+            throw failure
+        }
+    }
+
+    /** Hashes the intended JPEG without buffering a second full-size image in memory. */
+    private fun jpegContentSha256(bitmap: Bitmap): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val digestSink = object : OutputStream() {
+            override fun write(byte: Int) {
+                digest.update(byte.toByte())
+            }
+
+            override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                digest.update(bytes, offset, length)
+            }
+        }
+        check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, digestSink)) {
+            "JPEG encoding returned false while verifying an existing cleaned image"
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    private fun newCleanedImageName(pageKey: String): String {
+        val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val version = "${System.currentTimeMillis().toString(36)}-${UUID.randomUUID().toString().replace("-", "")}"
+        return "$safeName.cleaned.$version.jpg"
+    }
 }
 
 /**
@@ -392,6 +494,7 @@ internal class CleanedPublication(
  */
 internal fun markOriginalImageFallback(page: PageTranslation): PageTranslation = page.apply {
     cleanedImageName = null
+    cleanedImageContentHash = null
     originalImageFallback = true
     inpaintStatus = StageStatus.READY
     renderStatus = StageStatus.READY

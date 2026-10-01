@@ -84,6 +84,7 @@ internal suspend fun publishPreparedPageFromOcr(
         mangaId = mangaId,
         sourceId = sourceId,
         cleanedImageName = durablePage?.cleanedImageName,
+        cleanedImageContentHash = durablePage?.cleanedImageContentHash,
         generation = snapshot.generation,
         pageVersion = snapshot.pageVersion,
         blockFingerprints = snapshot.blockFingerprints,

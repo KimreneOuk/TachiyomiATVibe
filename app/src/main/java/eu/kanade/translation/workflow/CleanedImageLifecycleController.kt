@@ -1,6 +1,7 @@
 package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.translation.persistence.artifact.CleanedImageIdentity
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
@@ -70,6 +71,15 @@ internal class CleanedImageLifecycleController(
                             scanlator,
                             imageName,
                         )?.delete() == true
+                        if (deleted) {
+                            provider.findPageCleanedImage(
+                                mangaTitle,
+                                source,
+                                chapterName,
+                                scanlator,
+                                CleanedImageIdentity.sidecarName(imageName),
+                            )?.delete()
+                        }
                         logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
                             "TachiyomiAT chapter-load retired cleaned image drain: " +
                                 "pageKey=$pageKey file=$imageName deleted=$deleted"
@@ -105,7 +115,9 @@ internal class CleanedImageLifecycleController(
         directory.listFiles()
             ?.asSequence()
             ?.mapNotNull { file -> file.name?.let { it to file } }
-            ?.filter { (name, file) -> file.isFile && name.contains(".cleaned.") }
+            ?.filter { (name, file) ->
+                file.isFile && name.contains(".cleaned.") && !name.endsWith(".identity.json")
+            }
             ?.filterNot { (name, file) ->
                 name in referenced ||
                     streamRegistry.activeCleanedImageReadersForChapter(source.id, mangaId, chapterId, name) > 0 ||
@@ -115,6 +127,7 @@ internal class CleanedImageLifecycleController(
             ?.take(MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP)
             ?.forEach { (name, file) ->
                 val deleted = runCatching { file.delete() }.getOrDefault(false)
+                if (deleted) directory.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
                 logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
                     "TachiyomiAT orphaned cleaned image sweep: chapter=$chapterName file=$name deleted=$deleted"
                 }
@@ -152,6 +165,7 @@ internal class CleanedImageLifecycleController(
         source: Source,
         pageKey: String,
         imageName: String,
+        isReferencedElsewhere: () -> Boolean = { false },
     ) {
         val chapterId = chapter.id ?: return
         streamRegistry.retireCleanedImage(
@@ -161,13 +175,23 @@ internal class CleanedImageLifecycleController(
             pageKey = pageKey,
             imageName = imageName,
         ) {
-            provider.findPageCleanedImage(
+            if (isReferencedElsewhere()) return@retireCleanedImage
+            val imageDeleted = provider.findPageCleanedImage(
                 manga.title,
                 source,
                 chapter.name,
                 chapter.scanlator,
                 imageName,
-            )?.delete()
+            )?.let { !it.exists() || it.delete() } ?: true
+            if (imageDeleted) {
+                provider.findPageCleanedImage(
+                    manga.title,
+                    source,
+                    chapter.name,
+                    chapter.scanlator,
+                    CleanedImageIdentity.sidecarName(imageName),
+                )?.delete()
+            }
         }
     }
 
