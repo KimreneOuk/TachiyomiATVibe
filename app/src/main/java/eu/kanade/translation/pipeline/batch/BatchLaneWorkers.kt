@@ -44,13 +44,13 @@ import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
-import eu.kanade.translation.pipeline.finalizePostOcrStage
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumeGate
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumePlanner
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
+import eu.kanade.translation.pipeline.finalizePostOcrStage
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.util.ShortHash
@@ -208,6 +208,13 @@ internal class BatchLaneWorkers(
         update: (PageTranslation?) -> PageTranslation,
     ) = pageTraceRegistry.withPageRun(pageKey) {
         writeGate.guardedBatchUpdate(pageKey, description, stage, update)
+    }
+
+    private suspend fun publishTranslationCompletion(
+        pageKey: String,
+        candidate: PageTranslation,
+    ) = pageTraceRegistry.withPageRun(pageKey) {
+        writeGate.publishTranslationCompletion(pageKey, candidate)
     }
 
     private fun refreshBatchIdentity(pageKey: String, snapshot: ChapterTranslationStore.PageSnapshot) =
@@ -1149,7 +1156,7 @@ internal class BatchLaneWorkers(
                     TranslationBlockValidation.applyTo(p)
                     val s = p.translationStatus
                     when (s) {
-                        StageStatus.READY -> tracker?.markTranslateDone(pageKey)
+                        StageStatus.READY -> Unit
                         StageStatus.PARTIAL -> {
                             val failure = ProviderFailure(
                                 kind = ProviderFailureKind.PROTOCOL,
@@ -1200,7 +1207,6 @@ internal class BatchLaneWorkers(
                         }
                     }
                     succeeded = s == StageStatus.READY
-                    if (succeeded) tracker?.markAiSucceeded(pageKey)
                 } catch (e: BatchPersistenceRejectedException) {
                     throw e
                 } catch (e: Exception) {
@@ -1240,28 +1246,47 @@ internal class BatchLaneWorkers(
                 if (failedOutcome != null) {
                     standardOutcome = failedOutcome
                 } else if (succeeded) {
-                    val persisted = guardedBatchUpdate(pageKey, "batch translation final commit", BatchStage.TRANSLATION) {
-                        (it ?: p).apply {
-                            translationStatus = p.translationStatus
-                            translationError = null
-                            blocks = p.blocks.toMutableList()
-                            updatedAt = System.currentTimeMillis()
-                        }
-                    }
-                    if (persisted is ChapterTranslationStore.PatchResult.Rejected) {
-                        val reason = "translation commit rejected: ${persisted.reason}"
-                        tracker?.markTranslateFailed(pageKey, reason)
-                        tracker?.markAiFailed(pageKey, reason)
-                        standardOutcome = TranslationCompletionOutcome.PersistenceRejected(
-                            anchorPageKey = pageKey,
-                            stage = TranslationStageEvent.TRANSLATING,
-                            reason = "Batch persistence publication rejected",
-                        )
-                    } else {
-                        standardOutcome = TranslationCompletionOutcome.Completed(setOf(pageKey))
-                    }
+                    standardOutcome = recordTranslationPublicationOutcome(
+                        pageKey = pageKey,
+                        publication = publishTranslationCompletion(pageKey, p),
+                        tracker = tracker,
+                    )
                 }
             }
         }
+    }
+}
+
+internal fun recordTranslationPublicationOutcome(
+    pageKey: String,
+    publication: BatchTranslationPublication,
+    tracker: TranslationBatchProgressTracker?,
+): TranslationCompletionOutcome = when (publication) {
+    is BatchTranslationPublication.Committed,
+    is BatchTranslationPublication.Superseded,
+    is BatchTranslationPublication.Rebased,
+    -> {
+        tracker?.markTranslateDone(pageKey)
+        tracker?.markAiSucceeded(pageKey)
+        TranslationCompletionOutcome.Completed(setOf(pageKey))
+    }
+    is BatchTranslationPublication.Deferred -> {
+        tracker?.markTranslatePaused(pageKey, publication.reason)
+        tracker?.markAiPaused(pageKey, publication.reason)
+        TranslationCompletionOutcome.PersistenceRejected(
+            anchorPageKey = pageKey,
+            stage = TranslationStageEvent.TRANSLATING,
+            reason = "Batch persistence publication rejected",
+        )
+    }
+    is BatchTranslationPublication.Failed -> {
+        val reason = "translation commit rejected: ${publication.reason}"
+        tracker?.markTranslateFailed(pageKey, reason)
+        tracker?.markAiFailed(pageKey, reason)
+        TranslationCompletionOutcome.PersistenceRejected(
+            anchorPageKey = pageKey,
+            stage = TranslationStageEvent.TRANSLATING,
+            reason = "Batch persistence publication rejected",
+        )
     }
 }

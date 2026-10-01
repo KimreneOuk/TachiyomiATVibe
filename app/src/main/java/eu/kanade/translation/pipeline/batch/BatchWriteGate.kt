@@ -98,6 +98,23 @@ internal data class BatchWriteIdentity(
     var artifactPageVersion: Long?,
 )
 
+internal sealed interface BatchTranslationPublication {
+    data class Committed(val snapshot: ChapterTranslationStore.PageSnapshot) : BatchTranslationPublication
+    data class Superseded(val snapshot: ChapterTranslationStore.PageSnapshot) : BatchTranslationPublication
+    data class Rebased(val snapshot: ChapterTranslationStore.PageSnapshot) : BatchTranslationPublication
+    data class Deferred(val reason: String) : BatchTranslationPublication
+    data class Failed(val reason: String) : BatchTranslationPublication
+}
+
+internal fun classifyTranslationPublicationRejection(
+    rejection: ChapterTranslationStore.PatchResult.Rejected,
+): BatchTranslationPublication =
+    when (rejection.detail) {
+        ChapterTranslationStore.PatchResult.Rejected.Detail.ArtifactPublicationFailed ->
+            BatchTranslationPublication.Failed(rejection.reason)
+        else -> BatchTranslationPublication.Deferred(rejection.reason)
+    }
+
 /**
  * Owns per-page lease and identity bookkeeping and every guarded durable write
  * performed by the batch path. The shell shares the identity map and durable
@@ -358,6 +375,61 @@ internal class BatchWriteGate(
             )
         }
         return result
+    }
+
+    /**
+     * Persists a completed standard translation and reconciles only a typed page-version race.
+     * The ordinary write gate still owns the first write and its one strict same-token retry.
+     */
+    suspend fun publishTranslationCompletion(
+        pageKey: String,
+        candidate: PageTranslation,
+    ): BatchTranslationPublication {
+        val prepared = stampBatchProvenance(candidate.detachedCopy(), BatchStage.TRANSLATION).apply {
+            translationError = null
+        }
+        val result = guardedBatchUpdate(
+            pageKey = pageKey,
+            description = "batch translation final commit",
+            stage = BatchStage.TRANSLATION,
+        ) { current ->
+            (current ?: prepared.detachedCopy()).apply {
+                translationStatus = prepared.translationStatus
+                translationError = null
+                blocks = prepared.blocks.map { it.detachedCopy() }.toMutableList()
+                updatedAt = System.currentTimeMillis()
+            }
+        }
+        if (result is ChapterTranslationStore.PatchResult.Accepted) {
+            return BatchTranslationPublication.Committed(result.snapshot)
+        }
+        result as ChapterTranslationStore.PatchResult.Rejected
+        if (result.detail !is ChapterTranslationStore.PatchResult.Rejected.Detail.PageVersionMismatch) {
+            return classifyTranslationPublicationRejection(result)
+        }
+
+        val expected = batchWritePrecondition(pageKey)
+            ?: return BatchTranslationPublication.Deferred("batch identity missing after version drift")
+        return when (
+            val reconciliation = store.reconcileBatchTranslationPageVersionDrift(
+                pageKey = pageKey,
+                expected = expected,
+                candidate = prepared,
+            )
+        ) {
+            is ChapterTranslationStore.TranslationPublicationReconciliation.AlreadyDurable -> {
+                refreshBatchIdentity(pageKey, reconciliation.snapshot)
+                BatchTranslationPublication.Superseded(reconciliation.snapshot)
+            }
+            is ChapterTranslationStore.TranslationPublicationReconciliation.Rebased -> {
+                refreshBatchIdentity(pageKey, reconciliation.snapshot)
+                BatchTranslationPublication.Rebased(reconciliation.snapshot)
+            }
+            is ChapterTranslationStore.TranslationPublicationReconciliation.Deferred ->
+                BatchTranslationPublication.Deferred(reconciliation.reason)
+            is ChapterTranslationStore.TranslationPublicationReconciliation.PublicationFailed ->
+                BatchTranslationPublication.Deferred("rebase publication was not accepted: ${reconciliation.reason}")
+        }
     }
 
     fun refreshBatchIdentity(pageKey: String, snapshot: ChapterTranslationStore.PageSnapshot) {

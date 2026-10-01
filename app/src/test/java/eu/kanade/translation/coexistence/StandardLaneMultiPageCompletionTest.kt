@@ -12,7 +12,6 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
 /**
@@ -34,12 +33,8 @@ import org.junit.jupiter.api.Test
  * honesty is preserved when the predecessor terminally failed (negative
  * control: the skip must remain when p0 durably failed, not unblock).
  */
-// Retain quarantine after E22 characterization: a full-suite run rejected p1's
-// final write (`page lease token expected=5 actual=null`,
-// `leaseTokenMismatchHeal=not attempted`) while its translation remained
-// non-durable. Retirement waits for the write-gate heal-path root cause or
-// E16c D1-A durable-state reconciliation. Runs with -PincludeQuarantinedTests.
-@Tag("quarantined-flaky")
+// Quarantine removal starts the retirement streak for stale-version reconciliation. Any
+// lease-token mismatch remains strictly fenced and is intentionally a full-gate failure.
 class StandardLaneMultiPageCompletionTest {
 
     companion object {
