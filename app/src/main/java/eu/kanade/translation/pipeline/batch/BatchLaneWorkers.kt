@@ -44,6 +44,7 @@ import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
+import eu.kanade.translation.pipeline.finalizePostOcrStage
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumeGate
@@ -1030,8 +1031,11 @@ internal class BatchLaneWorkers(
             translationRegistry[pageKey] = p
             val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
             if (sourceBlocks == 0) {
-                p.translationStatus = StageStatus.SKIPPED
-                p.renderStatus = StageStatus.SKIPPED
+                // Keep the standard batch path aligned with the single-page
+                // post-OCR rule: a no-text page is terminal when there is no
+                // erase-mask work, while masked pages remain pending for the
+                // inpaint lane to settle.
+                finalizePostOcrStage(p, inpaintAlreadyRan = false)
                 val textless = guardedBatchUpdate(pageKey, "batch textless translation commit", BatchStage.TRANSLATION) { p }
                 if (textless is ChapterTranslationStore.PatchResult.Rejected) {
                     abortBatchCandidate(pageKey, "textless commit rejected: ${textless.reason}")
