@@ -32,11 +32,8 @@ class PageInpaintingEngine(
     }
 
     fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
-        if (pageTranslation.blocks.isEmpty()) {
-            markReady(pageTranslation)
-            return null
-        }
-
+        // Persisted masks and detector-only regions can outlive OCR blocks.
+        // Only an empty erase plan makes inpainting a no-op.
         val input = PageInpaintingPlanner.build(pageTranslation)
         if (input.isEmpty) {
             markReady(pageTranslation)
