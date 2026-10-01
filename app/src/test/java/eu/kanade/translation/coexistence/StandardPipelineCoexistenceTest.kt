@@ -1,10 +1,14 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
+import eu.kanade.translation.pipeline.batch.recovery.BatchResumePolicy
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.runBlocking
@@ -41,6 +45,82 @@ import org.junit.jupiter.api.Test
 // E12 interaction unlikely though not behaviorally disproven. Diagnostic commit
 // 3707047 now surfaces the concrete write-gate rejection if this recurs.
 class StandardPipelineCoexistenceTest {
+
+    @Test
+    fun `standard batch persists no-detection pages as processed textless terminals`() {
+        val pageKeys = listOf("p0")
+        val harness = TranslationCoexistenceHarness.createStandard(
+            pageKeys,
+            zeroDetectionMaskBoxes = emptyList(),
+        )
+        try {
+            // The coexistence harness injects batch OCR through batchAnalyze,
+            // separate from its single-page FakeRecognitionEngine.
+            harness.stubChapterPages(pageKeys)
+
+            val batch = harness.launchBatch(pageKeys)
+            val reconciliation = runBlocking {
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                    batch.reconciliation.await().shouldNotBeNull()
+                }
+            }
+
+            reconciliation.chapterStatus shouldBe Translation.State.TRANSLATED
+            reconciliation.strandedPages shouldBe emptyMap()
+            reconciliation.doneCount shouldBe 1
+            reconciliation.failedCount shouldBe 0
+            harness.transportCallsFor("p0") shouldBe 0
+            harness.batchInpaintPageKeys shouldBe emptyList()
+
+            val page = runBlocking { harness.store.snapshot("p0").page.shouldNotBeNull() }
+            page.ocrStatus shouldBe StageStatus.READY
+            page.translationStatus shouldBe StageStatus.SKIPPED
+            page.renderStatus shouldBe StageStatus.SKIPPED
+            page.inpaintStatus shouldBe StageStatus.SKIPPED
+            page.isTextlessTerminal shouldBe true
+            val display = page.toPageDisplayProjection()
+            display.isTextless shouldBe true
+            display.processed shouldBe true
+            BatchResumePolicy.nextStage(page, cleanedFileValid = false) shouldBe BatchResumePolicy.NextStage.SKIP
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `standard batch admits masked no-detection pages so inpaint settles`() {
+        val pageKeys = listOf("p0")
+        val harness = TranslationCoexistenceHarness.createStandard(
+            pageKeys,
+            zeroDetectionMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 1)),
+        )
+        try {
+            harness.stubChapterPages(pageKeys)
+
+            val batch = harness.launchBatch(pageKeys)
+            val reconciliation = runBlocking {
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                    batch.reconciliation.await().shouldNotBeNull()
+                }
+            }
+
+            reconciliation.chapterStatus shouldBe Translation.State.TRANSLATED
+            reconciliation.strandedPages shouldBe emptyMap()
+            reconciliation.doneCount shouldBe 1
+            reconciliation.failedCount shouldBe 0
+            harness.transportCallsFor("p0") shouldBe 0
+            harness.batchInpaintPageKeys shouldBe listOf("p0")
+
+            val page = runBlocking { harness.store.snapshot("p0").page.shouldNotBeNull() }
+            page.translationStatus shouldBe StageStatus.SKIPPED
+            page.inpaintStatus shouldBe StageStatus.READY
+            page.isTextlessTerminal shouldBe true
+            page.toPageDisplayProjection().processed shouldBe true
+            BatchResumePolicy.nextStage(page, cleanedFileValid = false) shouldBe BatchResumePolicy.NextStage.SKIP
+        } finally {
+            harness.close()
+        }
+    }
 
     @Test
     fun `flagged standard lane runs the real shell end-to-end with full OCR before translate`() {

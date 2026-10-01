@@ -13,6 +13,7 @@ import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -125,6 +126,7 @@ internal class TranslationCoexistenceHarness private constructor(
     val manager: TranslationManager,
     val fakeRecognition: FakeRecognitionEngine,
     val fakeTransport: FakeTransportTranslator,
+    internal val batchInpaintPageKeys: CopyOnWriteArrayList<String>,
     val trackerRegistry: TranslationBatchTrackerRegistry,
     val schedulerJobMap: CapturingJobMap,
     val streamRegistry: TranslationStreamRegistry,
@@ -208,6 +210,8 @@ internal class TranslationCoexistenceHarness private constructor(
             // same commit: a harness-invented deadlock, not a production
             // ordering.
             transportWaitsForNativeStage: Boolean = false,
+            // Optional batch OCR result shape for no-detection integration tests.
+            batchZeroDetectionMaskBoxes: List<InpaintMaskBox>? = null,
         ): TranslationCoexistenceHarness {
             val chapterId = nextChapterId.getAndAdd(2L)
             val barrier = CoexistenceBarrier()
@@ -479,6 +483,10 @@ internal class TranslationCoexistenceHarness private constructor(
                 BatchExpectedFingerprints,
             ) -> PageTranslation = { pageKey, _, _, batchStore, fingerprints ->
                 val analyzed = FakeCoexistence.analyzedPage(pageKey).apply {
+                    batchZeroDetectionMaskBoxes?.let { masks ->
+                        blocks.clear()
+                        inpaintMaskBoxes = masks
+                    }
                     sourceFingerprint = "fp-$pageKey"
                     detectionFingerprint = fingerprints.detection
                     ocrFingerprint = fingerprints.ocr
@@ -513,6 +521,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 ).shouldBeInstanceOf<StagePatchResult.Accepted>()
                 analyzed
             }
+            val batchInpaintPageKeys = CopyOnWriteArrayList<String>()
             val batchInpaint: suspend (
                 String,
                 Bitmap,
@@ -520,6 +529,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 String?,
                 suspend (String, (PageTranslation?) -> PageTranslation) -> ChapterTranslationStore.PatchResult,
             ) -> PageTranslation = { pageKey, _, page, batchFingerprint, _ ->
+                batchInpaintPageKeys += pageKey
                 //  track I (round 2) CONVERSION: the old
                 // `transportStarted[pageKey]?.await()` pinned the pre-decoupling
                 // lane order "the page's batch identity check has passed once
@@ -764,6 +774,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 manager = manager,
                 fakeRecognition = fakeRecognition,
                 fakeTransport = fakeTransport,
+                batchInpaintPageKeys = batchInpaintPageKeys,
                 trackerRegistry = trackerRegistry,
                 schedulerJobMap = schedulerJobMap,
                 streamRegistry = streamRegistry,
@@ -923,10 +934,12 @@ internal class TranslationCoexistenceHarness private constructor(
         fun createStandard(
             pageKeys: List<String>,
             storeOverride: ChapterTranslationStore? = null,
+            zeroDetectionMaskBoxes: List<InpaintMaskBox>? = null,
         ): TranslationCoexistenceHarness = create(
             pageKeys = pageKeys,
             storeOverride = storeOverride ?: artifactAuthorityStore(pageKeys),
             transportWaitsForNativeStage = false,
+            batchZeroDetectionMaskBoxes = zeroDetectionMaskBoxes,
         )
 
         private fun seed(key: String, value: Any): InMemoryPreferenceStore.InMemoryPreference<Any> =

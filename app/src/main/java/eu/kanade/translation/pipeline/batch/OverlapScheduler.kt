@@ -468,11 +468,10 @@ internal class OverlapScheduler(
             // non-final OCR pages — PENDING/RUNNING/FAILED, which have no
             // durable mask to erase — out of the lane.)
             if (page.ocrStatus != StageStatus.READY) continue
-            // Textless preservation: an OCR-final page with no blocks has no
-            // mask to erase. Before the translation stage marks it
-            // SKIPPED (making [isTextlessTerminal] true) this early skip keeps
-            // the lane free for pages with real work.
-            if (page.blocks.isEmpty()) continue
+            // An OCR-final page with no blocks and no mask has no inpaint
+            // work. Keep masked zero-block pages eligible so the existing
+            // inpaint path can settle their PENDING status to READY.
+            if (page.blocks.isEmpty() && page.inpaintMaskBoxes.isEmpty()) continue
             val inpaint = page.inpaintStatus
             if (inpaint == StageStatus.READY ||
                 inpaint == StageStatus.FAILED ||
@@ -638,7 +637,7 @@ internal class OverlapScheduler(
                         // irrelevant (inpaint's data dependency is detection/OCR only).
                         if (live == null ||
                             live.ocrStatus != StageStatus.READY ||
-                            live.blocks.isEmpty() ||
+                            (live.blocks.isEmpty() && live.inpaintMaskBoxes.isEmpty()) ||
                             live.inpaintStatus == StageStatus.READY ||
                             live.isTextlessTerminal
                         ) {
