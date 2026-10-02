@@ -227,7 +227,7 @@ internal fun retainStagedJournalCredit(
     return existing
 }
 
-class ChapterTranslationStore(
+class ChapterTranslationStore internal constructor(
     // Retained as a source-compatible test seam; artifact-only persistence never
     // invokes this legacy flat-file creator.
     // The scheduler uses these fields to preserve the legacy lazy-file fallback
@@ -244,6 +244,8 @@ class ChapterTranslationStore(
     private val persistenceDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val privateStorageRoot: File? = null,
     private val privateStorageIdentity: String? = null,
+    journalReplayResult: ChapterJournalReplayResult? = null,
+    initialRecoveredPages: Map<String, PublishedPageTranslation>? = null,
 ) {
     /** Explicit memory, lazy-durable, or opened-durable storage mode. */
     internal var engineMode: ChapterStoreEngineMode =
@@ -333,6 +335,23 @@ class ChapterTranslationStore(
     /** Durable artifact manifest snapshot used by the live writer bridge. */
     @Volatile
     internal var artifactManifest: ChapterArtifactManifest? = initialArtifactManifest
+
+    /**
+     * Mutable status state seeded from the recovered prefix at open. The
+     * projector never reads the replay result directly; accepted store
+     * mutations advance this same snapshot while the store is live.
+     */
+    @Volatile
+    private var journalStatusSnapshot: StoreStatusSnapshot? = journalReplayResult?.let { replay ->
+        StoreStatusSnapshot(
+            inventory = StoreStatusInventory(
+                expectedPageKeys = replay.expectedPageKeys.toSet(),
+                expectedPageCount = replay.expectedPageCount,
+                expectedPageCountTrusted = replay.inventory != null,
+            ),
+            durableFailures = replay.durableFailures.toMap(),
+        )
+    }
 
     /**
      * Cleaned-image names retained because the superseded committed bundle
@@ -1349,14 +1368,21 @@ class ChapterTranslationStore(
                 retiredCleanedImages[pageKey] = ConcurrentHashMap.newKeySet<String>().also { it.addAll(names) }
             }
         }
-        initialPages.forEach { (pageKey, page) ->
-            val version = nextVersion()
-            val owned = page.detachedCopy().apply {
-                sourceFileName = sourceFileName ?: pageKey
-                runGeneration = generation
-                pageVersion = version
+        if (initialRecoveredPages != null) {
+            initialRecoveredPages.forEach { (pageKey, page) ->
+                pages = pages.put(pageKey, page)
             }
-            pages = pages.put(pageKey, publishPage(owned))
+            nextPageVersion = initialRecoveredPages.values.maxOfOrNull(PublishedPageTranslation::pageVersion) ?: 0L
+        } else {
+            initialPages.forEach { (pageKey, page) ->
+                val version = nextVersion()
+                val owned = page.detachedCopy().apply {
+                    sourceFileName = sourceFileName ?: pageKey
+                    runGeneration = generation
+                    pageVersion = version
+                }
+                pages = pages.put(pageKey, publishPage(owned))
+            }
         }
         // Seed the last-known-good display pointers from durable artifact
         // snapshots first. The mutable live map may be an incomplete candidate
@@ -1409,7 +1435,104 @@ class ChapterTranslationStore(
      * projection body's original points.
      */
     internal fun statusProjectionInputs(): StoreStatusInputs =
-        StoreStatusInputs(artifactManifest, state, display)
+        StoreStatusInputs(
+            manifest = artifactManifest,
+            state = state,
+            display = display,
+            journalStatus = journalStatusSnapshot,
+        )
+
+    /** Caller holds [mutex]; publish one accepted page mutation into the active status snapshot. */
+    private fun recordJournalStatusPageMutationLocked(
+        pageKey: String,
+        durableFailure: DurableFailureMetadata?,
+    ) {
+        val current = journalStatusSnapshot ?: return
+        val keys = current.inventory.expectedPageKeys + pageKey
+        val failures = LinkedHashMap(current.durableFailures)
+        failures.entries.removeAll { it.value.pageKey == pageKey }
+        durableFailure?.let { failure ->
+            failures["${failure.pageKey}:${failure.stage.name}"] = failure
+        }
+        journalStatusSnapshot = current.copy(
+            inventory = current.inventory.copy(
+                expectedPageKeys = keys,
+                expectedPageCount = maxOf(current.inventory.expectedPageCount ?: 0, keys.size),
+            ),
+            durableFailures = failures.toMap(),
+        )
+    }
+
+    /** Caller holds [mutex]; accepted page deletion removes that page's live inventory/failure identity. */
+    private fun recordJournalStatusPageDeletionLocked(pageKey: String) {
+        val current = journalStatusSnapshot ?: return
+        journalStatusSnapshot = current.copy(
+            inventory = current.inventory.copy(
+                expectedPageKeys = current.inventory.expectedPageKeys - pageKey,
+            ),
+            durableFailures = current.durableFailures.filterValues { it.pageKey != pageKey },
+        )
+    }
+
+    /** Caller holds [mutex]; a bulk re-key transfers the active inventory and failure identities. */
+    private fun recordJournalStatusRekeyLocked(moves: Map<String, String>) {
+        val current = journalStatusSnapshot ?: return
+        val keys = current.inventory.expectedPageKeys.mapTo(LinkedHashSet()) { key -> moves[key] ?: key }
+            .apply { addAll(moves.values) }
+        val failures = LinkedHashMap<String, DurableFailureMetadata>()
+        current.durableFailures.values.forEach { failure ->
+            val pageKey = moves[failure.pageKey] ?: failure.pageKey
+            val moved = failure.copy(pageKey = pageKey)
+            failures["$pageKey:${moved.stage.name}"] = moved
+        }
+        journalStatusSnapshot = current.copy(
+            inventory = current.inventory.copy(expectedPageKeys = keys),
+            durableFailures = failures.toMap(),
+        )
+    }
+
+    /** Caller holds [mutex]; registration is an accepted store mutation even before its journal offer. */
+    private fun recordJournalStatusRegistrationLocked(
+        pageKeys: Set<String>,
+        expectedPageCount: Int?,
+        expectedPageCountTrusted: Boolean,
+    ) {
+        val current = journalStatusSnapshot ?: return
+        val keys = current.inventory.expectedPageKeys + pageKeys
+        val expectedCount = maxOf(
+            current.inventory.expectedPageCount ?: 0,
+            expectedPageCount ?: 0,
+            keys.size,
+        )
+        journalStatusSnapshot = current.copy(
+            inventory = current.inventory.copy(
+                expectedPageKeys = keys,
+                expectedPageCount = expectedCount,
+                expectedPageCountTrusted =
+                current.inventory.expectedPageCountTrusted || expectedPageCountTrusted,
+            ),
+        )
+    }
+
+    /** Caller holds [mutex]; replaceAll swaps the accepted inventory and clears superseded failures. */
+    private fun recordJournalStatusReplacementLocked(pageKeys: Set<String>) {
+        val current = journalStatusSnapshot ?: return
+        journalStatusSnapshot = current.copy(
+            inventory = current.inventory.copy(
+                expectedPageKeys = pageKeys.toSet(),
+                expectedPageCount = maxOf(current.inventory.expectedPageCount ?: 0, pageKeys.size),
+            ),
+            durableFailures = emptyMap(),
+        )
+    }
+
+    /** Caller holds [mutex]; clears one accepted failure mutation from the active status snapshot. */
+    private fun clearJournalStatusFailureLocked(pageKey: String) {
+        val current = journalStatusSnapshot ?: return
+        journalStatusSnapshot = current.copy(
+            durableFailures = current.durableFailures.filterValues { it.pageKey != pageKey },
+        )
+    }
 
     /** Current durable stage failure, if the artifact manifest owns one. */
     fun durableFailure(
@@ -1528,6 +1651,7 @@ class ChapterTranslationStore(
         )
         if (artifact.publishManifest(updated)) {
             artifactManifest = updated
+            clearJournalStatusFailureLocked(pageKey)
             _state.value = snapshotPages()
             displaySnapshotLocked(emptyList())
         } else {
@@ -1994,6 +2118,7 @@ class ChapterTranslationStore(
                         restorePageLocked(pageKey, previous)
                         return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
                     }
+                    recordJournalStatusPageMutationLocked(pageKey, failure)
                     // A retryable/terminal candidate is deliberately not promoted. The
                     // prior committed display remains the reader authority.
                     _state.value = snapshotPages()
@@ -2805,6 +2930,7 @@ class ChapterTranslationStore(
                         }
                         pages = pages.remove(pageKey)
                         committedDisplay = committedDisplay.remove(pageKey)
+                        recordJournalStatusPageDeletionLocked(pageKey)
                         retiredCleanedImages.remove(pageKey)
                         pageLeases.remove(pageKey)
                         schedulePersist()
@@ -2882,6 +3008,7 @@ class ChapterTranslationStore(
                             flushStagedMutationsLocked(CommitPoint.EXPLICIT_FLUSH)
                         }
                         persistenceScheduler.dirty = !persistLocked()
+                        recordJournalStatusReplacementLocked(updatedPages.keys)
                         _state.value = snapshotPages()
                         displaySnapshotLocked(changedDisplayKeys)
                     } finally {
@@ -2997,6 +3124,7 @@ class ChapterTranslationStore(
                         }
                         pages = updatedPages
                         committedDisplay = updatedCommitted
+                        recordJournalStatusRekeyLocked(plan.moves)
                         plan.moves.forEach { (oldKey, newKey) ->
                             if (pendingArtifactPageRegistrations.remove(oldKey)) {
                                 pendingArtifactPageRegistrations += newKey
@@ -3146,6 +3274,11 @@ class ChapterTranslationStore(
                     crossCheckUnknown -> false
                     else -> manifest?.expectedPageCountTrusted == true || pendingExpectedPageCountTrusted
                 }
+                recordJournalStatusRegistrationLocked(
+                    pageKeys = pageKeys.toSet(),
+                    expectedPageCount = expected,
+                    expectedPageCountTrusted = expectedTrusted,
+                )
                 // The partial delta rides the same publish as the totals; a full
                 // cross-check (missing == 0) clears a previously recorded label.
                 val partialInfo = when {
@@ -3290,7 +3423,9 @@ class ChapterTranslationStore(
         // Durable failure records remain synchronous so cancellation/retry
         // semantics never report a failure before its ledger is recorded.
         if (lazyPersistenceEnabled && durableFailure == null) {
-            return publishLazyLocked(pageKey, previous, updated, expected, journalCredit)
+            val accepted = publishLazyLocked(pageKey, previous, updated, expected, journalCredit)
+            if (accepted) recordJournalStatusPageMutationLocked(pageKey, durableFailure)
+            return accepted
         }
         val isDurable = shouldPersistUpdate(previous, updated)
         //  R2 restricted UI-before-persist: transient non-durable updates publish StateFlows
@@ -3312,6 +3447,7 @@ class ChapterTranslationStore(
             true
         }
         if (!artifactAccepted) return false
+        recordJournalStatusPageMutationLocked(pageKey, durableFailure)
         promoteDisplayIfReadyLocked(pageKey, updated)
         if (!GroupCommitConfiguration.enabled || isDurable) {
             _state.value = snapshotPages()
@@ -4340,27 +4476,48 @@ class ChapterTranslationStore(
         fun open(translationFile: UniFile): ChapterTranslationStore =
             open(translationFile, privateStorageRoot = null, privateStorageIdentity = null)
 
-        /** Opens a durable artifact and enables shadow capture in app-private files when provided. */
+        /** Synchronous compatibility seam retained for existing JVM tests. */
         internal fun open(
             translationFile: UniFile,
             privateStorageRoot: File?,
             privateStorageIdentity: String?,
-        ): ChapterTranslationStore = openArtifact(
+        ): ChapterTranslationStore = runBlocking(Dispatchers.IO) {
+            openSuspend(translationFile, privateStorageRoot, privateStorageIdentity)
+        }
+
+        /** Production open seam: manifest reads and journal recovery never block the caller thread. */
+        internal suspend fun openSuspend(
+            translationFile: UniFile,
+            privateStorageRoot: File?,
+            privateStorageIdentity: String?,
+        ): ChapterTranslationStore = openArtifactSuspend(
             translationFile.parentFile ?: error("translation file has no parent"),
             translationFile.name ?: DEFAULT_FILE_NAME,
             privateStorageRoot,
             privateStorageIdentity,
         )
 
-        /** Opens an artifact chapter, creating an empty manifest when needed. */
+        /** Synchronous compatibility seam retained for existing JVM tests. */
         internal fun openArtifact(
             parent: UniFile,
             fileName: String,
             privateStorageRoot: File? = null,
             privateStorageIdentity: String? = null,
-        ): ChapterTranslationStore {
-            return withArtifactOpenLock(parent, fileName) { openLock ->
-                openArtifactOnly(parent, fileName, openLock.monitor, privateStorageRoot, privateStorageIdentity)
+        ): ChapterTranslationStore = runBlocking(Dispatchers.IO) {
+            openArtifactSuspend(parent, fileName, privateStorageRoot, privateStorageIdentity)
+        }
+
+        /** Opens an artifact and installs only the state reconstructed from its ACKed journal prefix. */
+        internal suspend fun openArtifactSuspend(
+            parent: UniFile,
+            fileName: String,
+            privateStorageRoot: File? = null,
+            privateStorageIdentity: String? = null,
+        ): ChapterTranslationStore = withContext(Dispatchers.IO) {
+            withArtifactOpenLock(parent, fileName) { openLock ->
+                synchronized(openLock.monitor) {
+                    openArtifactOnly(parent, fileName, privateStorageRoot, privateStorageIdentity)
+                }
             }
         }
 
@@ -4400,7 +4557,6 @@ class ChapterTranslationStore(
         private fun openArtifactOnly(
             parent: UniFile?,
             fileName: String,
-            openMonitor: Any,
             privateStorageRoot: File?,
             privateStorageIdentity: String?,
         ): ChapterTranslationStore {
@@ -4417,18 +4573,35 @@ class ChapterTranslationStore(
             val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
             val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
             val artifact = ChapterArtifactEngine(documents, layout)
-            val manifest = synchronized(openMonitor) { artifact.load().manifest }
+            val manifest = artifact.load().manifest
+            val chapterIdentity = privateStorageIdentity ?: buildString {
+                append(parent.filePath ?: parent.uri?.toString() ?: "<no-parent>")
+                append(':')
+                append(fileName)
+            }
+            val journalReplay = privateStorageRoot?.let { root ->
+                val chapterIdentityHash = StageFingerprints.sha256Hex(chapterIdentity.toByteArray(Charsets.UTF_8))
+                ChapterJournalReplayReducer.replay(
+                    epochs = ChapterJournalReplayReducer.readAppPrivateEpochs(root, chapterIdentity),
+                    artifactResolver = ChapterJournalReplayReducer.artifactResolver(artifact, manifest),
+                    expectedChapterIdentityHash = chapterIdentityHash,
+                )
+            }
             val committedPages = manifest.pages.mapNotNull { (pageKey, record) ->
                 record.committed?.pageSnapshotFileName
                     ?.let(artifact::readPageSnapshot)
                     ?.let { pageKey to it }
             }.toMap()
-            val livePages = manifest.pages.mapNotNull { (pageKey, record) ->
-                val snapshot = record.candidate?.pageSnapshotFileName?.let(artifact::readPageSnapshot)
-                    ?: record.committed?.pageSnapshotFileName?.let(artifact::readPageSnapshot)
-                    ?: record.toArtifactPageFallback()
-                pageKey to snapshot
-            }.toMap()
+            val livePages = if (journalReplay == null) {
+                manifest.pages.mapNotNull { (pageKey, record) ->
+                    val snapshot = record.candidate?.pageSnapshotFileName?.let(artifact::readPageSnapshot)
+                        ?: record.committed?.pageSnapshotFileName?.let(artifact::readPageSnapshot)
+                        ?: record.toArtifactPageFallback()
+                    pageKey to snapshot
+                }.toMap()
+            } else {
+                emptyMap()
+            }
             val retiredCleanedImages = manifest.pages.mapNotNull { (pageKey, record) ->
                 val previous = record.previousCommitted ?: return@mapNotNull null
                 val name = previous.displayBase.fileName
@@ -4443,6 +4616,8 @@ class ChapterTranslationStore(
                 artifactStore = artifact,
                 initialCommittedPages = committedPages,
                 initialArtifactManifest = manifest,
+                journalReplayResult = journalReplay,
+                initialRecoveredPages = journalReplay?.pages,
                 initialRetiredCleanedImages = retiredCleanedImages,
                 artifactParent = parent,
                 artifactFileName = fileName,

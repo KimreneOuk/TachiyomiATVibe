@@ -240,14 +240,14 @@ class ChapterTranslator(
                     translation.manga.title,
                     translation.source,
                 )?.takeIf { it.exists() }?.let { file ->
-                    ChapterTranslationStore.open(
+                    ChapterTranslationStore.openSuspend(
                         file,
                         provider.privateJournalRoot,
                         provider.privateJournalIdentity(translation.source, translation.manga.title, file.name ?: "translation.json"),
                     )
                 }
                     ?: provider.findMangaDir(translation.manga.title, translation.source)?.let { parent ->
-                        ChapterTranslationStore.openArtifact(
+                        ChapterTranslationStore.openArtifactSuspend(
                             parent,
                             provider.getTranslationFileName(
                                 translation.chapter.name,
@@ -696,7 +696,7 @@ class ChapterTranslator(
                         translation.status = Translation.State.ERROR
                         return null
                     }
-                    store = ChapterTranslationStore.openArtifact(
+                    store = ChapterTranslationStore.openArtifactSuspend(
                         translationMangaDir,
                         saveFile,
                         provider.privateJournalRoot,
@@ -712,7 +712,7 @@ class ChapterTranslator(
                     return null
                 }
                 if (store == null) {
-                    store = ChapterTranslationStore.open(
+                    store = ChapterTranslationStore.openSuspend(
                         translationFile!!,
                         provider.privateJournalRoot,
                         provider.privateJournalIdentity(

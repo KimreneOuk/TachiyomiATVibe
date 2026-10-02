@@ -4,27 +4,37 @@ import com.hippo.unifile.FakeUniFile
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressStage
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
+import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.CandidateGenerationMetadata
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
+import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.CleanedImageIdentity
 import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
 import eu.kanade.translation.persistence.artifact.DisplayBaseKind
 import eu.kanade.translation.persistence.artifact.DisplayBaseReference
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.SourceIdentity
 import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.journal.ChapterJournalBulkRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalFormat
 import eu.kanade.translation.persistence.journal.ChapterJournalInventoryRecord
+import eu.kanade.translation.persistence.journal.ChapterJournalInventorySnapshot
 import eu.kanade.translation.persistence.journal.ChapterJournalRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalReplayEpoch
 import eu.kanade.translation.persistence.journal.ChapterJournalReplayReducer
@@ -32,6 +42,7 @@ import eu.kanade.translation.persistence.journal.ChapterJournalReplaySegment
 import eu.kanade.translation.persistence.journal.ChapterJournalSink
 import eu.kanade.translation.persistence.journal.ChapterJournalStorage
 import eu.kanade.translation.persistence.journal.ChapterJournalWriter
+import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.toPrecondition
 import io.kotest.matchers.collections.shouldContainExactly
@@ -232,6 +243,242 @@ class ChapterTranslationStoreJournalCaptureTest {
                 store.closeAndFlush()
                 writer.drainAndClose()
             }
+        }
+    }
+
+    @Test
+    fun `artifact open does not expose a candidate ahead of the journal prefix`() = runTest {
+        val root = FakeUniFile(parent = null, backing = chapterDir)
+        val privateJournalRoot = File(chapterDir, "private-journal")
+        val journalIdentity = "source:manga:Cutover chapter.json"
+        val layout = ChapterArtifactLayout("Cutover chapter")
+        val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(root))
+        val engine = ChapterArtifactEngine(documents, layout)
+        val pageKey = "page.jpg"
+        val journalFailure = DurableFailureMetadata(
+            pageKey = pageKey,
+            stage = ArtifactStage.TRANSLATION,
+            status = ArtifactStageStatus.FAILED_RETRYABLE,
+            category = FailureCategory.TRANSIENT,
+            retryCount = 2,
+            lastFailureMessage = "journal-owned retryable failure",
+            lastFailedAtEpochMs = 2L,
+        )
+        val journalWinner = PageTranslation(
+            sourceFileName = pageKey,
+            blocks = mutableListOf(
+                TranslationBlock(
+                    text = "source",
+                    translation = "journal winner",
+                    width = 10f,
+                    height = 10f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            ),
+            translationStatus = StageStatus.FAILED,
+            translationError = "journal-owned retryable failure",
+        ).toPublishedPage()
+        val journalHash = StageFingerprints.pageSnapshot(journalWinner)
+        val committedSnapshot = layout.committedPageSnapshotFile(pageKey, "journal-winner")
+        documents.publishJson(committedSnapshot, journalWinner.toDraft()) shouldBe true
+
+        val artifactAhead = journalWinner.toDraft().apply {
+            blocks = blocks.map { it.copy(translation = "manifest-only candidate") }.toMutableList()
+            translationStatus = StageStatus.READY
+            translationError = null
+        }
+        val candidateSnapshot = layout.candidatePageSnapshotFile(pageKey, "artifact-ahead")
+        val candidateHash = StageFingerprints.pageSnapshot(artifactAhead)
+        documents.publishJson(candidateSnapshot, artifactAhead) shouldBe true
+
+        val candidateId = "artifact-ahead"
+        val pageRecord = PageArtifactRecord(
+            pageKey = pageKey,
+            committed = CommittedBundleMetadata(
+                generationId = "journal-winner",
+                displayBase = DisplayBaseReference(DisplayBaseKind.ORIGINAL_SOURCE, validated = true),
+                translationFingerprint = journalHash,
+                pageSnapshotFileName = committedSnapshot,
+            ),
+            candidate = CandidateGenerationMetadata(
+                generationId = candidateId,
+                dependencyFingerprint = journalHash,
+                pageSnapshotFileName = candidateSnapshot,
+                pageSnapshotFingerprint = candidateHash,
+            ),
+        )
+        var manifest = ChapterArtifactManifest(
+            chapterKey = layout.chapterKey,
+            pages = mapOf(pageKey to pageRecord),
+            durableFailures = mapOf(
+                "$pageKey:${ArtifactStage.TRANSLATION.name}" to DurableFailureMetadata(
+                    pageKey = pageKey,
+                    stage = ArtifactStage.TRANSLATION,
+                    status = ArtifactStageStatus.FAILED_TERMINAL,
+                    category = FailureCategory.PROTOCOL,
+                    retryCount = 1,
+                    lastFailureMessage = "stale manifest-only failure",
+                    lastFailedAtEpochMs = 1L,
+                ),
+            ),
+            expectedPageCount = 1,
+            expectedPageCountTrusted = true,
+            activeCandidateGenerationIds = setOf(candidateId),
+        )
+        engine.publishManifest(manifest) shouldBe true
+        val frozenRunConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
+            sourceLang = "ja",
+            targetLang = "en",
+            ocrEngine = "FakeOcrEngine",
+            inpaintMode = "OFF",
+            providerKey = "fake:provider",
+        )
+        val completeRunRecord = ChapterRunRecord(
+            runId = "complete-cutover-run",
+            state = ChapterRunState.COMPLETE,
+            frozenConfig = frozenRunConfig,
+            frozenRunConfigFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozenRunConfig),
+            orderedSourceDigest = StageFingerprints.sha256Hex("ordered-source".encodeToByteArray()),
+            analysisPolicyFingerprint = StageFingerprints.sha256Hex("analysis-policy".encodeToByteArray()),
+            envelopePolicyFingerprint = StageFingerprints.sha256Hex("envelope-policy".encodeToByteArray()),
+            createdAtEpochMs = 1L,
+            updatedAtEpochMs = 1L,
+        )
+        val completeRunFingerprint = StageFingerprints.sha256Hex(
+            ArtifactDocumentJson.encodeToString(completeRunRecord).encodeToByteArray(),
+        )
+        manifest = engine.publishActiveRun(
+            manifest = engine.readManifest() ?: error("fixture: manifest missing before run record"),
+            record = completeRunRecord,
+            contentFingerprint = completeRunFingerprint,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest
+
+        // Write an ordinary CRC-framed journal prefix to the same app-private epoch layout
+        // consumed by production open, then materialize its segment as a real file.
+        val epochOrdinal = 4L
+        val sessionId = UUID.randomUUID()
+        val chapterIdentityHash = StageFingerprints.sha256Hex(journalIdentity.toByteArray())
+        val journalJson = Json {
+            encodeDefaults = true
+            explicitNulls = true
+        }
+        val storage = MemoryStorage()
+        val writer = ChapterJournalWriter(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { journalJson.encodeToString(it).encodeToByteArray() },
+            encodeBulkRecord = { journalJson.encodeToString(it).encodeToByteArray() },
+            encodeInventory = { journalJson.encodeToString(it).encodeToByteArray() },
+            encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
+            storeGeneration = 0L,
+            epochOrdinal = epochOrdinal,
+            sessionId = sessionId,
+            chapterIdentityHash = chapterIdentityHash,
+        )
+        try {
+            val credit = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyPersisted(
+                commitSeq = writer.nextCommitSeq(),
+                credit = credit,
+                pageKey = pageKey,
+                generation = 0L,
+                fencingToken = 0L,
+                page = journalWinner,
+                durableFailure = journalFailure,
+                artifactContentHash = journalHash,
+                inventory = ChapterJournalInventorySnapshot(
+                    expectedPageKeys = setOf(pageKey),
+                    expectedPageCount = 1,
+                    sourceShaByPageKey = emptyMap(),
+                ),
+            )
+            writer.flushToCaptureBarrier() shouldBe 2L
+        } finally {
+            writer.drainAndClose()
+        }
+        val epochDirectory = File(
+            File(File(privateJournalRoot, "translation-journal-v1"), chapterIdentityHash),
+            "epoch-${epochOrdinal.toString().padStart(20, '0')}-g0-$sessionId",
+        )
+        check(epochDirectory.mkdirs())
+        val segmentBytes = storage.readSegment(0L)
+        epochDirectory.resolve("segment-00000000.tjr").writeBytes(segmentBytes)
+
+        val scannedPrefix = ChapterJournalFormat.scanSegment(
+            bytes = segmentBytes,
+            expectedSegmentIndex = 0L,
+            expectedGeneration = 0L,
+            expectedEpochOrdinal = epochOrdinal,
+            expectedSessionId = sessionId,
+            firstExpectedFrameSeq = 1L,
+            firstExpectedCommitSeq = 1L,
+        )
+        scannedPrefix.validHeader shouldBe true
+        scannedPrefix.frames.map { it.kind } shouldContainExactly listOf(
+            ChapterJournalFormat.RecordKind.INVENTORY,
+            ChapterJournalFormat.RecordKind.FREE_STATE,
+        )
+        val scannedRecord = journalJson.decodeFromString<ChapterJournalRecord>(
+            scannedPrefix.frames.last().payload.decodeToString(),
+        )
+        scannedRecord.pageKey shouldBe pageKey
+        scannedRecord.state shouldBe journalWinner
+        scannedRecord.artifactContentHash shouldBe journalHash
+        scannedRecord.durableFailure shouldBe journalFailure
+
+        // Pin the setup: the production resolver validates the acknowledged prefix even though
+        // the newer candidate is manifest-visible.
+        val artifactResolver = ChapterJournalReplayReducer.artifactResolver(engine, manifest)
+        artifactResolver.matches(pageKey, journalHash, journalWinner) shouldBe true
+        val replay = ChapterJournalReplayReducer.replay(
+            epochs = ChapterJournalReplayReducer.readAppPrivateEpochs(privateJournalRoot, journalIdentity).also {
+                it.size shouldBe 1
+                it.single().segments.map(ChapterJournalReplaySegment::index) shouldContainExactly listOf(0L)
+            },
+            artifactResolver = artifactResolver,
+            expectedChapterIdentityHash = chapterIdentityHash,
+        )
+        replay.validFrameCount shouldBe 2
+        replay.appliedRecordCount shouldBe 1
+        replay.pages[pageKey] shouldBe journalWinner
+        replay.invalidPageKeys shouldBe emptySet()
+        replay.durableFailures shouldBe mapOf("$pageKey:${ArtifactStage.TRANSLATION.name}" to journalFailure)
+
+        val reopened = ChapterTranslationStore.openArtifactSuspend(
+            root,
+            "Cutover chapter.json",
+            privateStorageRoot = privateJournalRoot,
+            privateStorageIdentity = journalIdentity,
+        )
+        try {
+            reopened.pages[pageKey] shouldBe journalWinner
+            reopened.pages.getValue(pageKey).blocks.single().translation shouldBe "journal winner"
+            reopened.durableFailure(pageKey, ArtifactStage.TRANSLATION) shouldBe journalFailure
+            reopened.durableFailuresSnapshot() shouldBe mapOf(
+                "$pageKey:${ArtifactStage.TRANSLATION.name}" to journalFailure,
+            )
+            reopened.artifactStatus() shouldBe Translation.State.PAUSED
+
+            // A durable COMPLETE record preserves translated-but-unrendered
+            // pages at the display tail. The manifest's READY candidate cannot
+            // provide the evidence: only this accepted active-store mutation
+            // clears the retryable failure and makes the exception apply.
+            reopened.updatePage(pageKey) { page ->
+                checkNotNull(page).copy(
+                    translationStatus = StageStatus.READY,
+                    translationError = null,
+                )
+            }
+            reopened.durableFailuresSnapshot() shouldBe emptyMap()
+            reopened.pages.getValue(pageKey).translationStatus shouldBe StageStatus.READY
+            reopened.pages.getValue(pageKey).renderStatus shouldBe StageStatus.PENDING
+            reopened.artifactStatus() shouldBe Translation.State.TRANSLATED
+        } finally {
+            reopened.closeAndFlush()
         }
     }
 

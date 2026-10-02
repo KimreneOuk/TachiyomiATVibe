@@ -1237,7 +1237,7 @@ class TranslationManager private constructor(
         if (manifestProbe.exists) {
             val parent = file.parentFile ?: return@runBlocking emptyMap()
             val store = activeStores.getOrCreateFile(file.registryKey()) {
-                ChapterTranslationStore.openArtifact(
+                ChapterTranslationStore.openArtifactSuspend(
                     parent,
                     file.name ?: "translation.json",
                     provider.privateJournalRoot,
@@ -1274,7 +1274,7 @@ class TranslationManager private constructor(
         }
         val store = if (chapterId != null) {
             activeStores.getOrCreate(chapterId, document.registryKey) {
-                ChapterTranslationStore.openArtifact(
+                ChapterTranslationStore.openArtifactSuspend(
                     document.parent,
                     document.fileName,
                     provider.privateJournalRoot,
@@ -1283,7 +1283,7 @@ class TranslationManager private constructor(
             }
         } else {
             activeStores.getOrCreateFile(document.registryKey) {
-                ChapterTranslationStore.openArtifact(
+                ChapterTranslationStore.openArtifactSuspend(
                     document.parent,
                     document.fileName,
                     provider.privateJournalRoot,
@@ -1335,7 +1335,7 @@ class TranslationManager private constructor(
                 ?.takeIf { it.exists() }
                 ?: return
             activeStores.getOrCreate(chapterId, file.registryKey()) {
-                ChapterTranslationStore.open(
+                ChapterTranslationStore.openSuspend(
                     file,
                     provider.privateJournalRoot,
                     provider.privateJournalIdentity(source, manga.title, file.name ?: "translation.json"),
@@ -1442,7 +1442,7 @@ class TranslationManager private constructor(
             document?.registryKey,
         ) {
             if (manifestProbe?.exists == true) {
-                ChapterTranslationStore.openArtifact(
+                ChapterTranslationStore.openArtifactSuspend(
                     document.parent,
                     fileName,
                     provider.privateJournalRoot,

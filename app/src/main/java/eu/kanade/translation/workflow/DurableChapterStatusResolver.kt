@@ -114,7 +114,12 @@ internal class DurableChapterStatusResolver(
             ?: return null
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         return if (manifestProbe.exists) {
-            withProbeStore(document, chapterId) { store -> store.artifactStatus() }
+            withProbeStore(
+                document = document,
+                chapterId = chapterId,
+                privateJournalRoot = provider.privateJournalRoot,
+                privateJournalIdentity = provider.privateJournalIdentity(source, mangaTitle, document.fileName),
+            ) { store -> store.artifactStatus() }
         } else {
             null
         }
@@ -172,19 +177,32 @@ internal class DurableChapterStatusResolver(
         if (!ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName).exists) {
             return null
         }
-        return withProbeStore(document, chapterId, block)
+        return withProbeStore(
+            document = document,
+            chapterId = chapterId,
+            privateJournalRoot = provider.privateJournalRoot,
+            privateJournalIdentity = provider.privateJournalIdentity(source, mangaTitle, document.fileName),
+            block = block,
+        )
     }
 
     private suspend fun <T> withProbeStore(
         document: TranslationDocument,
         chapterId: Long?,
+        privateJournalRoot: java.io.File,
+        privateJournalIdentity: String,
         block: suspend (ChapterTranslationStore) -> T,
     ): T? {
         if (chapterId != null) {
             activeStores.get(chapterId)?.let { return block(it) }
         }
         val result = activeStores.getOrCreateProbe(document.registryKey) {
-            ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+            ChapterTranslationStore.openArtifactSuspend(
+                document.parent,
+                document.fileName,
+                privateJournalRoot,
+                privateJournalIdentity,
+            )
         } ?: return null
         // A newly created probe can perform the one-way rescue and rename
         // intent recovery while it opens; statuses cached before that

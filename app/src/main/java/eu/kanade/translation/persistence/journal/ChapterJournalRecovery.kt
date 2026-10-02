@@ -3,6 +3,7 @@ package eu.kanade.translation.persistence.journal
 import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -56,6 +57,8 @@ internal data class ChapterJournalReplayResult(
     val ignoredStaleRecordCount: Int,
     val validFrameCount: Int,
     val corruptEpochs: Set<ChapterJournalFormat.EpochOrderKey>,
+    /** Latest accepted failure metadata per page, reconstructed from the same durable prefix. */
+    val durableFailures: Map<String, DurableFailureMetadata> = emptyMap(),
 ) {
     val hasCompleteInventory: Boolean
         get() = inventory != null &&
@@ -100,6 +103,7 @@ internal object ChapterJournalReplayReducer {
         val pages = LinkedHashMap<String, PublishedPageTranslation>()
         val winners = HashMap<String, Winner>()
         val invalidPages = LinkedHashSet<String>()
+        val durableFailures = LinkedHashMap<String, DurableFailureMetadata>()
         val corruptEpochs = LinkedHashSet<ChapterJournalFormat.EpochOrderKey>()
         var inventory: ChapterJournalInventoryRecord? = null
         var applied = 0
@@ -161,6 +165,7 @@ internal object ChapterJournalReplayReducer {
                                 pages = pages,
                                 winners = winners,
                                 invalidPages = invalidPages,
+                                durableFailures = durableFailures,
                                 artifactResolver = artifactResolver,
                             )
                         ) {
@@ -202,6 +207,7 @@ internal object ChapterJournalReplayReducer {
                                     pages = pages,
                                     winners = winners,
                                     invalidPages = invalidPages,
+                                    durableFailures = durableFailures,
                                     artifactResolver = artifactResolver,
                                 )
                             ) {
@@ -246,6 +252,7 @@ internal object ChapterJournalReplayReducer {
             ignoredStaleRecordCount = ignoredStale,
             validFrameCount = validFrames,
             corruptEpochs = corruptEpochs,
+            durableFailures = durableFailures.toMap(),
         )
     }
 
@@ -440,6 +447,7 @@ internal object ChapterJournalReplayReducer {
         pages: MutableMap<String, PublishedPageTranslation>,
         winners: MutableMap<String, Winner>,
         invalidPages: MutableSet<String>,
+        durableFailures: MutableMap<String, DurableFailureMetadata>,
         artifactResolver: ChapterJournalArtifactIdentityResolver?,
     ): Boolean {
         val previous = winners[record.pageKey]
@@ -453,6 +461,12 @@ internal object ChapterJournalReplayReducer {
             if (epochOrdinal < previous.epochOrdinal || staleWithinEpoch) return false
         }
         val winner = Winner(record.generation, record.fencingToken, epoch.order.epochOrdinal, commitSeq)
+        if (record.durableFailure == null) {
+            durableFailures.entries.removeAll { it.value.pageKey == record.pageKey }
+        } else {
+            val failure = checkNotNull(record.durableFailure)
+            durableFailures["${failure.pageKey}:${failure.stage.name}"] = failure
+        }
         val state = record.state
         if (state != null) {
             val hash = record.artifactContentHash
@@ -541,7 +555,8 @@ internal object ChapterJournalReplayReducer {
             terminalObservedPayloadBytes?.let { it >= 0 } != false &&
             (state == null || (pageKey.isNotBlank() && state.sourceFileName == pageKey))
 
-    private fun ChapterJournalRecord.isPageMutationSemanticallyValid(): Boolean = pageKey.isNotBlank()
+    private fun ChapterJournalRecord.isPageMutationSemanticallyValid(): Boolean =
+        pageKey.isNotBlank() && durableFailure?.pageKey?.let { it == pageKey } != false
 
     private fun ChapterJournalBulkRecord.isSemanticallyValid(): Boolean =
         operation.isNotBlank() &&
