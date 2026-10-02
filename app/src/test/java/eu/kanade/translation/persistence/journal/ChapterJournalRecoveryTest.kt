@@ -44,34 +44,39 @@ class ChapterJournalRecoveryTest {
     )
 
     @Test
-    fun `successor epoch wins same page over a late append after old epoch defunct`() {
+    fun `successor epoch beats higher generation and token including an old epoch late append`() {
         val old = page("page", "old")
         val lateOldAppend = page("page", "late-old-append")
         val current = page("page", "current")
         val epochs = listOf(
             epoch(
-                generation = 0L,
+                generation = 9L,
                 ordinal = 20L,
                 frames = listOf(
-                    stateFrame(1L, old, generation = 0L),
+                    stateFrame(1L, old, generation = 9L, fencingToken = 11L),
                     defunctFrame(2L),
-                    stateFrame(2L, lateOldAppend, generation = 0L),
+                    stateFrame(2L, lateOldAppend, generation = 9L, fencingToken = 12L),
                 ),
             ),
             epoch(
-                generation = 0L,
+                generation = 1L,
                 ordinal = 21L,
-                frames = listOf(stateFrame(1L, current, generation = 0L)),
+                frames = listOf(stateFrame(1L, current, generation = 1L, fencingToken = 0L)),
             ),
         )
 
-        replay(epochs).pages["page.jpg"] shouldBe current
+        val result = replay(epochs)
+
+        result.pages["page.jpg"] shouldBe current
+        result.invalidPageKeys shouldBe emptySet()
+        result.ignoredStaleRecordCount shouldBe 0
     }
 
     @Test
-    fun `older generation record cannot invalidate a valid newer winner`() {
+    fun `older generation and fencing token are stale within the same epoch`() {
         val current = page("page", "current")
-        val stale = page("page", "stale")
+        val staleGeneration = page("page", "stale-generation")
+        val staleToken = page("page", "stale-token")
         val result = replay(
             listOf(
                 epoch(
@@ -85,17 +90,21 @@ class ChapterJournalRecoveryTest {
                             fencingToken = 5L,
                             hash = StageFingerprints.pageSnapshot(current),
                         ),
+                        stateFrame(
+                            2L,
+                            staleGeneration,
+                            generation = 2L,
+                            fencingToken = 99L,
+                            hash = "0".repeat(64),
+                        ),
+                        stateFrame(
+                            3L,
+                            staleToken,
+                            generation = 3L,
+                            fencingToken = 4L,
+                            hash = "0".repeat(64),
+                        ),
                     ),
-                ),
-                epoch(
-                    generation = 3L,
-                    ordinal = 2L,
-                    frames = listOf(stateFrame(1L, stale, generation = 3L, fencingToken = 4L, hash = "0".repeat(64))),
-                ),
-                epoch(
-                    generation = 2L,
-                    ordinal = 3L,
-                    frames = listOf(stateFrame(1L, stale, generation = 2L, fencingToken = 99L, hash = "0".repeat(64))),
                 ),
             ),
             artifactResolver = resolver(mapOf("page.jpg" to current)),
@@ -250,16 +259,11 @@ class ChapterJournalRecoveryTest {
                     ordinal = 2L,
                     frames = listOf(tombstoneFrame(1L, generation = 1L)),
                 ),
-                epoch(
-                    generation = 0L,
-                    ordinal = 3L,
-                    frames = listOf(stateFrame(1L, old, generation = 0L)),
-                ),
             ),
         )
 
         result.pages shouldBe emptyMap()
-        result.ignoredStaleRecordCount shouldBe 1
+        result.ignoredStaleRecordCount shouldBe 0
     }
 
     @Test

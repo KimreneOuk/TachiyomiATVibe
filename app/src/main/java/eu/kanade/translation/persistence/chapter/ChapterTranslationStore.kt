@@ -3942,7 +3942,6 @@ class ChapterTranslationStore(
             val newKey = moves[oldKey] ?: oldKey
             if (updatedSourceSha.put(newKey, sourceSha) != null) return null
         }
-        if (prepared.pages.keys.size != prepared.pages.keys.distinct().size) return null
         return base.copy(
             pages = prepared.pages,
             durableFailures = updatedFailures,

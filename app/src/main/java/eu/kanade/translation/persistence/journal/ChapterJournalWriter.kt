@@ -54,10 +54,11 @@ internal data class ChapterJournalRecord(
     val cleanedImageName: String? = null,
     val cleanedImageContentHash: String? = null,
     /**
-     * Semantic SHA-256 identity of the page snapshot persisted by the legacy artifact; null only
-     * when no snapshot exists. Replay verifies it by re-reading that artifact, re-deriving the
-     * PageTranslation, and calling the same StageFingerprints.pageSnapshot function. It must not
-     * hash serialized JSON bytes, whose harmless encoding changes are not semantic page changes.
+     * Semantic SHA-256 identity of the page snapshot persisted by the legacy artifact; null when
+     * no snapshot exists or the record is an explicit retryable invalidation. Replay verifies it
+     * by re-reading that artifact, re-deriving the PageTranslation, and calling the same
+     * StageFingerprints.pageSnapshot function. It must not hash serialized JSON bytes, whose
+     * harmless encoding changes are not semantic page changes.
      */
     val artifactContentHash: String? = null,
     val durableFailure: DurableFailureMetadata? = null,

@@ -81,8 +81,10 @@ internal object ChapterJournalReplayReducer {
      * Replay every valid frame prefix. Epochs are ordered by persisted ordinal;
      * state frames within an epoch are already ordered by their physical frame
      * sequence, which is equivalent to commitSeq order for durable frames.
-     * Generation and fencing are evaluated independently when choosing a page
-     * winner, so an old epoch's late append cannot replace a newer generation.
+     * The persisted epoch ordinal is the primary winner boundary across store
+     * instances. Generation and fencing tokens may reset on restart, so they
+     * only order records within one epoch; an old epoch's late append cannot
+     * replace a record from a successor epoch.
      */
     fun replay(
         epochs: Collection<ChapterJournalReplayEpoch>,
@@ -441,13 +443,12 @@ internal object ChapterJournalReplayReducer {
         artifactResolver: ChapterJournalArtifactIdentityResolver?,
     ): Boolean {
         val previous = winners[record.pageKey]
-        if (previous != null &&
-            (
-                record.generation < previous.generation ||
-                    (record.generation == previous.generation && record.fencingToken < previous.fencingToken)
-                )
-        ) {
-            return false
+        if (previous != null) {
+            val epochOrdinal = epoch.order.epochOrdinal
+            val staleWithinEpoch = epochOrdinal == previous.epochOrdinal &&
+                (record.generation < previous.generation ||
+                    (record.generation == previous.generation && record.fencingToken < previous.fencingToken))
+            if (epochOrdinal < previous.epochOrdinal || staleWithinEpoch) return false
         }
         val winner = Winner(record.generation, record.fencingToken, epoch.order.epochOrdinal, commitSeq)
         val state = record.state

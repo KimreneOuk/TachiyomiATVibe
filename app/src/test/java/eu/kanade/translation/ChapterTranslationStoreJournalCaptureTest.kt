@@ -6,6 +6,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressStage
+import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -48,6 +49,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.util.TreeMap
@@ -498,7 +500,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     }
 
     @Test
-    fun `rekey bulk prefix inventories valid and pointerless destinations before legacy flush`() = runTest {
+    fun `cross session rekey wins after restart even when its generation and token reset`() = runTest {
         val io = FakeChapterDocumentIo()
         val documents = AtomicChapterDocuments(io)
         val layout = ChapterArtifactLayout("Rekey immediate replay")
@@ -604,7 +606,9 @@ class ChapterTranslationStoreJournalCaptureTest {
             initialArtifactManifest = manifest,
         )
         store.enableLazyPersistence()
+        store.beginGeneration("completed-download rekey after restart") shouldBe 1L
         val storage = MemoryStorage()
+        val sessionId = UUID.nameUUIDFromBytes("rekey-session-2".encodeToByteArray())
         val journalJson = Json {
             encodeDefaults = true
             explicitNulls = true
@@ -616,6 +620,9 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeBulkRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
+            storeGeneration = 1L,
+            epochOrdinal = 21L,
+            sessionId = sessionId,
         )
         store.attachJournalWriterForTests(writer)
 
@@ -649,9 +656,9 @@ class ChapterTranslationStoreJournalCaptureTest {
             val frames = ChapterJournalFormat.scanSegment(
                 bytes = storage.readSegment(0L),
                 expectedSegmentIndex = 0L,
-                expectedGeneration = 0L,
-                expectedEpochOrdinal = 0L,
-                expectedSessionId = UUID(0L, 0L),
+                expectedGeneration = 1L,
+                expectedEpochOrdinal = 21L,
+                expectedSessionId = sessionId,
                 firstExpectedFrameSeq = 1L,
                 firstExpectedCommitSeq = 1L,
             ).frames
@@ -677,14 +684,56 @@ class ChapterTranslationStoreJournalCaptureTest {
             sourceOnlyInvalidation.artifactContentHash shouldBe null
             bulk.mutations.single { it.pageKey == oldSourceOnlyKey }.state shouldBe null
 
+            val priorPage = committedSnapshot.toPublishedPage()
+            val priorSessionId = UUID.nameUUIDFromBytes("rekey-session-1".encodeToByteArray())
+            val priorRecord = ChapterJournalRecord(
+                pageKey = oldValidKey,
+                generation = 9L,
+                fencingToken = 12L,
+                pageVersion = priorPage.pageVersion,
+                state = priorPage,
+                cleanedImageName = priorPage.cleanedImageName,
+                cleanedImageContentHash = priorPage.cleanedImageContentHash,
+                artifactContentHash = StageFingerprints.pageSnapshot(priorPage),
+            )
+            val priorBytes = ByteArrayOutputStream().apply {
+                write(ChapterJournalFormat.segmentHeader(0L, 9L, 20L, priorSessionId))
+                write(
+                    ChapterJournalFormat.encodeFrame(
+                        frameSeq = 1L,
+                        commitSeq = null,
+                        kind = ChapterJournalFormat.RecordKind.INVENTORY,
+                        payload = journalJson.encodeToString(
+                            ChapterJournalInventoryRecord(
+                                chapterIdentityHash = "prior-session",
+                                expectedPageKeys = listOf(oldValidKey),
+                                expectedPageCount = 1,
+                                sourceFingerprint = "prior-session-inventory",
+                            ),
+                        ).encodeToByteArray(),
+                    ),
+                )
+                write(
+                    ChapterJournalFormat.encodeFrame(
+                        frameSeq = 2L,
+                        commitSeq = 1L,
+                        kind = ChapterJournalFormat.RecordKind.FREE_STATE,
+                        payload = journalJson.encodeToString(priorRecord).encodeToByteArray(),
+                    ),
+                )
+            }.toByteArray()
+            val priorEpoch = ChapterJournalReplayEpoch(
+                order = ChapterJournalFormat.EpochOrderKey(9L, 20L, priorSessionId),
+                segments = listOf(ChapterJournalReplaySegment(0L, priorBytes)),
+            )
             val epoch = ChapterJournalReplayEpoch(
-                order = ChapterJournalFormat.EpochOrderKey(0L, 0L, UUID(0L, 0L)),
+                order = ChapterJournalFormat.EpochOrderKey(1L, 21L, sessionId),
                 segments = storage.segmentIndexes().map { index ->
                     ChapterJournalReplaySegment(index, storage.readSegment(index))
                 },
             )
             val replayed = ChapterJournalReplayReducer.replay(
-                epochs = listOf(epoch),
+                epochs = listOf(priorEpoch, epoch),
                 artifactResolver = ChapterJournalReplayReducer.artifactResolver(artifactEngine, currentManifest),
             )
             replayed.expectedPageKeys shouldBe setOf(newValidKey, newPointerlessKey, newSourceOnlyKey)
@@ -692,6 +741,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             replayed.pages.keys shouldBe setOf(newValidKey)
             replayed.invalidPageKeys shouldBe setOf(newPointerlessKey, newSourceOnlyKey)
             replayed.missingPageKeys shouldBe emptySet()
+            replayed.ignoredStaleRecordCount shouldBe 0
             (oldValidKey in replayed.pages || oldPointerlessKey in replayed.pages || oldSourceOnlyKey in replayed.pages) shouldBe false
         } finally {
             store.closeAndFlush()
@@ -712,6 +762,92 @@ class ChapterTranslationStoreJournalCaptureTest {
             fixture.storage.segmentIndexes() shouldBe emptyList()
         } finally {
             fixture.store.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `crash after rekey manifest publication but before store swap and journal frame is retryable`() = runTest {
+        val fixture = committedRekeyFixture(
+            scheduler = testScheduler,
+            chapterName = "Rekey crash before bulk handoff",
+            includeCleanedImage = false,
+        )
+        var storeClosed = false
+        try {
+            fixture.store.updatePage(fixture.oldKey) { current ->
+                checkNotNull(current).apply {
+                    blocks = blocks.map { it.copy(translation = "durable before rekey") }.toMutableList()
+                }
+            }
+            runCurrent()
+            fixture.store.closeAndFlush()
+            storeClosed = true
+
+            val capturedState = fixture.store.pages.getValue(fixture.oldKey)
+            val previousManifest = checkNotNull(fixture.engine.readManifest())
+            val oldEpoch = replayEpoch(
+                storage = fixture.storage,
+                generation = 0L,
+                ordinal = 0L,
+                sessionId = UUID(0L, 0L),
+            )
+            val priorReplay = ChapterJournalReplayReducer.replay(
+                epochs = listOf(oldEpoch),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(fixture.engine, previousManifest),
+            )
+            priorReplay.pages[fixture.oldKey] shouldBe capturedState
+
+            val moves = mapOf(fixture.oldKey to fixture.newKey)
+            val prepared = checkNotNull(
+                fixture.engine.preparePageSnapshotRekey(
+                    manifest = previousManifest,
+                    moves = moves,
+                    livePages = fixture.store.pages,
+                    operationId = "crash-after-manifest-publication",
+                ),
+            )
+            val movedSourceSha = previousManifest.sourceShaByPageKey.mapKeys { (pageKey, _) ->
+                moves[pageKey] ?: pageKey
+            }
+            val outcome = fixture.engine.publishSidecarPointers(
+                manifest = previousManifest,
+                sidecars = emptyList(),
+                updatePointers = { current ->
+                    check(current == previousManifest)
+                    current.copy(
+                        pages = prepared.pages,
+                        sourceShaByPageKey = movedSourceSha,
+                        updatedAtEpochMs = System.currentTimeMillis(),
+                    )
+                },
+            )
+            val publishedManifest = (outcome as? ChapterArtifactEngine.TransactionOutcome.Committed)
+                ?.manifest ?: error("rekey manifest publication failed")
+
+            fixture.engine.readManifest() shouldBe publishedManifest
+            fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
+            val oldFrames = ChapterJournalFormat.scanSegment(
+                bytes = fixture.storage.readSegment(0L),
+                expectedSegmentIndex = 0L,
+                expectedGeneration = 0L,
+                expectedEpochOrdinal = 0L,
+                expectedSessionId = UUID(0L, 0L),
+                firstExpectedFrameSeq = 1L,
+                firstExpectedCommitSeq = 1L,
+            ).frames
+            oldFrames.any { it.kind == ChapterJournalFormat.RecordKind.BULK_REKEY } shouldBe false
+
+            val replayAfterCrash = ChapterJournalReplayReducer.replay(
+                epochs = listOf(oldEpoch),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(fixture.engine, publishedManifest),
+            )
+            replayAfterCrash.pages shouldBe emptyMap()
+            replayAfterCrash.invalidPageKeys shouldBe setOf(fixture.oldKey)
+            replayAfterCrash.missingPageKeys shouldBe emptySet()
+            replayAfterCrash.expectedPageKeys shouldBe setOf(fixture.oldKey)
+            replayAfterCrash.hasCompleteInventory shouldBe false
+        } finally {
+            if (!storeClosed) fixture.store.closeAndFlush()
         }
     }
 
@@ -957,6 +1093,7 @@ class ChapterTranslationStoreJournalCaptureTest {
         scheduler: TestCoroutineScheduler,
         chapterName: String,
         includeCandidateAndPrevious: Boolean = false,
+        includeCleanedImage: Boolean = true,
     ): RekeyFixture {
         val io = FakeChapterDocumentIo()
         val documents = AtomicChapterDocuments(io)
@@ -967,8 +1104,9 @@ class ChapterTranslationStoreJournalCaptureTest {
         val sourceSha = "c".repeat(64)
         val page = PageTranslation(
             sourceFileName = oldKey,
-            cleanedImageName = "shared-cleaned.jpg",
-            cleanedImageContentHash = StageFingerprints.sha256Hex("shared-cleaned-image".encodeToByteArray()),
+            cleanedImageName = "shared-cleaned.jpg".takeIf { includeCleanedImage },
+            cleanedImageContentHash = StageFingerprints.sha256Hex("shared-cleaned-image".encodeToByteArray())
+                .takeIf { includeCleanedImage },
             blocks = mutableListOf(
                 TranslationBlock(
                     text = "source",
@@ -1076,4 +1214,16 @@ class ChapterTranslationStoreJournalCaptureTest {
         store.attachJournalWriterForTests(writer)
         return RekeyFixture(io, layout, engine, manifest, store, storage, oldKey, newKey, oldSnapshotName)
     }
+
+    private fun replayEpoch(
+        storage: MemoryStorage,
+        generation: Long,
+        ordinal: Long,
+        sessionId: UUID,
+    ) = ChapterJournalReplayEpoch(
+        order = ChapterJournalFormat.EpochOrderKey(generation, ordinal, sessionId),
+        segments = storage.segmentIndexes().map { index ->
+            ChapterJournalReplaySegment(index, storage.readSegment(index))
+        },
+    )
 }

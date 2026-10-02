@@ -112,6 +112,7 @@ internal class CleanedImageLifecycleController(
         val referenced = store.referencedCleanedImageNames()
         val pageKeys = store.state.value.keys
         val now = System.currentTimeMillis()
+        var deletedImages = 0
         directory.listFiles()
             ?.asSequence()
             ?.mapNotNull { file -> file.name?.let { it to file } }
@@ -127,9 +128,41 @@ internal class CleanedImageLifecycleController(
             ?.take(MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP)
             ?.forEach { (name, file) ->
                 val deleted = runCatching { file.delete() }.getOrDefault(false)
-                if (deleted) directory.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
+                if (deleted) {
+                    deletedImages++
+                    directory.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
+                }
                 logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
                     "TachiyomiAT orphaned cleaned image sweep: chapter=$chapterName file=$name deleted=$deleted"
+                }
+            }
+
+        val remainingBudget = MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP - deletedImages
+        if (remainingBudget <= 0) return
+        directory.listFiles()
+            ?.asSequence()
+            ?.mapNotNull { file -> file.name?.let { it to file } }
+            ?.mapNotNull { (name, file) ->
+                val imageName = name.removeSuffix(".identity.json")
+                (imageName to file).takeIf {
+                    file.isFile &&
+                        name.endsWith(".identity.json") &&
+                        imageName.contains(".cleaned.")
+                }
+            }
+            ?.filterNot { (imageName, sidecar) ->
+                directory.findFile(imageName)?.exists() == true ||
+                    imageName in referenced ||
+                    streamRegistry.activeCleanedImageReadersForChapter(source.id, mangaId, chapterId, imageName) > 0 ||
+                    pageKeys.any { pageKey -> !store.mayDeleteCleanedImage(pageKey, imageName) } ||
+                    isFreshOrphanedCleanedImage(sidecar.lastModified(), now)
+            }
+            ?.take(remainingBudget)
+            ?.forEach { (imageName, sidecar) ->
+                val deleted = runCatching { sidecar.delete() }.getOrDefault(false)
+                logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
+                    "TachiyomiAT orphaned cleaned image identity sweep: chapter=$chapterName " +
+                        "file=${sidecar.name} image=$imageName deleted=$deleted"
                 }
             }
     }
