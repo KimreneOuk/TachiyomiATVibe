@@ -446,8 +446,10 @@ internal object ChapterJournalReplayReducer {
         if (previous != null) {
             val epochOrdinal = epoch.order.epochOrdinal
             val staleWithinEpoch = epochOrdinal == previous.epochOrdinal &&
-                (record.generation < previous.generation ||
-                    (record.generation == previous.generation && record.fencingToken < previous.fencingToken))
+                (
+                    record.generation < previous.generation ||
+                        (record.generation == previous.generation && record.fencingToken < previous.fencingToken)
+                    )
             if (epochOrdinal < previous.epochOrdinal || staleWithinEpoch) return false
         }
         val winner = Winner(record.generation, record.fencingToken, epoch.order.epochOrdinal, commitSeq)
