@@ -81,7 +81,7 @@ class ChapterTranslationStorePhase3Test {
         store.display.value.getValue("p1").cleanedImageName shouldBe "new.jpg"
         store.display.value.getValue("p1").blocks.single().translation shouldBe "new-target"
         store.committedDisplayPage("p1")?.cleanedImageName shouldBe "new.jpg"
-        store.drainRetiredCleanedImage("p1") shouldBe "old.jpg"
+        store.drainRetiredCleanedImages("p1") shouldBe listOf("old.jpg")
     }
 
     @Test
@@ -260,6 +260,6 @@ class ChapterTranslationStorePhase3Test {
 
         store.display.value.getValue("p1").isTextlessTerminal shouldBe true
         store.committedDisplayPage("p1")?.cleanedImageName shouldBe null
-        store.drainRetiredCleanedImage("p1") shouldBe "old.jpg"
+        store.drainRetiredCleanedImages("p1") shouldBe listOf("old.jpg")
     }
 }

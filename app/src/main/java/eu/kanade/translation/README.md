@@ -8,16 +8,16 @@ Requests move from the reader through ownership and scheduling into execution; s
 
 ```text
 Reader / chapter UI
-        │ request
-        ▼
-     workflow ── owns admission and reader/batch lifecycle
-       ├── scheduling ── selects and times manual/auto page jobs
-       └── pipeline ── executes page and chapter work
-             ├── engines ── vision → translator → inpainting/rendering
-             └── persistence ── live page state, artifacts, and queue
-                    │ state and results
-                    ▼
-             presentation projections → reader UI
+    | request
+    v
+workflow -- owns admission and reader/batch lifecycle
+    +-- scheduling -- selects and times manual/auto page jobs
+    \-- pipeline -- executes page and chapter work
+        +-- engines -- vision -> translator -> inpainting/rendering
+        \-- persistence -- live page state, artifacts, and queue
+            | state and results
+            v
+        presentation projections -> reader UI
 ```
 
 ## Where do I make this change?

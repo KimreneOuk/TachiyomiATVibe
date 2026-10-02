@@ -138,7 +138,7 @@ class CleanedImagePublisherTest {
 
         (result is CleanedImagePublisher.Result.Published) shouldBe true
         events shouldBe listOf("write:new.jpg", "commit:new.jpg")
-        store.drainRetiredCleanedImage("p1") shouldBe "old.jpg"
+        store.drainRetiredCleanedImages("p1") shouldBe listOf("old.jpg")
     }
 
     @Test

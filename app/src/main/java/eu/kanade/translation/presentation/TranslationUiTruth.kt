@@ -11,7 +11,6 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.scheduling.AutoSlotState
@@ -169,15 +168,6 @@ object TranslationUiTruth {
     // ------------------------------------------------------------------
     // Manual precedence internals
     // ------------------------------------------------------------------
-
-    /**
-     * Timeout copy names the actual result timer
-     * that fired and omits unmeasured durations. The native lane and the
-     * HTTP+render lane run DIFFERENT timers; a generic "Translation timed out"
-     * tells the user nothing about which half of the pipeline stalled.
-     */
-    fun timeoutCopy(nativeTimer: Boolean): String =
-        PageStoreWriter.timeoutFailureMessage(nativeTimer)
 
     /**
      * One chapter's partial-download admission facts ( /N2).

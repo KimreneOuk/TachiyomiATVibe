@@ -2,6 +2,7 @@ package eu.kanade.translation.persistence.internal
 
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasCommittedDisplay
 import eu.kanade.translation.model.hasRenderedResult
@@ -174,7 +175,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
         pageRecords.forEach { pageRecord ->
             val projection = pageRecord.toArtifactDisplayProjection()
             val livePartial = pagesSnapshot[pageRecord.pageKey]?.translationStatus ==
-                eu.kanade.translation.model.StageStatus.PARTIAL
+                StageStatus.PARTIAL
             val done = projection.displayReady ||
                 projection.isTextless ||
                 pageRecord.candidate != null ||

@@ -40,6 +40,7 @@ import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
 import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.CommitPoint
 import eu.kanade.translation.persistence.artifact.CommittedDisplayRef
+import eu.kanade.translation.persistence.artifact.DisplayBaseKind
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
@@ -54,6 +55,7 @@ import eu.kanade.translation.persistence.artifact.SourceIdentity
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.internal.ChapterAttemptLedger
+import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
 import eu.kanade.translation.persistence.internal.PageStageLeaseTable
 import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
 import eu.kanade.translation.persistence.internal.StoreStatusInputs
@@ -162,9 +164,9 @@ private fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
     val displayBase = committed?.displayBase
     val hasCommittedDisplay = committed != null &&
         (
-            displayBase?.kind == eu.kanade.translation.persistence.artifact.DisplayBaseKind.ORIGINAL_SOURCE ||
+            displayBase?.kind == DisplayBaseKind.ORIGINAL_SOURCE ||
                 (
-                    displayBase?.kind == eu.kanade.translation.persistence.artifact.DisplayBaseKind.CLEANED_IMAGE &&
+                    displayBase?.kind == DisplayBaseKind.CLEANED_IMAGE &&
                         displayBase.fileName != null &&
                         !displayBase.legacyLayout
                     )
@@ -177,36 +179,36 @@ private fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
     val running = displayState == PageDisplayState.CANDIDATE_RUNNING
     val failed = displayState == PageDisplayState.FAILED_NO_RESULT
     val cleanedName = displayBase?.fileName?.takeIf {
-        displayBase.kind == eu.kanade.translation.persistence.artifact.DisplayBaseKind.CLEANED_IMAGE &&
+        displayBase.kind == DisplayBaseKind.CLEANED_IMAGE &&
             !displayBase.legacyLayout
     }
     return PageTranslation(
         sourceFileName = pageKey,
         cleanedImageName = cleanedName,
         ocrStatus = when {
-            ready -> eu.kanade.translation.model.StageStatus.READY
-            running -> eu.kanade.translation.model.StageStatus.RUNNING
-            failed -> eu.kanade.translation.model.StageStatus.FAILED
-            else -> eu.kanade.translation.model.StageStatus.PENDING
+            ready -> StageStatus.READY
+            running -> StageStatus.RUNNING
+            failed -> StageStatus.FAILED
+            else -> StageStatus.PENDING
         },
         translationStatus = when {
-            ready -> eu.kanade.translation.model.StageStatus.READY
-            running -> eu.kanade.translation.model.StageStatus.RUNNING
-            failed -> eu.kanade.translation.model.StageStatus.FAILED
-            else -> eu.kanade.translation.model.StageStatus.PENDING
+            ready -> StageStatus.READY
+            running -> StageStatus.RUNNING
+            failed -> StageStatus.FAILED
+            else -> StageStatus.PENDING
         },
         inpaintStatus = when {
-            ready && cleanedName != null -> eu.kanade.translation.model.StageStatus.READY
-            running -> eu.kanade.translation.model.StageStatus.RUNNING
-            failed -> eu.kanade.translation.model.StageStatus.FAILED
-            else -> eu.kanade.translation.model.StageStatus.PENDING
+            ready && cleanedName != null -> StageStatus.READY
+            running -> StageStatus.RUNNING
+            failed -> StageStatus.FAILED
+            else -> StageStatus.PENDING
         },
         renderStatus = when {
-            ready && (cleanedName != null || displayBase?.kind == eu.kanade.translation.persistence.artifact.DisplayBaseKind.ORIGINAL_SOURCE) ->
-                eu.kanade.translation.model.StageStatus.READY
-            running -> eu.kanade.translation.model.StageStatus.RUNNING
-            failed -> eu.kanade.translation.model.StageStatus.FAILED
-            else -> eu.kanade.translation.model.StageStatus.PENDING
+            ready && (cleanedName != null || displayBase?.kind == DisplayBaseKind.ORIGINAL_SOURCE) ->
+                StageStatus.READY
+            running -> StageStatus.RUNNING
+            failed -> StageStatus.FAILED
+            else -> StageStatus.PENDING
         },
         pageVersion = pageVersion,
         updatedAt = committed?.promotedAtEpochMs ?: 0L,
@@ -246,21 +248,21 @@ class ChapterTranslationStore(
     private val privateStorageIdentity: String? = null,
 ) {
     /** Explicit memory, lazy-durable, or opened-durable storage mode. */
-    internal var engineMode: eu.kanade.translation.persistence.internal.ChapterStoreEngineMode =
-        artifactStore?.let { eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable(it) }
+    internal var engineMode: ChapterStoreEngineMode =
+        artifactStore?.let { ChapterStoreEngineMode.Durable(it) }
             ?: if (translationFile != null || fileCreator != null || artifactParent != null || artifactFileName != null) {
-                eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.LazyDurable(
+                ChapterStoreEngineMode.LazyDurable(
                     artifactParent = artifactParent,
                     artifactFileName = artifactFileName,
                     fileCreator = fileCreator,
                 )
             } else {
-                eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Memory
+                ChapterStoreEngineMode.Memory
             }
 
     /** The durable engine when this mode has been opened; memory and lazy modes are explicit. */
     internal val artifactEngine: ChapterArtifactEngine?
-        get() = (engineMode as? eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable)?.artifact
+        get() = (engineMode as? ChapterStoreEngineMode.Durable)?.artifact
 
     internal val mutex = Mutex()
 
@@ -286,9 +288,6 @@ class ChapterTranslationStore(
 
     internal val chapterKey: String?
         get() = artifactEngine?.layout?.chapterKey ?: translationFile?.name?.substringBeforeLast('.')
-
-    /** Whether the facade has opened its durable engine. */
-    internal fun hasArtifactEngine(): Boolean = artifactEngine != null
 
     /** Runs one external artifact transaction under the facade mutex. */
     internal suspend inline fun <T> withArtifactEngineLocked(
@@ -1542,14 +1541,14 @@ class ChapterTranslationStore(
                 message = "store is defunct",
             )
         }
-        if (engineMode is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable && artifactManifest != null) {
+        if (engineMode is ChapterStoreEngineMode.Durable && artifactManifest != null) {
             return MutationAdmission.Granted
         }
         // Explicitly memory-only stores are used by pure reducer/unit tests;
         // they have no persistence target and therefore cannot accidentally
         // create a legacy document. Production stores always provide a parent
         // or an already-open artifact document and take the lazy creation path below.
-        if (engineMode is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Memory) {
+        if (engineMode is ChapterStoreEngineMode.Memory) {
             return MutationAdmission.Granted
         }
         if (!ensureArtifactStoreLocked()) {
@@ -1558,7 +1557,7 @@ class ChapterTranslationStore(
                 message = "artifact store creation/publication failed",
             )
         }
-        return if (engineMode is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable && artifactManifest != null) {
+        return if (engineMode is ChapterStoreEngineMode.Durable && artifactManifest != null) {
             MutationAdmission.Granted
         } else {
             MutationAdmission.Rejected(
@@ -2075,7 +2074,7 @@ class ChapterTranslationStore(
         expectedTranslation: String? = null,
         expectedUserEditedAt: Long? = null,
         description: String,
-        patch: (eu.kanade.translation.model.TranslationBlock) -> eu.kanade.translation.model.TranslationBlock,
+        patch: (TranslationBlock) -> TranslationBlock,
     ): PatchResult = patchPage(pageKey, expected, description) { page ->
         requireNotNull(page) { "page missing" }
         val current = page.blocks.getOrNull(blockIndex)
@@ -3131,7 +3130,7 @@ class ChapterTranslationStore(
                     _state.value = snapshotPages()
                     displaySnapshotLocked(changedPageKeys)
                 }
-                if (engineMode !is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable &&
+                if (engineMode !is ChapterStoreEngineMode.Durable &&
                     artifactParent != null &&
                     artifactFileName != null
                 ) {
@@ -3397,7 +3396,7 @@ class ChapterTranslationStore(
             )
             return false
         }
-        if (engineMode is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Memory) {
+        if (engineMode is ChapterStoreEngineMode.Memory) {
             // Pure in-memory stores have no persistence target and never
             // create a compatibility document as a side effect.
             // Preserve the historical dirty/flush contract for callers
@@ -3408,12 +3407,12 @@ class ChapterTranslationStore(
             journalCredit?.releaseIfUnqueued()
             return true
         }
-        if (engineMode !is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable &&
+        if (engineMode !is ChapterStoreEngineMode.Durable &&
             !ensureArtifactStoreLocked()
         ) {
             return reject("artifact store initialization failed")
         }
-        val store = (engineMode as? eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable)?.artifact
+        val store = (engineMode as? ChapterStoreEngineMode.Durable)?.artifact
             ?: return reject("durable artifact store unavailable")
         var manifest = artifactManifest ?: run {
             journalCredit?.releaseIfUnqueued()
@@ -3468,7 +3467,7 @@ class ChapterTranslationStore(
                             }
                         current.copy(
                             pages = current.pages + keys.associateWith {
-                                eu.kanade.translation.persistence.artifact.PageArtifactRecord(pageKey = it)
+                                PageArtifactRecord(pageKey = it)
                             },
                             expectedPageCount = maxOf(
                                 current.expectedPageCount ?: 0,
@@ -3750,7 +3749,7 @@ class ChapterTranslationStore(
 
     /** Lazily creates the artifact store for a chapter that has no manifest yet. */
     private fun ensureArtifactStoreLocked(): Boolean {
-        if (engineMode is eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable) {
+        if (engineMode is ChapterStoreEngineMode.Durable) {
             return artifactManifest != null
         }
         // Lazy production stores must provide an artifact parent/name. A store
@@ -3768,7 +3767,7 @@ class ChapterTranslationStore(
         val manifest = withArtifactOpenLock(parent, fileName) { openLock ->
             synchronized(openLock.monitor) { store.load().manifest }
         }
-        engineMode = eu.kanade.translation.persistence.internal.ChapterStoreEngineMode.Durable(store)
+        engineMode = ChapterStoreEngineMode.Durable(store)
         artifactManifest = manifest
         return true
     }
@@ -4037,19 +4036,6 @@ class ChapterTranslationStore(
             record.previousCommitted?.displayBase?.fileName?.let(::add)
         }
     }
-
-    /**
-     * Returns and forgets one cleaned-image name retained for [pageKey] after
-     * a newer bundle promoted; retained names are drained as a set so rapid
-     * promotions cannot orphan an earlier superseded file.
-     */
-    internal fun drainRetiredCleanedImage(pageKey: String): String? =
-        retiredCleanedImages[pageKey]?.let { retired ->
-            val name = retired.firstOrNull() ?: return@let null
-            retired.remove(name)
-            if (retired.isEmpty()) retiredCleanedImages.remove(pageKey, retired)
-            name
-        }
 
     /** Atomically takes every superseded cleaned-image name for [pageKey]. */
     fun drainRetiredCleanedImages(pageKey: String): List<String> =

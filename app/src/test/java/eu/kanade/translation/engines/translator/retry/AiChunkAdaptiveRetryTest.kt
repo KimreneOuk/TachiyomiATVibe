@@ -22,7 +22,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.io.IOException
 
-class AiTranslationRetryControllerTest {
+class AiChunkAdaptiveRetryTest {
 
     @Test
     fun `first pass returns complete detached translations`() = runTest {
