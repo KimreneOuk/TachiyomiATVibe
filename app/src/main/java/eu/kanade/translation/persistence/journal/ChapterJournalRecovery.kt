@@ -123,7 +123,8 @@ internal object ChapterJournalReplayReducer {
                         val decoded = root?.let {
                             runCatching { json.decodeFromJsonElement<ChapterJournalInventoryRecord>(it) }.getOrNull()
                         }
-                        if (decoded == null || !decoded.isSemanticallyValid() ||
+                        if (decoded == null ||
+                            !decoded.isSemanticallyValid() ||
                             (
                                 expectedChapterIdentityHash != null &&
                                     decoded.chapterIdentityHash != expectedChapterIdentityHash
@@ -173,18 +174,20 @@ internal object ChapterJournalReplayReducer {
                         val root = versionedPayload(frame.payload, ChapterJournalBulkRecord.SCHEMA_VERSION, json)
                         val mutationRoots = root?.get("mutations")
                             ?.let { it as? JsonArray }
-                        val mutationsValid = mutationRoots != null && mutationRoots.all { mutation ->
-                            val mutationRoot = mutation as? JsonObject ?: return@all false
-                            versionedPayload(mutationRoot, ChapterJournalRecord.SUPPORTED_SCHEMA_VERSIONS) != null
-                        }
+                        val mutationsValid = mutationRoots != null &&
+                            mutationRoots.all { mutation ->
+                                val mutationRoot = mutation as? JsonObject ?: return@all false
+                                versionedPayload(mutationRoot, ChapterJournalRecord.SUPPORTED_SCHEMA_VERSIONS) != null
+                            }
                         val bulk = root?.takeIf { mutationsValid }?.let {
                             runCatching { json.decodeFromJsonElement<ChapterJournalBulkRecord>(it) }.getOrNull()
                         }
-                        val operationMatchesKind = bulk != null && when (frame.kind) {
-                            ChapterJournalFormat.RecordKind.BULK_REPLACE -> bulk.operation == "replace_all"
-                            ChapterJournalFormat.RecordKind.BULK_REKEY -> bulk.operation == "rekey_pages"
-                            else -> false
-                        }
+                        val operationMatchesKind = bulk != null &&
+                            when (frame.kind) {
+                                ChapterJournalFormat.RecordKind.BULK_REPLACE -> bulk.operation == "replace_all"
+                                ChapterJournalFormat.RecordKind.BULK_REKEY -> bulk.operation == "rekey_pages"
+                                else -> false
+                            }
                         if (bulk == null || !bulk.isSemanticallyValid() || !operationMatchesKind) {
                             semanticCorruption = true
                             break
@@ -460,9 +463,12 @@ internal object ChapterJournalReplayReducer {
             // the record before consulting any artifact lookup. This remains
             // mandatory even for injected resolvers: a valid pointer cannot
             // authenticate a different embedded state.
-            val embeddedStateMatches = cleanedImageIdentityMatches && hash != null &&
+            val embeddedStateMatches = cleanedImageIdentityMatches &&
+                hash != null &&
                 runCatching { StageFingerprints.pageSnapshot(state) == hash }.getOrDefault(false)
-            val artifactMatches = hash != null && embeddedStateMatches && artifactResolver != null &&
+            val artifactMatches = hash != null &&
+                embeddedStateMatches &&
+                artifactResolver != null &&
                 runCatching { artifactResolver.matches(record.pageKey, hash, state) }.getOrDefault(false)
             if (!artifactMatches) {
                 pages.remove(record.pageKey)

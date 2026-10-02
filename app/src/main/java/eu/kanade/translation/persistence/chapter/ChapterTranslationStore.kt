@@ -3878,11 +3878,13 @@ class ChapterTranslationStore(
         if (moves.isEmpty() || moves.values.distinct().size != moves.size) return null
 
         val manifest = artifactManifest
-        val requiresArtifactTransaction = artifactEngine != null && manifest != null && moves.keys.any { oldKey ->
-            oldKey in manifest.pages ||
-                manifest.durableFailures.values.any { it.pageKey == oldKey } ||
-                oldKey in manifest.sourceShaByPageKey
-        }
+        val requiresArtifactTransaction = artifactEngine != null &&
+            manifest != null &&
+            moves.keys.any { oldKey ->
+                oldKey in manifest.pages ||
+                    manifest.durableFailures.values.any { it.pageKey == oldKey } ||
+                    oldKey in manifest.sourceShaByPageKey
+            }
         val oldArtifactContentHashes = moves.keys.associateWith { oldKey ->
             val record = manifest?.pages?.get(oldKey)
             // Never derive a fingerprint under the store mutex. A missing legacy fingerprint
@@ -3910,8 +3912,11 @@ class ChapterTranslationStore(
 
     /** Caller holds [mutex]. Reject any store-side change made while snapshots were prepared. */
     private fun isCurrentPageRekeyPlanLocked(plan: PageRekeyPlan): Boolean {
-        if (defunct || generation != plan.generation || pages !== plan.pages ||
-            committedDisplay !== plan.committedDisplay || artifactManifest !== plan.manifest
+        if (defunct ||
+            generation != plan.generation ||
+            pages !== plan.pages ||
+            committedDisplay !== plan.committedDisplay ||
+            artifactManifest !== plan.manifest
         ) {
             return false
         }
