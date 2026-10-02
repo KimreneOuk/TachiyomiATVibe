@@ -7,7 +7,6 @@ import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.InMemorySharedPreferences
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.translator.TextTranslatorLanguage
@@ -29,6 +28,7 @@ import eu.kanade.translation.persistence.chapter.OcrStagePatch
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.queue.InMemorySharedPreferences
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
