@@ -6,9 +6,9 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
-import eu.kanade.translation.InMemorySharedPreferences
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.persistence.queue.InMemorySharedPreferences
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.assertions.throwables.shouldThrow
