@@ -1,4 +1,4 @@
-package eu.kanade.translation.persistence.internal
+package eu.kanade.translation.persistence.chapter
 
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslationView
@@ -16,15 +16,12 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.toArtifactDisplayProjection
-import eu.kanade.translation.persistence.chapter.ChapterPageReconciler
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Consistent projection inputs handed to [StoreStatusProjector] by the owning
- * store's internal accessor. The two flows are carried by reference, so their
- * `.value` reads still happen at the projection body's original points — only
- * the manifest is captured once, exactly where the pre-move body read it.
+ * Projection inputs handed to [StoreStatusProjector] by the owning store. The
+ * manifest and flow references are captured together, then each projection
+ * reads each needed flow value once from that bundle.
  */
 internal class StoreStatusInputs(
     val manifest: ChapterArtifactManifest?,
@@ -35,23 +32,18 @@ internal class StoreStatusInputs(
 // Durable status and failure views are projected from one store snapshot.
 internal class StoreStatusProjector(private val store: ChapterTranslationStore) {
 
-    // Read the manifest/state/display inputs together through the store's
-    // consistent-snapshot accessor.
-    private val artifactManifest get() = store.statusProjectionInputs().manifest
-
-    private val state get() = store.statusProjectionInputs().state
-
-    private val display get() = store.statusProjectionInputs().display
-
     /** Current durable stage failure, if the artifact manifest owns one. */
     fun durableFailure(
         pageKey: String,
         stage: ArtifactStage = ArtifactStage.TRANSLATION,
-    ): DurableFailureMetadata? = artifactManifest?.durableFailures?.get("$pageKey:${stage.name}")
+    ): DurableFailureMetadata? = store.statusProjectionInputs()
+        .manifest
+        ?.durableFailures
+        ?.get("$pageKey:${stage.name}")
 
     /** Immutable view used by queue restoration and planner admission. */
     fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> =
-        artifactManifest?.durableFailures?.toMap().orEmpty()
+        store.statusProjectionInputs().manifest?.durableFailures?.toMap().orEmpty()
 
     /**
      * Derives durable artifact status without consulting the legacy summary sidecar.
@@ -68,12 +60,13 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
      * has no page records, the legacy live-page projection remains in force.
      */
     fun artifactStatus(): Translation.State? {
-        val manifest = artifactManifest ?: return null
+        val inputs = store.statusProjectionInputs()
+        val manifest = inputs.manifest ?: return null
+        val pagesSnapshot = inputs.state.value
         if (manifest.activeRun != null) {
-            completedRunRecordStatus(manifest)?.let { return it }
+            completedRunRecordStatus(manifest, pagesSnapshot)?.let { return it }
         }
-        val pagesSnapshot = state.value
-        val visiblePages = display.value
+        val visiblePages = inputs.display.value
         val hasReadableOutput = visiblePages.values.any { it.toPageDisplayProjection().displayReady } ||
             pagesSnapshot.values.any { it.hasRenderedResult || it.isTextlessTerminal }
         val hasPartialArtifact = pagesSnapshot.isNotEmpty() || manifest.pages.isNotEmpty()
@@ -163,10 +156,12 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
      * publishes a rendered bundle. Partial translation evidence yields
      * READY_WITH_WARNINGS.
      */
-    private fun completedRunRecordStatus(manifest: ChapterArtifactManifest): Translation.State? {
-        val record = store.readActiveRunRecord() ?: return null
+    private fun completedRunRecordStatus(
+        manifest: ChapterArtifactManifest,
+        pagesSnapshot: Map<String, PageTranslationView>,
+    ): Translation.State? {
+        val record = store.readRunRecord(manifest.activeRun) ?: return null
         if (record.state != ChapterRunState.COMPLETE) return null
-        val pagesSnapshot = state.value
         val pageRecords = manifest.pages.values
         if (pageRecords.isEmpty()) return null
         var doneCount = 0

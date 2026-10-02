@@ -58,8 +58,6 @@ import eu.kanade.translation.persistence.internal.ChapterAttemptLedger
 import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
 import eu.kanade.translation.persistence.internal.PageStageLeaseTable
 import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
-import eu.kanade.translation.persistence.internal.StoreStatusInputs
-import eu.kanade.translation.persistence.internal.StoreStatusProjector
 import eu.kanade.translation.persistence.internal.formatWriteDiagnostic
 import eu.kanade.translation.persistence.journal.ChapterJournalBulkRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalCaptureCoordinator
@@ -298,7 +296,12 @@ class ChapterTranslationStore(
 
     /** Read-only run-record projection used by progress/status consumers. */
     internal fun readActiveRunRecord(): ChapterRunRecord? {
-        val pointer = artifactManifest?.activeRun ?: return null
+        return readRunRecord(artifactManifest?.activeRun)
+    }
+
+    /** Reads the record addressed by one already-captured manifest pointer. */
+    internal fun readRunRecord(pointer: SidecarPointer?): ChapterRunRecord? {
+        val pointer = pointer?.takeIf { it.isWellFormed() } ?: return null
         val artifact = artifactEngine ?: return null
         return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
     }
@@ -1396,7 +1399,7 @@ class ChapterTranslationStore(
 
     // Durable status reads stay on the store API; the projector derives them
     // from the store's consistent manifest/state/display snapshot.
-    private val statusProjector get() = StoreStatusProjector(this)
+    private val statusProjector = StoreStatusProjector(this)
 
     /**
      * One consistent read of the status-projection inputs for

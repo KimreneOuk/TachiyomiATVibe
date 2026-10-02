@@ -2,7 +2,11 @@ package eu.kanade.translation.persistence.internal
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -20,10 +24,16 @@ import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.StageArtifactRecord
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.StoreStatusInputs
+import eu.kanade.translation.persistence.chapter.StoreStatusProjector
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.jupiter.api.Test
 import java.security.MessageDigest
 
@@ -144,6 +154,33 @@ class StoreStatusProjectorRunRecordTest {
         artifactStore = artifact,
         initialArtifactManifest = manifest,
     )
+
+    @Test
+    fun `artifact status uses one captured input snapshot`() {
+        val artifact = artifactsAuthority(emptyMap())
+        val manifest = artifact.readManifest().shouldNotBeNull()
+        val coherentInputs = StoreStatusInputs(
+            manifest = manifest,
+            state = MutableStateFlow<Map<String, PageTranslationView>>(emptyMap()),
+            display = MutableStateFlow(emptyMap()),
+        )
+        val laterInputsWithFailure = StoreStatusInputs(
+            manifest = manifest,
+            state = MutableStateFlow(
+                mapOf("p0" to PageTranslation(ocrStatus = StageStatus.FAILED).toPublishedPage()),
+            ),
+            display = MutableStateFlow(emptyMap()),
+        )
+        val store = mockk<ChapterTranslationStore>()
+        every { store.statusProjectionInputs() } returnsMany listOf(
+            coherentInputs,
+            laterInputsWithFailure,
+            laterInputsWithFailure,
+        )
+
+        StoreStatusProjector(store).artifactStatus() shouldBe null
+        verify(exactly = 1) { store.statusProjectionInputs() }
+    }
 
     @Test
     fun `complete run record over committed page records projects TRANSLATED`() {
