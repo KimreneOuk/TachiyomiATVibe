@@ -28,11 +28,11 @@ import eu.kanade.translation.engines.translator.contextual.TranslationContextChu
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus

@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.vision.segmentation
 
+import eu.kanade.translation.model.MaskGeometry
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

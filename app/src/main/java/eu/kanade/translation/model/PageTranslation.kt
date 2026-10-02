@@ -362,7 +362,7 @@ data class TranslationBlock(
      * Encoded as RLE for compact persistence. Used by the inpainter
      * (Interior Median Solid Fill) and the layout planner (Symmetrical Growth).
      */
-    override val segmentationMask: eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle? = null,
+    override val segmentationMask: BubbleMaskRle? = null,
     override var userEditedAt: Long? = null,
 ) : TranslationBlockView {
     override fun equals(other: Any?): Boolean = translationBlockValueEquals(this, other)

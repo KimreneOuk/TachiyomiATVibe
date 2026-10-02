@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.vision.segmentation
 
+import eu.kanade.translation.model.BubbleMaskRle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test

@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.translator.contextual
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe

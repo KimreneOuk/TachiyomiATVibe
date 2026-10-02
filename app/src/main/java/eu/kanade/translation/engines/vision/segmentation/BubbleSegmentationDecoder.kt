@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.vision.segmentation
 
+import eu.kanade.translation.model.BubbleMaskRle
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min

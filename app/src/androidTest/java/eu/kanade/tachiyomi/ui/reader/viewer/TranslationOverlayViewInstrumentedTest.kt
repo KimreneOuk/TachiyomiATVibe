@@ -10,7 +10,7 @@ import eu.kanade.translation.engines.rendering.FloatRect
 import eu.kanade.translation.engines.rendering.HardClip
 import eu.kanade.translation.engines.rendering.PositionedLine
 import eu.kanade.translation.engines.rendering.TextAlign
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
+import eu.kanade.translation.model.MaskGeometry
 import eu.kanade.translation.model.TranslationBlock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

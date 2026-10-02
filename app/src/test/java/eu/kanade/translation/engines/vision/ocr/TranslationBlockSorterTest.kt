@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.vision.ocr
 
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

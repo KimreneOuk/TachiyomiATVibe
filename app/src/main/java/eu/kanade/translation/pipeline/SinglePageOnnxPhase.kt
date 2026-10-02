@@ -14,10 +14,10 @@ import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.prepareForcedRetry

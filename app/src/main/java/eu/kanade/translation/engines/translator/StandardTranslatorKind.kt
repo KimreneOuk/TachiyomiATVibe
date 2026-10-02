@@ -2,7 +2,8 @@ package eu.kanade.translation.engines.translator
 import eu.kanade.translation.engines.translator.providers.DeepLTranslator
 import eu.kanade.translation.engines.translator.providers.GoogleTranslator
 import eu.kanade.translation.engines.translator.providers.MLKitTranslator
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationPreferences

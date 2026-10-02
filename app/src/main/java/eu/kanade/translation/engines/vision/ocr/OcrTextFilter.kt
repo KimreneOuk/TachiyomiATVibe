@@ -1,5 +1,7 @@
 package eu.kanade.translation.engines.vision.ocr
 
+import eu.kanade.translation.model.TextRecognizerLanguage
+
 object OcrTextFilter {
     fun isUsable(text: String): Boolean = text.any { it.isLetter() }
 

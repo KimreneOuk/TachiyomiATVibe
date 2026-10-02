@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle
+import eu.kanade.translation.model.BubbleMaskRle
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe

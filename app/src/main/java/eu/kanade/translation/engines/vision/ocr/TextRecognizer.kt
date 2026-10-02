@@ -7,6 +7,7 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.util.await
 import java.io.Closeable
 

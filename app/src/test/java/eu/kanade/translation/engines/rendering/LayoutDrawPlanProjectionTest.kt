@@ -1,8 +1,8 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry.RowSpan
+import eu.kanade.translation.model.BubbleMaskRle
+import eu.kanade.translation.model.MaskGeometry
+import eu.kanade.translation.model.MaskGeometry.RowSpan
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.DrawPlanFontIdentity
 import io.kotest.matchers.collections.shouldHaveSize

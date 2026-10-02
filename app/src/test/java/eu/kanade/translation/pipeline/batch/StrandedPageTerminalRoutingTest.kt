@@ -3,7 +3,6 @@ package eu.kanade.translation.pipeline.batch
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
@@ -24,6 +23,8 @@ import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
@@ -242,8 +243,8 @@ class StrandedPageTerminalRoutingTest {
     ) : AiTranslator() {
         val requests = mutableListOf<TranslationContextChunk>()
 
-        override val fromLang: eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage =
-            eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage.JAPANESE
+        override val fromLang: TextRecognizerLanguage =
+            TextRecognizerLanguage.JAPANESE
         override val toLang: TextTranslatorLanguage = TextTranslatorLanguage.ENGLISH
 
         override suspend fun translateContextualStructured(
@@ -262,7 +263,7 @@ class StrandedPageTerminalRoutingTest {
     ): ContextualTranslationBatch {
         val request = ContextualRequestBuilder.build(
             chunk,
-            eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage.JAPANESE,
+            TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
         val results = request.orderedIds.filterNot(omit::contains).map { id ->

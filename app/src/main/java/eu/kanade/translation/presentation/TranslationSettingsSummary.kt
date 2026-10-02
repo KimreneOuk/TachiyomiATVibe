@@ -2,9 +2,9 @@ package eu.kanade.translation.presentation
 
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory

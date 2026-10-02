@@ -4,13 +4,13 @@ import android.content.Context
 import androidx.annotation.VisibleForTesting
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.translator.TextTranslator
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.TranslationEngineBuilder
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CompletableDeferred

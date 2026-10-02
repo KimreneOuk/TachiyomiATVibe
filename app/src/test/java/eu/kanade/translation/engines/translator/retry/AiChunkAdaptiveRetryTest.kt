@@ -3,7 +3,6 @@ import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
 import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.engines.translator.ProviderFailureRetryability
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
@@ -11,8 +10,9 @@ import eu.kanade.translation.engines.translator.contextual.ContextualTranslation
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.providers.AiTranslator
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe

@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.vision.ocr
 
+import eu.kanade.translation.model.TextRecognizerLanguage
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.translation.OcrModel

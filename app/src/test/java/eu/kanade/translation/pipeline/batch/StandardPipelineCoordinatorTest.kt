@@ -3,14 +3,14 @@ package eu.kanade.translation.pipeline.batch
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.TextTranslator
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.TranslationBlockValidation
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toDraft

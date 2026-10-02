@@ -18,10 +18,10 @@ import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidge
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.providers.AiModelFetcher
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.presentation.TranslationFont
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap

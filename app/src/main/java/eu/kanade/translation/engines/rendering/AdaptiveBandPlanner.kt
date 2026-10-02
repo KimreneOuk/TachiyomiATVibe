@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
+import eu.kanade.translation.model.MaskGeometry
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor

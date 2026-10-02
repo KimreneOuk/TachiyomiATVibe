@@ -1,4 +1,4 @@
-package eu.kanade.translation.engines.vision.segmentation
+package eu.kanade.translation.model
 
 import java.util.Collections
 

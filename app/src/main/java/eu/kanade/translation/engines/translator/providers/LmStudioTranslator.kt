@@ -3,13 +3,13 @@ import eu.kanade.translation.engines.translator.InputAccountingContract
 import eu.kanade.translation.engines.translator.LmStudioInputAccountingContract
 import eu.kanade.translation.engines.translator.ProviderRequestGovernor
 import eu.kanade.translation.engines.translator.SharedProviderRequestGovernor
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.retry.withTranslationRetry
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject

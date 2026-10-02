@@ -10,6 +10,7 @@ import android.graphics.RectF
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.model.BubbleMaskRle
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool

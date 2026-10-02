@@ -1,6 +1,7 @@
 package eu.kanade.translation.engines.translator
 
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt

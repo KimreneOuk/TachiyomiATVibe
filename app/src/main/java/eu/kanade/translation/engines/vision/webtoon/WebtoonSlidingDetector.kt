@@ -2,7 +2,7 @@ package eu.kanade.translation.engines.vision.webtoon
 
 import android.graphics.Bitmap
 import eu.kanade.translation.engines.vision.ocr.BoxGeometry
-import eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle
+import eu.kanade.translation.model.BubbleMaskRle
 import eu.kanade.translation.model.Detection
 import kotlin.math.ceil
 import kotlin.math.max

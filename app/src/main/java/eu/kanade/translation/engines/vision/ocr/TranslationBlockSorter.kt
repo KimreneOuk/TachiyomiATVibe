@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.vision.ocr
 
+import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TranslationBlock
 import tachiyomi.domain.translation.TranslationReadingOrder
 import kotlin.math.abs

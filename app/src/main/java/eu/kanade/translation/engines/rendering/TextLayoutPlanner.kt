@@ -1,8 +1,9 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.engines.vision.segmentation.MaskConversionBudgets
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
-import eu.kanade.translation.engines.vision.segmentation.OrderedMaskResult
+import eu.kanade.translation.model.BubbleMaskRle
+import eu.kanade.translation.model.MaskConversionBudgets
+import eu.kanade.translation.model.MaskGeometry
+import eu.kanade.translation.model.OrderedMaskResult
 import eu.kanade.translation.model.TranslationBlockView
 import kotlin.math.ceil
 import kotlin.math.floor

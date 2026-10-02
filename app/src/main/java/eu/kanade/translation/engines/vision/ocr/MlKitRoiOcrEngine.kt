@@ -2,6 +2,7 @@ package eu.kanade.translation.engines.vision.ocr
 
 import android.graphics.Bitmap
 import com.google.mlkit.vision.common.InputImage
+import eu.kanade.translation.model.TextRecognizerLanguage
 import tachiyomi.domain.translation.pools.BitmapPool
 
 class MlKitRoiOcrEngine(language: TextRecognizerLanguage) : RoiOcrEngine {

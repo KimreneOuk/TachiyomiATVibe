@@ -48,10 +48,10 @@ import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.engines.rendering.PersistedLayoutReaderBridge
 import eu.kanade.translation.engines.translator.NativeStallState
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.hasRenderedResult

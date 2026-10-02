@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.vision.ocr
 
+import eu.kanade.translation.model.TextRecognizerLanguage
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.core.common.preference.Preference

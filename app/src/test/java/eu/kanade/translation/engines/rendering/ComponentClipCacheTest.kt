@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
+import eu.kanade.translation.model.MaskGeometry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
