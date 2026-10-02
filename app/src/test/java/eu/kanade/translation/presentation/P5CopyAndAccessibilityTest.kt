@@ -4,6 +4,7 @@ import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.pipeline.PageStoreWriter
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
@@ -57,18 +58,13 @@ class P5CopyAndAccessibilityTest {
     }
 
     @Test
-    fun `pure timeout copy names the native and http timers distinctly`() {
-        val defect =
-            "T917 P5 RED defect (D12 copy): TranslationUiTruth has no timeoutCopy selector — " +
-                "timeout copy must name the actual timer that fired and omit unmeasured " +
-                "durations (spec §3.2)"
-
+    fun `page store timeout failure message names the native and http timers distinctly`() {
         withClue("the native result timer copy names ONNX/native") {
-            callTruth("timeoutCopy", 1, defect, true) shouldBe
+            PageStoreWriter.timeoutFailureMessage(nativeTimer = true) shouldBe
                 "ONNX/native result timer expired; translation failed."
         }
         withClue("the HTTP+render result timer copy names HTTP+render") {
-            callTruth("timeoutCopy", 1, defect, false) shouldBe
+            PageStoreWriter.timeoutFailureMessage(nativeTimer = false) shouldBe
                 "HTTP+render result timer expired; translation failed."
         }
     }

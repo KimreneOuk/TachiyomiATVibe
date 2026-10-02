@@ -161,10 +161,6 @@ internal class ChapterDataResetController(
         durableStatusResolver.clearDurableStatusCache()
     }
 
-    suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
-        resetOcrData(chapter, manga, source, pageKey)
-    }
-
     suspend fun chapterResetPreflight(
         chapter: Chapter,
         manga: Manga,

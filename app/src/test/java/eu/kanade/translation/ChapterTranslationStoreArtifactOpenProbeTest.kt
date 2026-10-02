@@ -38,17 +38,16 @@ import java.util.zip.CRC32
 import java.util.zip.DeflaterOutputStream
 
 /**
- * Production-path coverage for the artifact manifest hook wired into
- * [ChapterTranslationStore.open]: a legacy chapter opened through the store
- * gains a sibling manifest; a later legacy mutation and persist forces a
- * resync to the newest authoritative bytes.
+ * Production-path coverage for artifact-open, probe, and lazy-store successor
+ * behavior. These tests also pin that opening a legacy flat translation file
+ * does not migrate it into an artifact manifest or recreate the flat file.
  *
  * The cleaned-image validation seam ([ChapterTranslationStore.artifactImageProbe])
  * is pointed at a header-parsing PNG probe because android.graphics is not
  * available in JVM unit tests; production keeps the BitmapFactory
  * bounds-only probe.
  */
-class ChapterTranslationStoreArtifactMigrationTest {
+class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @TempDir
     lateinit var mangaDir: File

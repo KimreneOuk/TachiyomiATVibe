@@ -3,7 +3,7 @@ package eu.kanade.translation.engines.vision.ocr.paddle.batch
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
-class PaddleOcrRollingP95PolicyTest {
+class PaddleOcrRollingP95HysteresisDowngradePolicyTest {
 
     @Test
     fun `two high windows downgrade one step and healthy windows recover with hysteresis`() {

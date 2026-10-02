@@ -8,7 +8,6 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestFailureKind
@@ -50,7 +49,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -155,7 +153,7 @@ class TranslationManager private constructor(
     val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
         pendingTranslationRequestsState.asStateFlow()
 
-    /**  reader-visible native lane stall projection. */
+    /** Reader-visible native lane stall projection. */
     val nativeStall: StateFlow<eu.kanade.translation.engines.translator.NativeStallState?>
         get() = pipeline.nativeStall
 
@@ -308,14 +306,6 @@ class TranslationManager private constructor(
         }
     }
 
-    /**
-     * Evicts a single-page translation job whose worker is stuck in uncancellable native
-     * code past its deadline. Delegates to the scheduler, which owns the [activePageJobs] map.
-     */
-    fun markPageJobStuck(chapterId: Long, pageKey: String) {
-        scheduler.markPageJobStuck(chapterId, pageKey)
-    }
-
     private val activeStores = ActiveChapterStoreRegistry()
     private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
 
@@ -413,11 +403,11 @@ class TranslationManager private constructor(
     }
 
     /**
-     * The chapter's files finalized, but translation startup
-     * start after the download failed (rekey/handoff/admission). The download
-     * keeps its `DOWNLOADED` status; the request gets the R10 admission-failure
-     * typing instead of a false download failure. No-op without a pending
-     * request, so ordinary downloads are unaffected.
+     * The chapter's files were finalized, but translation startup failed during
+     * rekey, handoff, or admission. The download keeps its `DOWNLOADED` status;
+     * the request receives R10 admission-failure typing instead of a false
+     * download failure. No-op without a pending request, so ordinary downloads
+     * are unaffected.
      */
     fun markTranslationHandoffFailed(
         chapterId: Long,
@@ -1382,16 +1372,6 @@ class TranslationManager private constructor(
         }
     }
 
-    fun registerActiveTranslationStore(chapterId: Long, store: ChapterTranslationStore) {
-        // Keep the existing instance if already registered so a reader keeps observing the same object.
-        // Active reader/batch stores publish live state first; unit/probe stores
-        // retain the synchronous ChapterTranslationStore default until they are
-        // explicitly registered here.
-        store.enableLazyPersistence()
-        activeStores.register(chapterId, store)
-        durableStatusResolver.clearDurableStatusCache()
-    }
-
     suspend fun unregisterActiveTranslationStore(chapterId: Long) {
         // Remove it before joining persistence so new lookups cannot bind to the store being
         // evicted. Once the bounded join ends, markDefunct fences workers that still hold it.
@@ -1407,9 +1387,9 @@ class TranslationManager private constructor(
      * it, so a translator starting now and a reader observing now share the
      * same instance.
      *
-     * This suspends on IO because opening a store can perform legacy artifact
-     * migration with SAF binder I/O; callers should not block their dispatcher
-     * while that work runs.
+     * This suspends on IO because opening a store can probe artifact storage
+     * with SAF binder I/O; callers should not block their dispatcher while that
+     * work runs.
      */
     suspend fun openOrCreateActiveChapterTranslationStoreSuspend(
         chapterId: Long,
@@ -1431,10 +1411,10 @@ class TranslationManager private constructor(
 
     /**
      * Shared open-or-create body. The registry monitor is held only for the
-     * map operations themselves — never across store open / artifact
-     * migration / SAF I/O. A concurrent open for the same chapter resolves
-     * through the registry's keep-existing [registerActiveTranslationStore]
-     * semantics: exactly one instance survives and both callers observe it.
+     * map operations themselves — never during store opening or artifact
+     * probing through SAF. A concurrent open for the same chapter resolves
+     * through the registry's keep-existing semantics: exactly one instance
+     * survives and both callers observe it.
      */
     private suspend fun openOrCreateActiveChapterTranslationStoreImpl(
         chapterId: Long,
@@ -1630,8 +1610,6 @@ class TranslationManager private constructor(
         )
     }
 
-    fun shutdownAutoCoordinator() = scheduler.shutdownAutoCoordinator()
-
     /** Reconciles the active rolling window after a reader lifecycle/memory signal. */
     fun reconcileAutoWindow() {
         //   a stale window cannot be re-admitted mid-batch — the
@@ -1672,9 +1650,6 @@ class TranslationManager private constructor(
     ): Flow<TranslationProgressSnapshot> =
         progressProjection.observeBatchProgress(chapterId, durableStateHint)
 
-    fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? =
-        progressProjection.observePageView(chapterId, pageKey)
-
     // Chapter and page deletion/reset ordering is owned by this collaborator.
     private val chapterDataReset: ChapterDataResetController by lazy {
         ChapterDataResetController(
@@ -1707,9 +1682,6 @@ class TranslationManager private constructor(
     suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) =
         chapterDataReset.deleteTranslation(chapter, manga, source)
 
-    suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
-        chapterDataReset.deletePageTranslation(chapter, manga, source, pageKey)
-
     suspend fun chapterResetPreflight(
         chapter: Chapter,
         manga: Manga,
@@ -1737,19 +1709,6 @@ class TranslationManager private constructor(
 
     suspend fun resetOcrData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
         chapterDataReset.resetOcrData(chapter, manga, source, pageKey)
-
-    fun deleteManga(manga: Manga, source: Source, removeQueued: Boolean = true) {
-        launchIO {
-            if (removeQueued) {
-                translator.removeFromQueue(manga)
-            }
-            provider.findMangaDir(manga.title, source)?.delete()
-            val sourceDir = provider.findSourceDir(source)
-            if (sourceDir?.listFiles()?.isEmpty() == true) {
-                sourceDir.delete()
-            }
-        }
-    }
 
     fun cancelQueuedTranslation(translation: Translation) {
         removeFromTranslationQueue(translation.chapter)

@@ -254,7 +254,7 @@ class TranslationManagerDeleteResetOrderingTest {
     }
 
     @Test
-    fun `resetOcrData and deletePageTranslation cancel the page, delete, flush, and retire images in order`() =
+    fun `resetOcrData cancels the page, deletes, flushes, and retires images in order`() =
         runBlocking<Unit> {
             val source = mockk<HttpSource>(relaxed = true)
             val manga = mockk<Manga>(relaxed = true)
@@ -288,13 +288,6 @@ class TranslationManagerDeleteResetOrderingTest {
                 ),
                 "resetOcrData ordering changed: $events",
             )
-
-            // deletePageTranslation is documented as routing to resetOcrData; the
-            // same ordering must hold through the alias.
-            events.clear()
-            manager.deletePageTranslation(chapter, manga, source, "p1")
-            assertTrue(events.first() == "clearDurableStatusCache", "alias ordering changed: $events")
-            assertTrue(events.contains("deletePage") && events.contains("clearPage"), "alias ordering changed: $events")
         }
 
     private fun durableResolver(manager: TranslationManager): DurableChapterStatusResolver {

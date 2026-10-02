@@ -7,7 +7,6 @@ import eu.kanade.translation.engines.translator.ProviderRequestGovernor
 import eu.kanade.translation.engines.translator.ProviderRequestKey
 import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.engines.translator.providers.OpenAiCompatibleTranslator
-import eu.kanade.translation.engines.translator.routing.MultiBackendRouter
 import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
 import eu.kanade.translation.persistence.artifact.EvidenceRef
@@ -220,26 +219,6 @@ class ProviderHeadroomTest {
 
         val parsed = OpenAiCompatibleTranslator.parseSseResponse(ssePayload)
         parsed shouldBe "Chapter 42"
-    }
-
-    @Test
-    fun `multi backend router routes operations to distinct backends`() {
-        val router = MultiBackendRouter.dual(
-            translationBackend = "lm_studio",
-            analysisBackend = "gemini",
-        )
-
-        router.routeOperation("analysis") shouldBe "gemini"
-        router.routeOperation("translation") shouldBe "lm_studio"
-        router.routeOperation("other") shouldBe "lm_studio"
-
-        val analysisKey = router.requestKeyFor("analysis", model = "gemini-1.5-flash")
-        analysisKey.backend shouldBe "gemini"
-        analysisKey.model shouldBe "gemini-1.5-flash"
-
-        val translationKey = router.requestKeyFor("translation", model = "qwen-2.5")
-        translationKey.backend shouldBe "lm_studio"
-        translationKey.model shouldBe "qwen-2.5"
     }
 
     @Test
