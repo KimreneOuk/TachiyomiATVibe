@@ -8,13 +8,13 @@ import eu.kanade.translation.engines.translator.ProviderRequestGovernor
 import eu.kanade.translation.engines.translator.ProviderRequestKey
 import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.engines.translator.SharedProviderRequestGovernor
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.currentProviderRequestPriority
 import eu.kanade.translation.engines.translator.retry.classifyHttpFailure
 import eu.kanade.translation.engines.translator.retry.withTranslationRetry
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray

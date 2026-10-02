@@ -2,10 +2,10 @@ package eu.kanade.translation.coexistence
 
 import android.graphics.Bitmap
 import eu.kanade.translation.engines.translator.TextTranslator
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget

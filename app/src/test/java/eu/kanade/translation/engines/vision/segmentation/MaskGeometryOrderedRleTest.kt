@@ -1,6 +1,11 @@
 package eu.kanade.translation.engines.vision.segmentation
 
 import eu.kanade.translation.engines.rendering.SharedMaskSession
+import eu.kanade.translation.model.BubbleMaskRle
+import eu.kanade.translation.model.MaskConversionBudgets
+import eu.kanade.translation.model.MaskGeometry
+import eu.kanade.translation.model.OrderedMaskFallbackReason
+import eu.kanade.translation.model.OrderedMaskResult
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull

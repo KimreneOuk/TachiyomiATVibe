@@ -1,11 +1,11 @@
 package eu.kanade.translation.engines.translator.contextual
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
 import eu.kanade.translation.engines.translator.contextual.AnchoredTargetKey
 import eu.kanade.translation.engines.translator.contextual.TargetLocation
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.providers.BaseTranslator
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain

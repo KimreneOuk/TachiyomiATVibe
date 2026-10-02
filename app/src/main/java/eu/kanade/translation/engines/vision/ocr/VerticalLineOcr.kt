@@ -5,9 +5,9 @@ import eu.kanade.translation.engines.vision.ocr.DbPostProcess
 import eu.kanade.translation.engines.vision.ocr.OcrTextFilter
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.RoiOcrEngine
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrFallbackKind
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrRotation
+import eu.kanade.translation.model.TextRecognizerLanguage
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 

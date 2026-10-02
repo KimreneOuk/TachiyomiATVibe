@@ -3,7 +3,6 @@ package eu.kanade.translation.engines.vision.ocr
 import android.graphics.Bitmap
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatch
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchPlanner
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchSize
@@ -14,6 +13,7 @@ import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrPageGenera
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrParentRegion
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrWidthBucket
 import eu.kanade.translation.model.Detection
+import eu.kanade.translation.model.TextRecognizerLanguage
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.CancellationException

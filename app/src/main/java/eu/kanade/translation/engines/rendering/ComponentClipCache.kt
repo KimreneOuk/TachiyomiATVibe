@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
+import eu.kanade.translation.model.MaskGeometry
 
 /**
  * compact, JVM-pure clip-object cache keyed by the per-page

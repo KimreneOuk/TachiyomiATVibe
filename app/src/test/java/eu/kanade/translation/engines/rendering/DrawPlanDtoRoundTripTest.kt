@@ -1,7 +1,9 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
+import eu.kanade.translation.model.BubbleMaskRle
+import eu.kanade.translation.model.MaskConversionBudgets
+import eu.kanade.translation.model.MaskGeometry
+import eu.kanade.translation.model.OrderedMaskResult
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -481,13 +483,13 @@ class DrawPlanDtoRoundTripTest {
     private object MaskGeometryResolverStub {
         fun resolve(block: TranslationBlock): MaskGeometry? {
             val mask = block.segmentationMask ?: return null
-            return eu.kanade.translation.engines.vision.segmentation.MaskGeometry.fromOrderedRle(
+            return MaskGeometry.fromOrderedRle(
                 mask,
-                eu.kanade.translation.engines.vision.segmentation.MaskConversionBudgets(),
+                MaskConversionBudgets(),
             ).let { result ->
                 when (result) {
-                    is eu.kanade.translation.engines.vision.segmentation.OrderedMaskResult.Success -> result.geometry
-                    is eu.kanade.translation.engines.vision.segmentation.OrderedMaskResult.Fallback -> null
+                    is OrderedMaskResult.Success -> result.geometry
+                    is OrderedMaskResult.Fallback -> null
                 }
             }
         }

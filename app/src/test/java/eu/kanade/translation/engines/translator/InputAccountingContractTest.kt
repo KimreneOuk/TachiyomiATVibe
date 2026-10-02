@@ -5,7 +5,8 @@ import eu.kanade.translation.engines.translator.providers.DeepSeekTranslator
 import eu.kanade.translation.engines.translator.providers.GeminiTranslator
 import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
 import eu.kanade.translation.engines.translator.providers.OpenRouterTranslator
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain

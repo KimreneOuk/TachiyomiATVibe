@@ -1,4 +1,4 @@
-package eu.kanade.translation.engines.translator
+package eu.kanade.translation.model
 
 import com.google.mlkit.nl.translate.TranslateLanguage
 import tachiyomi.core.common.preference.Preference

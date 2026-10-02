@@ -1,6 +1,5 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.engines.vision.segmentation.BubbleMaskRle
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encoding.Decoder

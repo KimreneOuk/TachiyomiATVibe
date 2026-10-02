@@ -3,7 +3,8 @@ import eu.kanade.translation.engines.translator.providers.DeepSeekTranslator
 import eu.kanade.translation.engines.translator.providers.GeminiTranslator
 import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
 import eu.kanade.translation.engines.translator.providers.OpenRouterTranslator
-import eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationPreferences

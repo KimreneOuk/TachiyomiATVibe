@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.engines.vision.segmentation.MaskGeometry
+import eu.kanade.translation.model.MaskGeometry
 import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.SidecarPointer

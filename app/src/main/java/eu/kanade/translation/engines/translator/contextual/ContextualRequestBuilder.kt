@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.translator.contextual
-import eu.kanade.translation.engines.translator.TextTranslatorLanguage
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 
 object ContextualRequestBuilder {
     private val stableBlockIdRegex = Regex("(?:p\\d+_)?b(\\d+)")
@@ -24,7 +25,7 @@ object ContextualRequestBuilder {
      */
     fun build(
         chunk: TranslationContextChunk,
-        fromLang: eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage,
+        fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
     ): Request {
         val idMap = LinkedHashMap<String, AnchoredTargetKey>()
@@ -75,7 +76,7 @@ object ContextualRequestBuilder {
     /** Builds the request used for reader single-page translation. */
     fun buildLegacy(
         chunk: TranslationContextChunk,
-        fromLang: eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage,
+        fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
     ): Request {
         val idMap = LinkedHashMap<String, AnchoredTargetKey>()
@@ -109,7 +110,7 @@ object ContextualRequestBuilder {
 
     fun buildFor(
         chunk: TranslationContextChunk,
-        fromLang: eu.kanade.translation.engines.vision.ocr.TextRecognizerLanguage,
+        fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
     ): Request = when (chunk.protocol) {
         ContextualRequestProtocol.BATCH_V1 -> build(chunk, fromLang, toLang)
