@@ -19,5 +19,6 @@ internal fun finalizePostOcrStage(
         page.cleanedBitmap?.let { bitmap -> runCatching { bitmap.recycle() } }
         page.cleanedBitmap = null
         page.cleanedImageName = null
+        page.cleanedImageContentHash = null
     }
 }

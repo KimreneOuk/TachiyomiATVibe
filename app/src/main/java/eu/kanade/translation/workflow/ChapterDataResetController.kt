@@ -40,7 +40,7 @@ internal class ChapterDataResetController(
     private val streamRegistryProvider: () -> TranslationStreamRegistry,
     private val providerProvider: () -> TranslationFileProvider,
     private val retireChapterCompanionImagesFn: (Manga, Chapter, Source) -> Unit,
-    private val retirePageCompanionImageFn: (Manga, Chapter, Source, String, String) -> Unit,
+    private val retirePageCompanionImageFn: (Manga, Chapter, Source, String, String, () -> Boolean) -> Unit,
     private val durableStatusResolverProvider: () -> DurableChapterStatusResolver,
     private val activeStoresProvider: () -> ActiveChapterStoreRegistry,
     private val openExistingChapterTranslationStoreFn: suspend (
@@ -86,8 +86,14 @@ internal class ChapterDataResetController(
     private fun retireChapterCompanionImages(manga: Manga, chapter: Chapter, source: Source) =
         retireChapterCompanionImagesFn(manga, chapter, source)
 
-    private fun retirePageCompanionImage(manga: Manga, chapter: Chapter, source: Source, pageKey: String, imageName: String) =
-        retirePageCompanionImageFn(manga, chapter, source, pageKey, imageName)
+    private fun retirePageCompanionImage(
+        manga: Manga,
+        chapter: Chapter,
+        source: Source,
+        pageKey: String,
+        imageName: String,
+        isReferencedElsewhere: () -> Boolean,
+    ) = retirePageCompanionImageFn(manga, chapter, source, pageKey, imageName, isReferencedElsewhere)
 
     private suspend fun openExistingChapterTranslationStore(
         chapterId: Long?,
@@ -211,6 +217,7 @@ internal class ChapterDataResetController(
         resetChapterData(chapter, manga, source) { page ->
             page.copy(
                 cleanedImageName = null,
+                cleanedImageContentHash = null,
                 inpaintStatus = StageStatus.PENDING,
                 renderStatus = StageStatus.PENDING,
             ).also {
@@ -352,13 +359,15 @@ internal class ChapterDataResetController(
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
 
-        val store = activeStores.get(chapterId)
+        var ownershipStore = activeStores.get(chapterId)
+        val store = ownershipStore
         val persistedCleanedName = store?.state?.value?.get(pageKey)?.cleanedImageName
         if (store != null) {
             store.updatePageFromCurrentSnapshot(pageKey, "inpaint data reset") { page ->
                 page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
                 page.copy(
                     cleanedImageName = null,
+                    cleanedImageContentHash = null,
                     inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
                     renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
                 ).also {
@@ -376,10 +385,12 @@ internal class ChapterDataResetController(
                 manga.title,
                 source,
             )?.let { s ->
+                ownershipStore = s
                 s.updatePageFromCurrentSnapshot(pageKey, "inpaint data reset") { page ->
                     page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
                     page.copy(
                         cleanedImageName = null,
+                        cleanedImageContentHash = null,
                         inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
                         renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
                     ).also {
@@ -407,7 +418,9 @@ internal class ChapterDataResetController(
                 .forEach(::add)
         }
         retiredNames.forEach { imageName ->
-            retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
+            retirePageCompanionImage(manga, chapter, source, pageKey, imageName) {
+                ownershipStore?.isCleanedImageReferencedByAnotherPage(pageKey, imageName) == true
+            }
         }
 
         reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
@@ -420,7 +433,8 @@ internal class ChapterDataResetController(
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
 
-        val activeStore = activeStores.get(chapterId)
+        var ownershipStore = activeStores.get(chapterId)
+        val activeStore = ownershipStore
         val persistedCleanedName = activeStore?.state?.value?.get(pageKey)?.cleanedImageName
         if (activeStore != null) {
             activeStore.deletePage(pageKey)
@@ -433,6 +447,7 @@ internal class ChapterDataResetController(
                 manga.title,
                 source,
             )?.let { store ->
+                ownershipStore = store
                 store.deletePage(pageKey)
                 store.flush()
             }
@@ -455,7 +470,9 @@ internal class ChapterDataResetController(
                 .forEach(::add)
         }
         retiredNames.forEach { imageName ->
-            retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
+            retirePageCompanionImage(manga, chapter, source, pageKey, imageName) {
+                ownershipStore?.isCleanedImageReferencedByAnotherPage(pageKey, imageName) == true
+            }
         }
     }
 

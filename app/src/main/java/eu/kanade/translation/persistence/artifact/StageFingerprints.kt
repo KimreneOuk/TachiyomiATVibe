@@ -125,27 +125,37 @@ object StageFingerprints {
     )
 
     /** Fingerprint of the complete live-store page snapshot. */
-    fun pageSnapshot(page: PageTranslationView): String = fingerprintIndexed(
-        "page-snapshot",
-        page.sourceFileName,
-        page.cleanedImageName,
-        page.ocrStatus,
-        page.translationStatus,
-        page.inpaintStatus,
-        page.renderStatus,
-        page.inpaintRevision,
-        page.sourceFingerprint,
-        page.detectionFingerprint,
-        page.ocrFingerprint,
-        page.inpaintFingerprint,
-        page.translationFingerprint,
-        page.layoutFingerprint,
-        page.translationOrigin,
-        page.retryCount,
-        page.attemptCount,
-        page.errorMessage,
-        page.blocks.map { it.stableFingerprint() },
-    )
+    fun pageSnapshot(page: PageTranslationView): String {
+        val fields = mutableListOf<Any?>(
+            "page-snapshot",
+            page.sourceFileName,
+            page.cleanedImageName,
+            page.ocrStatus,
+            page.translationStatus,
+            page.inpaintStatus,
+            page.renderStatus,
+            page.inpaintRevision,
+            page.sourceFingerprint,
+            page.detectionFingerprint,
+            page.ocrFingerprint,
+            page.inpaintFingerprint,
+            page.translationFingerprint,
+            page.layoutFingerprint,
+            page.translationOrigin,
+            page.retryCount,
+            page.attemptCount,
+            page.errorMessage,
+            page.blocks.map { it.stableFingerprint() },
+        )
+        // Preserve historical hashes for records without this additive field.
+        // New cleaned-image publications bind the exact image bytes into the
+        // semantic page identity as well as the journal record envelope.
+        page.cleanedImageContentHash?.let { hash ->
+            fields += "cleaned-image-content-sha256-v1"
+            fields += hash
+        }
+        return fingerprintIndexed(fields)
+    }
 
     /**
      * 02 (`PageOcrContentFingerprint`): semantic content fingerprint

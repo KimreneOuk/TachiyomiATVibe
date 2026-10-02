@@ -611,6 +611,7 @@ internal class BatchLaneWorkers(
                 plannedCleanedPresent
             ) {
                 target.cleanedImageName = latest.cleanedImageName
+                target.cleanedImageContentHash = latest.cleanedImageContentHash
                 target.inpaintingModeUsed = latest.inpaintingModeUsed
                 target.inpaintStatus = latest.inpaintStatus
                 target.inpaintRevision = latest.inpaintRevision
@@ -626,6 +627,7 @@ internal class BatchLaneWorkers(
                 resumeGate(latest) == BatchResumeGate.SKIP_ALL
             if (hasDurableCleaned) {
                 target.cleanedImageName = latest.cleanedImageName
+                target.cleanedImageContentHash = latest.cleanedImageContentHash
                 target.inpaintingModeUsed = latest.inpaintingModeUsed
                 target.inpaintStatus = StageStatus.READY
                 target.cleanedBitmap = null

@@ -13,6 +13,7 @@ interface PageTranslationView {
     val imgWidth: Float
     val imgHeight: Float
     val cleanedImageName: String?
+    val cleanedImageContentHash: String?
     val ocrArtifactId: String?
     val recognitionEngine: String?
     val detectionCount: Int
@@ -106,6 +107,7 @@ class PublishedPageTranslation private constructor(
     override val imgWidth: Float,
     override val imgHeight: Float,
     override val cleanedImageName: String?,
+    override val cleanedImageContentHash: String?,
     override val ocrArtifactId: String?,
     override val recognitionEngine: String?,
     override val detectionCount: Int,
@@ -160,6 +162,7 @@ class PublishedPageTranslation private constructor(
             imgWidth = page.imgWidth,
             imgHeight = page.imgHeight,
             cleanedImageName = page.cleanedImageName,
+            cleanedImageContentHash = page.cleanedImageContentHash,
             ocrArtifactId = page.ocrArtifactId,
             recognitionEngine = page.recognitionEngine,
             detectionCount = page.detectionCount,
@@ -355,6 +358,7 @@ internal fun PublishedPageTranslation.toDraft(): PageTranslation = PageTranslati
     imgWidth = imgWidth,
     imgHeight = imgHeight,
     cleanedImageName = cleanedImageName,
+    cleanedImageContentHash = cleanedImageContentHash,
     ocrArtifactId = ocrArtifactId,
     recognitionEngine = recognitionEngine,
     detectionCount = detectionCount,
@@ -440,6 +444,7 @@ internal fun pageTranslationValueEquals(page: PageTranslationView, other: Any?):
         sameValue(page.imgWidth, other.imgWidth) &&
         sameValue(page.imgHeight, other.imgHeight) &&
         page.cleanedImageName == other.cleanedImageName &&
+        page.cleanedImageContentHash == other.cleanedImageContentHash &&
         page.ocrArtifactId == other.ocrArtifactId &&
         page.recognitionEngine == other.recognitionEngine &&
         page.detectionCount == other.detectionCount &&
@@ -478,6 +483,7 @@ internal fun pageTranslationValueHashCode(page: PageTranslationView): Int {
     result = 31 * result + page.imgWidth.toBits()
     result = 31 * result + page.imgHeight.toBits()
     result = 31 * result + (page.cleanedImageName?.hashCode() ?: 0)
+    result = 31 * result + (page.cleanedImageContentHash?.hashCode() ?: 0)
     result = 31 * result + (page.ocrArtifactId?.hashCode() ?: 0)
     result = 31 * result + (page.recognitionEngine?.hashCode() ?: 0)
     result = 31 * result + page.detectionCount
@@ -518,6 +524,7 @@ internal fun pageTranslationValueToString(page: PageTranslationView): String =
         "imgWidth=${page.imgWidth}, " +
         "imgHeight=${page.imgHeight}, " +
         "cleanedImageName=${page.cleanedImageName}, " +
+        "cleanedImageContentHash=${page.cleanedImageContentHash}, " +
         "ocrArtifactId=${page.ocrArtifactId}, " +
         "recognitionEngine=${page.recognitionEngine}, " +
         "detectionCount=${page.detectionCount}, " +

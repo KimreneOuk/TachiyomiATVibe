@@ -165,6 +165,7 @@ data class PreparedPage(
     val mangaId: Long,
     val sourceId: Long,
     val cleanedImageName: String?,
+    val cleanedImageContentHash: String? = null,
     val generation: Long,
     val pageVersion: Long,
     val blockFingerprints: List<String>,

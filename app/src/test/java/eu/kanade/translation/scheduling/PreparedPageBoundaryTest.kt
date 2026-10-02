@@ -41,6 +41,7 @@ class PreparedPageBoundaryTest {
             "mangaId",
             "sourceId",
             "cleanedImageName",
+            "cleanedImageContentHash",
             "generation",
             "pageVersion",
             "blockFingerprints",

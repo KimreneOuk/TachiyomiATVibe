@@ -11,6 +11,8 @@ data class PageTranslation(
     override var imgWidth: Float = 0f,
     override var imgHeight: Float = 0f,
     override var cleanedImageName: String? = null,
+    /** SHA-256 of the exact JPEG bytes named by [cleanedImageName], when verified at publication. */
+    override var cleanedImageContentHash: String? = null,
     override var ocrArtifactId: String? = null,
     override var recognitionEngine: String? = null,
     override var detectionCount: Int = 0,
@@ -204,6 +206,7 @@ data class PageTranslation(
         inpaintStatus = StageStatus.PENDING
         inpaintError = null
         cleanedImageName = null
+        cleanedImageContentHash = null
         originalImageFallback = false
         cleanedBitmap = null
         inpaintRevision = 0

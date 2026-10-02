@@ -279,7 +279,11 @@ internal class SinglePageOnnxPhase(
             val desiredModeName = inpaintingModeFromPref().name
             val modeMatches = resumeTranslation?.inpaintingModeUsed == null || resumeTranslation.inpaintingModeUsed == desiredModeName
             val adjustedResume = if (resumeTranslation != null && !modeMatches && resumeTranslation.isCleanedImageReady) {
-                resumeTranslation.copy(inpaintStatus = StageStatus.PENDING, cleanedImageName = null)
+                resumeTranslation.copy(
+                    inpaintStatus = StageStatus.PENDING,
+                    cleanedImageName = null,
+                    cleanedImageContentHash = null,
+                )
             } else {
                 resumeTranslation
             }

@@ -989,6 +989,7 @@ class TranslationPipeline private constructor(
             mangaId = manga.id,
             sourceId = source.id,
             cleanedImageName = page.cleanedImageName,
+            cleanedImageContentHash = page.cleanedImageContentHash,
             generation = snapshot.generation,
             pageVersion = snapshot.pageVersion,
             blockFingerprints = snapshot.blockFingerprints,
@@ -1067,6 +1068,11 @@ class TranslationPipeline private constructor(
             }
             val pageState = store.state.value[prepared.pageKey] ?: return null
             val cleanedImageName = prepared.cleanedImageName ?: pageState.cleanedImageName
+            val cleanedImageContentHash = if (prepared.cleanedImageName != null) {
+                prepared.cleanedImageContentHash
+            } else {
+                pageState.cleanedImageContentHash
+            }
             if (cleanedImageName == null) {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT translatePreparedPage: no cleaned image for pageKey=${prepared.pageKey}"
@@ -1083,6 +1089,8 @@ class TranslationPipeline private constructor(
 
             val pageTranslation = pageState.toDraft()
             pageTranslation.cleanedBitmap = null
+            pageTranslation.cleanedImageName = cleanedImageName
+            pageTranslation.cleanedImageContentHash = cleanedImageContentHash
 
             // The prepared-page boundary does not re-decode the source on the
             // translation side: the cleaned image is the durable artifact. An empty

@@ -1542,7 +1542,15 @@ class TranslationManager private constructor(
         source: Source,
         pageKey: String,
         imageName: String,
-    ) = cleanedImageLifecycle.retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
+        isReferencedElsewhere: () -> Boolean,
+    ) = cleanedImageLifecycle.retirePageCompanionImage(
+        manga,
+        chapter,
+        source,
+        pageKey,
+        imageName,
+        isReferencedElsewhere,
+    )
 
     suspend fun openTranslationSession(
         manga: Manga,
@@ -1685,8 +1693,8 @@ class TranslationManager private constructor(
             retireChapterCompanionImagesFn = { manga, chapter, source ->
                 retireChapterCompanionImages(manga, chapter, source)
             },
-            retirePageCompanionImageFn = { manga, chapter, source, pageKey, imageName ->
-                retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
+            retirePageCompanionImageFn = { manga, chapter, source, pageKey, imageName, isReferencedElsewhere ->
+                retirePageCompanionImage(manga, chapter, source, pageKey, imageName, isReferencedElsewhere)
             },
             durableStatusResolverProvider = { durableStatusResolver },
             activeStoresProvider = { activeStores },
