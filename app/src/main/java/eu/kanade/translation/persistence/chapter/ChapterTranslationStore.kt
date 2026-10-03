@@ -349,6 +349,7 @@ class ChapterTranslationStore internal constructor(
                 expectedPageCountTrusted = replay.inventory?.hasTrustedExpectedPageCount == true,
             ),
             durableFailures = replay.durableFailures.toMap(),
+            pageOutcomes = replay.pageOutcomes.toMap(),
         )
     }
 
@@ -1099,6 +1100,11 @@ class ChapterTranslationStore internal constructor(
             )
             val seededPrefix = replayJournalForRecovery() ?: return
             if (!seedPages.keys.all { seededPrefix.pageOutcomes[it] == ChapterJournalPageOutcome.RECORDED }) return
+            mutex.withLock {
+                journalStatusSnapshot = journalStatusSnapshot?.copy(
+                    pageOutcomes = seededPrefix.pageOutcomes.toMap(),
+                )
+            }
             if (!inventory.expectedPageCountTrusted) {
                 journalSeedDiagnostics = journalSeedDiagnostics.copy(completed = true)
                 return
@@ -1126,6 +1132,7 @@ class ChapterTranslationStore internal constructor(
                             expectedPageCount = inventory.expectedPageCount,
                             expectedPageCountTrusted = true,
                         ),
+                        pageOutcomes = completedPrefix.pageOutcomes.toMap(),
                     )
                 }
             }
@@ -1459,6 +1466,9 @@ class ChapterTranslationStore internal constructor(
                 expectedPageCount = maxOf(current.inventory.expectedPageCount ?: 0, keys.size),
             ),
             durableFailures = failures.toMap(),
+            // The active store mutation supersedes this key's replay-prefix outcome.
+            // Its current content/terminal state is projected from [pages] instead.
+            pageOutcomes = current.pageOutcomes - pageKey,
         )
     }
 
@@ -1470,6 +1480,7 @@ class ChapterTranslationStore internal constructor(
                 expectedPageKeys = current.inventory.expectedPageKeys - pageKey,
             ),
             durableFailures = current.durableFailures.filterValues { it.pageKey != pageKey },
+            pageOutcomes = current.pageOutcomes - pageKey,
         )
     }
 
@@ -1484,12 +1495,15 @@ class ChapterTranslationStore internal constructor(
             val moved = failure.copy(pageKey = pageKey)
             failures["$pageKey:${moved.stage.name}"] = moved
         }
+        val pageOutcomes = current.pageOutcomes.entries
+            .associate { (pageKey, outcome) -> (moves[pageKey] ?: pageKey) to outcome }
         journalStatusSnapshot = current.copy(
             inventory = current.inventory.copy(
                 expectedPageKeys = keys,
                 expectedPageCount = maxOf(current.inventory.expectedPageCount ?: 0, keys.size),
             ),
             durableFailures = failures.toMap(),
+            pageOutcomes = pageOutcomes,
         )
     }
 
@@ -4609,6 +4623,7 @@ class ChapterTranslationStore internal constructor(
                             (manifest.expectedPageCountTrusted && unverifiedFallbackKeys.isEmpty()),
                     ),
                     durableFailures = manifestFailures + journalReplay.durableFailures,
+                    pageOutcomes = journalReplay.pageOutcomes.toMap(),
                 )
                 store.journalInventoryTrustEstablished = authoritativeJournal
                 if (!authoritativeJournal) {

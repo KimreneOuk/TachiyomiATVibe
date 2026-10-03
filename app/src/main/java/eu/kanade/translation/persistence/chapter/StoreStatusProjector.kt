@@ -6,6 +6,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasCommittedDisplay
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageCancelled
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
@@ -16,6 +17,7 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.toArtifactDisplayProjection
+import eu.kanade.translation.persistence.journal.ChapterJournalPageOutcome
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -31,6 +33,7 @@ internal data class StoreStatusInventory(
 internal data class StoreStatusSnapshot(
     val inventory: StoreStatusInventory,
     val durableFailures: Map<String, DurableFailureMetadata>,
+    val pageOutcomes: Map<String, ChapterJournalPageOutcome>,
 )
 
 /**
@@ -143,7 +146,46 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
         }
         if (hasTerminalDurableFailure || hasInMemoryFailure) return Translation.State.ERROR
         if (hasRetryableDurableFailure) return Translation.State.PAUSED
+        if (journalStatus != null) {
+            val expectedJournalKeys = inventory?.expectedPageKeys.orEmpty()
+            // A materialized page row or replay outcome distinguishes an admitted/migrating
+            // chapter from an untouched chapter. With no rows or outcomes, progress falls back
+            // to NOT_TRANSLATED rather than treating an empty inventory as interrupted work.
+            val hasObservedChapterWork = pagesSnapshot.isNotEmpty() ||
+                journalStatus.pageOutcomes.isNotEmpty() ||
+                durableFailures.isNotEmpty()
+            val hasInertExpectedPageWithoutOutcome = expectedJournalKeys.any { pageKey ->
+                if (journalStatus.pageOutcomes[pageKey] != null) return@any false
+
+                val page = pagesSnapshot[pageKey]
+                val manifestPage = manifest.pages[pageKey]
+                val readableDisplay = visiblePages[pageKey]
+                    ?.toPageDisplayProjection()
+                    ?.displayReady == true
+                val hasContentOrCommittedDisplay = page?.blocks?.isNotEmpty() == true ||
+                    page?.hasRenderedResult == true ||
+                    readableDisplay
+                val hasCandidate = manifestPage?.candidate != null
+                val hasTerminalState = page?.isStageFailed == true ||
+                    page?.isTextlessTerminal == true ||
+                    page?.isStageCancelled == true
+                val hasLiveStage = page?.isStageRunning == true
+
+                !hasContentOrCommittedDisplay && !hasCandidate && !hasTerminalState && !hasLiveStage
+            }
+            if (hasObservedChapterWork && hasInertExpectedPageWithoutOutcome) {
+                // The accepted expected-page registration proves work was admitted, but no
+                // journal winner or content-backed terminal state proves this page completed.
+                // Retry is the safe healing direction; metadata-only fallback remains visible.
+                return Translation.State.ERROR
+            }
+        }
         if (hasInFlightPage) {
+            // A journal-backed RUNNING page survived its process owner and is
+            // orphaned work; keep the chapter retryable even when other pages
+            // remain readable. A live artifact-only store still has an owner,
+            // so retain its warnings-as-progress behavior.
+            if (journalStatus != null) return Translation.State.ERROR
             return if ((expectedPageCountTrusted && expectedPageCount != null && expectedPageCount > 0) ||
                 hasReadableOutput ||
                 hasPartialArtifact

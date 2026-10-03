@@ -183,6 +183,8 @@ class DurableStatusWipeGateTest {
         val provider = mockk<TranslationFileProvider>()
         every { provider.findMangaDir(any(), any()) } returns parent
         every { provider.getTranslationFileName(any(), any()) } answers { "${firstArg<String>()}.json" }
+        every { provider.privateJournalRoot } returns File(mangaDir, "private-journal").apply { mkdirs() }
+        every { provider.privateJournalIdentity(any(), any(), any()) } returns "wipe-gate:Chapter 1.json"
         return provider
     }
 

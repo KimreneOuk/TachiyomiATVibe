@@ -703,6 +703,19 @@ class ChapterTranslationStoreJournalCaptureTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
         val privateJournalRoot = File(chapterDir, "fallback-journal")
         check(privateJournalRoot.mkdirs())
+        val neverStarted = ChapterTranslationStore.openArtifactSuspend(
+            root,
+            "Never started chapter.json",
+            privateStorageRoot = privateJournalRoot,
+            privateStorageIdentity = "source:manga:Never started chapter.json",
+            journalStorageFactory = ::jvmFileBackedJournalStorage,
+        )
+        try {
+            neverStarted.artifactStatus() shouldBe null
+        } finally {
+            neverStarted.closeAndFlush()
+        }
+
         val journalIdentity = "source:manga:Fallback-only chapter.json"
         val layout = ChapterArtifactLayout("Fallback-only chapter")
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(root))
@@ -726,6 +739,7 @@ class ChapterTranslationStoreJournalCaptureTest {
         try {
             firstOpen.pages.containsKey(pageKey) shouldBe true
             firstOpen.display.value.containsKey(pageKey) shouldBe true
+            firstOpen.artifactStatus() shouldBe Translation.State.ERROR
             val seed = firstOpen.journalSeedDiagnostics
             check(seed.failure == null) {
                 "journal seed failed: ${describeCauseChain(seed.failure)}"
@@ -744,6 +758,9 @@ class ChapterTranslationStoreJournalCaptureTest {
 
         val validPage = PageTranslation(
             sourceFileName = pageKey,
+            translationStatus = StageStatus.READY,
+            renderStatus = StageStatus.READY,
+            originalImageFallback = true,
             blocks = mutableListOf(
                 TranslationBlock(
                     text = "source",
@@ -785,6 +802,7 @@ class ChapterTranslationStoreJournalCaptureTest {
         )
         try {
             healedOpen.pages[pageKey] shouldBe validPage
+            healedOpen.artifactStatus() shouldBe Translation.State.TRANSLATED
             val healedPrefix = checkNotNull(healedOpen.replayJournalForRecovery())
             healedPrefix.pageOutcomes[pageKey] shouldBe ChapterJournalPageOutcome.RECORDED
             healedPrefix.inventory?.hasTrustedExpectedPageCount shouldBe true

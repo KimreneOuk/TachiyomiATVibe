@@ -78,6 +78,8 @@ class TranslationManagerArtifactReadTest {
         val provider = mockk<TranslationFileProvider>(relaxed = true)
         every { provider.findMangaDir(any(), any()) } returns artifactParent()
         every { provider.getTranslationFileName(any(), any()) } returns fileName
+        every { provider.privateJournalRoot } returns File(mangaDir, "private-journal").apply { mkdirs() }
+        every { provider.privateJournalIdentity(any(), any(), any()) } returns "manager-test:$fileName"
         val sourceManager = mockk<SourceManager>(relaxed = true)
         every { sourceManager.get(77L) } returns source
         val translator = mockk<ChapterTranslator>(relaxed = true)
@@ -186,8 +188,8 @@ class TranslationManagerArtifactReadTest {
         file.delete()
 
         val manager = newManager(artifactFileName("Chapter 5"))
-        manager.getChapterTranslationStatus(46L, "Chapter 5", null, "Manga", 77L) shouldBe
-            Translation.State.ERROR
+        val managerStatus = manager.getChapterTranslationStatus(46L, "Chapter 5", null, "Manga", 77L)
+        managerStatus shouldBe Translation.State.ERROR
     }
 
     @Test

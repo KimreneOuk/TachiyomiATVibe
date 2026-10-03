@@ -14,6 +14,7 @@ import eu.kanade.translation.persistence.artifact.DisplayBaseKind
 import eu.kanade.translation.persistence.artifact.DisplayBaseReference
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.ProbedImage
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -202,6 +203,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
                         displayBase = DisplayBaseReference(kind = DisplayBaseKind.ORIGINAL_SOURCE),
                         origin = eu.kanade.translation.persistence.artifact.ArtifactOrigin.LEGACY,
                         provisional = true,
+                        translationFingerprint = StageFingerprints.pageSnapshot(page),
                         pageSnapshotFileName = snapshotFile,
                     ),
                     displayState = PageDisplayState.ORIGINAL_ONLY,
@@ -216,7 +218,13 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
             writeText(Json.encodeToString(page))
         }
 
-        val store = ChapterTranslationStore.openArtifact(root, "Chapter 1.json")
+        val journalRoot = File(mangaDir, "private-journal").apply { mkdirs() }
+        val store = ChapterTranslationStore.openArtifact(
+            root,
+            "Chapter 1.json",
+            journalRoot,
+            "fixture-source:Manga:Chapter 1.json",
+        )
 
         File(mangaDir, "Chapter 1.json").exists() shouldBe false
         store.state.value.getValue("page.jpg").blocks.single().translation shouldBe "hello"
