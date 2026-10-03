@@ -83,8 +83,7 @@ class TranslationManagerAutoArbitrationTest {
     @Test
     fun `manager suppresses same-chapter auto while the chapter batch is queued`() = runBlocking<Unit> {
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf("p0" to eu.kanade.translation.model.PageTranslation(sourceFileName = "")),
         )
         val source = mockk<HttpSource>(relaxed = true)

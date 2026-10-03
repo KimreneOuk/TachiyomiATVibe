@@ -29,9 +29,8 @@ import java.security.MessageDigest
  *    Committed manifest) equals the durable manifest after the final flush;
  *  - the coalesced CAS baseline lets the serialized transaction chain build
  *    on its own staged manifests without spurious stale rejections, and a
- *    stale façade (the background health verify's VERIFIED stamp) still
- *    rebases — the pointer-set-only adoption mutation carries the fresh
- *    durable `legacyMigration` forward instead of clobbering it;
+ *    stale façade still rebases — the pointer-set-only adoption mutation
+ *    carries the concurrent chapter timestamp forward instead of clobbering it;
  *  - a mid-window flush failure fails the owning transaction exactly like a
  *    direct publication failure (Rejected), never silently.
  */
@@ -73,14 +72,7 @@ class ChapterArtifactEngineManifestCoalescingTest {
 
     private fun legacySnapshot(pageKeys: List<String>) = ArtifactSeed(
         pages = pageKeys.associateWith { key -> ArtifactPageFacts(page(key), CleanedFileState.VALID) },
-        legacyIdentity = LegacySourceIdentity(
-            sha256 = "sha-chapter",
-            lengthBytes = 1L,
-            lastModifiedMs = 1L,
-        ),
-        sourceFileName = "Chapter 1.json",
-        migratedByVersionCode = 63L,
-        migratedAtEpochMs = 42L,
+        createdAtEpochMs = 42L,
     )
 
     /** Durable manifest rewrites so far (temp→primary rename of the manifest document). */
@@ -140,29 +132,23 @@ class ChapterArtifactEngineManifestCoalescingTest {
     }
 
     @Test
-    fun `coalesced adoptions rebase onto a stale façade and carry the VERIFIED marker forward`() {
+    fun `coalesced adoptions rebase onto a stale façade and carry the concurrent timestamp forward`() {
         val io = FakeChapterDocumentIo()
         val artifact = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
         val pageKeys = (1..3).map { index -> "p%03d.jpg".format(index) }
         artifact.loadArtifact(legacySnapshot(pageKeys))
 
-        // The façade cached the pre-verification snapshot; the background
-        // health verify then republished VERIFIED behind its back.
+        // The façade cached the prior snapshot; a concurrent metadata publication
+        // advanced the durable chapter timestamp behind its back.
         val facadeSnapshot = artifact.readManifest().shouldNotBeNull()
-        val verified = facadeSnapshot.legacyMigration
-            ?: LegacyMigrationMetadata(sourceFileName = "Chapter 1.json")
         check(
             artifact.publishManifest(
                 facadeSnapshot.copy(
-                    legacyMigration = verified.copy(
-                        health = LegacyMigrationHealth.VERIFIED,
-                        lastVerifiedByVersionCode = 63L,
-                        lastVerifiedAtEpochMs = 5_000L,
-                    ),
+                    cutoverAtEpochMs = 5_000L,
                     updatedAtEpochMs = 5_000L,
                 ),
             ),
-        ) { "fixture: concurrent verify publication failed" }
+        ) { "fixture: concurrent metadata publication failed" }
         val writesBeforeWindow = durableManifestWrites(io)
 
         var facade: ChapterArtifactManifest = facadeSnapshot
@@ -176,10 +162,9 @@ class ChapterArtifactEngineManifestCoalescingTest {
         }
 
         val durable = artifact.readManifest().shouldNotBeNull()
-        // The stale first adoption rebased onto the fresh VERIFIED manifest and
-        // the whole pointer-set-only adoption chain carried it forward —
-        // instead of clobbering health back to the pre-verification value.
-        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        // The stale first adoption rebased onto the fresh manifest and the
+        // pointer-set-only adoption chain carried its timestamp forward.
+        durable.cutoverAtEpochMs shouldBe 5_000L
         durable.activeCandidateGenerationIds.size shouldBe pageKeys.size
         facade shouldBe durable
         durableManifestWrites(io) - writesBeforeWindow shouldBe 1

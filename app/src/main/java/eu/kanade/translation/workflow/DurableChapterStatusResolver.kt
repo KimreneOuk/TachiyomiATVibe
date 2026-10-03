@@ -41,7 +41,6 @@ internal data class DurableStatus(val state: Translation.State)
 internal data class TranslationDocument(
     val parent: UniFile,
     val fileName: String,
-    val file: UniFile?,
 ) {
     val registryKey: String get() = "${parent.filePath ?: parent.uri}:$fileName"
 }
@@ -66,7 +65,7 @@ internal class DurableChapterStatusResolver(
 
     /**
      * Invalidates every cached durable status and memoized document. This is
-     * protocol, not detail: opens, rescues, and deletes change durable truth,
+     * protocol, not detail: opens, journal recovery/seeding, and deletes change durable truth,
      * and a missed clear can resurrect stale TRANSLATED states. All status and document
      * invalidations route through this method.
      */
@@ -95,8 +94,8 @@ internal class DurableChapterStatusResolver(
                 sourceId,
             )
         }
-        // A null result includes an absent document, a failed probe, and a
-        // recoverable rescue/permission error. Do not turn that transient
+        // A null result includes an absent artifact, a failed probe, and a
+        // recoverable recovery/permission error. Do not turn that transient
         // outcome into a same-manager cache hit that hides a later retry.
         state?.let { durableStatusCache[key] = DurableStatus(it) }
         return state
@@ -114,7 +113,12 @@ internal class DurableChapterStatusResolver(
             ?: return null
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         return if (manifestProbe.exists) {
-            withProbeStore(document, chapterId) { store -> store.artifactStatus() }
+            withProbeStore(
+                document = document,
+                chapterId = chapterId,
+                privateJournalRoot = provider.privateJournalRoot,
+                privateJournalIdentity = provider.privateJournalIdentity(source, mangaTitle, document.fileName),
+            ) { store -> store.artifactStatus() }
         } else {
             null
         }
@@ -128,16 +132,15 @@ internal class DurableChapterStatusResolver(
     ): TranslationDocument? {
         // The document location cannot legitimately move mid-session, and
         // one reader entry used to walk the SAF tree for it 5-7 times
-        // (60-210ms each on device). Memoize positive results; callers
-        // already re-check document.file existence before opening.
+        // (60-210ms each on device). Memoize positive directory/name pairs;
+        // callers probe the artifact manifest before opening.
         val memoKey = DurableDocumentKey(chapterName, scanlator, mangaTitle, source.id)
         durableDocumentCache[memoKey]?.let { return it }
         val entryStage = ReaderEntryTrace.begin("translation.findDocument", null)
         val document = try {
-            val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
-            val parent = file?.parentFile ?: provider.findMangaDir(mangaTitle, source) ?: return null
-            val fileName = file?.name ?: provider.getTranslationFileName(chapterName, scanlator)
-            TranslationDocument(parent, fileName, file ?: parent.findFile(fileName))
+            val parent = provider.findMangaDir(mangaTitle, source) ?: return null
+            val fileName = provider.getTranslationFileName(chapterName, scanlator)
+            TranslationDocument(parent, fileName)
         } finally {
             entryStage.end()
         }
@@ -172,23 +175,35 @@ internal class DurableChapterStatusResolver(
         if (!ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName).exists) {
             return null
         }
-        return withProbeStore(document, chapterId, block)
+        return withProbeStore(
+            document = document,
+            chapterId = chapterId,
+            privateJournalRoot = provider.privateJournalRoot,
+            privateJournalIdentity = provider.privateJournalIdentity(source, mangaTitle, document.fileName),
+            block = block,
+        )
     }
 
     private suspend fun <T> withProbeStore(
         document: TranslationDocument,
         chapterId: Long?,
+        privateJournalRoot: java.io.File,
+        privateJournalIdentity: String,
         block: suspend (ChapterTranslationStore) -> T,
     ): T? {
         if (chapterId != null) {
             activeStores.get(chapterId)?.let { return block(it) }
         }
         val result = activeStores.getOrCreateProbe(document.registryKey) {
-            ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+            ChapterTranslationStore.openArtifactSuspend(
+                document.parent,
+                document.fileName,
+                privateJournalRoot,
+                privateJournalIdentity,
+            )
         } ?: return null
-        // A newly created probe can perform the one-way rescue and rename
-        // intent recovery while it opens; statuses cached before that
-        // transition are stale. Reused probes already had their wipe when
+        // A newly created probe can recover or seed journal-backed state while
+        // it opens; statuses cached before that transition are stale. Reused probes already had their wipe when
         // they were created — wiping the whole cache again on every probe
         // pass reduced the cache to a single surviving entry whenever the
         // chapter list resolved statuses sequentially.

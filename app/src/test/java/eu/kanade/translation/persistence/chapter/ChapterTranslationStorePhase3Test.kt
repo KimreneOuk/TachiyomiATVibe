@@ -40,8 +40,7 @@ class ChapterTranslationStorePhase3Test {
     )
 
     private fun store() = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = mapOf("p1" to readyPage()),
     )
 

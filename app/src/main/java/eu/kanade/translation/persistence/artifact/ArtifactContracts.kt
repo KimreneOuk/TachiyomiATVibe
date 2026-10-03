@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
  * explicit per-stage artifact status vocabulary for the chapter
  * artifact manifest (artifact lifecycle contract §2). Distinct from the legacy
  * [eu.kanade.translation.model.StageStatus] strings, which remain the working
- * vocabulary of the live pipeline until the store transaction phase.
+ * vocabulary of live page state.
  */
 enum class ArtifactStageStatus {
     /** No artifact exists. */
@@ -130,20 +130,6 @@ data class DisplayBaseReference(
     val validated: Boolean = false,
     /** True when the name resolves inside the legacy companion image directory. */
     val legacyLayout: Boolean = false,
-)
-
-/**
- * Exact identity of the legacy flat translation file a manifest was built
- * from. The legacy file stays authoritative until the store-transaction
- * phase, so every load compares this identity and resyncs the manifest when
- * the authoritative bytes changed.
- */
-@Serializable
-data class LegacySourceIdentity(
-    /** SHA-256 over the legacy translation file bytes at migration time. */
-    val sha256: String,
-    val lengthBytes: Long,
-    val lastModifiedMs: Long,
 )
 
 /** Artifact metadata and provenance for one stage of one page (lifecycle contract §§4–8). */

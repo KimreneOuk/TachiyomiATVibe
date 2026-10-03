@@ -1,6 +1,5 @@
 package eu.kanade.translation.workflow
 
-import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.PageTranslation
@@ -82,11 +81,10 @@ class ResetRetiresActiveRunTest {
             ChapterArtifactLayout("Chapter 1"),
         )
         var manifest = artifact
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
             cutoverAtEpochMs = 1L,
-            migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
         )
         check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
@@ -121,8 +119,7 @@ class ResetRetiresActiveRunTest {
     fun `chapter translation reset retires the recorded COMPLETE run`() = runTest {
         val artifact = artifactStoreWithCompleteRun()
         val store = ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf(
                 "p0" to translatedPage("p0"),
                 "p1" to translatedPage("p1"),

@@ -34,8 +34,7 @@ class ChapterTranslationStoreCaptureBarrierTest {
         )
         documents.publishJson(layout.manifestFileName, manifest) shouldBe true
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf("p0" to PageTranslation(sourceFileName = "p0")),
             artifactStore = ChapterArtifactEngine(documents, layout),
             initialArtifactManifest = manifest,

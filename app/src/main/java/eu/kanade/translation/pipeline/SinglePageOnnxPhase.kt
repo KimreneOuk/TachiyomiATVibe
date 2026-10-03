@@ -263,7 +263,7 @@ internal class SinglePageOnnxPhase(
             val mangaDir = provider.getMangaDir(manga.title, source)
             val saveFile = provider.getTranslationFileName(chapter.name, chapter.scanlator)
             val parent = mangaDir ?: return null
-            ChapterTranslationStore.openArtifact(
+            ChapterTranslationStore.openArtifactSuspend(
                 parent,
                 saveFile,
                 provider.privateJournalRoot,

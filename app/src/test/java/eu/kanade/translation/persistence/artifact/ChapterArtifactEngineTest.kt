@@ -49,21 +49,9 @@ class ChapterArtifactEngineTest {
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
     )
 
-    private fun identity(tag: String) = LegacySourceIdentity(
-        sha256 = "sha-$tag",
-        lengthBytes = tag.length.toLong(),
-        lastModifiedMs = 1L,
-    )
-
-    private fun legacySnapshot(
-        identityTag: String = "v1",
-        page: PageTranslation = displayablePage(),
-    ) = ArtifactSeed(
+    private fun seededSnapshot(page: PageTranslation = displayablePage()) = ArtifactSeed(
         pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
-        legacyIdentity = identity(identityTag),
-        sourceFileName = "Chapter 1.json",
-        migratedByVersionCode = 63L,
-        migratedAtEpochMs = 42L,
+        createdAtEpochMs = 42L,
     )
 
     private fun artifactStore(io: FakeChapterDocumentIo) =
@@ -88,7 +76,7 @@ class ChapterArtifactEngineTest {
     fun `corrupt manifest primary recovers from retained backup`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
-        val first = store.loadArtifact(legacySnapshot())
+        val first = store.loadArtifact(seededSnapshot())
         store.publishManifest(first.manifest.copy(updatedAtEpochMs = 43L))
         io.files[layout.manifestFileName] = "not json".toByteArray()
         val recovered = store.readManifest().shouldNotBeNull()
@@ -100,7 +88,7 @@ class ChapterArtifactEngineTest {
     fun `corrupt manifest recovery does not overwrite an existing quarantine`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
-        val first = store.loadArtifact(legacySnapshot())
+        val first = store.loadArtifact(seededSnapshot())
         store.publishManifest(first.manifest.copy(updatedAtEpochMs = 43L))
         val corruptBytes = "still not json".toByteArray()
         io.files[layout.manifestFileName] = corruptBytes
@@ -118,7 +106,7 @@ class ChapterArtifactEngineTest {
     fun `load preserves a valid backup when primary promotion is interrupted`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
-        val first = store.loadArtifact(legacySnapshot())
+        val first = store.loadArtifact(seededSnapshot())
         val artifactManifest = first.manifest.copy(
             updatedAtEpochMs = 43L,
         )
@@ -131,7 +119,7 @@ class ChapterArtifactEngineTest {
         io.files.remove(layout.manifestFileName)
         io.renamesToFail += backupName
 
-        val recovered = store.loadArtifact(legacySnapshot())
+        val recovered = store.loadArtifact(seededSnapshot())
 
         recovered.manifest.pages.keys shouldBe setOf("page.jpg")
         io.read(backupName) shouldBe backupBytes
@@ -144,7 +132,7 @@ class ChapterArtifactEngineTest {
         val io = FakeChapterDocumentIo()
         val future = ChapterArtifactManifest(schemaVersion = 99, chapterKey = "Chapter 1")
         io.write(layout.manifestFileName, json.encodeToString(future).toByteArray())
-        val result = artifactStore(io).loadArtifact(legacySnapshot())
+        val result = artifactStore(io).loadArtifact(seededSnapshot())
         String(io.read(layout.manifestFileName)!!) shouldBe json.encodeToString(future)
     }
 
@@ -154,7 +142,7 @@ class ChapterArtifactEngineTest {
         val future = ChapterArtifactManifest(schemaVersion = 99, chapterKey = "Chapter 1")
         io.write(AtomicChapterDocuments.backupNameFor(layout.manifestFileName), json.encodeToString(future).toByteArray())
 
-        val result = artifactStore(io).loadArtifact(legacySnapshot())
+        val result = artifactStore(io).loadArtifact(seededSnapshot())
 
         result.manifest shouldBe future
         // The future document was not renamed, deleted, quarantined, or
@@ -174,7 +162,7 @@ class ChapterArtifactEngineTest {
         io.write(layout.manifestFileName, "{ corrupt".toByteArray())
         io.write(backupName, json.encodeToString(future).toByteArray())
 
-        val result = artifactStore(io).loadArtifact(legacySnapshot())
+        val result = artifactStore(io).loadArtifact(seededSnapshot())
 
         result.manifest shouldBe future
         // Corrupt primary bytes remain preserved; the future backup is intact.
@@ -187,14 +175,14 @@ class ChapterArtifactEngineTest {
     fun `usable primary wins over a future backup without touching it`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
-        val first = store.loadArtifact(legacySnapshot(identityTag = "v1"))
+        val first = store.loadArtifact(seededSnapshot())
         val future = ChapterArtifactManifest(schemaVersion = 99, chapterKey = "Chapter 1")
         io.write(
             AtomicChapterDocuments.backupNameFor(layout.manifestFileName),
             json.encodeToString(future).toByteArray(),
         )
 
-        val result = store.loadArtifact(legacySnapshot(identityTag = "v1"))
+        val result = store.loadArtifact(seededSnapshot())
 
         result.manifest shouldBe first.manifest
         // Fast path must not delete the future backup.
@@ -205,7 +193,7 @@ class ChapterArtifactEngineTest {
     fun `recordDurableFailure reports NotStored on write failure and keeps the prior manifest`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
-        val first = store.loadArtifact(legacySnapshot())
+        val first = store.loadArtifact(seededSnapshot())
         val failure = DurableFailureMetadata(
             pageKey = "page.jpg",
             stage = ArtifactStage.TRANSLATION,
@@ -228,7 +216,7 @@ class ChapterArtifactEngineTest {
     fun `recordDurableFailure reports NotStored on rename failure`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
-        val first = store.loadArtifact(legacySnapshot())
+        val first = store.loadArtifact(seededSnapshot())
         val failure = DurableFailureMetadata(
             pageKey = "page.jpg",
             stage = ArtifactStage.OCR,
@@ -250,7 +238,7 @@ class ChapterArtifactEngineTest {
     fun `recordDurableFailure is durable on the happy path`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
-        val manifest = store.loadArtifact(legacySnapshot()).manifest
+        val manifest = store.loadArtifact(seededSnapshot()).manifest
         val failure = DurableFailureMetadata(
             pageKey = "page.jpg",
             stage = ArtifactStage.TRANSLATION,
@@ -336,7 +324,7 @@ class ChapterArtifactEngineTest {
     fun `artifact load removes corrupt and orphan managed temp files but keeps active candidate`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)
-        val migrated = store.loadArtifact(legacySnapshot()).manifest
+        val migrated = store.loadArtifact(seededSnapshot()).manifest
         val opened = store.openCandidate(
             migrated,
             "page.jpg",
@@ -356,7 +344,7 @@ class ChapterArtifactEngineTest {
         io.write(AtomicChapterDocuments.tempNameFor(layout.manifestFileName), byteArrayOf(6))
 
         val reloaded = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
-            .loadArtifact(legacySnapshot())
+            .loadArtifact(seededSnapshot())
 
         io.files.containsKey(candidateImage) shouldBe true
         io.files.containsKey("$orphanStage.tmp") shouldBe false
@@ -368,7 +356,7 @@ class ChapterArtifactEngineTest {
     fun `openCandidate reports idempotent reuse as a neutral outcome`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
-        val manifest = store.loadArtifact(legacySnapshot()).manifest
+        val manifest = store.loadArtifact(seededSnapshot()).manifest
         val opened = store.openCandidate(
             manifest = manifest,
             pageKey = "page.jpg",
@@ -512,7 +500,7 @@ class ChapterArtifactEngineTest {
     @Test
     fun `empty legacy chapter produces an empty manifest`() {
         val io = FakeChapterDocumentIo()
-        val result = artifactStore(io).loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+        val result = artifactStore(io).loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
         result.manifest.pages.isEmpty() shouldBe true
     }
 
@@ -520,7 +508,7 @@ class ChapterArtifactEngineTest {
     fun `promotion reuses an identical candidate snapshot and defers retention sweep`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)
-        val migrated = store.loadArtifact(legacySnapshot()).manifest
+        val migrated = store.loadArtifact(seededSnapshot()).manifest
         val opened = store.openCandidate(
             manifest = migrated,
             pageKey = "page.jpg",
@@ -576,7 +564,7 @@ class ChapterArtifactEngineTest {
     fun `candidate and retryable failure publish atomically without replacing committed display`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)
-        val migrated = store.loadArtifact(legacySnapshot()).manifest
+        val migrated = store.loadArtifact(seededSnapshot()).manifest
         val committedGeneration = migrated.pages.getValue("page.jpg").committed
             .shouldNotBeNull().generationId
         val opened = store.openCandidate(
@@ -643,7 +631,7 @@ class ChapterArtifactEngineTest {
     fun `process restart turns an interrupted artifact stage into a durable retryable failure`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)
-        val migrated = store.loadArtifact(legacySnapshot()).manifest
+        val migrated = store.loadArtifact(seededSnapshot()).manifest
         val interrupted = migrated.copy(
             pages = migrated.pages + (
                 "page.jpg" to migrated.pages.getValue("page.jpg").copy(
@@ -657,7 +645,7 @@ class ChapterArtifactEngineTest {
         )
         store.publishManifest(interrupted) shouldBe true
 
-        val restarted = store.loadArtifact(legacySnapshot()).manifest
+        val restarted = store.loadArtifact(seededSnapshot()).manifest
 
         restarted.pages.getValue("page.jpg").translation
             .shouldNotBeNull().status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
@@ -671,10 +659,9 @@ class ChapterArtifactEngineTest {
     fun `concurrent candidate opens serialize against the same manifest snapshot`() {
         val io = FakeChapterDocumentIo()
         val artifact = transactionStore(io)
-        val migrated = artifact.loadArtifact(legacySnapshot()).manifest
+        val migrated = artifact.loadArtifact(seededSnapshot()).manifest
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             artifactStore = artifact,
             initialArtifactManifest = migrated,
         )
@@ -734,7 +721,7 @@ class ChapterArtifactEngineTest {
             inpaintStatus = StageStatus.SKIPPED,
             renderStatus = StageStatus.SKIPPED,
         )
-        val migrated = store.loadArtifact(legacySnapshot(page = textless)).manifest
+        val migrated = store.loadArtifact(seededSnapshot(page = textless)).manifest
         migrated.pages.getValue("page.jpg").displayState shouldBe PageDisplayState.TEXTLESS_COMPLETE
         val opened = store.openCandidate(
             migrated,
@@ -768,20 +755,16 @@ class ChapterArtifactEngineTest {
         val io = FakeChapterDocumentIo()
         io.write(layout.manifestFileName, v2FixtureBytes())
 
-        val loaded = artifactStore(io).loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+        val loaded = artifactStore(io).loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
 
         val manifest = loaded.manifest
         // In-memory normalization stamps the current schema version.
         manifest.schemaVersion shouldBe ChapterArtifactManifest.SCHEMA_VERSION
-        // Old data intact.
+        // Recognized schema-2 data remains intact; removed legacy-rescue keys
+        // are ignored by the current model.
         manifest.chapterKey shouldBe "Chapter 1"
         manifest.expectedPageCount shouldBe 1
         manifest.expectedPageCountTrusted shouldBe true
-        manifest.legacySource shouldBe LegacySourceIdentity(
-            sha256 = "4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c",
-            lengthBytes = 4211L,
-            lastModifiedMs = 1757030000000L,
-        )
         val page = manifest.pages.getValue("0001.jpg")
         page.pageVersion shouldBe 3L
         page.committed.shouldNotBeNull().generationId shouldBe "g-1757040000000-0001jpg-5baa61e4"
@@ -802,7 +785,7 @@ class ChapterArtifactEngineTest {
         val io = FakeChapterDocumentIo()
         io.write(layout.manifestFileName, v2FixtureBytes())
         val store = artifactStore(io)
-        val loaded = store.loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L)).manifest
+        val loaded = store.loadArtifact(ArtifactSeed(createdAtEpochMs = 1L)).manifest
 
         store.publishManifest(loaded.copy(updatedAtEpochMs = 999L)) shouldBe true
 
@@ -811,9 +794,8 @@ class ChapterArtifactEngineTest {
         reparsed shouldBe loaded.copy(updatedAtEpochMs = 999L)
         // The old page record survives the rewrite byte-for-byte.
         reparsed.pages shouldBe loaded.pages
-        reparsed.legacyMigration shouldBe loaded.legacyMigration
         // Second load with unchanged bytes takes the fast path and stays equal.
-        val reloaded = store.loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+        val reloaded = store.loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
         reloaded.manifest shouldBe reparsed
     }
 }

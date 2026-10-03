@@ -33,7 +33,6 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
@@ -295,706 +294,704 @@ internal class BatchChapterTranslator(
         val batchGeneration = store.beginGeneration("batch start chapter=${chapter.name}")
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        return GroupCommitConfiguration.withFlag(true) {
-            store.withGeneration(batchGeneration) {
-                val batchWriteIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
-                // Paused/terminal durable failures retain their candidate and
-                // manifest metadata until the next explicit retry/reset. The
-                // outer teardown releases these leases rather than cancelling
-                // the candidate that explains the durable state.
-                val durableFailurePageKeys = ConcurrentHashMap.newKeySet<String>()
-                try {
-                    // Settle the engine-setup span on every exit, including a
-                    // throw from native-lane teardown.
-                    val engineSetupSpan = scheduleTrace.beginStage(
-                        TranslationTraceStage.ENGINE_SETUP,
-                    )
-                    var engineSetupTimedOut = false
-                    val engineSetupResult = try {
-                        withNativeLane(
-                            timeoutMs = ONNX_PHASE_TIMEOUT_MS,
-                            chapterId = chapter.id,
-                            chapterName = chapter.name,
-                            pageKey = "<engine-setup>",
-                            onTimeout = {
-                                engineSetupTimedOut = true
-                                store.invalidateGeneration("engine setup timeout chapter=${chapter.name}")
-                            },
-                        ) {
-                            engineRebuildMutex.withLock {
-                                ensureEnginesBuiltFor(fromLang, toLang)
-                            }
-                        }
-                    } catch (t: Throwable) {
-                        engineSetupSpan.end(TranslationTraceOutcome.FAILURE, error = t)
-                        throw t
-                    }
-                    engineSetupSpan.end(
-                        if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.SUCCESS,
-                    )
-                    if (engineSetupResult == null) {
-                        // No batch page lease outlives its run, whatever exit
-                        // path it takes.
-                        setScheduleOutcome(
-                            if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.FAILURE,
-                        )
-                        store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                        // Terminate the tracker with a typed reason rather than
-                        // leaving it live after setup fails.
-                        tracker?.abort(
-                            remainingPageKeys = remainingAbortKeys(orderedStreams, store),
-                            reason = "Translation could not start: batch engine setup failed or timed out",
-                        )
-                        return@withGeneration null
-                    }
-
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT batch START chapter=${chapter.name} pages=${orderedStreams.size} " +
-                            "engine=${recognitionEngine::class.simpleName} translator=${textTranslator::class.simpleName}"
-                    }
-
-                    // The batch coordinator owns the phase barriers. AI admission feeds
-                    // the token planner without provider calls; one overflow page may be kept
-                    // as an OCR-only probe. Each actual chunk OCRs completely before its AI
-                    // request and native inpaint branches overlap, and render joins both.
-                    val isAi = translationPreferences.translationEngineCategory().get() == TranslationEngineCategory.AI_MODEL &&
-                        textTranslator is ContextualTextTranslator
-                    val contextualTranslator = textTranslator as? ContextualTextTranslator
-                    val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
-                        ?: TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
-                    val chunkProfile = if (contextualTranslator is LmStudioTranslator) {
-                        TranslationContextChunkPlanner.Profile.LM_STUDIO
-                    } else {
-                        TranslationContextChunkPlanner.Profile.DEFAULT
-                    }
-
-                    // All batch stages share this registry and its byte/count accounting.
-                    val heldBitmapRegistry = HeldBitmapRegistry()
-                    val heldBitmapBytes = heldBitmapRegistry.heldBitmapBytes
-                    val countSlots = heldBitmapRegistry.countSlots
-                    val bitmapRegistry = heldBitmapRegistry.bitmapRegistry
-                    val translationRegistry = ConcurrentHashMap<String, PageTranslation>()
-                    val aborted = AtomicBoolean(false)
-                    val expectedBatchFingerprints = batchExpectedFingerprints(fromLang, toLang)
-
-                    // Resume context is a natural-order frontier, never a chapter-wide
-                    // unordered snapshot. Pages after the first missing/failed predecessor
-                    // remain durable and reusable, but cannot become context until traversal
-                    // reaches them; a non-textless terminal gap blocks later AI admission.
-                    val contextFrontier = BatchContextFrontier(resolvedNaturalPageIndexes)
-
-                    // Source identity is a direct input to detection and inpaint.
-                    // Hash the downloaded bytes before planning so replacing a
-                    // page under the same natural key cannot reuse old artifacts.
-                    // This is an I/O-only preflight; no detector/OCR/inpaint or
-                    // translator work is invoked for a matching completed page.
-                    // Lazy per-page source fingerprinting eliminates the whole-chapter
-                    // I/O barrier before planning and starting page 1.
-                    val fingerprintSpan = scheduleTrace.beginStage(
-                        TranslationTraceStage.SOURCE_FINGERPRINT,
-                        items = orderedStreams.size,
-                    )
-                    val sourceFingerprints: Map<String, String> = LazySourceFingerprints(orderedStreams.toMap(), computeSourceFingerprintFn)
-                    fingerprintSpan.end(
-                        TranslationTraceOutcome.SUCCESS,
-                        items = sourceFingerprints.size,
-                    )
-
-                    // The planner and lane workers share the same context frontier.
-                    val resumePlanner = BatchResumePlanner(
-                        store = store,
-                        provider = provider,
-                        manga = manga,
-                        source = source,
-                        chapter = chapter,
-                        orderedStreams = orderedStreams,
-                        isAi = isAi,
-                        sourceFingerprints = sourceFingerprints,
-                        expectedBatchFingerprints = expectedBatchFingerprints,
-                        contextFrontier = contextFrontier,
-                        inpaintingModeFromPref = inpaintingModeFromPref,
-                    )
-
-                    // All batch writers use this gate with the same identity map and
-                    // durable-failure set held by the shell.
-                    val batchWriteGate = BatchWriteGate(
-                        store = store,
-                        batchWriteIdentities = batchWriteIdentities,
-                        durableFailurePageKeys = durableFailurePageKeys,
-                        expectedBatchFingerprints = expectedBatchFingerprints,
-                        stampBatchProvenance = { page, stage -> resumePlanner.stampBatchProvenance(page, stage) },
-                        releaseBatchPageLeaseFn = releaseBatchPageLease,
-                        persistPageWithOomRecoveryFn = persistPageWithOomRecovery,
-                        pageTraceRegistry = pageTraceRegistry,
-                    )
-
-                    resumePlanner.seed()
-
-                    fun recordContextPage(
-                        pageKey: String,
-                        page: PageTranslation,
-                        terminalFailure: Boolean = false,
-                    ) = resumePlanner.recordContextPage(pageKey, page, terminalFailure)
-
-                    fun translationFailureFence(pageKey: String): Boolean =
-                        resumePlanner.translationFailureFence(pageKey)
-
-                    fun recordReusableContextPage(pageKey: String, page: PageTranslation) =
-                        resumePlanner.recordReusableContextPage(pageKey, page)
-
-                    fun plannedTranslationNeedsWork(pageKey: String): Boolean =
-                        resumePlanner.plannedTranslationNeedsWork(pageKey)
-
-                    fun plannedRenderNeedsWork(pageKey: String): Boolean =
-                        resumePlanner.plannedRenderNeedsWork(pageKey)
-
-                    suspend fun resumeGate(page: PageTranslation?) = resumePlanner.resumeGate(page)
-
-                    suspend fun guardedBatchUpdate(
-                        pageKey: String,
-                        description: String,
-                        stage: BatchStage?,
-                        update: (PageTranslation?) -> PageTranslation,
-                    ) = batchWriteGate.guardedBatchUpdate(pageKey, description, stage, update)
-
-                    fun refreshBatchIdentity(pageKey: String, snapshot: ChapterTranslationStore.PageSnapshot) =
-                        batchWriteGate.refreshBatchIdentity(pageKey, snapshot)
-
-                    fun batchWritePrecondition(pageKey: String): ChapterTranslationStore.PatchPrecondition? =
-                        batchWriteGate.batchWritePrecondition(pageKey)
-
-                    suspend fun persistAiFailureOrThrow(
-                        pageKey: String,
-                        page: PageTranslation,
-                        failure: ProviderFailure,
-                        retryable: Boolean,
-                        partialCandidate: Boolean,
-                        envelopeId: String?,
-                        missingBlockIds: Set<String>,
-                    ) = batchWriteGate.persistAiFailureOrThrow(
-                        pageKey = pageKey,
-                        page = page,
-                        failure = failure,
-                        retryable = retryable,
-                        partialCandidate = partialCandidate,
-                        envelopeId = envelopeId,
-                        missingBlockIds = missingBlockIds,
-                    )
-
-                    suspend fun releaseBatchLease(pageKey: String) =
-                        batchWriteGate.releaseBatchLease(pageKey)
-
-                    suspend fun persistBatchPageWithOomRecovery(
-                        pageKey: String,
-                        pageTranslation: PageTranslation,
-                    ) = batchWriteGate.persistBatchPageWithOomRecovery(pageKey, pageTranslation)
-
-                    suspend fun abortBatchCandidate(pageKey: String, reason: String) {
-                        heldBitmapRegistry.recycleHeld(pageKey)
-                        translationRegistry.remove(pageKey)
-                        batchWriteIdentities.remove(pageKey)
-                        if (pageKey in durableFailurePageKeys) {
-                            releaseBatchPageLease(store, pageKey)
-                            logcat(LogPriority.INFO) {
-                                "TachiyomiAT batch durable failure retained: pageKey=$pageKey reason=$reason"
-                            }
-                            return
-                        }
-                        val cancelled = store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
-                        logcat(if (cancelled) LogPriority.INFO else LogPriority.WARN) {
-                            "TachiyomiAT batch candidate aborted: pageKey=$pageKey " +
-                                "cancelled=$cancelled reason=$reason"
-                        }
-                    }
-
-                    // Lane workers call tryRender at commit boundaries; the
-                    // coordinator publishes persisted layouts for completed pages.
-                    val renderJoin = BatchRenderJoin(
-                        store = store,
-                        pageTraceRegistry = pageTraceRegistry,
-                        manga = manga,
-                        chapter = chapter,
-                        source = source,
-                        tracker = tracker,
-                        translationRegistry = translationRegistry,
-                        heldBitmapRegistry = heldBitmapRegistry,
-                        resumePlanner = resumePlanner,
-                        writeGate = batchWriteGate,
-                        expectedBatchFingerprints = expectedBatchFingerprints,
-                        loadPersistedCleanedBitmapFn = loadPersistedCleanedBitmap,
-                        deleteRetiredCleanedFileFn = deleteRetiredCleanedFile,
-                        abortBatchCandidateFn = ::abortBatchCandidate,
-                    )
-
-                    val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
-
-                    // Workers receive the same registry, identity map, and context
-                    // frontier used by the shell and its other collaborators.
-                    val batchScheduleListener = object : BatchScheduleListener() {
-                        override fun ocrStarted(pageKey: String) {
-                            // Reused preflight pages emit the same progress mark as
-                            // fresh OCR pages. The tracker publishes snapshots on
-                            // events, so each resumed page must advance the display.
-                            tracker?.markOcrRunning(pageKey)
-                        }
-
-                        override fun ocrPublished(pageKey: String) {
-                            tracker?.markOcrDone(pageKey)
-                        }
-
-                        //   the envelope plan-build window (resume
-                        // hydration) used to emit NOTHING — the sheet sat frozen
-                        // for minutes. Map the coordinator's rebuild events to
-                        // tracker emissions; each is a Channel trySend plus one
-                        // projection recompute from live store state.
-                        override fun envelopePlanStarted(totalPages: Int) {
-                            tracker?.markEnvelopePlanStarted(totalPages)
-                        }
-
-                        override fun envelopePlanProgress(done: Int, total: Int) {
-                            tracker?.markEnvelopePlanProgress(done, total)
-                        }
-
-                        override fun envelopePlanCommitted() {
-                            tracker?.markEnvelopePlanCommitted()
-                        }
-                    }
-
-                    val batchLaneWorkers = BatchLaneWorkers(
-                        store = store,
-                        manga = manga,
-                        chapter = chapter,
-                        source = source,
-                        provider = provider,
-                        translationPreferences = translationPreferences,
-                        tracker = tracker,
-                        batchGeneration = batchGeneration,
-                        isAi = isAi,
-                        textTranslatorFn = { textTranslator },
-                        recognitionEngineFn = { recognitionEngine },
-                        fromLang = fromLang,
-                        orderedStreams = orderedStreams,
-                        resolvedNaturalPageIndexes = resolvedNaturalPageIndexes,
-                        requestedOutputTokens = requestedOutputTokens,
-                        chunkProfile = chunkProfile,
-                        translationRegistry = translationRegistry,
-                        batchWriteIdentities = batchWriteIdentities,
-                        aborted = aborted,
-                        expectedBatchFingerprints = expectedBatchFingerprints,
-                        contextFrontier = contextFrontier,
-                        resumePlanner = resumePlanner,
-                        writeGate = batchWriteGate,
-                        renderJoin = renderJoin,
-                        heldBitmapRegistry = heldBitmapRegistry,
-                        scheduleTrace = scheduleTrace,
-                        pageTraceRegistry = pageTraceRegistry,
-                        nativeLane = object : NativeLaneRunner {
-                            override suspend fun <T> run(
-                                timeoutMs: Long,
-                                chapterId: Long?,
-                                chapterName: String,
-                                pageKey: String,
-                                onTimeout: suspend () -> Unit,
-                                block: suspend () -> T,
-                            ): T? = withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
+        return store.withGeneration(batchGeneration) {
+            val batchWriteIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            // Paused/terminal durable failures retain their candidate and
+            // manifest metadata until the next explicit retry/reset. The
+            // outer teardown releases these leases rather than cancelling
+            // the candidate that explains the durable state.
+            val durableFailurePageKeys = ConcurrentHashMap.newKeySet<String>()
+            try {
+                // Settle the engine-setup span on every exit, including a
+                // throw from native-lane teardown.
+                val engineSetupSpan = scheduleTrace.beginStage(
+                    TranslationTraceStage.ENGINE_SETUP,
+                )
+                var engineSetupTimedOut = false
+                val engineSetupResult = try {
+                    withNativeLane(
+                        timeoutMs = ONNX_PHASE_TIMEOUT_MS,
+                        chapterId = chapter.id,
+                        chapterName = chapter.name,
+                        pageKey = "<engine-setup>",
+                        onTimeout = {
+                            engineSetupTimedOut = true
+                            store.invalidateGeneration("engine setup timeout chapter=${chapter.name}")
                         },
-                        markPageTimedOutFn = markPageTimedOut,
-                        analyzePageFn = analyzePage,
-                        decodePageBitmapForTranslationFn = decodePageBitmapForTranslation,
-                        preflightInpaintGateFn = preflightInpaintGate,
-                        inpaintPageFn = inpaintPage,
-                        retryInpaintDownscaledFn = retryInpaintDownscaled,
-                        persistCleanedBitmapFn = persistCleanedBitmap,
-                        abortBatchCandidateFn = ::abortBatchCandidate,
-                        scheduleListener = batchScheduleListener,
+                    ) {
+                        engineRebuildMutex.withLock {
+                            ensureEnginesBuiltFor(fromLang, toLang)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    engineSetupSpan.end(TranslationTraceOutcome.FAILURE, error = t)
+                    throw t
+                }
+                engineSetupSpan.end(
+                    if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.SUCCESS,
+                )
+                if (engineSetupResult == null) {
+                    // No batch page lease outlives its run, whatever exit
+                    // path it takes.
+                    setScheduleOutcome(
+                        if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.FAILURE,
+                    )
+                    store.releaseAllPageLeases(PageWriteOrigin.BATCH)
+                    // Terminate the tracker with a typed reason rather than
+                    // leaving it live after setup fails.
+                    tracker?.abort(
+                        remainingPageKeys = remainingAbortKeys(orderedStreams, store),
+                        reason = "Translation could not start: batch engine setup failed or timed out",
+                    )
+                    return@withGeneration null
+                }
+
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT batch START chapter=${chapter.name} pages=${orderedStreams.size} " +
+                        "engine=${recognitionEngine::class.simpleName} translator=${textTranslator::class.simpleName}"
+                }
+
+                // The batch coordinator owns the phase barriers. AI admission feeds
+                // the token planner without provider calls; one overflow page may be kept
+                // as an OCR-only probe. Each actual chunk OCRs completely before its AI
+                // request and native inpaint branches overlap, and render joins both.
+                val isAi = translationPreferences.translationEngineCategory().get() == TranslationEngineCategory.AI_MODEL &&
+                    textTranslator is ContextualTextTranslator
+                val contextualTranslator = textTranslator as? ContextualTextTranslator
+                val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
+                    ?: TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
+                val chunkProfile = if (contextualTranslator is LmStudioTranslator) {
+                    TranslationContextChunkPlanner.Profile.LM_STUDIO
+                } else {
+                    TranslationContextChunkPlanner.Profile.DEFAULT
+                }
+
+                // All batch stages share this registry and its byte/count accounting.
+                val heldBitmapRegistry = HeldBitmapRegistry()
+                val heldBitmapBytes = heldBitmapRegistry.heldBitmapBytes
+                val countSlots = heldBitmapRegistry.countSlots
+                val bitmapRegistry = heldBitmapRegistry.bitmapRegistry
+                val translationRegistry = ConcurrentHashMap<String, PageTranslation>()
+                val aborted = AtomicBoolean(false)
+                val expectedBatchFingerprints = batchExpectedFingerprints(fromLang, toLang)
+
+                // Resume context is a natural-order frontier, never a chapter-wide
+                // unordered snapshot. Pages after the first missing/failed predecessor
+                // remain durable and reusable, but cannot become context until traversal
+                // reaches them; a non-textless terminal gap blocks later AI admission.
+                val contextFrontier = BatchContextFrontier(resolvedNaturalPageIndexes)
+
+                // Source identity is a direct input to detection and inpaint.
+                // Hash the downloaded bytes before planning so replacing a
+                // page under the same natural key cannot reuse old artifacts.
+                // This is an I/O-only preflight; no detector/OCR/inpaint or
+                // translator work is invoked for a matching completed page.
+                // Lazy per-page source fingerprinting eliminates the whole-chapter
+                // I/O barrier before planning and starting page 1.
+                val fingerprintSpan = scheduleTrace.beginStage(
+                    TranslationTraceStage.SOURCE_FINGERPRINT,
+                    items = orderedStreams.size,
+                )
+                val sourceFingerprints: Map<String, String> = LazySourceFingerprints(orderedStreams.toMap(), computeSourceFingerprintFn)
+                fingerprintSpan.end(
+                    TranslationTraceOutcome.SUCCESS,
+                    items = sourceFingerprints.size,
+                )
+
+                // The planner and lane workers share the same context frontier.
+                val resumePlanner = BatchResumePlanner(
+                    store = store,
+                    provider = provider,
+                    manga = manga,
+                    source = source,
+                    chapter = chapter,
+                    orderedStreams = orderedStreams,
+                    isAi = isAi,
+                    sourceFingerprints = sourceFingerprints,
+                    expectedBatchFingerprints = expectedBatchFingerprints,
+                    contextFrontier = contextFrontier,
+                    inpaintingModeFromPref = inpaintingModeFromPref,
+                )
+
+                // All batch writers use this gate with the same identity map and
+                // durable-failure set held by the shell.
+                val batchWriteGate = BatchWriteGate(
+                    store = store,
+                    batchWriteIdentities = batchWriteIdentities,
+                    durableFailurePageKeys = durableFailurePageKeys,
+                    expectedBatchFingerprints = expectedBatchFingerprints,
+                    stampBatchProvenance = { page, stage -> resumePlanner.stampBatchProvenance(page, stage) },
+                    releaseBatchPageLeaseFn = releaseBatchPageLease,
+                    persistPageWithOomRecoveryFn = persistPageWithOomRecovery,
+                    pageTraceRegistry = pageTraceRegistry,
+                )
+
+                resumePlanner.seed()
+
+                fun recordContextPage(
+                    pageKey: String,
+                    page: PageTranslation,
+                    terminalFailure: Boolean = false,
+                ) = resumePlanner.recordContextPage(pageKey, page, terminalFailure)
+
+                fun translationFailureFence(pageKey: String): Boolean =
+                    resumePlanner.translationFailureFence(pageKey)
+
+                fun recordReusableContextPage(pageKey: String, page: PageTranslation) =
+                    resumePlanner.recordReusableContextPage(pageKey, page)
+
+                fun plannedTranslationNeedsWork(pageKey: String): Boolean =
+                    resumePlanner.plannedTranslationNeedsWork(pageKey)
+
+                fun plannedRenderNeedsWork(pageKey: String): Boolean =
+                    resumePlanner.plannedRenderNeedsWork(pageKey)
+
+                suspend fun resumeGate(page: PageTranslation?) = resumePlanner.resumeGate(page)
+
+                suspend fun guardedBatchUpdate(
+                    pageKey: String,
+                    description: String,
+                    stage: BatchStage?,
+                    update: (PageTranslation?) -> PageTranslation,
+                ) = batchWriteGate.guardedBatchUpdate(pageKey, description, stage, update)
+
+                fun refreshBatchIdentity(pageKey: String, snapshot: ChapterTranslationStore.PageSnapshot) =
+                    batchWriteGate.refreshBatchIdentity(pageKey, snapshot)
+
+                fun batchWritePrecondition(pageKey: String): ChapterTranslationStore.PatchPrecondition? =
+                    batchWriteGate.batchWritePrecondition(pageKey)
+
+                suspend fun persistAiFailureOrThrow(
+                    pageKey: String,
+                    page: PageTranslation,
+                    failure: ProviderFailure,
+                    retryable: Boolean,
+                    partialCandidate: Boolean,
+                    envelopeId: String?,
+                    missingBlockIds: Set<String>,
+                ) = batchWriteGate.persistAiFailureOrThrow(
+                    pageKey = pageKey,
+                    page = page,
+                    failure = failure,
+                    retryable = retryable,
+                    partialCandidate = partialCandidate,
+                    envelopeId = envelopeId,
+                    missingBlockIds = missingBlockIds,
+                )
+
+                suspend fun releaseBatchLease(pageKey: String) =
+                    batchWriteGate.releaseBatchLease(pageKey)
+
+                suspend fun persistBatchPageWithOomRecovery(
+                    pageKey: String,
+                    pageTranslation: PageTranslation,
+                ) = batchWriteGate.persistBatchPageWithOomRecovery(pageKey, pageTranslation)
+
+                suspend fun abortBatchCandidate(pageKey: String, reason: String) {
+                    heldBitmapRegistry.recycleHeld(pageKey)
+                    translationRegistry.remove(pageKey)
+                    batchWriteIdentities.remove(pageKey)
+                    if (pageKey in durableFailurePageKeys) {
+                        releaseBatchPageLease(store, pageKey)
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT batch durable failure retained: pageKey=$pageKey reason=$reason"
+                        }
+                        return
+                    }
+                    val cancelled = store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
+                    logcat(if (cancelled) LogPriority.INFO else LogPriority.WARN) {
+                        "TachiyomiAT batch candidate aborted: pageKey=$pageKey " +
+                            "cancelled=$cancelled reason=$reason"
+                    }
+                }
+
+                // Lane workers call tryRender at commit boundaries; the
+                // coordinator publishes persisted layouts for completed pages.
+                val renderJoin = BatchRenderJoin(
+                    store = store,
+                    pageTraceRegistry = pageTraceRegistry,
+                    manga = manga,
+                    chapter = chapter,
+                    source = source,
+                    tracker = tracker,
+                    translationRegistry = translationRegistry,
+                    heldBitmapRegistry = heldBitmapRegistry,
+                    resumePlanner = resumePlanner,
+                    writeGate = batchWriteGate,
+                    expectedBatchFingerprints = expectedBatchFingerprints,
+                    loadPersistedCleanedBitmapFn = loadPersistedCleanedBitmap,
+                    deleteRetiredCleanedFileFn = deleteRetiredCleanedFile,
+                    abortBatchCandidateFn = ::abortBatchCandidate,
+                )
+
+                val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
+
+                // Workers receive the same registry, identity map, and context
+                // frontier used by the shell and its other collaborators.
+                val batchScheduleListener = object : BatchScheduleListener() {
+                    override fun ocrStarted(pageKey: String) {
+                        // Reused preflight pages emit the same progress mark as
+                        // fresh OCR pages. The tracker publishes snapshots on
+                        // events, so each resumed page must advance the display.
+                        tracker?.markOcrRunning(pageKey)
+                    }
+
+                    override fun ocrPublished(pageKey: String) {
+                        tracker?.markOcrDone(pageKey)
+                    }
+
+                    //   the envelope plan-build window (resume
+                    // hydration) used to emit NOTHING — the sheet sat frozen
+                    // for minutes. Map the coordinator's rebuild events to
+                    // tracker emissions; each is a Channel trySend plus one
+                    // projection recompute from live store state.
+                    override fun envelopePlanStarted(totalPages: Int) {
+                        tracker?.markEnvelopePlanStarted(totalPages)
+                    }
+
+                    override fun envelopePlanProgress(done: Int, total: Int) {
+                        tracker?.markEnvelopePlanProgress(done, total)
+                    }
+
+                    override fun envelopePlanCommitted() {
+                        tracker?.markEnvelopePlanCommitted()
+                    }
+                }
+
+                val batchLaneWorkers = BatchLaneWorkers(
+                    store = store,
+                    manga = manga,
+                    chapter = chapter,
+                    source = source,
+                    provider = provider,
+                    translationPreferences = translationPreferences,
+                    tracker = tracker,
+                    batchGeneration = batchGeneration,
+                    isAi = isAi,
+                    textTranslatorFn = { textTranslator },
+                    recognitionEngineFn = { recognitionEngine },
+                    fromLang = fromLang,
+                    orderedStreams = orderedStreams,
+                    resolvedNaturalPageIndexes = resolvedNaturalPageIndexes,
+                    requestedOutputTokens = requestedOutputTokens,
+                    chunkProfile = chunkProfile,
+                    translationRegistry = translationRegistry,
+                    batchWriteIdentities = batchWriteIdentities,
+                    aborted = aborted,
+                    expectedBatchFingerprints = expectedBatchFingerprints,
+                    contextFrontier = contextFrontier,
+                    resumePlanner = resumePlanner,
+                    writeGate = batchWriteGate,
+                    renderJoin = renderJoin,
+                    heldBitmapRegistry = heldBitmapRegistry,
+                    scheduleTrace = scheduleTrace,
+                    pageTraceRegistry = pageTraceRegistry,
+                    nativeLane = object : NativeLaneRunner {
+                        override suspend fun <T> run(
+                            timeoutMs: Long,
+                            chapterId: Long?,
+                            chapterName: String,
+                            pageKey: String,
+                            onTimeout: suspend () -> Unit,
+                            block: suspend () -> T,
+                        ): T? = withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
+                    },
+                    markPageTimedOutFn = markPageTimedOut,
+                    analyzePageFn = analyzePage,
+                    decodePageBitmapForTranslationFn = decodePageBitmapForTranslation,
+                    preflightInpaintGateFn = preflightInpaintGate,
+                    inpaintPageFn = inpaintPage,
+                    retryInpaintDownscaledFn = retryInpaintDownscaled,
+                    persistCleanedBitmapFn = persistCleanedBitmap,
+                    abortBatchCandidateFn = ::abortBatchCandidate,
+                    scheduleListener = batchScheduleListener,
+                )
+
+                /** The engine category selects the batch translation lane.
+                 * Standard translators use per-page requests; AI
+                 * translators use deterministic contextual envelopes.
+                 * Both lanes share coordinator resume and completion.
+                 */
+                suspend fun runBatchPass1(
+                    orderedPages: List<PageKey>,
+                    computeClass: TranslatorComputeClass,
+                ): BatchPass1Outcome {
+                    val engineCategoryIsStandard =
+                        translationPreferences.translationEngineCategory().get() ==
+                            TranslationEngineCategory.STANDARD
+                    val dispatchKind = profilePipelineDispatchKind(
+                        engineCategoryIsStandard = engineCategoryIsStandard,
                     )
 
-                    /** The engine category selects the batch translation lane.
-                     * Standard translators use per-page requests; AI
-                     * translators use deterministic contextual envelopes.
-                     * Both lanes share coordinator resume and completion.
-                     */
-                    suspend fun runBatchPass1(
-                        orderedPages: List<PageKey>,
-                        computeClass: TranslatorComputeClass,
-                    ): BatchPass1Outcome {
-                        val engineCategoryIsStandard =
-                            translationPreferences.translationEngineCategory().get() ==
-                                TranslationEngineCategory.STANDARD
-                        val dispatchKind = profilePipelineDispatchKind(
-                            engineCategoryIsStandard = engineCategoryIsStandard,
-                        )
-
-                        // The coordinator's standard tail calls the regular
-                        // translator worker. Preflight has already released its
-                        // lease, so this seam acquires a fresh batch lease and
-                        // identity, then releases it only after translation settles.
-                        // A denied lease leaves the manual owner's work untouched.
-                        suspend fun standardTranslateOutcome(
-                            ref: OcrReadyPageRef,
-                        ): TranslationCompletionOutcome {
-                            val pageKey = ref.pageKey
-                            return when (
-                                val acquisition = batchLaneWorkers.pageTraceRegistry.withLeaseWait(
-                                    pageKey = pageKey,
-                                    site = TranslationTraceSite.BATCH_STANDARD_TRANSLATION,
-                                    leaseKind = TranslationTraceLeaseKind.TRANSLATION,
-                                ) {
-                                    store.tryAcquirePageStageLease(
-                                        pageKey,
-                                        PageStage.Translation,
-                                        PageWriteOrigin.BATCH,
-                                    )
-                                }
+                    // The coordinator's standard tail calls the regular
+                    // translator worker. Preflight has already released its
+                    // lease, so this seam acquires a fresh batch lease and
+                    // identity, then releases it only after translation settles.
+                    // A denied lease leaves the manual owner's work untouched.
+                    suspend fun standardTranslateOutcome(
+                        ref: OcrReadyPageRef,
+                    ): TranslationCompletionOutcome {
+                        val pageKey = ref.pageKey
+                        return when (
+                            val acquisition = batchLaneWorkers.pageTraceRegistry.withLeaseWait(
+                                pageKey = pageKey,
+                                site = TranslationTraceSite.BATCH_STANDARD_TRANSLATION,
+                                leaseKind = TranslationTraceLeaseKind.TRANSLATION,
                             ) {
-                                is LeaseAcquisition.Denied -> {
-                                    logcat(LogPriority.INFO) {
-                                        "TachiyomiAT t924 standard translate defers ${acquisition.owner}-owned " +
-                                            "page: pageKey=$pageKey"
-                                    }
-                                    TranslationCompletionOutcome.Completed(emptySet())
+                                store.tryAcquirePageStageLease(
+                                    pageKey,
+                                    PageStage.Translation,
+                                    PageWriteOrigin.BATCH,
+                                )
+                            }
+                        ) {
+                            is LeaseAcquisition.Denied -> {
+                                logcat(LogPriority.INFO) {
+                                    "TachiyomiAT t924 standard translate defers ${acquisition.owner}-owned " +
+                                        "page: pageKey=$pageKey"
                                 }
-                                is LeaseAcquisition.Granted -> {
-                                    val lease = acquisition.lease
-                                    // The tail's terminal pre-check ran before
-                                    // lease acquisition. A concurrent owner (the
-                                    // manual/reader lane) can commit its terminal
-                                    // stage and release in that window
-                                    // (commit-before-release idiom), so the grant
-                                    // does not prove the page still needs work.
-                                    // Re-evaluate the SAME translate-time terminal
-                                    // predicate under the lease: an already-
-                                    // terminal page is never re-paid.
-                                    val liveUnderLease = store.state.value[pageKey]
-                                    if (
-                                        liveUnderLease != null &&
-                                        ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(
-                                            liveUnderLease,
-                                        )
-                                    ) {
-                                        logcat(LogPriority.INFO) {
-                                            "TachiyomiAT t924 standard translate skips re-pay: page went " +
-                                                "terminal before lease use, pageKey=$pageKey"
-                                        }
-                                        releaseBatchPageLease(store, pageKey)
-                                        return TranslationCompletionOutcome.Completed(emptySet())
-                                    }
-                                    batchWriteIdentities[pageKey] = BatchWriteIdentity(
-                                        generation = lease.generation,
-                                        pageVersion = lease.pageVersion,
-                                        leaseToken = lease.token,
-                                        candidateGenerationId = lease.candidateGenerationId,
-                                        dependencyFingerprint = lease.dependencyFingerprint,
-                                        artifactPageVersion = lease.artifactPageVersion,
+                                TranslationCompletionOutcome.Completed(emptySet())
+                            }
+                            is LeaseAcquisition.Granted -> {
+                                val lease = acquisition.lease
+                                // The tail's terminal pre-check ran before
+                                // lease acquisition. A concurrent owner (the
+                                // manual/reader lane) can commit its terminal
+                                // stage and release in that window
+                                // (commit-before-release idiom), so the grant
+                                // does not prove the page still needs work.
+                                // Re-evaluate the SAME translate-time terminal
+                                // predicate under the lease: an already-
+                                // terminal page is never re-paid.
+                                val liveUnderLease = store.state.value[pageKey]
+                                if (
+                                    liveUnderLease != null &&
+                                    ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(
+                                        liveUnderLease,
                                     )
-                                    try {
-                                        batchLaneWorkers.pageTraceRegistry.withProviderWindow(
-                                            pageKeys = listOf(pageKey),
-                                        ) {
-                                            batchLaneWorkers.translatorWorker.translateOutcome(
-                                                ref.copy(
-                                                    leaseToken = lease.token,
-                                                    candidateGenerationId = lease.candidateGenerationId,
-                                                    dependencyFingerprint = lease.dependencyFingerprint,
-                                                    artifactPageVersion = lease.artifactPageVersion,
-                                                ),
-                                            )
-                                        }
-                                    } finally {
-                                        releaseBatchPageLease(store, pageKey)
+                                ) {
+                                    logcat(LogPriority.INFO) {
+                                        "TachiyomiAT t924 standard translate skips re-pay: page went " +
+                                            "terminal before lease use, pageKey=$pageKey"
                                     }
+                                    releaseBatchPageLease(store, pageKey)
+                                    return TranslationCompletionOutcome.Completed(emptySet())
+                                }
+                                batchWriteIdentities[pageKey] = BatchWriteIdentity(
+                                    generation = lease.generation,
+                                    pageVersion = lease.pageVersion,
+                                    leaseToken = lease.token,
+                                    candidateGenerationId = lease.candidateGenerationId,
+                                    dependencyFingerprint = lease.dependencyFingerprint,
+                                    artifactPageVersion = lease.artifactPageVersion,
+                                )
+                                try {
+                                    batchLaneWorkers.pageTraceRegistry.withProviderWindow(
+                                        pageKeys = listOf(pageKey),
+                                    ) {
+                                        batchLaneWorkers.translatorWorker.translateOutcome(
+                                            ref.copy(
+                                                leaseToken = lease.token,
+                                                candidateGenerationId = lease.candidateGenerationId,
+                                                dependencyFingerprint = lease.dependencyFingerprint,
+                                                artifactPageVersion = lease.artifactPageVersion,
+                                            ),
+                                        )
+                                    }
+                                } finally {
+                                    releaseBatchPageLease(store, pageKey)
                                 }
                             }
                         }
-                        return when (dispatchKind) {
-                            ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE -> {
-                                // Freeze the configured provider and model in the
-                                // run identity. Store only a one-way credential
-                                // signature, never the raw secret. Use the same
-                                // backend spelling as the provider governor and
-                                // envelope work builder.
-                                val aiEnginePref = translationPreferences.translationAiEngine().get()
-                                val aiEngine = contextualTranslator as? AiTranslator
-                                val providerKeyEngine = aiEngine?.analysisBackendId
-                                    ?: aiEnginePref.name.lowercase(Locale.ROOT)
-                                val aiModel = translationPreferences.translationAiModel(aiEnginePref)
-                                    .get()
-                                    .ifBlank { "unspecified" }
-                                val credentialSecret = if (aiEnginePref == AiEngine.LMSTUDIO) {
-                                    translationPreferences.translationAiBaseUrlLmStudio().get()
-                                } else {
-                                    translationPreferences.translationAiApiKey(aiEnginePref).get()
-                                }
-                                // The overlap scheduler runs the existing
-                                // native inpaint lane during provider requests,
-                                // and the render join publishes persisted layouts
-                                // per page. Both use the shared identity map and
-                                // lease-release path.
-                                val overlapScheduler = OverlapScheduler(
-                                    store = store,
-                                    nativeWorker = batchLaneWorkers.nativeWorker,
-                                    orderedPageKeys = orderedPages.map { it.first },
-                                    batchWriteIdentities = batchWriteIdentities,
-                                    releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
-                                    pageTraceRegistry = pageTraceRegistry,
-                                )
-                                ChapterProfileBatchCoordinator(
-                                    store = store,
-                                    nativeWorker = batchLaneWorkers.nativeWorker,
-                                    listener = batchScheduleListener,
-                                    frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
-                                        sourceLang = fromLang.code,
-                                        targetLang = toLang.code,
-                                        ocrEngine = recognitionEngine::class.java.simpleName,
-                                        inpaintMode = inpaintingModeFromPref().name,
-                                        providerKey = "$providerKeyEngine:$aiModel",
-                                        credentialId = credentialSecret.takeIf { it.isNotBlank() }
-                                            ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
-                                            .orEmpty(),
-                                    ),
-                                    orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
-                                        pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
-                                    },
-                                    releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
-                                    // AI translation requires contextual support.
-                                    textTranslator = contextualTranslator,
-                                    overlapScheduler = overlapScheduler,
-                                    renderJoin = renderJoin,
-                                    pageTraceRegistry = pageTraceRegistry,
-                                ).runPass1(orderedPages, computeClass)
-                            }
-                            ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
-                                // Standard translation uses the coordinator's
-                                // per-page tail. The provider identity freezes as
-                                // `standard:<engine>`; DeepL is the only credentialed
-                                // standard engine (one-way signature, never a raw
-                                // key). NO AnalysisChunkExecutor and NO contextual
-                                // translator on this lane — AI envelope,
-                                // analysis work never runs here.
-                                val standardEngine = translationPreferences.translationStandardEngine().get()
-                                val credentialSecret = if (standardEngine == StandardEngine.DEEPL) {
-                                    translationPreferences.translationDeeplApiKey().get()
-                                } else {
-                                    ""
-                                }
-                                val overlapScheduler = OverlapScheduler(
-                                    store = store,
-                                    nativeWorker = batchLaneWorkers.nativeWorker,
-                                    orderedPageKeys = orderedPages.map { it.first },
-                                    batchWriteIdentities = batchWriteIdentities,
-                                    releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
-                                    pageTraceRegistry = pageTraceRegistry,
-                                )
-                                ChapterProfileBatchCoordinator(
-                                    store = store,
-                                    nativeWorker = batchLaneWorkers.nativeWorker,
-                                    listener = batchScheduleListener,
-                                    frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
-                                        sourceLang = fromLang.code,
-                                        targetLang = toLang.code,
-                                        ocrEngine = recognitionEngine::class.java.simpleName,
-                                        inpaintMode = inpaintingModeFromPref().name,
-                                        providerKey = "standard:" + standardEngine.name.lowercase(Locale.ROOT),
-                                        credentialId = credentialSecret.takeIf { it.isNotBlank() }
-                                            ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
-                                            .orEmpty(),
-                                    ),
-                                    orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
-                                        pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
-                                    },
-                                    releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
-                                    // The plain per-page standard translator rides
-                                    // the WIDENED seam type; the envelope path's
-                                    // contextual cast never runs on this lane.
-                                    textTranslator = textTranslator,
-                                    overlapScheduler = overlapScheduler,
-                                    renderJoin = renderJoin,
-                                    standardLane = true,
-                                    standardTranslateOutcome = { ref -> standardTranslateOutcome(ref) },
-                                    pageTraceRegistry = pageTraceRegistry,
-                                ).runPass1(orderedPages, computeClass)
-                            }
-                        }
                     }
-
-                    var pass1Outcome: BatchPass1Outcome? = null
-                    try {
-                        coroutineScope {
-                            val orderedPages = orderedStreams.mapIndexed { index, (pageKey, _) ->
-                                pageKey to (resolvedNaturalPageIndexes[pageKey] ?: index)
+                    return when (dispatchKind) {
+                        ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE -> {
+                            // Freeze the configured provider and model in the
+                            // run identity. Store only a one-way credential
+                            // signature, never the raw secret. Use the same
+                            // backend spelling as the provider governor and
+                            // envelope work builder.
+                            val aiEnginePref = translationPreferences.translationAiEngine().get()
+                            val aiEngine = contextualTranslator as? AiTranslator
+                            val providerKeyEngine = aiEngine?.analysisBackendId
+                                ?: aiEnginePref.name.lowercase(Locale.ROOT)
+                            val aiModel = translationPreferences.translationAiModel(aiEnginePref)
+                                .get()
+                                .ifBlank { "unspecified" }
+                            val credentialSecret = if (aiEnginePref == AiEngine.LMSTUDIO) {
+                                translationPreferences.translationAiBaseUrlLmStudio().get()
+                            } else {
+                                translationPreferences.translationAiApiKey(aiEnginePref).get()
                             }
-                            pageTraceRegistry.startPages(orderedPages.map { it.first })
-
-                            pass1Outcome = runBatchPass1(orderedPages, computeClass)
-                        }
-                    } finally {
-                        // Only the registry's REMAINING entries need a release here: consumed/
-                        // recycled/spilled bitmaps already balanced themselves. Releasing exactly
-                        // `leaked` slots restores countSlots with no double-release. This is the
-                        // ONLY release site that observes pages whose render never ran.
-                        val leaked = bitmapRegistry.size
-                        bitmapRegistry.values.forEach {
-                            try {
-                                it.recycle()
-                            } catch (_: Exception) {}
-                        }
-                        bitmapRegistry.clear()
-                        heldBitmapBytes.set(0L)
-                        repeat(leaked) { countSlots.release() }
-                    }
-
-                    // OOM abort: markChapterError already recorded the abort reason on every
-                    // still-pending page, so skip the reconciler finish.
-                    if (aborted.get()) {
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
-                        }
-                        setScheduleOutcome(TranslationTraceOutcome.FAILURE)
-                        // Emit the aborted snapshot with untranslated pages so
-                        // the tracker is not left live.
-                        tracker?.abort(
-                            remainingPageKeys = remainingAbortKeys(orderedStreams, store),
-                            reason = "Translation aborted: device memory pressure (OOM)",
-                        )
-                        store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                        store.flush()
-                        return@withGeneration null
-                    }
-                    val stoppedOutcome = pass1Outcome
-                    if (stoppedOutcome != null && stoppedOutcome.status != BatchPass1Status.COMPLETED) {
-                        // Unexpected stage failures are normally made durable before
-                        // reconciliation. If that publication is rejected, preserve
-                        // the rejection as an explicit in-memory-only outcome: do not
-                        // add the page to durableFailurePageKeys and do not let the
-                        // outer cleanup claim a durable terminal record exists.
-                        val effectiveOutcome = try {
-                            if (stoppedOutcome.unexpectedStage != null && stoppedOutcome.anchorPageKey != null) {
-                                persistUnexpectedBatchStageFailure(
-                                    store = store,
-                                    pageKey = stoppedOutcome.anchorPageKey,
-                                    stage = stoppedOutcome.unexpectedStage,
-                                    reason = stoppedOutcome.reason ?: "Unexpected batch stage failure",
-                                )
-                                // Keep the unexpected-stage terminal snapshot intact during the
-                                // outer lease cleanup. A plain cancellation here would erase the
-                                // visible failure and make the page look pending again.
-                                durableFailurePageKeys += stoppedOutcome.anchorPageKey
-                                store.flush()
-                            }
-                            stoppedOutcome
-                        } catch (rejected: BatchPersistenceRejectedException) {
-                            stoppedOutcome.copy(
-                                status = BatchPass1Status.PERSISTENCE_REJECTED,
-                                anchorPageKey = rejected.pageKey ?: stoppedOutcome.anchorPageKey,
-                                retryablePageKeys = emptySet(),
-                                terminalPageKeys = emptySet(),
-                                failure = null,
-                                nextEligibleRetryAtEpochMs = null,
-                                reason = "Batch persistence publication rejected",
-                                unexpectedStage = null,
-                                persistenceRejectedStage = rejected.stage ?: stoppedOutcome.unexpectedStage,
+                            // The overlap scheduler runs the existing
+                            // native inpaint lane during provider requests,
+                            // and the render join publishes persisted layouts
+                            // per page. Both use the shared identity map and
+                            // lease-release path.
+                            val overlapScheduler = OverlapScheduler(
+                                store = store,
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                orderedPageKeys = orderedPages.map { it.first },
+                                batchWriteIdentities = batchWriteIdentities,
+                                releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                                pageTraceRegistry = pageTraceRegistry,
                             )
+                            ChapterProfileBatchCoordinator(
+                                store = store,
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                listener = batchScheduleListener,
+                                frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
+                                    sourceLang = fromLang.code,
+                                    targetLang = toLang.code,
+                                    ocrEngine = recognitionEngine::class.java.simpleName,
+                                    inpaintMode = inpaintingModeFromPref().name,
+                                    providerKey = "$providerKeyEngine:$aiModel",
+                                    credentialId = credentialSecret.takeIf { it.isNotBlank() }
+                                        ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
+                                        .orEmpty(),
+                                ),
+                                orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
+                                    pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
+                                },
+                                releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                                // AI translation requires contextual support.
+                                textTranslator = contextualTranslator,
+                                overlapScheduler = overlapScheduler,
+                                renderJoin = renderJoin,
+                                pageTraceRegistry = pageTraceRegistry,
+                            ).runPass1(orderedPages, computeClass)
                         }
-                        val reconciliation = BatchProgressReconciler.reconcile(
-                            pageMap = store.state.value,
-                            orderedKeys = orderedStreams.map { it.first },
-                            activeGeneration = store.currentGeneration,
-                            pauseOutcome = effectiveOutcome,
-                        )
-                        store.flush()
-                        if (effectiveOutcome.status == BatchPass1Status.PAUSED) {
-                            tracker?.pause(effectiveOutcome, orderedStreams.size)
-                        } else {
-                            tracker?.finish(reconciliation)
+                        ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
+                            // Standard translation uses the coordinator's
+                            // per-page tail. The provider identity freezes as
+                            // `standard:<engine>`; DeepL is the only credentialed
+                            // standard engine (one-way signature, never a raw
+                            // key). NO AnalysisChunkExecutor and NO contextual
+                            // translator on this lane — AI envelope,
+                            // analysis work never runs here.
+                            val standardEngine = translationPreferences.translationStandardEngine().get()
+                            val credentialSecret = if (standardEngine == StandardEngine.DEEPL) {
+                                translationPreferences.translationDeeplApiKey().get()
+                            } else {
+                                ""
+                            }
+                            val overlapScheduler = OverlapScheduler(
+                                store = store,
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                orderedPageKeys = orderedPages.map { it.first },
+                                batchWriteIdentities = batchWriteIdentities,
+                                releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                                pageTraceRegistry = pageTraceRegistry,
+                            )
+                            ChapterProfileBatchCoordinator(
+                                store = store,
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                listener = batchScheduleListener,
+                                frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
+                                    sourceLang = fromLang.code,
+                                    targetLang = toLang.code,
+                                    ocrEngine = recognitionEngine::class.java.simpleName,
+                                    inpaintMode = inpaintingModeFromPref().name,
+                                    providerKey = "standard:" + standardEngine.name.lowercase(Locale.ROOT),
+                                    credentialId = credentialSecret.takeIf { it.isNotBlank() }
+                                        ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
+                                        .orEmpty(),
+                                ),
+                                orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
+                                    pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
+                                },
+                                releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                                // The plain per-page standard translator rides
+                                // the WIDENED seam type; the envelope path's
+                                // contextual cast never runs on this lane.
+                                textTranslator = textTranslator,
+                                overlapScheduler = overlapScheduler,
+                                renderJoin = renderJoin,
+                                standardLane = true,
+                                standardTranslateOutcome = { ref -> standardTranslateOutcome(ref) },
+                                pageTraceRegistry = pageTraceRegistry,
+                            ).runPass1(orderedPages, computeClass)
                         }
-                        setScheduleOutcome(effectiveOutcome.status.toScheduleOutcome())
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT batch stopped before tail reconciliation chapter=${chapter.name} " +
-                                "status=${effectiveOutcome.status} anchor=${effectiveOutcome.anchorPageKey?.let(ShortHash::hash)}"
-                        }
-                        store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                        return@withGeneration reconciliation
                     }
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
-                    }
+                }
 
-                    //   / : BOTH surviving lanes end
-                    // COMPLETED runs translation-terminal WITHOUT an in-pass
-                    // render, so the post-pass completion projection is ALWAYS
-                    // the flagged projection — the legacy done-predicate would
-                    // project every healthy page as stranded and report the
-                    // chapter ERROR. (Non-COMPLETED stops never reach this site:
-                    // the stop branch above keeps the pause-aware reconcile.)
-                    val reconciliation = BatchProgressReconciler.reconcileFlaggedCompleted(
+                var pass1Outcome: BatchPass1Outcome? = null
+                try {
+                    coroutineScope {
+                        val orderedPages = orderedStreams.mapIndexed { index, (pageKey, _) ->
+                            pageKey to (resolvedNaturalPageIndexes[pageKey] ?: index)
+                        }
+                        pageTraceRegistry.startPages(orderedPages.map { it.first })
+
+                        pass1Outcome = runBatchPass1(orderedPages, computeClass)
+                    }
+                } finally {
+                    // Only the registry's REMAINING entries need a release here: consumed/
+                    // recycled/spilled bitmaps already balanced themselves. Releasing exactly
+                    // `leaked` slots restores countSlots with no double-release. This is the
+                    // ONLY release site that observes pages whose render never ran.
+                    val leaked = bitmapRegistry.size
+                    bitmapRegistry.values.forEach {
+                        try {
+                            it.recycle()
+                        } catch (_: Exception) {}
+                    }
+                    bitmapRegistry.clear()
+                    heldBitmapBytes.set(0L)
+                    repeat(leaked) { countSlots.release() }
+                }
+
+                // OOM abort: markChapterError already recorded the abort reason on every
+                // still-pending page, so skip the reconciler finish.
+                if (aborted.get()) {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
+                    }
+                    setScheduleOutcome(TranslationTraceOutcome.FAILURE)
+                    // Emit the aborted snapshot with untranslated pages so
+                    // the tracker is not left live.
+                    tracker?.abort(
+                        remainingPageKeys = remainingAbortKeys(orderedStreams, store),
+                        reason = "Translation aborted: device memory pressure (OOM)",
+                    )
+                    store.releaseAllPageLeases(PageWriteOrigin.BATCH)
+                    store.flush()
+                    return@withGeneration null
+                }
+                val stoppedOutcome = pass1Outcome
+                if (stoppedOutcome != null && stoppedOutcome.status != BatchPass1Status.COMPLETED) {
+                    // Unexpected stage failures are normally made durable before
+                    // reconciliation. If that publication is rejected, preserve
+                    // the rejection as an explicit in-memory-only outcome: do not
+                    // add the page to durableFailurePageKeys and do not let the
+                    // outer cleanup claim a durable terminal record exists.
+                    val effectiveOutcome = try {
+                        if (stoppedOutcome.unexpectedStage != null && stoppedOutcome.anchorPageKey != null) {
+                            persistUnexpectedBatchStageFailure(
+                                store = store,
+                                pageKey = stoppedOutcome.anchorPageKey,
+                                stage = stoppedOutcome.unexpectedStage,
+                                reason = stoppedOutcome.reason ?: "Unexpected batch stage failure",
+                            )
+                            // Keep the unexpected-stage terminal snapshot intact during the
+                            // outer lease cleanup. A plain cancellation here would erase the
+                            // visible failure and make the page look pending again.
+                            durableFailurePageKeys += stoppedOutcome.anchorPageKey
+                            store.flush()
+                        }
+                        stoppedOutcome
+                    } catch (rejected: BatchPersistenceRejectedException) {
+                        stoppedOutcome.copy(
+                            status = BatchPass1Status.PERSISTENCE_REJECTED,
+                            anchorPageKey = rejected.pageKey ?: stoppedOutcome.anchorPageKey,
+                            retryablePageKeys = emptySet(),
+                            terminalPageKeys = emptySet(),
+                            failure = null,
+                            nextEligibleRetryAtEpochMs = null,
+                            reason = "Batch persistence publication rejected",
+                            unexpectedStage = null,
+                            persistenceRejectedStage = rejected.stage ?: stoppedOutcome.unexpectedStage,
+                        )
+                    }
+                    val reconciliation = BatchProgressReconciler.reconcile(
                         pageMap = store.state.value,
                         orderedKeys = orderedStreams.map { it.first },
                         activeGeneration = store.currentGeneration,
+                        pauseOutcome = effectiveOutcome,
                     )
-                    // Persist every expected stranded page before emitting terminal progress. This
-                    // ensures callers that observe the terminal state can also inspect retryable failures.
-                    reconciliation.strandedPages.forEach { (pageKey, reason) ->
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT batch stranded page: chapter=${chapter.name} pageKey=$pageKey reason=$reason"
-                        }
-                        guardedBatchUpdate(pageKey, "batch stranded page", null) { existing ->
-                            (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
-                                ocrStatus = StageStatus.FAILED
-                                errorMessage = reason
-                                updatedAt = System.currentTimeMillis()
-                            }
-                        }
-                    }
                     store.flush()
-                    //  : no surviving lane emits render events
-                    // for translatable pages, so the tracker's RENDER phase would
-                    // stay processed=0 forever and the processed/total fraction
-                    // would top out at 4/5 per display-ready page even at terminal.
-                    // The completion path settles every expected page's render
-                    // phase as skipped terminal work — bounded to this COMPLETED
-                    // path (once per page, before the terminal BatchFinished), never
-                    // a per-page hot path.
-                    tracker?.let { t ->
-                        orderedStreams.forEach { (pageKey, _) -> t.markRenderSkipped(pageKey) }
+                    if (effectiveOutcome.status == BatchPass1Status.PAUSED) {
+                        tracker?.pause(effectiveOutcome, orderedStreams.size)
+                    } else {
+                        tracker?.finish(reconciliation)
                     }
-                    tracker?.finish(reconciliation)
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"
+                    setScheduleOutcome(effectiveOutcome.status.toScheduleOutcome())
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT batch stopped before tail reconciliation chapter=${chapter.name} " +
+                            "status=${effectiveOutcome.status} anchor=${effectiveOutcome.anchorPageKey?.let(ShortHash::hash)}"
                     }
-                    setScheduleOutcome(TranslationTraceOutcome.SUCCESS)
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                     return@withGeneration reconciliation
+                }
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
+                }
+
+                //   / : BOTH surviving lanes end
+                // COMPLETED runs translation-terminal WITHOUT an in-pass
+                // render, so the post-pass completion projection is ALWAYS
+                // the flagged projection — the legacy done-predicate would
+                // project every healthy page as stranded and report the
+                // chapter ERROR. (Non-COMPLETED stops never reach this site:
+                // the stop branch above keeps the pause-aware reconcile.)
+                val reconciliation = BatchProgressReconciler.reconcileFlaggedCompleted(
+                    pageMap = store.state.value,
+                    orderedKeys = orderedStreams.map { it.first },
+                    activeGeneration = store.currentGeneration,
+                )
+                // Persist every expected stranded page before emitting terminal progress. This
+                // ensures callers that observe the terminal state can also inspect retryable failures.
+                reconciliation.strandedPages.forEach { (pageKey, reason) ->
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT batch stranded page: chapter=${chapter.name} pageKey=$pageKey reason=$reason"
+                    }
+                    guardedBatchUpdate(pageKey, "batch stranded page", null) { existing ->
+                        (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
+                            ocrStatus = StageStatus.FAILED
+                            errorMessage = reason
+                            updatedAt = System.currentTimeMillis()
+                        }
+                    }
+                }
+                store.flush()
+                //  : no surviving lane emits render events
+                // for translatable pages, so the tracker's RENDER phase would
+                // stay processed=0 forever and the processed/total fraction
+                // would top out at 4/5 per display-ready page even at terminal.
+                // The completion path settles every expected page's render
+                // phase as skipped terminal work — bounded to this COMPLETED
+                // path (once per page, before the terminal BatchFinished), never
+                // a per-page hot path.
+                tracker?.let { t ->
+                    orderedStreams.forEach { (pageKey, _) -> t.markRenderSkipped(pageKey) }
+                }
+                tracker?.finish(reconciliation)
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"
+                }
+                setScheduleOutcome(TranslationTraceOutcome.SUCCESS)
+                store.releaseAllPageLeases(PageWriteOrigin.BATCH)
+                return@withGeneration reconciliation
+            } finally {
+                try {
+                    // Cancellation, an unexpected worker exception, or a provider
+                    // failure must not strand a BATCH lease for the next run.
+                    batchWriteIdentities.keys.toList().forEach { pageKey ->
+                        if (pageKey in durableFailurePageKeys) {
+                            store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+                        } else {
+                            store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
+                        }
+                    }
+                    batchWriteIdentities.clear()
+                    store.releaseAllPageLeases(PageWriteOrigin.BATCH)
+                    withContext(NonCancellable) {
+                        // Settle the flush span even when persistence throws.
+                        val flushSpan = scheduleTrace.beginStage(
+                            TranslationTraceStage.STORE_FLUSH,
+                            lane = TranslationTraceLane.STORAGE,
+                        )
+                        try {
+                            store.flush()
+                        } finally {
+                            flushSpan.end()
+                        }
+                    }
+                    store.reconcileArtifactRetentionAsync()
+                    onBatchClosed?.invoke(manga, chapter, source, store)
                 } finally {
-                    try {
-                        // Cancellation, an unexpected worker exception, or a provider
-                        // failure must not strand a BATCH lease for the next run.
-                        batchWriteIdentities.keys.toList().forEach { pageKey ->
-                            if (pageKey in durableFailurePageKeys) {
-                                store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
-                            } else {
-                                store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
-                            }
-                        }
-                        batchWriteIdentities.clear()
-                        store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                        withContext(NonCancellable) {
-                            // Settle the flush span even when persistence throws.
-                            val flushSpan = scheduleTrace.beginStage(
-                                TranslationTraceStage.STORE_FLUSH,
-                                lane = TranslationTraceLane.STORAGE,
-                            )
-                            try {
-                                store.flush()
-                            } finally {
-                                flushSpan.end()
-                            }
-                        }
-                        store.reconcileArtifactRetentionAsync()
-                        onBatchClosed?.invoke(manga, chapter, source, store)
-                    } finally {
-                        pageTraceRegistry.finishOpenRuns { pageKey ->
-                            batchTraceOutcome(store.state.value[pageKey])
-                        }
+                    pageTraceRegistry.finishOpenRuns { pageKey ->
+                        batchTraceOutcome(store.state.value[pageKey])
                     }
                 }
             }

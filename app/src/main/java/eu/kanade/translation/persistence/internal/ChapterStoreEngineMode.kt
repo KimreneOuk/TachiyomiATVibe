@@ -19,7 +19,7 @@ internal sealed interface ChapterStoreEngineMode {
     data class LazyDurable(
         val artifactParent: UniFile?,
         val artifactFileName: String?,
-        val fileCreator: (() -> UniFile)?,
+        val artifactParentResolver: (() -> UniFile)?,
     ) : ChapterStoreEngineMode
 
     /** Eagerly opened artifact engine owned by the facade. */

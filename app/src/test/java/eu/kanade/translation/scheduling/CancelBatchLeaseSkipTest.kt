@@ -41,8 +41,7 @@ import java.io.InputStream
 class CancelBatchLeaseSkipTest {
 
     private fun newStore(): ChapterTranslationStore = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = emptyMap(),
     )
 

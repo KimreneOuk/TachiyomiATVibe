@@ -58,7 +58,7 @@ internal class ReaderTeardownCoordinator(
         translator.stop(reason, closeEngines)
 
     fun stopReaderTranslations(reason: String) {
-        // Keep the suspending durable cleanup and bounded persist joins on the manager's IO
+        // Keep the suspending durable cleanup and bounded drain joins on the manager's IO
         // scope so ReaderActivity lifecycle callbacks return without doing storage work on main.
         applicationScope.launch(start = CoroutineStart.DEFAULT) {
             readerTeardownMutex.withLock {

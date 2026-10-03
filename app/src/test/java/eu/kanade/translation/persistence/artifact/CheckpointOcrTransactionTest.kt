@@ -69,18 +69,9 @@ class CheckpointOcrTransactionTest {
         },
     )
 
-    private fun identity(tag: String) = LegacySourceIdentity(
-        sha256 = "sha-$tag",
-        lengthBytes = tag.length.toLong(),
-        lastModifiedMs = 1L,
-    )
-
-    private fun legacySnapshot(page: PageTranslation = ocrPage()) = ArtifactSeed(
+    private fun seededSnapshot(page: PageTranslation = ocrPage()) = ArtifactSeed(
         pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
-        legacyIdentity = identity("v1"),
-        sourceFileName = "Chapter 1.json",
-        migratedByVersionCode = 63L,
-        migratedAtEpochMs = 42L,
+        createdAtEpochMs = 42L,
     )
 
     /**
@@ -98,7 +89,7 @@ class CheckpointOcrTransactionTest {
 
     private fun fixtureWithActiveCandidate(io: FakeChapterDocumentIo, ocrSnapshot: PageTranslation = ocrPage()): Fixture {
         val store = store(io)
-        val migrated = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
+        val migrated = store.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
         val opened = store.openCandidate(
             migrated,
             "page.jpg",
@@ -384,7 +375,7 @@ class CheckpointOcrTransactionTest {
     fun `adopt without a committed bundle is rejected`() {
         val io = FakeChapterDocumentIo()
         val store = store(io)
-        val migrated = store.loadArtifact(legacySnapshot()).manifest
+        val migrated = store.loadArtifact(seededSnapshot()).manifest
         // Demote the committed bundle so neither candidate nor committed exists.
         val demoted = store.demoteLivePage(migrated, "page.jpg")
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest

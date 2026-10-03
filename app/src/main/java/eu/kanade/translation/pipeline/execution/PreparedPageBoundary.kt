@@ -65,7 +65,7 @@ internal suspend fun publishPreparedPageFromOcr(
 
     // Active reader stores enqueue the JPEG write before this boundary is
     // reached. The AUTO lane must not recycle the source bitmap while that
-    // worker still owns it: [StorePersistenceScheduler.flush] serializes the
+    // worker still owns it: [StoreWriteDrainCoordinator.flush] serializes the
     // worker and is the same durability/ownership barrier used by the reader
     // render path. Probe stores keep their historical synchronous behavior.
     if (store.isLazyPersistenceEnabled()) {

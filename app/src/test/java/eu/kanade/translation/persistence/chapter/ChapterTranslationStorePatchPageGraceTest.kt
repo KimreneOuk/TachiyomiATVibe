@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence.chapter
 
-import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -57,11 +56,10 @@ class ChapterTranslationStorePatchPageGraceTest {
             ChapterArtifactLayout("Grace Chapter"),
         )
         val manifest = artifactStore
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         return ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf(pageKey to PageTranslation(sourceFileName = pageKey)),
             artifactStore = artifactStore,
             initialArtifactManifest = manifest,

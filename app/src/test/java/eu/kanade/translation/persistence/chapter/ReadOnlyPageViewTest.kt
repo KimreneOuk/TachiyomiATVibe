@@ -21,8 +21,7 @@ class ReadOnlyPageViewTest {
         val smallPage = page("small", blockCount = 2, rendered = true)
         val candidatePage = page("candidate", blockCount = 96, rendered = false)
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf(
                 "large" to largePage,
                 "small" to smallPage,

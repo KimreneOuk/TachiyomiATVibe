@@ -1,6 +1,5 @@
 package eu.kanade.translation.coexistence
 
-import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -82,11 +81,10 @@ class PartialDownloadAdmissionTest {
             ChapterArtifactLayout("D10 Chapter"),
         )
         val manifest = artifactStore
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         return ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = pageKeys.associateWith { key ->
                 PageTranslation(sourceFileName = key).apply {
                     pageOverrides[key]?.invoke(this)

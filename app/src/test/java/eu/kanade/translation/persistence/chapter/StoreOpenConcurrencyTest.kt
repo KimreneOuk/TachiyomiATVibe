@@ -17,7 +17,7 @@ class StoreOpenConcurrencyTest {
         val fileKey = "chapter-73"
         val creationStarted = CompletableDeferred<Unit>()
         val releaseCreation = CompletableDeferred<ChapterTranslationStore>()
-        val createdStore = ChapterTranslationStore(null, null)
+        val createdStore = ChapterTranslationStore()
         var createCount = 0
 
         val firstOpen = async {

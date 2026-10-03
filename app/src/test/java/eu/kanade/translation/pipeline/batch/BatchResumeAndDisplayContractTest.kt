@@ -65,8 +65,7 @@ class BatchResumeAndDisplayContractTest {
     fun `store emissions expose original fallback while replacement status is running`() = runTest {
         val counters = BatchStageInvocationCounters()
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf("page-1" to translatedPage(cleanedImageName = "page-1.cleaned.jpg")),
         )
         val displayReadiness = mutableListOf<Boolean>()

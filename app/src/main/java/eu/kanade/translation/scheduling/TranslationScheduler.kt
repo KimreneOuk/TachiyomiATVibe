@@ -14,7 +14,6 @@ import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
-import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
@@ -344,9 +343,6 @@ class TranslationScheduler(
                 activePageJobs.remove(jobKey)
             }
             logcat(LogPriority.DEBUG) { "translatePage: launching $jobKey" }
-            if (GroupCommitConfiguration.enabled) {
-                manualOutcomes[jobKey] = SinglePageOutcome.Admitted
-            }
             // The schedule and run are created
             // BEFORE the coroutine is launched, and the lease_wait span starts
             // here so its duration is the request→coroutine-start scheduler

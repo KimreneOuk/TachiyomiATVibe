@@ -18,13 +18,8 @@ import java.security.MessageDigest
  * Tests the durable CommitPoint contract.
  *
  * Asserts:
- * 1. The mandatory commit points are codified. BATCH_CHUNK — the
- *    MAX_STAGED_PAGES accumulation flush — is a commit boundary, and it
- *    is a REAL commit point: ChapterTranslationStore.flushStagedMutationsLocked
- *    commits staged candidates under it and both it and the artifact store
- *    force an fsync on it (syncToDisk), matching every other boundary's
- *    mandatory-durability contract.
- * 2. Stageable mutations (candidate open, intermediate candidate persist/stage, candidate cancel) have null commitPoint.
+ * 1. The six named durable boundaries are codified.
+ * 2. Candidate open and candidate persist have no named commit point.
  * 3. Terminal promotion, OCR checkpoint close, and chapter phase records carry their respective CommitPoint.
  */
 class ChapterCommitPointContractTest {
@@ -62,20 +57,10 @@ class ChapterCommitPointContractTest {
         inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 1)),
     )
 
-    private fun identity(tag: String) = LegacySourceIdentity(
-        sha256 = "sha-$tag",
-        lengthBytes = tag.length.toLong(),
-        lastModifiedMs = 1L,
-    )
-
-    private fun legacySnapshot(page: PageTranslation) = ArtifactSeed(
+    private fun seededSnapshot(page: PageTranslation) = ArtifactSeed(
         pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
-        legacyIdentity = identity("v1"),
-        sourceFileName = "Chapter 1.json",
-        migratedByVersionCode = 63L,
-        migratedAtEpochMs = 42L,
+        createdAtEpochMs = 42L,
     )
-
     private fun createStore(): Pair<ChapterArtifactEngine, FakeChapterDocumentIo> {
         val io = FakeChapterDocumentIo()
         val store = ChapterArtifactEngine(
@@ -89,7 +74,7 @@ class ChapterCommitPointContractTest {
     }
 
     @Test
-    fun `commit points enum contains exactly the 7 required boundaries`() {
+    fun `commit points enum contains exactly the 6 required boundaries`() {
         val expected = listOf(
             CommitPoint.OCR_CHECKPOINT_CLOSE,
             CommitPoint.PAGE_TERMINAL_PROMOTION,
@@ -97,25 +82,20 @@ class ChapterCommitPointContractTest {
             CommitPoint.CHAPTER_COMPLETE,
             CommitPoint.USER_STOP_DRAIN,
             CommitPoint.EXPLICIT_FLUSH,
-            //  group-commit accumulation boundary: real and fsync-forcing
-            // (ChapterTranslationStore.kt:270/:297, ChapterArtifactEngine.kt:911).
-            CommitPoint.BATCH_CHUNK,
         )
         CommitPoint.values().toList() shouldContainExactlyInAnyOrder expected
         expected.forEach { point ->
             CommitPoint.isCommitPoint(point) shouldBe true
-            CommitPoint.isStageable(point) shouldBe false
             point.isMandatoryDurable shouldBe true
         }
         CommitPoint.isCommitPoint(null) shouldBe false
-        CommitPoint.isStageable(null) shouldBe true
     }
 
     @Test
     fun `ocr checkpoint CLOSE is a commit point while REBASE is stageable`() {
         val (store, _) = createStore()
         val ocrSnapshot = ocrPage()
-        val manifest = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
+        val manifest = store.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
 
         val opened = store.openCandidate(
             manifest = manifest,
@@ -187,7 +167,7 @@ class ChapterCommitPointContractTest {
 
         // 2. CLOSE branch on a fresh store -> commitPoint is CommitPoint.OCR_CHECKPOINT_CLOSE
         val (store2, _) = createStore()
-        val manifest2 = store2.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
+        val manifest2 = store2.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
         val opened2 = store2.openCandidate(
             manifest = manifest2,
             pageKey = "page.jpg",
@@ -231,12 +211,12 @@ class ChapterCommitPointContractTest {
     }
 
     @Test
-    fun `page-terminal promotion is a commit point while intermediate mutations are stageable`() {
+    fun `page-terminal promotion is a named commit point while candidate operations are unnamed`() {
         val (store, _) = createStore()
         val ocrSnapshot = ocrPage()
-        val manifest = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
+        val manifest = store.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
 
-        // Open candidate -> stageable (null commitPoint)
+        // Open candidate has no named commit point.
         val openOutcome = store.openCandidate(
             manifest = manifest,
             pageKey = "page.jpg",
@@ -249,7 +229,7 @@ class ChapterCommitPointContractTest {
         openCommitted.commitPoint.shouldBeNull()
         val generationId = openCommitted.generationId.shouldNotBeNull()
 
-        // Persist candidate -> stageable (null commitPoint)
+        // Persist candidate has no named commit point.
         val persistOutcome = store.persistLiveCandidate(
             manifest = openCommitted.manifest,
             pageKey = "page.jpg",
@@ -282,7 +262,7 @@ class ChapterCommitPointContractTest {
     fun `run record mutations carry CHAPTER_PHASE_RECORD commit point`() {
         val (store, _) = createStore()
         val ocrSnapshot = ocrPage()
-        val manifest = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
+        val manifest = store.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
 
         val runRecord = ChapterRunRecord(
             runId = "run-test-1",

@@ -1,6 +1,5 @@
 package eu.kanade.translation.model
 
-import com.hippo.unifile.UniFile
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import io.kotest.assertions.withClue
@@ -182,8 +181,7 @@ class P5TerminalProgressTest {
     fun `an aborted batch settles its remaining pages as cancelled terminal work`() = runBlocking<Unit> {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val store = ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = emptyMap(),
         )
         val tracker = TranslationBatchProgressTracker(
@@ -254,8 +252,7 @@ class P5TerminalProgressTest {
     fun `a registered batch work set stays trusted and keeps the numeric terminal hero`() = runBlocking<Unit> {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val store = ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = emptyMap(),
         )
         val tracker = TranslationBatchProgressTracker(

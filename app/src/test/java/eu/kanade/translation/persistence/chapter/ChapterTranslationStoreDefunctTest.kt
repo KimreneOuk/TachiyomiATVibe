@@ -13,20 +13,19 @@ import org.junit.jupiter.api.Test
  *
  * [TranslationManager.deleteTranslation] now joins the batch worker before
  * deleting files, but the worker can be mid-uncancellable ONNX at cancel() time
- * and reach a suspension point AFTER its store was evicted and the on-disk file
- * deleted. Without a guard it would recreate the JSON or strand a page at
+ * and reach a suspension point AFTER its store was evicted and the artifact tree
+ * deleted. Without a guard it could recreate artifact state or strand a page at
  * RUNNING on a store the reader no longer observes — the "original image + stuck
  * spinner" symptom. [markDefunct] (called by unregisterActiveTranslationStore)
  * flips a flag that turns every mutator into a logged no-op.
  *
- * The store is constructed with no file/creator: the defunct guard returns
+ * The store is constructed with no artifact target: the defunct guard returns
  * BEFORE any mutex/persist, so no disk I/O is reachable on the defunct path.
  */
 class ChapterTranslationStoreDefunctTest {
 
     private fun newStore(): ChapterTranslationStore = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = emptyMap(),
     )
 
@@ -56,8 +55,6 @@ class ChapterTranslationStoreDefunctTest {
         store.updatePage("p1") { PageTranslation(blocks = mutableListOf(block())) }
         val before = store.state.value["p1"]
         before?.blocks shouldBe listOf(block())
-        val persistsBefore = store.persistCount
-
         store.markDefunct()
 
         // A late write from an unwound worker — e.g. flipping a stage to RUNNING.
@@ -67,7 +64,6 @@ class ChapterTranslationStoreDefunctTest {
 
         store.state.value["p1"] shouldBe before
         store.state.value["p1"]?.ocrStatus shouldBe StageStatus.PENDING
-        store.persistCount shouldBe persistsBefore
     }
 
     @Test
@@ -125,7 +121,6 @@ class ChapterTranslationStoreDefunctTest {
         store.flush()
 
         store.state.value["p1"]?.blocks shouldBe listOf(block())
-        store.persistCount shouldBe 1
         store.isDefunct shouldBe false
     }
 }

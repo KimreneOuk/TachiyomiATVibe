@@ -6,16 +6,16 @@ import kotlinx.serialization.Serializable
 /**
  * chapter artifact manifest (lifecycle contract §15).
  *
- * `chapter.translation.manifest.json`-equivalent sibling of the legacy flat
- * translation file. Holds schema version, page records with committed and
- * candidate metadata, active candidate ids, durable failures, and migration
- * metadata. Large payloads stay immutable files under the artifact tree; the
- * manifest never duplicates image bytes.
+ * `chapter.translation.manifest.json`-equivalent sibling keyed by the chapter's
+ * established file-name stem. Holds schema version, page records with committed
+ * and candidate metadata, active candidate ids, durable failures, and current
+ * run metadata. Large payloads stay immutable files under the artifact tree;
+ * the manifest never duplicates image bytes.
  */
 @Serializable
 data class ChapterArtifactManifest(
     val schemaVersion: Int = SCHEMA_VERSION,
-    /** Chapter base name (translation file name without extension) this manifest covers. */
+    /** Chapter artifact base name this manifest covers. */
     val chapterKey: String = "",
     val pages: Map<String, PageArtifactRecord> = emptyMap(),
     /** Expected chapter page baseline captured at batch pre-registration or first durable write. */
@@ -34,16 +34,7 @@ data class ChapterArtifactManifest(
     val partialBatchInfo: PartialBatchInfo? = null,
     val activeCandidateGenerationIds: Set<String> = emptySet(),
     val durableFailures: Map<String, DurableFailureMetadata> = emptyMap(),
-    /**
-     * Identity of the legacy flat translation file this manifest describes.
-     * Null on manifests written before resync tracking existed; a null value
-     * never matches a live identity, forcing one conservative resync.
-     */
-    val legacySource: LegacySourceIdentity? = null,
-    /** Additive provenance and preservation state for a legacy rescue. */
-    val legacyMigration: LegacyMigrationMetadata? = null,
     val cutoverAtEpochMs: Long? = null,
-    val migratedFromLegacyAtEpochMs: Long? = null,
     val updatedAtEpochMs: Long = 0L,
     // 04 additive pointer extensions: appended at the END of the
     // declaration  with neutral defaults so schemaVersion 2
@@ -113,98 +104,6 @@ data class PartialBatchInfo(
     val determinedFrom: PartialBatchDetermination,
     val recordedAtEpochMs: Long = 0L,
 )
-
-/**
- * Durable identity and preservation metadata for a one-way legacy rescue.
- * Missing, incomplete, or unsupported values are intentionally not eligible
- * for destructive cleanup decisions.
- */
-@Serializable
-data class LegacyMigrationMetadata(
-    val formatVersion: Int = FORMAT_VERSION,
-    val sourceFileName: String = "",
-    val sourcePreservation: LegacyPreservationState = LegacyPreservationState.INTENT,
-    val requestedSourceFileName: String? = null,
-    val resolvedSourceFileName: String? = null,
-    val sourcePreservedAtEpochMs: Long? = null,
-    val sourceIdentity: LegacySourceIdentity? = null,
-    val sourcePageCount: Int = 0,
-    val sourcePageKeyDigest: String = "",
-    val migratedByVersionCode: Long = 0L,
-    val migratedAtEpochMs: Long = 0L,
-    val health: LegacyMigrationHealth = LegacyMigrationHealth.INITIAL_CUTOVER,
-    val lastVerifiedByVersionCode: Long? = null,
-    val lastVerifiedAtEpochMs: Long? = null,
-) {
-    /** Only complete schema-1 metadata may participate in later cleanup. */
-    val isSupported: Boolean
-        get() = formatVersion == FORMAT_VERSION &&
-            sourceFileName.isNotBlank() &&
-            sourceIdentity?.isValidForCleanup() == true &&
-            sourcePreservationIsSupported() &&
-            verificationIsSupported() &&
-            sourcePageCount >= 0 &&
-            sourcePageKeyDigest.length == SHA256_HEX_LENGTH &&
-            sourcePageKeyDigest.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } &&
-            migratedByVersionCode > 0L &&
-            migratedAtEpochMs > 0L
-
-    private fun sourcePreservationIsSupported(): Boolean = when (sourcePreservation) {
-        LegacyPreservationState.NONE -> false
-        LegacyPreservationState.INTENT -> requestedSourceFileName.isPresent() &&
-            resolvedSourceFileName == null &&
-            sourcePreservedAtEpochMs == null
-        LegacyPreservationState.PRESERVED -> requestedSourceFileName.isPresent() &&
-            resolvedSourceFileName.isPresent() &&
-            sourcePreservedAtEpochMs.isValidTimestamp()
-        LegacyPreservationState.DELETED -> requestedSourceFileName.isPresent() &&
-            resolvedSourceFileName.isPresent() &&
-            sourcePreservedAtEpochMs.isValidTimestamp() &&
-            health == LegacyMigrationHealth.VERIFIED
-    }
-
-    private fun verificationIsSupported(): Boolean = when (health) {
-        LegacyMigrationHealth.INITIAL_CUTOVER ->
-            lastVerifiedByVersionCode == null && lastVerifiedAtEpochMs == null
-        LegacyMigrationHealth.VERIFIED_WITH_WARNINGS,
-        LegacyMigrationHealth.VERIFIED,
-        -> lastVerifiedByVersionCode != null &&
-            lastVerifiedByVersionCode > migratedByVersionCode &&
-            lastVerifiedAtEpochMs.isValidTimestamp()
-    }
-
-    private fun String?.isPresent(): Boolean = !isNullOrBlank()
-
-    private fun Long?.isValidTimestamp(): Boolean = this != null &&
-        this > 0L &&
-        this >= migratedAtEpochMs
-
-    private fun LegacySourceIdentity.isValidForCleanup(): Boolean =
-        sha256.length == SHA256_HEX_LENGTH &&
-            sha256.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } &&
-            lengthBytes >= 0L &&
-            lastModifiedMs >= 0L
-
-    companion object {
-        const val FORMAT_VERSION = 1
-        const val SHA256_HEX_LENGTH = 64
-    }
-}
-
-/** Preservation lifecycle for a legacy source. */
-enum class LegacyPreservationState {
-    NONE,
-    INTENT,
-    PRESERVED,
-    DELETED,
-}
-
-/** Verification health recorded by a migration transaction. */
-enum class LegacyMigrationHealth {
-    INITIAL_CUTOVER,
-    VERIFIED_WITH_WARNINGS,
-    VERIFIED,
-}
 
 /** One page's artifact records, committed/candidate pointers (lifecycle contract §1). */
 @Serializable

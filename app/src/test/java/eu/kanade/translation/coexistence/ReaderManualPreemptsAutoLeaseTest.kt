@@ -120,8 +120,7 @@ class ReaderManualPreemptsAutoLeaseTest {
     }
 
     private fun store(): ChapterTranslationStore = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = mapOf(PAGE to PageTranslation(sourceFileName = PAGE)),
     )
 

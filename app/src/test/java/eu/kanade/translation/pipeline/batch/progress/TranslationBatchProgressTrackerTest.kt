@@ -47,8 +47,6 @@ class TranslationBatchProgressTrackerTest {
     fun `rebuild from store publishes durable ready page progress`() = runTest {
         val page = readyPage()
         val store = ChapterTranslationStore(
-            null,
-            null,
             initialPages = mapOf("001.jpg" to page),
         )
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg"), this)
@@ -73,7 +71,7 @@ class TranslationBatchProgressTrackerTest {
 
     @Test
     fun `phase events are projection only and never mutate store`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         store.preRegisterPages(listOf("001.jpg"))
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg"), this)
 
@@ -87,7 +85,7 @@ class TranslationBatchProgressTrackerTest {
 
     @Test
     fun `terminal event retains failure in projection`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         store.preRegisterPages(listOf("001.jpg"))
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg"), this)
 
@@ -106,8 +104,6 @@ class TranslationBatchProgressTrackerTest {
         // page whose reason lives in a stage field used to fall into the
         // generic "Unknown error" bucket in the sheet's failure groups.
         val store = ChapterTranslationStore(
-            null,
-            null,
             initialPages = mapOf(
                 "001.jpg" to PageTranslation(
                     ocrStatus = StageStatus.FAILED,
@@ -138,7 +134,7 @@ class TranslationBatchProgressTrackerTest {
 
     @Test
     fun `envelope plan events flip the phase to rebuilding and committed ends the window`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         store.preRegisterPages(listOf("001.jpg", "002.jpg"))
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg", "002.jpg"), this)
 
@@ -171,7 +167,7 @@ class TranslationBatchProgressTrackerTest {
 
     @Test
     fun `envelope plan progress never mutates the store`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         store.preRegisterPages(listOf("001.jpg"))
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg"), this)
 
@@ -187,7 +183,7 @@ class TranslationBatchProgressTrackerTest {
     @Test
     fun `AI progress distinguishes pending buffered running succeeded and failed pages`() = runTest {
         val pageKeys = listOf("001.jpg", "002.jpg", "003.jpg", "004.jpg", "005.jpg")
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         store.preRegisterPages(pageKeys)
         val tracker = TranslationBatchProgressTracker(1, store, pageKeys, this)
 
@@ -216,8 +212,6 @@ class TranslationBatchProgressTrackerTest {
     @Test
     fun `AI progress rebuild derives durable success and failure without claiming buffered work`() = runTest {
         val store = ChapterTranslationStore(
-            null,
-            null,
             initialPages = mapOf(
                 "001.jpg" to PageTranslation(translationStatus = StageStatus.READY),
                 "002.jpg" to PageTranslation(translationStatus = StageStatus.FAILED),
@@ -237,7 +231,7 @@ class TranslationBatchProgressTrackerTest {
 
     @Test
     fun `retryable pause is a terminal projection with explicit anchor and cooldown`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         store.preRegisterPages(listOf("001.jpg", "002.jpg"))
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg", "002.jpg"), this)
 
@@ -263,7 +257,7 @@ class TranslationBatchProgressTrackerTest {
 
     @Test
     fun `finish emits immutable terminal snapshot`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         val tracker = TranslationBatchProgressTracker(1, store, emptyList(), this)
         tracker.finish(
             ReconciliationResult(
@@ -282,7 +276,7 @@ class TranslationBatchProgressTrackerTest {
 
     @Test
     fun `terminal snapshot is available after terminal event without waiting for later emissions`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         val tracker = TranslationBatchProgressTracker(1, store, emptyList(), this)
 
         tracker.finish(

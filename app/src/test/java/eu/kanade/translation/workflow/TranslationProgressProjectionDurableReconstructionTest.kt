@@ -53,7 +53,7 @@ class TranslationProgressProjectionDurableReconstructionTest {
             ChapterArtifactLayout("Chapter 5"),
         )
         return ChapterTranslationStore.lazy(
-            fileCreator = { root().createFile("Chapter 5.json")!! },
+            artifactParentResolver = { root().createFile("Chapter 5.json")!! },
             artifactParent = root(),
             artifactFileName = "Chapter 5.json",
         )
@@ -118,7 +118,7 @@ class TranslationProgressProjectionDurableReconstructionTest {
     fun `a live tracker still wins over durable reconstruction`() = runTest {
         val openOrCreateInvocations = mutableListOf<Long>()
         val registry = TranslationBatchTrackerRegistry()
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         registry.createTracker(
             chapterId = chapterId,
             store = store,
@@ -160,18 +160,15 @@ class TranslationProgressProjectionDurableReconstructionTest {
     private fun resolver(
         activeStores: ActiveChapterStoreRegistry,
         source: Source?,
-        translationFileExists: Boolean,
+        artifactParentExists: Boolean,
     ): DurableChapterStatusResolver {
         val sourceManager = mockk<tachiyomi.domain.source.service.SourceManager>()
         every { sourceManager.get(any()) } returns source
         return DurableChapterStatusResolver(
             providerProvider = {
                 mockk(relaxed = true) {
-                    every { findTranslationFile(any(), any(), any(), any()) } returns mockk {
-                        every { parentFile } returns mockk(relaxed = true)
-                        every { name } returns "chapter.json"
-                        every { exists() } returns translationFileExists
-                    }
+                    every { findMangaDir(any(), any()) } returns
+                        if (artifactParentExists) mockk<UniFile>(relaxed = true) else null
                 }
             },
             sourceManagerProvider = { sourceManager },
@@ -181,7 +178,7 @@ class TranslationProgressProjectionDurableReconstructionTest {
 
     @Test
     fun `withDurableStore returns null when the source cannot be resolved`() = runTest {
-        val resolver = resolver(activeStores = ActiveChapterStoreRegistry(), source = null, translationFileExists = false)
+        val resolver = resolver(activeStores = ActiveChapterStoreRegistry(), source = null, artifactParentExists = false)
 
         val result = resolver.withDurableStore(chapterId, "Chapter 1", null, "fixture", 1L) { it }
 
@@ -191,9 +188,9 @@ class TranslationProgressProjectionDurableReconstructionTest {
     @Test
     fun `withDurableStore prefers the active store and never opens a probe`() = runTest {
         val activeStores = ActiveChapterStoreRegistry()
-        val activeStore = ChapterTranslationStore(null, null)
+        val activeStore = ChapterTranslationStore()
         activeStores.register(chapterId, activeStore)
-        val resolver = resolver(activeStores, source = mockk<Source>(relaxed = true), translationFileExists = true)
+        val resolver = resolver(activeStores, source = mockk<Source>(relaxed = true), artifactParentExists = true)
 
         val result = resolver.withDurableStore(chapterId, "Chapter 1", null, "fixture", 1L) { store -> store }
 

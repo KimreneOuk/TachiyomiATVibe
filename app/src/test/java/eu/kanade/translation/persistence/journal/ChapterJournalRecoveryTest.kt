@@ -8,6 +8,7 @@ import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -221,6 +222,7 @@ class ChapterJournalRecoveryTest {
 
         result.pages shouldBe emptyMap()
         result.invalidPageKeys shouldBe setOf("legacy-image.jpg")
+        result.pageOutcomes shouldBe mapOf("legacy-image.jpg" to ChapterJournalPageOutcome.INVALID)
         result.corruptEpochs shouldBe emptySet()
     }
 
@@ -264,6 +266,62 @@ class ChapterJournalRecoveryTest {
 
         result.pages shouldBe emptyMap()
         result.ignoredStaleRecordCount shouldBe 0
+        result.pageOutcomes shouldBe mapOf("old.jpg" to ChapterJournalPageOutcome.TOMBSTONED)
+    }
+
+    @Test
+    fun `v1 inventory count equal to key count never implies trusted completeness`() {
+        val legacyInventory = ChapterJournalInventoryRecord(
+            schemaVersion = ChapterJournalInventoryRecord.LEGACY_SCHEMA_VERSION,
+            chapterIdentityHash = "chapter",
+            expectedPageKeys = listOf("same-count.jpg"),
+            expectedPageCount = 1,
+            sourceFingerprint = "legacy-v1-fingerprint",
+            // Even a stray field cannot promote a v1 record to trusted.
+            expectedPageCountTrusted = true,
+        )
+        val result = replay(
+            listOf(
+                epoch(
+                    generation = 0L,
+                    ordinal = 1L,
+                    frames = listOf(inventoryFrame(legacyInventory)),
+                ),
+            ),
+            expectedChapterIdentityHash = "chapter",
+        )
+
+        result.expectedPageCount shouldBe result.expectedPageKeys.size
+        result.inventory?.hasTrustedExpectedPageCount shouldBe false
+        result.hasCompleteInventory shouldBe false
+    }
+
+    @Test
+    fun `v2 inventory trust flag round trips and changes its fingerprint`() {
+        val base = ChapterJournalInventorySnapshot(
+            expectedPageKeys = setOf("same-count.jpg"),
+            expectedPageCount = 1,
+            sourceShaByPageKey = mapOf("same-count.jpg" to "source-sha"),
+        )
+        val untrusted = base.record("chapter")
+        val trusted = base.copy(expectedPageCountTrusted = true).record("chapter")
+
+        untrusted.schemaVersion shouldBe ChapterJournalInventoryRecord.SCHEMA_VERSION
+        trusted.schemaVersion shouldBe ChapterJournalInventoryRecord.SCHEMA_VERSION
+        untrusted.sourceFingerprint shouldNotBe trusted.sourceFingerprint
+        untrusted.expectedPageCountTrusted shouldBe false
+        trusted.expectedPageCountTrusted shouldBe true
+
+        val replayUntrusted = replay(
+            listOf(epoch(0L, 1L, listOf(inventoryFrame(untrusted)))),
+            expectedChapterIdentityHash = "chapter",
+        )
+        val replayTrusted = replay(
+            listOf(epoch(0L, 2L, listOf(inventoryFrame(trusted)))),
+            expectedChapterIdentityHash = "chapter",
+        )
+        replayUntrusted.inventory?.hasTrustedExpectedPageCount shouldBe false
+        replayTrusted.inventory?.hasTrustedExpectedPageCount shouldBe true
     }
 
     @Test
@@ -769,6 +827,25 @@ class ChapterJournalRecoveryTest {
 
         sources.map { it.order.epochOrdinal } shouldContainExactly listOf(7L, 8L)
         sources.size shouldBe 2
+    }
+
+    @Test
+    fun `unrecognized app-private journal directories are skipped without blocking valid epochs`() {
+        val chapterIdentity = "stray-directory-chapter"
+        val digest = StageFingerprints.sha256Hex(chapterIdentity.toByteArray(Charsets.UTF_8))
+        val chapter = File(File(tempRoot, "translation-journal-v1"), digest).also { it.mkdirs() }
+        File(chapter, "unrelated-directory").mkdirs()
+        val valid = epoch(0L, 12L, listOf(stateFrame(1L, page("valid"), generation = 0L)))
+        val validDir = File(
+            chapter,
+            "epoch-${valid.order.epochOrdinal.toString().padStart(20, '0')}-g${valid.order.storeGeneration}-${valid.order.sessionId}",
+        ).also { it.mkdirs() }
+        validDir.resolve("segment-00000000.tjr").writeBytes(valid.segments.single().bytes)
+
+        val sources = ChapterJournalReplayReducer.readAppPrivateEpochs(tempRoot, chapterIdentity)
+
+        sources.map { it.order.epochOrdinal } shouldContainExactly listOf(12L)
+        replay(sources).pages.keys shouldBe setOf("valid.jpg")
     }
 
     @Test

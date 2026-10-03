@@ -1,6 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
-import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
+import eu.kanade.translation.persistence.internal.StoreWriteDrainCoordinator
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.Job
@@ -10,23 +10,22 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
-class StorePersistenceLockOrderTest {
+class StoreWriteDrainLockOrderTest {
 
-    private fun persistenceScheduler(store: ChapterTranslationStore): Any =
-        ChapterTranslationStore::class.java.getDeclaredField("persistenceScheduler").apply {
+    private fun writeDrain(store: ChapterTranslationStore): Any =
+        ChapterTranslationStore::class.java.getDeclaredField("writeDrain").apply {
             isAccessible = true
         }.get(store)
 
-    private fun persistJob(store: ChapterTranslationStore): Job? =
-        StorePersistenceScheduler::class.java.getDeclaredField("persistJob").apply {
+    private fun drainJob(store: ChapterTranslationStore): Job? =
+        StoreWriteDrainCoordinator::class.java.getDeclaredField("drainJob").apply {
             isAccessible = true
-        }.get(persistenceScheduler(store)) as Job?
+        }.get(writeDrain(store)) as Job?
 
     @Test
-    fun `schedule handoff stays synchronous and flush waits on the store mutex`() = runTest {
+    fun `drain handoff stays synchronous and flush waits on the store mutex`() = runTest {
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = { error("lock-order fixture must not open a legacy file") },
+            artifactParentResolver = { error("lock-order fixture must not open a legacy file") },
             initialPages = emptyMap(),
             persistenceDispatcher = StandardTestDispatcher(testScheduler),
         )
@@ -35,29 +34,29 @@ class StorePersistenceLockOrderTest {
         try {
             store.mutex.lock()
             try {
-                // This store-to-scheduler call is deliberately made while the
+                // This store-to-drain call is deliberately made while the
                 // only state mutex is held. It must return synchronously and
-                // repeated requests must reuse the same active persist job.
-                store.schedulePersist()
-                scheduledJob = persistJob(store)
+                // repeated requests must reuse the same active drain job.
+                store.schedulePendingLazyDrain()
+                scheduledJob = drainJob(store)
                 scheduledJob shouldNotBe null
-                store.schedulePersist()
-                persistJob(store) shouldBe scheduledJob
+                store.schedulePendingLazyDrain()
+                drainJob(store) shouldBe scheduledJob
 
                 // Virtual time runs the debounce worker until it reaches the
-                // scheduler-to-store mutex boundary. The active job remains
+                // drain-to-store mutex boundary. The active job remains
                 // parked there while this coroutine owns the store mutex.
-                advanceTimeBy(StorePersistenceScheduler.PERSIST_DEBOUNCE_MS + 1L)
+                advanceTimeBy(StoreWriteDrainCoordinator.PERSIST_DEBOUNCE_MS + 1L)
                 runCurrent()
                 scheduledJob?.isActive shouldBe true
-                persistJob(store) shouldBe scheduledJob
+                drainJob(store) shouldBe scheduledJob
             } finally {
                 store.mutex.unlock()
             }
 
             runCurrent()
             scheduledJob?.join()
-            persistJob(store) shouldBe null
+            drainJob(store) shouldBe null
         } finally {
             store.closeAndFlush()
         }

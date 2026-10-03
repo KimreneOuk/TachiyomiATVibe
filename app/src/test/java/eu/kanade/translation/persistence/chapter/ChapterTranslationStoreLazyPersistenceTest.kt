@@ -34,8 +34,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
         documents.publishJson(layout.manifestFileName, manifest) shouldBe true
         val artifact = ChapterArtifactEngine(documents, layout)
         return ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf(pageKey to PageTranslation(sourceFileName = pageKey)),
             artifactStore = artifact,
             initialArtifactManifest = manifest,

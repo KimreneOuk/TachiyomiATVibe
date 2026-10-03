@@ -30,8 +30,7 @@ import org.junit.jupiter.api.Test
 class TranslationProvenanceMergeTest {
 
     private fun store() = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = emptyMap(),
     )
 

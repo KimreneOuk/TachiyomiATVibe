@@ -1,6 +1,5 @@
 package eu.kanade.translation.coexistence
 
-import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -71,11 +70,10 @@ class BatchAttemptLedgerDeathCycleTest {
             ChapterArtifactLayout("D9 Chapter"),
         )
         val manifest = artifactStore
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         return ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = pageKeys.associateWith { key -> PageTranslation(sourceFileName = key) },
             artifactStore = artifactStore,
             initialArtifactManifest = manifest,

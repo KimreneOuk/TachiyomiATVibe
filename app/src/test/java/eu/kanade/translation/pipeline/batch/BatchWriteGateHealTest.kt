@@ -50,7 +50,7 @@ class BatchWriteGateHealTest {
     private fun lazyStore(): ChapterTranslationStore {
         artifactStore() // establish the artifact layout under the temp root
         return ChapterTranslationStore.lazy(
-            fileCreator = { root().createFile("Chapter 1.json")!! },
+            artifactParentResolver = { root().createFile("Chapter 1.json")!! },
             artifactParent = root(),
             artifactFileName = "Chapter 1.json",
         )

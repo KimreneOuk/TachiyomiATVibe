@@ -16,8 +16,7 @@ internal fun EnvelopePlanPublication.publish(
 ): ChapterArtifactEngine.TransactionOutcome = runBlocking {
     EnvelopePlanPublication.publish(
         store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             artifactStore = artifact,
         ),
         manifest = manifest,
@@ -32,8 +31,7 @@ internal fun EnvelopePlanPublication.readValidatedPlan(
 ): EnvelopePlanPublication.EnvelopePlanRead = runBlocking {
     EnvelopePlanPublication.readValidatedPlan(
         store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             artifactStore = artifact,
         ),
         manifest = manifest,

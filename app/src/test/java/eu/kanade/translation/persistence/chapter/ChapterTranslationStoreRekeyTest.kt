@@ -8,8 +8,7 @@ import org.junit.jupiter.api.Test
 class ChapterTranslationStoreRekeyTest {
 
     private fun store(vararg keys: String): ChapterTranslationStore = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = keys.associateWith { PageTranslation(sourceFileName = it) },
     )
 

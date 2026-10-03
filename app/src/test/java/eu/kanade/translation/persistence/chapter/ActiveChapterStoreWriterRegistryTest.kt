@@ -93,14 +93,14 @@ class ActiveChapterStoreWriterRegistryTest {
     fun `ActiveChapterStoreRegistry registers and unregisters MAIN_STORE and PROBE_STORE`() = runBlocking<Unit> {
         val registry = ActiveChapterStoreRegistry()
         val chapterId = 42L
-        val store = ChapterTranslationStore(translationFile = null, fileCreator = null)
+        val store = ChapterTranslationStore(artifactParentResolver = null)
 
         registry.register(chapterId, store) shouldBe true
         ActiveChapterStoreRegistry.hasActiveWriter(chapterId = chapterId, origin = WriterOrigin.MAIN_STORE) shouldBe true
 
         val probeKey = "probe:chapter42"
         val probeResult = registry.getOrCreateProbe(probeKey) {
-            ChapterTranslationStore(translationFile = null, fileCreator = null)
+            ChapterTranslationStore(artifactParentResolver = null)
         }
         probeResult shouldBe probeResult // non-null
         ActiveChapterStoreRegistry.hasActiveWriter(chapterKey = probeKey, origin = WriterOrigin.PROBE_STORE) shouldBe true

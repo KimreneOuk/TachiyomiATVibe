@@ -5,7 +5,7 @@ import java.security.MessageDigest
 /**
  * chapter-scoped artifact storage layout (lifecycle contract §15).
  *
- * Given a chapter translation file base name `X` (e.g. `Group_Chapter 1`), the
+ * Given a chapter artifact base name `X` (e.g. `Group_Chapter 1`), the
  * manifest is the sibling document `X.manifest.json` — matching the existing
  * `X.summary.json` sidecar convention — and all immutable
  * payloads live under the chapter directory `X_artifacts/`:
@@ -225,8 +225,8 @@ class ChapterArtifactLayout(chapterBaseName: String) {
                 .digest(value.toByteArray(Charsets.UTF_8))
                 .joinToString("") { byte -> "%02x".format(byte) }
 
-        /** Builds the layout from a translation file name such as `Group_Chapter 1.json`. */
-        fun fromTranslationFileName(translationFileName: String): ChapterArtifactLayout =
-            ChapterArtifactLayout(translationFileName.substringBeforeLast('.'))
+        /** Builds the layout from the established chapter artifact name, such as `Group_Chapter 1.json`. */
+        fun fromArtifactFileName(artifactFileName: String): ChapterArtifactLayout =
+            ChapterArtifactLayout(artifactFileName.substringBeforeLast('.'))
     }
 }

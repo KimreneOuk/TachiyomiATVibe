@@ -14,7 +14,7 @@ class CleanedImagePublisherTest {
         val events = mutableListOf<String>()
         val files = fakeFiles(events)
         val publisher = CleanedImagePublisher(files)
-        val store = ChapterTranslationStore(null, null, mapOf("p1" to PageTranslation(cleanedImageName = "old.jpg")))
+        val store = ChapterTranslationStore(mapOf("p1" to PageTranslation(cleanedImageName = "old.jpg")))
         val before = store.snapshot("p1")
 
         val result = publisher.publish("chapter", "p1", "old.jpg", commit = { newName ->
@@ -30,7 +30,7 @@ class CleanedImagePublisherTest {
     fun `rejection preserves current old file and cleans unpublished new file`() = runTest {
         val events = mutableListOf<String>()
         val publisher = CleanedImagePublisher(fakeFiles(events))
-        val store = ChapterTranslationStore(null, null, mapOf("p1" to PageTranslation(cleanedImageName = "old.jpg")))
+        val store = ChapterTranslationStore(mapOf("p1" to PageTranslation(cleanedImageName = "old.jpg")))
         val stale = store.snapshot("p1")
         store.updatePage("p1") { it!!.apply { errorMessage = "newer work" } }
 
@@ -118,7 +118,7 @@ class CleanedImagePublisherTest {
             cleanedImageName = "old.jpg",
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
         )
-        val store = ChapterTranslationStore(null, null, mapOf("p1" to page))
+        val store = ChapterTranslationStore(mapOf("p1" to page))
         val before = store.snapshot("p1")
 
         val result = publisher.publish(
@@ -143,7 +143,7 @@ class CleanedImagePublisherTest {
     fun `accepted candidate predecessor deletion uses the retirement callback`() = runTest {
         val events = mutableListOf<String>()
         val publisher = CleanedImagePublisher(fakeFiles(events))
-        val store = ChapterTranslationStore(null, null, mapOf("p1" to PageTranslation()))
+        val store = ChapterTranslationStore(mapOf("p1" to PageTranslation()))
         val before = store.snapshot("p1")
         var deferredDelete: (() -> Unit)? = null
 

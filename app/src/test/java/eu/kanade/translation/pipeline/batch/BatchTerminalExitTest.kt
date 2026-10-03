@@ -94,7 +94,7 @@ class BatchTerminalExitTest {
 
     @Test
     fun `zero-page chapter aborts its tracker with a distinct typed reason`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         val (registry, tracker) = registryTracker(store, orderedKeys = emptyList())
         val batch = translator(
             nativeLane = object : NativeLaneRunner {
@@ -137,7 +137,7 @@ class BatchTerminalExitTest {
 
     @Test
     fun `engine-setup failure aborts the tracker keeping the known totals and reason`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         val (registry, tracker) = registryTracker(store, orderedKeys = listOf("001.jpg", "002.jpg"))
         val batch = translator(
             nativeLane = object : NativeLaneRunner {
@@ -178,8 +178,6 @@ class BatchTerminalExitTest {
     @Test
     fun `remaining abort keys exclude durably terminal pages`() {
         val store = ChapterTranslationStore(
-            null,
-            null,
             initialPages = mapOf(
                 // Durably terminal: a textless page (OCR ready, nothing to
                 // translate, skipped inpaint/render).

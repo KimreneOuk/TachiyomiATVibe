@@ -41,7 +41,6 @@ import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
-import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
@@ -49,7 +48,6 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.TranslationScheduler
@@ -808,20 +806,10 @@ internal class ReaderTranslationController(
         val pageKey = resolvePageKey(page)
         val manga = manga ?: run {
             logcat(LogPriority.WARN) { "translateSinglePage: manga is null, cannot translate" }
-            if (GroupCommitConfiguration.enabled) {
-                chapter.id?.let { chapterId ->
-                    translationScheduler.recordManualOutcome(chapterId, pageKey, SinglePageOutcome.Failed(pageKey, "manga is null"))
-                }
-            }
             return
         }
         val source = sourceManager.get(manga.source) as? HttpSource ?: run {
             logcat(LogPriority.WARN) { "translateSinglePage: invalid HttpSource, cannot translate" }
-            if (GroupCommitConfiguration.enabled) {
-                chapter.id?.let { chapterId ->
-                    translationScheduler.recordManualOutcome(chapterId, pageKey, SinglePageOutcome.Failed(pageKey, "invalid HttpSource"))
-                }
-            }
             return
         }
         // TachiyomiAT: manual entry drops a stale DOWNLOAD_FAILED batch
@@ -875,11 +863,6 @@ internal class ReaderTranslationController(
             logcat(LogPriority.WARN) {
                 "translateSinglePage: no stream available for page $pageKey (originalStream=null, chapterDownloaded=$pageChapterDownloaded, imageUrl=${page.imageUrl != null})"
             }
-            if (GroupCommitConfiguration.enabled) {
-                chapter.id?.let { chapterId ->
-                    translationScheduler.recordManualOutcome(chapterId, pageKey, SinglePageOutcome.Failed(pageKey, "no stream available"))
-                }
-            }
             return
         }
         page.originalStream?.let { streamFn ->
@@ -910,11 +893,6 @@ internal class ReaderTranslationController(
                 } catch (e: Throwable) {
                     logcat(LogPriority.WARN) {
                         "translateSinglePage: lazy download failed for $pageKey: ${e.message}"
-                    }
-                    if (GroupCommitConfiguration.enabled) {
-                        chapter.id?.let { chapterId ->
-                            translationScheduler.recordManualOutcome(chapterId, pageKey, SinglePageOutcome.Failed(pageKey, "lazy download failed: ${e.message}"))
-                        }
                     }
                     return@launchIO
                 }

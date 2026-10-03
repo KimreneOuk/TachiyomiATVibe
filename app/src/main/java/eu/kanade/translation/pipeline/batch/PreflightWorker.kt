@@ -189,7 +189,7 @@ internal class PreflightWorker(
         // publish page state and page registration memory-first, so drain
         // that queue before reading the manifest-backed checkpoint
         // identity. This call is deliberately outside any store mutex;
-        // StorePersistenceScheduler serializes its own flush worker and
+        // StoreWriteDrainCoordinator serializes its lazy image flush worker and
         // no flush task calls back into this checkpoint path.
         val lazyPersistence = store.isLazyPersistenceEnabled()
         if (lazyPersistence) {

@@ -1,6 +1,5 @@
 package eu.kanade.translation.workflow
 
-import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -36,7 +35,7 @@ import java.util.zip.DeflaterOutputStream
  * Pins the two no-wipe gates of `DurableChapterStatusResolver.withProbeStore`:
  * the whole-cache wipe fires only when a
  * probe pass actually CREATES the store — the one moment an open can advance
- * durable truth via the one-way rescue. A held (reused) probe performed no
+ * durable truth through journal recovery or seeding. A held (reused) probe performed no
  * open, and an already-active store short-circuits before the probe path;
  * neither may thrash the cache.
  *
@@ -173,20 +172,19 @@ class DurableStatusWipeGateTest {
         )
     }
 
-    private fun translationFile(): UniFile =
-        com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir).findFile("Chapter 1.json")
-            ?: com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
-                .findFile("Chapter 1.json.migrated")!!
+    private fun artifactParent() = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+
+    private fun artifactFileName() = "Chapter 1.json"
 
     private fun provider(): TranslationFileProvider {
-        // Post-migration production shape: the flat "Chapter 1.json" is gone
-        // (renamed .migrated on disk), so the document resolves name-only
-        // from the manga dir and opens through openArtifact.
-        val parent = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        // The directory/name pair identifies the manifest. The preserved flat
+        // file is not read or migrated by this artifact-only resolver.
+        val parent = artifactParent()
         val provider = mockk<TranslationFileProvider>()
-        every { provider.findTranslationFile(any(), any(), any(), any()) } returns null
         every { provider.findMangaDir(any(), any()) } returns parent
         every { provider.getTranslationFileName(any(), any()) } answers { "${firstArg<String>()}.json" }
+        every { provider.privateJournalRoot } returns File(mangaDir, "private-journal").apply { mkdirs() }
+        every { provider.privateJournalIdentity(any(), any(), any()) } returns "wipe-gate:Chapter 1.json"
         return provider
     }
 
@@ -209,16 +207,15 @@ class DurableStatusWipeGateTest {
     fun `a created probe pass wipes the durable status cache while a held probe does not`() = runTest {
         installPngHeaderProbe()
         writeLegacyChapter()
-        // Materialize the artifact manifest: with only the legacy flat file
-        // on disk, status resolution takes the legacy-decode branch and never
-        // reaches the probe path at all.
-        ChapterTranslationStore.open(translationFile()).closeAndFlush()
+        // Materialize the artifact manifest beside the preserved flat file;
+        // the open path never decodes or renames that file.
+        ChapterTranslationStore.openArtifact(artifactParent(), artifactFileName()).closeAndFlush()
         val registry = ActiveChapterStoreRegistry()
         val resolver = resolver(provider(), registry)
         val cache = durableStatusCache(resolver)
 
-        // Created probe: the store open can advance durable truth (one-way
-        // rescue), so pre-existing cached statuses must not survive the pass.
+        // Created probe: recovery or seeding can advance durable truth, so
+        // pre-existing cached statuses must not survive the pass.
         cache[sentinel()] = DurableStatus(Translation.State.NOT_TRANSLATED)
         resolver.persistedChapterStatus(42L, "Chapter 1", null, "Manga", 77L)
         cache.containsKey(sentinel()) shouldBe false
@@ -246,7 +243,7 @@ class DurableStatusWipeGateTest {
         val resolver = resolver(provider(), registry)
         val cache = durableStatusCache(resolver)
 
-        registry.register(42L, ChapterTranslationStore.open(translationFile()))
+        registry.register(42L, ChapterTranslationStore.openArtifact(artifactParent(), artifactFileName()))
         cache[sentinel()] = DurableStatus(Translation.State.NOT_TRANSLATED)
 
         resolver.persistedChapterStatus(42L, "Chapter 1", null, "Manga", 77L)

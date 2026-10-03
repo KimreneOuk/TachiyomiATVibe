@@ -330,8 +330,7 @@ class RollingHistoryContextContractTest {
         pages.forEach { entry -> livePages[entry.key] = entry.toPage() }
         liveOverrides.forEach { (key, page) -> livePages[key] = page }
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = livePages,
             artifactStore = artifact,
             initialArtifactManifest = manifest,
@@ -388,8 +387,7 @@ class RollingHistoryContextContractTest {
 
         fun reopen(): Fixture {
             val reopened = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
+                artifactParentResolver = null,
                 initialPages = pages.associate { it.key to it.toPage() },
                 artifactStore = artifact,
                 initialArtifactManifest = artifact.readManifest(),
