@@ -66,6 +66,7 @@ import eu.kanade.translation.persistence.journal.ChapterJournalEpochCoverage
 import eu.kanade.translation.persistence.journal.ChapterJournalEpochGcState
 import eu.kanade.translation.persistence.journal.ChapterJournalFormat
 import eu.kanade.translation.persistence.journal.ChapterJournalGcMode
+import eu.kanade.translation.persistence.journal.ChapterJournalInventoryRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalInventorySnapshot
 import eu.kanade.translation.persistence.journal.ChapterJournalPageOutcome
 import eu.kanade.translation.persistence.journal.ChapterJournalRecord
@@ -4513,6 +4514,8 @@ class ChapterTranslationStore internal constructor(
             val layout = ChapterArtifactLayout.fromArtifactFileName(fileName)
             val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
             val artifact = ChapterArtifactEngine(documents, layout)
+            val hasPersistedManifest = documents.exists(layout.manifestFileName) ||
+                documents.exists(artifact.backupName())
             val manifest = artifact.load().manifest
             val chapterIdentity = privateStorageIdentity ?: buildString {
                 append(parent.filePath ?: parent.uri?.toString() ?: "<no-parent>")
@@ -4623,7 +4626,18 @@ class ChapterTranslationStore internal constructor(
             )
             if (journalReplay != null) {
                 val manifestKeys = manifest.pages.keys + manifest.sourceShaByPageKey.keys
-                val expectedKeys = journalReplay.expectedPageKeys + manifestKeys
+                val inventory = journalReplay.inventory
+                val expectedKeys = buildSet {
+                    addAll(manifestKeys)
+                    inventory
+                        ?.takeIf { it.hasTrustedExpectedPageCount }
+                        ?.expectedPageKeys
+                        ?.let(::addAll)
+                    // A v1 inventory is the only existence record only for a deep-legacy chapter with no manifest.
+                    if (!hasPersistedManifest && inventory?.schemaVersion == ChapterJournalInventoryRecord.LEGACY_SCHEMA_VERSION) {
+                        addAll(journalReplay.expectedPageKeys)
+                    }
+                }
                 val expectedCount = maxOf(
                     journalReplay.expectedPageCount,
                     manifest.expectedPageCount ?: 0,
