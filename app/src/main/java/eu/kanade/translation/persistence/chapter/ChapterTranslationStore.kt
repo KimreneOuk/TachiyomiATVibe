@@ -4561,9 +4561,24 @@ class ChapterTranslationStore internal constructor(
             } else {
                 emptySet()
             }
+            // A trusted journal can lose capture after terminal lag. A verified committed snapshot may fill only a silent key; journal outcomes and candidate metadata remain blockers.
+            val authoritativeSilentCommittedPages: Map<String, PublishedPageTranslation> = if (authoritativeJournal) {
+                artifactPageStates.mapNotNull { (pageKey, opened) ->
+                    if (pageKey in outcomes || pageKey in blockedManifestKeys || manifest.pages[pageKey]?.candidate != null) {
+                        null
+                    } else {
+                        opened.committedPage?.let { pageKey to it.toPublishedPage() }
+                    }
+                }.toMap()
+            } else {
+                emptyMap()
+            }
             val recoveredPages: Map<String, PublishedPageTranslation>? = when {
                 journalReplay == null -> null
-                authoritativeJournal -> journalReplay.pages
+                authoritativeJournal -> buildMap {
+                    putAll(journalReplay.pages)
+                    putAll(authoritativeSilentCommittedPages)
+                }
                 else -> buildMap<String, PublishedPageTranslation> {
                     putAll(journalReplay.pages)
                     artifactPageStates.forEach { (pageKey, opened) ->
@@ -4577,7 +4592,9 @@ class ChapterTranslationStore internal constructor(
                 emptyMap()
             }
             val committedPages = artifactPageStates.mapNotNull { (pageKey, opened) ->
-                val hasJournalWinnerForDisplay = !authoritativeJournal || outcomes[pageKey] == ChapterJournalPageOutcome.RECORDED
+                val hasJournalWinnerForDisplay = !authoritativeJournal ||
+                    outcomes[pageKey] == ChapterJournalPageOutcome.RECORDED ||
+                    pageKey in authoritativeSilentCommittedPages
                 opened.committedPage
                     ?.takeIf { pageKey !in blockedManifestKeys && hasJournalWinnerForDisplay }
                     ?.let { pageKey to it }

@@ -3,6 +3,7 @@ package eu.kanade.translation.persistence.chapter
 import com.hippo.unifile.FakeUniFile
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
@@ -558,6 +559,159 @@ class ChapterTranslationStoreJournalCaptureTest {
             seededPrefix.pages[pageKey] shouldBe legacyPage
             seededPrefix.pageOutcomes[pageKey] shouldBe ChapterJournalPageOutcome.RECORDED
             seededPrefix.inventory?.hasTrustedExpectedPageCount shouldBe true
+        } finally {
+            reopened.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `trusted terminal-lag journal fills a verified committed page with no journal outcome`() = runTest {
+        val root = FakeUniFile(parent = null, backing = chapterDir)
+        val privateJournalRoot = File(chapterDir, "terminal-lag-journal").also { check(it.mkdirs()) }
+        val journalIdentity = "source:manga:Terminal lag chapter.json"
+        val layout = ChapterArtifactLayout("Terminal lag chapter")
+        val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(root))
+        val engine = ChapterArtifactEngine(documents, layout)
+        val capturedPageKey = "captured-before-lag.jpg"
+        val committedAfterLagPageKey = "committed-after-lag.jpg"
+
+        fun translatedPage(pageKey: String, translation: String) = PageTranslation(
+            sourceFileName = pageKey,
+            ocrStatus = StageStatus.READY,
+            translationStatus = StageStatus.READY,
+            inpaintStatus = StageStatus.READY,
+            renderStatus = StageStatus.READY,
+            originalImageFallback = true,
+            blocks = mutableListOf(
+                TranslationBlock(
+                    text = "source",
+                    translation = translation,
+                    width = 10f,
+                    height = 10f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            ),
+        ).toPublishedPage()
+
+        val capturedPage = translatedPage(capturedPageKey, "captured before lag")
+        val committedAfterLagPage = translatedPage(committedAfterLagPageKey, "committed after lag")
+        fun commitSnapshot(pageKey: String, generationId: String, page: PageTranslationView) =
+            CommittedBundleMetadata(
+                generationId = generationId,
+                displayBase = DisplayBaseReference(DisplayBaseKind.ORIGINAL_SOURCE, validated = true),
+                translationFingerprint = StageFingerprints.pageSnapshot(page),
+                pageSnapshotFileName = layout.committedPageSnapshotFile(pageKey, generationId),
+            )
+
+        val capturedCommit = commitSnapshot(capturedPageKey, "captured-commit", capturedPage)
+        val postLagCommit = commitSnapshot(committedAfterLagPageKey, "post-lag-commit", committedAfterLagPage)
+        documents.publishJson(capturedCommit.pageSnapshotFileName!!, capturedPage.toDraft()) shouldBe true
+        documents.publishJson(postLagCommit.pageSnapshotFileName!!, committedAfterLagPage.toDraft()) shouldBe true
+        val manifest = ChapterArtifactManifest(
+            chapterKey = layout.chapterKey,
+            pages = mapOf(
+                capturedPageKey to PageArtifactRecord(pageKey = capturedPageKey, committed = capturedCommit),
+                committedAfterLagPageKey to PageArtifactRecord(
+                    pageKey = committedAfterLagPageKey,
+                    committed = postLagCommit,
+                ),
+            ),
+            expectedPageCount = 2,
+            expectedPageCountTrusted = true,
+        )
+        engine.publishManifest(manifest) shouldBe true
+
+        val chapterHash = StageFingerprints.sha256Hex(journalIdentity.toByteArray(Charsets.UTF_8))
+        val sessionId = UUID.randomUUID()
+        val epochDirectory = File(
+            File(File(privateJournalRoot, "translation-journal-v1"), chapterHash),
+            "epoch-${1L.toString().padStart(20, '0')}-g0-$sessionId",
+        ).also { check(it.mkdirs()) }
+        val journalJson = Json {
+            encodeDefaults = true
+            explicitNulls = true
+        }
+        val trustedInventory = ChapterJournalInventorySnapshot(
+            expectedPageKeys = setOf(capturedPageKey, committedAfterLagPageKey),
+            expectedPageCount = 2,
+            sourceShaByPageKey = emptyMap(),
+            expectedPageCountTrusted = true,
+        ).record(chapterHash)
+        val capturedRecord = ChapterJournalRecord(
+            pageKey = capturedPageKey,
+            generation = 0L,
+            fencingToken = 0L,
+            pageVersion = capturedPage.pageVersion,
+            state = capturedPage,
+            artifactContentHash = StageFingerprints.pageSnapshot(capturedPage),
+        )
+        val terminalLagRecord = ChapterJournalRecord(
+            pageKey = "",
+            generation = 0L,
+            fencingToken = 0L,
+            pageVersion = 0L,
+            state = null,
+            terminalReason = "${ChapterJournalRecord.TERMINAL_LAG_REASON_CREDIT_WINDOW}:1",
+            terminalCommitSeq = 2L,
+        )
+        val segment = ByteArrayOutputStream().apply {
+            write(ChapterJournalFormat.segmentHeader(0L, 0L, 1L, sessionId))
+            write(
+                ChapterJournalFormat.encodeFrame(
+                    1L,
+                    null,
+                    ChapterJournalFormat.RecordKind.INVENTORY,
+                    journalJson.encodeToString(trustedInventory).encodeToByteArray(),
+                ),
+            )
+            write(
+                ChapterJournalFormat.encodeFrame(
+                    2L,
+                    1L,
+                    ChapterJournalFormat.RecordKind.FREE_STATE,
+                    journalJson.encodeToString(capturedRecord).encodeToByteArray(),
+                ),
+            )
+            write(
+                ChapterJournalFormat.encodeFrame(
+                    3L,
+                    null,
+                    ChapterJournalFormat.RecordKind.TERMINAL_LAG,
+                    journalJson.encodeToString(terminalLagRecord).encodeToByteArray(),
+                ),
+            )
+        }.toByteArray()
+        epochDirectory.resolve("segment-00000000.tjr").writeBytes(segment)
+
+        val replayEpochs = ChapterJournalReplayReducer.readAppPrivateEpochs(privateJournalRoot, journalIdentity)
+        val replayBeforeOpen = ChapterJournalReplayReducer.replay(
+            epochs = replayEpochs,
+            artifactResolver = ChapterJournalReplayReducer.artifactResolver(engine, manifest),
+            expectedChapterIdentityHash = chapterHash,
+        )
+        replayBeforeOpen.corruptEpochs shouldBe emptySet()
+        replayBeforeOpen.validFrameCount shouldBe 3
+        replayBeforeOpen.inventory?.hasTrustedExpectedPageCount shouldBe true
+        replayBeforeOpen.expectedPageKeys shouldBe setOf(capturedPageKey, committedAfterLagPageKey)
+        replayBeforeOpen.pageOutcomes.keys shouldBe setOf(capturedPageKey)
+        replayBeforeOpen.missingPageKeys shouldBe setOf(committedAfterLagPageKey)
+
+        val reopened = ChapterTranslationStore.openArtifactSuspend(
+            root,
+            "Terminal lag chapter.json",
+            privateStorageRoot = privateJournalRoot,
+            privateStorageIdentity = journalIdentity,
+            journalStorageFactory = ::jvmFileBackedJournalStorage,
+        )
+        try {
+            reopened.pages[capturedPageKey] shouldBe capturedPage
+            reopened.pages[committedAfterLagPageKey] shouldBe committedAfterLagPage
+            reopened.display.value[committedAfterLagPageKey]?.blocks?.single()?.translation shouldBe
+                "committed after lag"
         } finally {
             reopened.closeAndFlush()
         }
