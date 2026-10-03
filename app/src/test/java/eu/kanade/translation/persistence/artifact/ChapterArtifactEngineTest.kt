@@ -561,6 +561,75 @@ class ChapterArtifactEngineTest {
     }
 
     @Test
+    fun `immediate promotion generation failure leaves a readable candidate after reopen`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val opened = store.openCandidate(
+            manifest = store.loadArtifact(seededSnapshot()).manifest,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+            nowEpochMs = 100L,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val page = displayablePage()
+        io.writeNamesToFail += layout.generationFile(generationId)
+
+        val outcome = store.promoteLiveCandidateImmediately(
+            manifest = opened.manifest,
+            pageKey = "page.jpg",
+            generationId = generationId,
+            expectedPageVersion = opened.manifest.pages.getValue("page.jpg").pageVersion,
+            expectedDependencyFingerprint = "deps",
+            pageSnapshot = page,
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 101L,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
+
+        outcome.reason.contains("generation record publication failed") shouldBe true
+        io.writeNamesToFail.clear()
+        val reopened = transactionStore(io).load().manifest
+        val candidate = reopened.pages.getValue("page.jpg").candidate.shouldNotBeNull()
+        candidate.pageSnapshotFileName shouldBe layout.candidatePageSnapshotFile("page.jpg", generationId)
+        transactionStore(io).readPageSnapshot(candidate.pageSnapshotFileName!!) shouldBe page
+    }
+
+    @Test
+    fun `immediate promotion final manifest failure leaves a readable candidate after reopen`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val opened = store.openCandidate(
+            manifest = store.loadArtifact(seededSnapshot()).manifest,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+            nowEpochMs = 100L,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val page = displayablePage()
+        io.ownedRenamesToFailOnce += AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
+
+        val outcome = store.promoteLiveCandidateImmediately(
+            manifest = opened.manifest,
+            pageKey = "page.jpg",
+            generationId = generationId,
+            expectedPageVersion = opened.manifest.pages.getValue("page.jpg").pageVersion,
+            expectedDependencyFingerprint = "deps",
+            pageSnapshot = page,
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 101L,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
+
+        outcome.reason.contains("manifest publication failed") shouldBe true
+        val reopened = transactionStore(io).load().manifest
+        val candidate = reopened.pages.getValue("page.jpg").candidate.shouldNotBeNull()
+        candidate.pageSnapshotFileName shouldBe layout.candidatePageSnapshotFile("page.jpg", generationId)
+        transactionStore(io).readPageSnapshot(candidate.pageSnapshotFileName!!) shouldBe page
+    }
+
+    @Test
     fun `candidate and retryable failure publish atomically without replacing committed display`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)

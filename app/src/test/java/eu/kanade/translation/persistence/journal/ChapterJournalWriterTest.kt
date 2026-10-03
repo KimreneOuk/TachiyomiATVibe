@@ -11,8 +11,10 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
+import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.util.TreeMap
 import java.util.UUID
 
@@ -279,6 +281,53 @@ class ChapterJournalWriterTest {
     }
 
     @Test
+    fun `free sync timer does not split a deferred inventory batch`() = runTest {
+        val storage = MemoryStorage()
+        val writer = writer(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            durabilityIntervalMs = 10L,
+        )
+        try {
+            writer.captureInventory(
+                ChapterJournalInventorySnapshot(
+                    expectedPageKeys = setOf("page-a"),
+                    expectedPageCount = 1,
+                    sourceShaByPageKey = mapOf("page-a" to "sha-a"),
+                ),
+            )
+            runCurrent()
+            val syncCountAfterInitialization = storage.syncCount
+
+            writer.captureInventory(
+                ChapterJournalInventorySnapshot(
+                    expectedPageKeys = setOf("page-a", "page-b"),
+                    expectedPageCount = 2,
+                    sourceShaByPageKey = mapOf("page-a" to "sha-a", "page-b" to "sha-b"),
+                ),
+                deferSyncUntilBarrier = true,
+            )
+            writer.captureInventory(
+                ChapterJournalInventorySnapshot(
+                    expectedPageKeys = setOf("page-a", "page-b", "page-c"),
+                    expectedPageCount = 3,
+                    sourceShaByPageKey = mapOf("page-a" to "sha-a", "page-b" to "sha-b", "page-c" to "sha-c"),
+                ),
+            )
+            runCurrent()
+
+            advanceTimeBy(10L)
+            runCurrent()
+            storage.syncCount shouldBe syncCountAfterInitialization
+
+            writer.flushToCaptureBarrier()
+            storage.syncCount shouldBe syncCountAfterInitialization + 1
+        } finally {
+            writer.drainAndClose()
+        }
+    }
+
+    @Test
     fun `torn tail is truncated before the next contiguous append`() = runTest {
         val storage = MemoryStorage()
         val first = writer(storage, StandardTestDispatcher(testScheduler))
@@ -425,6 +474,53 @@ class ChapterJournalWriterTest {
     }
 
     @Test
+    fun `rollover syncs only the new segment directory after epoch tree creation`() = runTest {
+        val durableRoot = Files.createTempDirectory("chapter-journal-directory-sync").toFile()
+        val epochDirectory = File(durableRoot, "journal/chapter/epoch-00000000000000000001-g1")
+        val syncedDirectories = mutableListOf<Path>()
+        val storage = FileChapterJournalStorage(
+            directory = epochDirectory,
+            durableRoot = durableRoot,
+            syncDirectoryEntry = { path ->
+                syncedDirectories.add(path.toPath().toAbsolutePath().normalize())
+            },
+        )
+        val writer = ChapterJournalWriter(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { "${it.pageKey}:${it.pageVersion}".encodeToByteArray() },
+            encodeInventory = { "inventory:${it.sourceFingerprint}".encodeToByteArray() },
+            encodeTerminalLag = { count, sequence -> "lag:$count:$sequence".encodeToByteArray() },
+            segmentByteLimit = 200L,
+        )
+        try {
+            val first = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyPersisted(writer.nextCommitSeq(), first, "page-a", 1L, 1L, page())
+            runCurrent()
+
+            val second = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyPersisted(writer.nextCommitSeq(), second, "page-b", 1L, 2L, page())
+            runCurrent()
+
+            storage.segmentIndexes() shouldContainExactly listOf(0L, 1L)
+            val epochPath = epochDirectory.toPath().toAbsolutePath().normalize()
+            val chapterPath = epochDirectory.parentFile.toPath().toAbsolutePath().normalize()
+            val journalPath = epochDirectory.parentFile.parentFile.toPath().toAbsolutePath().normalize()
+            val durableRootPath = durableRoot.toPath().toAbsolutePath().normalize()
+            syncedDirectories shouldContainExactly listOf(
+                epochPath,
+                chapterPath,
+                journalPath,
+                durableRootPath,
+                epochPath,
+            )
+        } finally {
+            writer.drainAndClose()
+            durableRoot.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `rollover keeps durable acknowledgement monotonic across free work`() = runTest {
         val storage = MemoryStorage()
         val writer = writer(
@@ -504,6 +600,55 @@ class ChapterJournalWriterTest {
             writer.ackedHighWaterSeq shouldBe 2L
             writer.inFlightCount shouldBe 1
             parked.releaseIfUnqueued() shouldBe true
+        } finally {
+            writer.drainAndClose()
+        }
+    }
+
+    @Test
+    fun `deferred flush forces rolled segment before close and final segment at barrier`() = runTest {
+        val storage = MemoryStorage()
+        val writer = writer(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { "x".repeat(128).encodeToByteArray() },
+            segmentByteLimit = 384L,
+        )
+        try {
+            val first = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyPersisted(
+                commitSeq = writer.nextCommitSeq(),
+                credit = first,
+                pageKey = "page-a",
+                generation = 1L,
+                fencingToken = 1L,
+                page = page("page-a"),
+                deferSyncUntilBarrier = true,
+            )
+            runCurrent()
+            storage.events.clear()
+
+            val second = writer.tryAcquireShadowCredit(foreground = false)!!
+            writer.captureLegacyPersisted(
+                commitSeq = writer.nextCommitSeq(),
+                credit = second,
+                pageKey = "page-b",
+                generation = 1L,
+                fencingToken = 2L,
+                page = page("page-b"),
+                deferSyncUntilBarrier = true,
+            )
+            runCurrent()
+
+            storage.segmentIndexes() shouldContainExactly listOf(0L, 1L)
+            val firstSegmentSync = storage.events.indexOf("sync:0")
+            val firstSegmentClose = storage.events.indexOf("close:0")
+            (firstSegmentSync >= 0 && firstSegmentSync < firstSegmentClose) shouldBe true
+
+            writer.flushToCaptureBarrier() shouldBe 3L
+            val lastSecondSegmentWrite = storage.events.indexOfLast { it == "write:1" }
+            val finalSegmentSync = storage.events.indexOfLast { it == "sync:1" }
+            (lastSecondSegmentWrite >= 0 && finalSegmentSync > lastSecondSegmentWrite) shouldBe true
         } finally {
             writer.drainAndClose()
         }
@@ -928,6 +1073,7 @@ class ChapterJournalWriterTest {
             private set
         var closedSinkCount = 0
             private set
+        val events = mutableListOf<String>()
 
         override fun segmentIndexes(): List<Long> = files.keys.toList()
 
@@ -960,6 +1106,7 @@ class ChapterJournalWriterTest {
             override val size: Long get() = files.getValue(index).size.toLong()
 
             override fun write(bytes: ByteArray, offset: Int, length: Int): Int {
+                events += "write:$index"
                 val count = minOf(length, maxWriteBytes)
                 val before = files.getValue(index)
                 val after = before.copyOf(position + count)
@@ -973,11 +1120,13 @@ class ChapterJournalWriterTest {
 
             override fun sync() {
                 syncCount++
+                events += "sync:$index"
                 if (syncCount == failOnSync) throw IOException("injected sync failure")
             }
 
             override fun close() {
                 closedSinkCount++
+                events += "close:$index"
             }
         }
     }
