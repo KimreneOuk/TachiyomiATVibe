@@ -129,6 +129,7 @@ class TranslationPipeline private constructor(
         val nativeStallWatchdog: NativeStallWatchdog,
         val nativeRunQuarantine: NativeRunQuarantine,
         val engines: EngineLane,
+        val devicePagePermitGate: DevicePagePermitGate? = null,
     )
 
     override fun close() {
@@ -184,8 +185,9 @@ class TranslationPipeline private constructor(
 
         /**
          * Tighter timeout for the permit-held ONNX phase (decode → OCR → inpaint →
-         * persist .cleaned). The HTTP translate + Canvas render phase runs outside
-         * the permit and has its own timeout (OkHttp timeouts + fast Canvas). Keeping
+         * persist .cleaned). HTTP translation runs outside the permit, while Canvas
+         * rendering reacquires it after the request completes. The HTTP/render phase
+         * has its own timeout (OkHttp timeouts + render work). Keeping
          * the ONNX phase shorter ensures the permit is released promptly so the next
          * prefetch page's ONNX work can overlap this page's network call.
          */
@@ -274,7 +276,8 @@ class TranslationPipeline private constructor(
     private val adaptiveKnobSignalAdapter = AdaptiveKnobSignalAdapter.forContext(context, adaptiveKnobController)
 
     @VisibleForTesting
-    internal val devicePagePermitGate = DevicePagePermitGate(capacity = { adaptiveKnobController.appliedConcurrency })
+    internal val devicePagePermitGate = testConstruction?.devicePagePermitGate
+        ?: DevicePagePermitGate(capacity = { adaptiveKnobController.appliedConcurrency })
 
     // EngineLane owns engine construction and native-call drainage. Its short
     // drain grace is retried by epoch, and the drain runs off the main thread.
@@ -303,14 +306,43 @@ class TranslationPipeline private constructor(
         priority: DevicePermitPriority = DevicePermitPriority.BACKGROUND,
         block: suspend () -> T,
     ): T? {
+        val scheduleTrace = TranslationTrace.currentRun()?.schedule
         val permit = devicePagePermitGate.acquire(priority) ?: run {
             onTimeout()
             return null
         }
         return try {
-            engines.withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
+            engines.withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout) {
+                // Count active native ownership only after both device-permit and
+                // quarantine admission have succeeded. The captured schedule is
+                // used because NativeRunQuarantine may execute the block in its
+                // independent native scope.
+                val nativeLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.NATIVE)
+                try {
+                    block()
+                } finally {
+                    nativeLaneToken?.close()
+                }
+            }
         } finally {
             permit.release()
+        }
+    }
+
+    private suspend fun drainDeferredPublications(deferred: DeferredPagePublications) {
+        val span = TranslationTrace.beginStage(
+            TranslationTraceStage.DEFERRED_STORAGE_DRAIN,
+            lane = TranslationTraceLane.STORAGE,
+        )
+        try {
+            deferred.drainAll()
+            span.end(TranslationTraceOutcome.SUCCESS)
+        } catch (t: Throwable) {
+            span.end(
+                if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
+                error = t,
+            )
+            throw t
         }
     }
 
@@ -425,9 +457,10 @@ class TranslationPipeline private constructor(
      * Translates a single page identified by [pageKey] within [chapter] of [manga].
      *
      * Phase ONNX (under the permit): setup, decode, recognize (OCR+inpaint), persist
-     * .cleaned. Phase translation/render-metadata (outside the permit): cooperative
-     * cancel check, textTranslator.translatePage, color estimation, and page-state
-     * persistence. The reader draws translated text live over the cleaned image.
+     * .cleaned. Provider translation runs outside the permit; Canvas rendering
+     * reacquires it after the request. Cooperative cancel checks, color estimation,
+     * and page-state persistence follow their respective phases. The reader draws
+     * translated text live over the cleaned image.
      * Splitting the permit-held ONNX work from the network-bound HTTP translate lets the next
      * prefetch page's ONNX overlap this page's network call — the same asymmetry
      * benefit the batch path already derives.
@@ -510,9 +543,7 @@ class TranslationPipeline private constructor(
         // (scheduler launch / rolling-coordinator wrap); outside a trace every
         // helper is a NO_OP. Emission is non-suspending and fail-open.
         val traceRun = TranslationTrace.currentRun()
-        val traceSchedule = traceRun?.schedule
         val nativeQueueSpan = traceRun?.beginStage(TranslationTraceStage.NATIVE_QUEUE)
-        val nativeLaneToken = traceSchedule?.enterLane(TranslationTraceLane.NATIVE)
         try {
             //   a same-page request whose predecessor still owns the
             // stove (e.g. a timed-out-but-parked native call) is rejected
@@ -526,7 +557,6 @@ class TranslationPipeline private constructor(
                     "TachiyomiAT native admission rejected: chapter=${chapter.name} " +
                         "pageKey=$pageKey reason=already in flight (residual)"
                 }
-                nativeLaneToken?.close()
                 return SinglePageOutcome.Rejected(null, "page already translating")
             }
             // Storage-tail deferral holder. The
@@ -585,18 +615,15 @@ class TranslationPipeline private constructor(
                         }
                     }.also {
                         if (it == null) nativeQueueSpan?.end(TranslationTraceOutcome.PAUSE)
-                        nativeLaneToken?.close()
                     }
                 } catch (_: NativePageAlreadyInFlightException) {
-                    nativeLaneToken?.close()
                     return SinglePageOutcome.Rejected(null, "page already translating")
                 }
             } catch (t: Throwable) {
-                nativeLaneToken?.close()
                 // Exception path: the boundary does not continue, so run any
                 // deferred storage tails inline (best effort — the block has
                 // already failed the page) and rethrow the original failure.
-                runCatching { deferredPublications.drainAll() }
+                runCatching { drainDeferredPublications(deferredPublications) }
                     .onFailure { drainError ->
                         logcat(LogPriority.ERROR, drainError) {
                             "TachiyomiAT deferred storage publication failed: pageKey=$pageKey"
@@ -608,7 +635,7 @@ class TranslationPipeline private constructor(
             // publication that throws fails the page — it must never be
             // silently dropped.
             try {
-                deferredPublications.drainAll()
+                drainDeferredPublications(deferredPublications)
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 logcat(LogPriority.ERROR, t) { "TachiyomiAT deferred storage publication failed: pageKey=$pageKey" }
@@ -655,7 +682,6 @@ class TranslationPipeline private constructor(
 
             // Preserve governor deferrals as typed pauses instead of reporting
             // them as successful completion.
-            val providerLaneToken = traceSchedule?.enterLane(TranslationTraceLane.PROVIDER)
             try {
                 httpOutcome = withTimeoutOrNull(singlePageTimeoutMs) {
                     translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener, origin)
@@ -674,7 +700,6 @@ class TranslationPipeline private constructor(
                     null
                 }
             } catch (t: Throwable) {
-                providerLaneToken?.close()
                 if (t is CancellationException) throw t
                 logcat(LogPriority.ERROR, t) {
                     "TachiyomiAT HTTP+render phase failed: pageKey=$pageKey"
@@ -682,7 +707,6 @@ class TranslationPipeline private constructor(
                 markPageFailed(manga, chapter, source, pageKey, t)
                 throw t
             }
-            providerLaneToken?.close()
         } finally {
             releaseReaderPageLease(leaseStore, pageKey, origin)
         }
@@ -758,6 +782,7 @@ class TranslationPipeline private constructor(
         provider = provider,
         streamRegistry = streamRegistry,
         engines = engines,
+        devicePagePermitGate = devicePagePermitGate,
         cleanedPublication = cleanedPublication,
         expectedBatchFingerprints = { fromLang, toLang -> batchExpectedFingerprints(fromLang, toLang) },
         retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation ->
@@ -845,7 +870,6 @@ class TranslationPipeline private constructor(
             // here is a fail-open no-op.
             val traceRun = TranslationTrace.currentRun()
             val nativeQueueSpan = traceRun?.beginStage(TranslationTraceStage.NATIVE_QUEUE)
-            val nativeLaneToken = traceRun?.schedule?.enterLane(TranslationTraceLane.NATIVE)
             val onnxResult = try {
                 withNativeLane(
                     timeoutMs = nativeTimeoutMs,
@@ -883,12 +907,11 @@ class TranslationPipeline private constructor(
                     } finally {
                         inFlightPageKeys.remove(pageKey)
                     }
-                }.also { nativeLaneToken?.close() }
+                }
             } catch (t: Throwable) {
-                nativeLaneToken?.close()
                 // Exception path: best-effort inline drain of deferred storage
                 // tails (the block has already failed the page), then rethrow.
-                runCatching { deferredPublications.drainAll() }
+                runCatching { drainDeferredPublications(deferredPublications) }
                     .onFailure { drainError ->
                         logcat(LogPriority.ERROR, drainError) {
                             "TachiyomiAT deferred storage publication failed: pageKey=$pageKey"
@@ -898,7 +921,7 @@ class TranslationPipeline private constructor(
             }
             // Normal path: drain OUTSIDE the permit. Fail-closed.
             try {
-                deferredPublications.drainAll()
+                drainDeferredPublications(deferredPublications)
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 logcat(LogPriority.ERROR, t) { "TachiyomiAT deferred storage publication failed: pageKey=$pageKey" }
@@ -998,10 +1021,10 @@ class TranslationPipeline private constructor(
     }
 
     /**
-     * Prepared-page boundary: loads the durable cleaned image
-     * produced by [prepareSinglePage] and runs translate + render outside the
-     * native permit so a caller's other native page may overlap this page's
-     * remote translation.
+     * Prepared-page boundary: loads the durable cleaned image produced by
+     * [prepareSinglePage], runs provider translation outside the native permit,
+     * and reacquires the permit for Canvas rendering after the request. This lets
+     * a caller's other native page overlap this page's remote translation.
      *
      * Returns a typed completion outcome when translate/render work was
      * performed or attempted (including textless terminal no-ops). Returns
@@ -1124,11 +1147,9 @@ class TranslationPipeline private constructor(
                 decoded = decoded,
                 commitPrecondition = snapshot.toPrecondition(),
             )
-            // The provider lane is active for the whole HTTP
-            // translate + render section of the prepared path so the schedule
-            // accumulator measures it overlapping the next page's native prep.
-            val providerLaneToken =
-                TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.PROVIDER)
+            // Provider occupancy covers HTTP translation; render permit wait and
+            // active render occupancy are recorded separately. The schedule
+            // accumulator preserves their overlap with the next page's native prep.
             val preparedOutcome = try {
                 val completed = withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
                     translateSinglePageHttpRender(manga, chapter, source, prepared.pageKey, ctx, stageListener, PageWriteOrigin.AUTO)
@@ -1146,15 +1167,12 @@ class TranslationPipeline private constructor(
                     completed
                 }
             } catch (e: CancellationException) {
-                providerLaneToken?.close()
                 throw e
             } catch (e: java.io.IOException) {
-                providerLaneToken?.close()
                 // A genuine failure (unreadable cleaned image, timeout) — propagate
                 // so the caller attributes it as a failure, not a race loss.
                 throw e
             } catch (t: Throwable) {
-                providerLaneToken?.close()
                 if (t is CancellationException) throw t
                 logcat(LogPriority.ERROR, t) {
                     "TachiyomiAT translatePreparedPage failed: pageKey=${prepared.pageKey}"
@@ -1162,7 +1180,6 @@ class TranslationPipeline private constructor(
                 markPageFailed(manga, chapter, source, prepared.pageKey, t)
                 throw t
             }
-            providerLaneToken?.close()
             return preparedOutcome
         } finally {
             releaseReaderPageLease(store, prepared.pageKey, PageWriteOrigin.AUTO)

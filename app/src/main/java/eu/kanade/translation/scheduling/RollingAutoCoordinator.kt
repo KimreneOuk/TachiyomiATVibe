@@ -6,7 +6,6 @@ import eu.kanade.translation.diagnostics.TranslationScheduleState
 import eu.kanade.translation.diagnostics.TranslationScheduleTrace
 import eu.kanade.translation.diagnostics.TranslationStageSpan
 import eu.kanade.translation.diagnostics.TranslationTrace
-import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
@@ -526,9 +525,6 @@ class RollingAutoCoordinator(
             // provider request is in flight. The stage listener refines this.
             updateSlot(work.pageIndex, AutoSlotState.Translating, work.generation)
             publishSnapshot(work.generation)
-            // Provider-lane occupancy contributes to the schedule overlap
-            // accumulator (N translate overlapping N+1 native prep).
-            val providerLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.PROVIDER)
             try {
                 if (!isWorkCurrent(work)) {
                     work.trace?.end(TranslationTraceOutcome.STALE_HANDOFF)
@@ -662,7 +658,6 @@ class RollingAutoCoordinator(
                 }
             } finally {
                 drainingRun = null
-                providerLaneToken?.close()
                 if (isWorkCurrent(work)) {
                     removeTranslateAdmitted(work.pageIndex, work.generation)
                     poke()
@@ -875,7 +870,6 @@ class RollingAutoCoordinator(
                 nativeActive = nativeAdmitted.size,
                 providerActive = translateAdmitted.size,
             )
-            val nativeLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.NATIVE)
             var sendingPrepared = false
             try {
                 if (!isGenerationActive(spec.generation)) return false
@@ -944,17 +938,33 @@ class RollingAutoCoordinator(
                                 TranslationTraceStage.PREPARED_QUEUE,
                             )
                             sendingPrepared = true
-                            preparedChannel.send(
-                                PreparedWork(
-                                    pageIndex = idx,
-                                    prepared = prepared,
-                                    identity = spec.identity,
-                                    session = spec.session,
-                                    generation = spec.generation,
-                                    trace = runTrace,
-                                    preparedQueueSpan = preparedQueueSpan,
-                                ),
+                            val preparedSendSpan = runTrace?.beginStage(
+                                TranslationTraceStage.PREPARED_SEND_WAIT,
                             )
+                            try {
+                                preparedChannel.send(
+                                    PreparedWork(
+                                        pageIndex = idx,
+                                        prepared = prepared,
+                                        identity = spec.identity,
+                                        session = spec.session,
+                                        generation = spec.generation,
+                                        trace = runTrace,
+                                        preparedQueueSpan = preparedQueueSpan,
+                                    ),
+                                )
+                                preparedSendSpan?.end(TranslationTraceOutcome.SUCCESS)
+                            } catch (t: Throwable) {
+                                preparedSendSpan?.end(
+                                    if (t is CancellationException) {
+                                        TranslationTraceOutcome.CANCELLED
+                                    } else {
+                                        TranslationTraceOutcome.FAILURE
+                                    },
+                                    error = t,
+                                )
+                                throw t
+                            }
                         } else {
                             // Window died between prepare and handoff: the
                             // cancel sweep already typed this run; the
@@ -982,7 +992,6 @@ class RollingAutoCoordinator(
                     updateSlot(idx, AutoSlotState.Failed(retryable = true), spec.generation)
                 }
             } finally {
-                nativeLaneToken?.close()
                 removeNativeAdmitted(idx, spec.generation)
             }
             publishSnapshot(spec.generation)

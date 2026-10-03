@@ -164,7 +164,7 @@ class EngineEpochStopRaceTest {
     /**
      * Drives the REAL AUTO boundary pair the rolling coordinator issues:
      * prepareSinglePage (native, under the permit) then translatePreparedPage
-     * (HTTP+render, OUTSIDE the permit — the phase  targets). The outcome
+     * (HTTP outside the permit; render reacquires it after provider work settles). The outcome
      * deferred converts every failure into a named assertion, never a timeout.
      */
     private fun launchAutoPage(pageKey: String): AutoRun {

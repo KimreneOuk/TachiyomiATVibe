@@ -112,6 +112,9 @@ class TranslationPipelineDiagnosticsTest {
             "schema=translation_trace_v1 event=schedule_start $identity page=none pageIndex=none" +
                 " pages=1 wallMs=0 nativeBusyMs=0 providerBusyMs=0 renderBusyMs=0" +
                 " overlapMs=0 unionActiveMs=0 concurrencySavingsMs=0 workMs=0 criticalPathMs=0" +
+                " leaseWaitMs=0 nativeQueueMs=0 preparedQueueMs=0 preparedSendWaitMs=0" +
+                " providerWindowWaitMs=0 providerGovernorWaitMs=0 translateMs=0 renderPermitWaitMs=0" +
+                " deferredStorageDrainMs=0 cleanedPersistMs=0 storeCommitMs=0 storeFlushMs=0" +
                 " maxQueueMs=0 slowestPage=none bottleneck=none outcome=started",
             // run_start
             "schema=translation_trace_v1 event=run_start $runIdentity pageIndex=0" +
@@ -134,7 +137,10 @@ class TranslationPipelineDiagnosticsTest {
             // schedule_end
             "schema=translation_trace_v1 event=schedule_end $identity page=none pageIndex=none" +
                 " pages=1 wallMs=5 nativeBusyMs=0 providerBusyMs=0 renderBusyMs=0" +
-                " overlapMs=0 unionActiveMs=0 concurrencySavingsMs=0 workMs=0 criticalPathMs=5" +
+                " overlapMs=0 unionActiveMs=0 concurrencySavingsMs=0 workMs=0" +
+                " leaseWaitMs=0 nativeQueueMs=0 preparedQueueMs=0 preparedSendWaitMs=0" +
+                " providerWindowWaitMs=0 providerGovernorWaitMs=0 translateMs=0 renderPermitWaitMs=0" +
+                " deferredStorageDrainMs=0 cleanedPersistMs=0 storeCommitMs=0 storeFlushMs=0 criticalPathMs=5" +
                 " maxQueueMs=0 slowestPage=$pageToken bottleneck=none outcome=success",
             // route_change
             "schema=translation_trace_v1 event=route_change $runIdentity pageIndex=0" +
@@ -145,6 +151,62 @@ class TranslationPipelineDiagnosticsTest {
                 " state=admitted reason=lease_granted queueDepth=0 nativeActive=1 providerActive=0",
         )
         lines.forEach { line -> line.shouldStartWithSchema() }
+    }
+
+    @Test
+    fun `schedule summary decomposes lane occupancy into page stage components`() {
+        val lines = withCapture(detailed = true) {
+            val clock = FakeClock()
+            val schedule = TranslationPipelineDiagnostics.startSchedule(
+                mode = TranslationTraceMode.AUTO,
+                pages = 1,
+                clock = clock,
+            )
+            val run = TranslationPipelineDiagnostics.startRun(schedule, pageIndex = 0, clock = clock)
+
+            fun stage(stage: TranslationTraceStage, durationMs: Long) {
+                run.beginStage(stage).let {
+                    clock.advanceMs(durationMs)
+                    it.end()
+                }
+            }
+
+            stage(TranslationTraceStage.LEASE_WAIT, 2)
+            stage(TranslationTraceStage.NATIVE_QUEUE, 3)
+            stage(TranslationTraceStage.PREPARED_QUEUE, 4)
+            stage(TranslationTraceStage.PREPARED_SEND_WAIT, 11)
+            stage(TranslationTraceStage.PROVIDER_WINDOW_WAIT, 5)
+            stage(TranslationTraceStage.PROVIDER_GOVERNOR_WAIT, 6)
+            stage(TranslationTraceStage.TRANSLATE, 7)
+            stage(TranslationTraceStage.RENDER_PERMIT_WAIT, 12)
+            stage(TranslationTraceStage.DEFERRED_STORAGE_DRAIN, 13)
+            stage(TranslationTraceStage.CLEANED_PERSIST, 8)
+            stage(TranslationTraceStage.STORE_COMMIT, 9)
+            stage(TranslationTraceStage.STORE_FLUSH, 10)
+
+            schedule.enterLane(TranslationTraceLane.NATIVE).also {
+                clock.advanceMs(14)
+                it.close()
+            }
+            schedule.enterLane(TranslationTraceLane.PROVIDER).also {
+                clock.advanceMs(15)
+                it.close()
+            }
+            schedule.enterLane(TranslationTraceLane.RENDER).also {
+                clock.advanceMs(16)
+                it.close()
+            }
+
+            run.end(TranslationTraceOutcome.SUCCESS)
+            schedule.end(TranslationTraceOutcome.SUCCESS)
+        }
+
+        val scheduleEnd = lines.single { it.contains("event=schedule_end") }
+        scheduleEnd.shouldContain("nativeBusyMs=14 providerBusyMs=15 renderBusyMs=16")
+        scheduleEnd.shouldContain("leaseWaitMs=2 nativeQueueMs=3 preparedQueueMs=4")
+        scheduleEnd.shouldContain("preparedSendWaitMs=11 providerWindowWaitMs=5 providerGovernorWaitMs=6")
+        scheduleEnd.shouldContain("translateMs=7 renderPermitWaitMs=12 deferredStorageDrainMs=13")
+        scheduleEnd.shouldContain("cleanedPersistMs=8 storeCommitMs=9 storeFlushMs=10")
     }
 
     // ------------------------------------------------------------------
@@ -211,7 +273,9 @@ class TranslationPipelineDiagnosticsTest {
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.LEASE_WAIT, TranslationTraceProvider.NONE) shouldBe 1_000L
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.NATIVE_QUEUE, TranslationTraceProvider.NONE) shouldBe 1_000L
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.PREPARED_QUEUE, TranslationTraceProvider.NONE) shouldBe 1_000L
+        TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.PREPARED_SEND_WAIT, TranslationTraceProvider.NONE) shouldBe 1_000L
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.PROVIDER_GOVERNOR_WAIT, TranslationTraceProvider.NONE) shouldBe 1_000L
+        TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.RENDER_PERMIT_WAIT, TranslationTraceProvider.NONE) shouldBe 1_000L
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.SOURCE_DECODE, TranslationTraceProvider.CPU) shouldBe 750L
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.DETECT, TranslationTraceProvider.CPU) shouldBe 750L
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.SEGMENT, TranslationTraceProvider.CPU) shouldBe 750L
@@ -224,6 +288,7 @@ class TranslationPipelineDiagnosticsTest {
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.RENDER, TranslationTraceProvider.ANDROID_CANVAS) shouldBe 1_000L
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.STORE_COMMIT, TranslationTraceProvider.NONE) shouldBe 1_000L
         TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.STORE_FLUSH, TranslationTraceProvider.NONE) shouldBe 1_000L
+        TranslationTraceBudgets.budgetMsFor(TranslationTraceStage.DEFERRED_STORAGE_DRAIN, TranslationTraceProvider.NONE) shouldBe 1_000L
 
         // lag=true iff durationMs > budgetMs or queueMs > queue budget.
         withCapture(detailed = true) {

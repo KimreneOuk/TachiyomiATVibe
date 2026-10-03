@@ -11,8 +11,10 @@ import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.translator.ProviderFailure
@@ -42,6 +44,8 @@ import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.persistence.chapter.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
+import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
+import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
 import eu.kanade.translation.pipeline.adaptive.DeviceStageNormalization
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
@@ -59,9 +63,9 @@ import java.io.InputStream
 import kotlin.coroutines.coroutineContext
 
 /**
- * Runs HTTP translation and rendering outside the native permit. It handles
- * contextual or plain translation, bounded partial retries, color recompute,
- * Canvas rendering, and guarded commit. The cleaned bitmap in
+ * Runs HTTP translation outside the native permit, then reacquires the device
+ * permit for Canvas rendering. It handles contextual or plain translation,
+ * bounded partial retries, color recompute, and guarded commit. The cleaned bitmap in
  * [OnnxPhaseResult] remains owned by this stage until its commit or cleanup.
  */
 internal class SinglePageHttpRenderPhase(
@@ -69,6 +73,7 @@ internal class SinglePageHttpRenderPhase(
     private val provider: TranslationFileProvider,
     private val streamRegistry: eu.kanade.translation.pipeline.execution.TranslationStreamRegistry,
     private val engines: EngineLane,
+    private val devicePagePermitGate: DevicePagePermitGate,
     private val cleanedPublication: CleanedPublication,
     // Engine-cache reads (translator signature/model/mode change on rebuild),
     // resolved through the pipeline's own helper at each call.
@@ -85,6 +90,43 @@ internal class SinglePageHttpRenderPhase(
         PageTranslation,
     ) -> PageTranslation,
 ) {
+
+    /** Acquire the existing device-active gate only after provider work has settled. */
+    private suspend fun withRenderPermit(
+        origin: PageWriteOrigin,
+        block: suspend () -> Unit,
+    ): Boolean {
+        val waitSpan = TranslationTrace.beginStage(
+            stage = TranslationTraceStage.RENDER_PERMIT_WAIT,
+            lane = TranslationTraceLane.SCHEDULER,
+            site = if (origin == PageWriteOrigin.MANUAL) {
+                TranslationTraceSite.READER_SINGLE_PAGE
+            } else {
+                TranslationTraceSite.ROLLING_AUTO_TRANSLATION
+            },
+            leaseKind = TranslationTraceLeaseKind.RENDER,
+        )
+        val permit = try {
+            devicePagePermitGate.acquire(
+                if (origin == PageWriteOrigin.MANUAL) DevicePermitPriority.FOREGROUND else DevicePermitPriority.BACKGROUND,
+            )
+        } catch (t: Throwable) {
+            waitSpan.end(
+                if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
+                error = t,
+            )
+            throw t
+        }
+        waitSpan.end(if (permit == null) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.SUCCESS)
+        if (permit == null) return false
+
+        try {
+            block()
+        } finally {
+            permit.release()
+        }
+        return true
+    }
 
     // Read live engine state so rebuilds are observed.
     private val textTranslator get() = engines.textTranslator
@@ -141,11 +183,13 @@ internal class SinglePageHttpRenderPhase(
     }
 
     /**
-     * Phase HTTP+Render of the reader single-page path: runs OUTSIDE the permit.
+     * Phase HTTP+Render of the reader single-page path: HTTP runs outside the
+     * device permit; rendering reacquires it after the provider call completes.
      *
      * Takes the [OnnxPhaseResult] from [translateSinglePageOnnx] (cleanedBitmap
      * alive on [PageTranslation]), translates text blocks via HTTP, renders
-     * translated text onto the cleaned bitmap via Canvas, and persists the result.
+     * translated text onto the cleaned bitmap via Canvas, then persists the result
+     * after releasing the render permit.
      *
      *  Epoch/drain contract: this is the
      * SINGLE translator borrow site. The phase registers the borrow on
@@ -244,6 +288,24 @@ internal class SinglePageHttpRenderPhase(
                 terminalPageKeys = emptySet(),
                 failure = renderFailure,
                 reason = renderFailure.safeSummary,
+            )
+        }
+
+        fun deferRenderForPermit() {
+            val failure = ProviderFailure(
+                kind = ProviderFailureKind.REFUSAL,
+                retryability = ProviderFailureRetryability.PAUSE,
+                safeSummary = "render permit unavailable; retry required",
+            )
+            // Keep a previous READY render from making newly translated text
+            // appear committed when this attempt could not render it.
+            pageTranslation.renderStatus = StageStatus.PENDING
+            translationOutcome = TranslationCompletionOutcome.Paused(
+                anchorPageKey = pageKey,
+                retryablePageKeys = setOf(pageKey),
+                failure = failure,
+                nextEligibleRetryAtEpochMs = failure.retryAfterAtEpochMs,
+                reason = failure.safeSummary,
             )
         }
 
@@ -353,11 +415,18 @@ internal class SinglePageHttpRenderPhase(
                 governorSpanSettled = true
                 governorSpan.end()
             }
-            val ct = activeTranslator as? ContextualTextTranslator
-            if (ct != null) {
-                ct.translateContextual(chunk)
-            } else {
-                activeTranslator.translatePage(pageKey, targetPage)
+            // Provider busy time measures the actual translation call, excluding
+            // governor wait, context preparation, render, and storage work.
+            val providerLaneToken = TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.PROVIDER)
+            try {
+                val ct = activeTranslator as? ContextualTextTranslator
+                if (ct != null) {
+                    ct.translateContextual(chunk)
+                } else {
+                    activeTranslator.translatePage(pageKey, targetPage)
+                }
+            } finally {
+                providerLaneToken?.close()
             }
         }
 
@@ -578,42 +647,86 @@ internal class SinglePageHttpRenderPhase(
                 val hasCleanedOnDisk = pageTranslation.cleanedImageName != null && pageTranslation.inpaintStatus == StageStatus.READY
                 if (hasCleanedBitmap || hasCleanedOnDisk) {
                     val cleanedBitmap = pageTranslation.cleanedBitmap
-                    // Layout (color estimation) is a sub-interval
-                    // of the render attempt, so its duration is included in
-                    // the render stage sum.
-                    val layoutSpan = TranslationTrace.beginStage(
-                        TranslationTraceStage.LAYOUT,
-                        lane = TranslationTraceLane.RENDER,
-                        normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-                    )
-                    val renderSpan = TranslationTrace.beginStage(
-                        TranslationTraceStage.RENDER,
-                        lane = TranslationTraceLane.RENDER,
-                        normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-                    )
-                    try {
-                        pageTranslation.renderStatus = StageStatus.RUNNING
+                    pageTranslation.renderStatus = StageStatus.RUNNING
+                    val liveRenderPublished = try {
                         publishLiveStage("single-page render running") {
                             it.renderStatus = StageStatus.RUNNING
                         }
-                        stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
-                        if (cleanedBitmap != null) {
-                            RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
-                        }
-                        layoutSpan.end()
-                        pageTranslation.renderStatus = StageStatus.READY
-                        pageTranslation.updatedAt = System.currentTimeMillis()
-                        renderSpan.end()
+                        true
                     } catch (e: Exception) {
-                        if (e is CancellationException) {
-                            layoutSpan.end(TranslationTraceOutcome.CANCELLED)
-                            renderSpan.end(TranslationTraceOutcome.CANCELLED, error = e)
-                            throw e
-                        }
-                        layoutSpan.end(TranslationTraceOutcome.FAILURE)
-                        renderSpan.end(TranslationTraceOutcome.FAILURE, error = e)
+                        if (e is CancellationException) throw e
                         markRenderFailure()
-                        logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
+                        logcat(LogPriority.ERROR, e) { "Failed to publish render start for single page $pageKey" }
+                        false
+                    }
+                    try {
+                        if (liveRenderPublished) {
+                            val renderStageAdmitted = try {
+                                stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
+                                true
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                markRenderFailure()
+                                logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
+                                false
+                            }
+                            if (renderStageAdmitted) {
+                                val rendered = withRenderPermit(origin) {
+                                    // Layout (color estimation) is a sub-interval of the
+                                    // active render attempt; gate waiting is reported in
+                                    // its own scheduler-lane span above.
+                                    val layoutSpan = TranslationTrace.beginStage(
+                                        TranslationTraceStage.LAYOUT,
+                                        lane = TranslationTraceLane.RENDER,
+                                        normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
+                                    )
+                                    try {
+                                        if (cleanedBitmap != null) {
+                                            // This zero-block boundary starts at actual render
+                                            // entry, after permit acquisition, around the estimator.
+                                            val renderSpan = TranslationTrace.beginStage(
+                                                TranslationTraceStage.RENDER,
+                                                lane = TranslationTraceLane.RENDER,
+                                                items = 0,
+                                                normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
+                                            )
+                                            try {
+                                                val renderLaneToken =
+                                                    TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.RENDER)
+                                                try {
+                                                    RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
+                                                } finally {
+                                                    renderLaneToken?.close()
+                                                }
+                                            } catch (e: Exception) {
+                                                renderSpan.end(
+                                                    if (e is CancellationException) {
+                                                        TranslationTraceOutcome.CANCELLED
+                                                    } else {
+                                                        TranslationTraceOutcome.FAILURE
+                                                    },
+                                                    error = e,
+                                                )
+                                                throw e
+                                            }
+                                            renderSpan.end()
+                                        }
+                                        layoutSpan.end()
+                                        pageTranslation.renderStatus = StageStatus.READY
+                                        pageTranslation.updatedAt = System.currentTimeMillis()
+                                    } catch (e: Exception) {
+                                        if (e is CancellationException) {
+                                            layoutSpan.end(TranslationTraceOutcome.CANCELLED)
+                                            throw e
+                                        }
+                                        layoutSpan.end(TranslationTraceOutcome.FAILURE)
+                                        markRenderFailure()
+                                        logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
+                                    }
+                                }
+                                if (!rendered) deferRenderForPermit()
+                            }
+                        }
                     } finally {
                         if (cleanedBitmap != null && ctx.pendingCleanedPublication == null) {
                             try {
@@ -658,22 +771,8 @@ internal class SinglePageHttpRenderPhase(
                         if (published != null) {
                             commitPrecondition = published.toPrecondition()
                         }
-                        // Spans are hoisted above the try so every
-                        // outcome (skip/failure/cancel/success) settles them.
-                        val retryLayoutSpan = TranslationTrace.beginStage(
-                            TranslationTraceStage.LAYOUT,
-                            lane = TranslationTraceLane.RENDER,
-                            normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-                        )
-                        val retryRenderSpan = TranslationTrace.beginStage(
-                            TranslationTraceStage.RENDER,
-                            lane = TranslationTraceLane.RENDER,
-                            normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-                        )
                         try {
                             if (published == null) {
-                                retryLayoutSpan.end(TranslationTraceOutcome.SKIP)
-                                retryRenderSpan.end(TranslationTraceOutcome.SKIP)
                                 markRenderFailure()
                                 pageTranslation.errorMessage =
                                     "Cleaned image could not be published; translated text was not rendered."
@@ -682,21 +781,71 @@ internal class SinglePageHttpRenderPhase(
                                 publishLiveStage("single-page render retry running") {
                                     it.renderStatus = StageStatus.RUNNING
                                 }
-                                stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
-                                RenderColorEstimator.recomputeFor(retriedCleaned, pageTranslation.blocks)
-                                retryLayoutSpan.end()
-                                pageTranslation.renderStatus = StageStatus.READY
-                                pageTranslation.updatedAt = System.currentTimeMillis()
-                                retryRenderSpan.end()
+                                val renderStageAdmitted = try {
+                                    stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
+                                    true
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    markRenderFailure()
+                                    logcat(LogPriority.ERROR, e) {
+                                        "Failed to render text for single page (retry path) $pageKey"
+                                    }
+                                    false
+                                }
+                                if (renderStageAdmitted) {
+                                    val rendered = withRenderPermit(origin) {
+                                        val retryLayoutSpan = TranslationTrace.beginStage(
+                                            TranslationTraceStage.LAYOUT,
+                                            lane = TranslationTraceLane.RENDER,
+                                            normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
+                                        )
+                                        try {
+                                            val retryRenderSpan = TranslationTrace.beginStage(
+                                                TranslationTraceStage.RENDER,
+                                                lane = TranslationTraceLane.RENDER,
+                                                items = 0,
+                                                normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
+                                            )
+                                            try {
+                                                val renderLaneToken =
+                                                    TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.RENDER)
+                                                try {
+                                                    RenderColorEstimator.recomputeFor(retriedCleaned, pageTranslation.blocks)
+                                                } finally {
+                                                    renderLaneToken?.close()
+                                                }
+                                            } catch (e: Exception) {
+                                                retryRenderSpan.end(
+                                                    if (e is CancellationException) {
+                                                        TranslationTraceOutcome.CANCELLED
+                                                    } else {
+                                                        TranslationTraceOutcome.FAILURE
+                                                    },
+                                                    error = e,
+                                                )
+                                                throw e
+                                            }
+                                            retryRenderSpan.end()
+                                            retryLayoutSpan.end()
+                                            pageTranslation.renderStatus = StageStatus.READY
+                                            pageTranslation.updatedAt = System.currentTimeMillis()
+                                        } catch (e: Exception) {
+                                            if (e is CancellationException) {
+                                                retryLayoutSpan.end(TranslationTraceOutcome.CANCELLED)
+                                                throw e
+                                            }
+                                            retryLayoutSpan.end(TranslationTraceOutcome.FAILURE)
+                                            markRenderFailure()
+                                            logcat(LogPriority.ERROR, e) {
+                                                "Failed to render text for single page (retry path) $pageKey"
+                                            }
+                                        }
+                                    }
+                                    if (!rendered) deferRenderForPermit()
+                                }
                             }
                         } catch (e: Exception) {
-                            if (e is CancellationException) {
-                                retryLayoutSpan.end(TranslationTraceOutcome.CANCELLED)
-                                retryRenderSpan.end(TranslationTraceOutcome.CANCELLED, error = e)
-                                throw e
-                            }
-                            retryLayoutSpan.end(TranslationTraceOutcome.FAILURE)
-                            retryRenderSpan.end(TranslationTraceOutcome.FAILURE, error = e)
+                            if (e is CancellationException) throw e
                             markRenderFailure()
                             logcat(LogPriority.ERROR, e) { "Failed to render text for single page (retry path) $pageKey" }
                         } finally {
