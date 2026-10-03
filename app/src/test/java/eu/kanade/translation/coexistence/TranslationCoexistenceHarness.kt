@@ -39,6 +39,7 @@ import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.SinglePageHttpRenderPhase
 import eu.kanade.translation.pipeline.SinglePageOnnxPhase
 import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
 import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
@@ -457,11 +458,13 @@ internal class TranslationCoexistenceHarness private constructor(
                 engineRebuildMutex = engineRebuildMutex,
             )
 
+            val devicePagePermitGate = DevicePagePermitGate()
             val httpRenderPhase = SinglePageHttpRenderPhase(
                 translationPreferences = preferences,
                 provider = provider,
                 streamRegistry = streamRegistry,
                 engines = engineLane,
+                devicePagePermitGate = devicePagePermitGate,
                 cleanedPublication = cleanedPublicationMock,
                 expectedBatchFingerprints = expectedFingerprints,
                 retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation ->
@@ -660,6 +663,7 @@ internal class TranslationCoexistenceHarness private constructor(
                     nativeStallWatchdog = nativeStallWatchdog,
                     nativeRunQuarantine = nativeRunQuarantine,
                     engines = engineLane,
+                    devicePagePermitGate = devicePagePermitGate,
                 ),
             )
             setFields(

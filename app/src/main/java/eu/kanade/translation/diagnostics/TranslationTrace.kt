@@ -110,12 +110,15 @@ enum class TranslationTraceStage : TraceToken {
     INPAINT,
     CLEANED_PERSIST,
     PREPARED_QUEUE,
+    PREPARED_SEND_WAIT,
     PROVIDER_WINDOW_WAIT,
     PROVIDER_GOVERNOR_WAIT,
     TRANSLATE,
     RENDER_JOIN,
+    RENDER_PERMIT_WAIT,
     LAYOUT,
     RENDER,
+    DEFERRED_STORAGE_DRAIN,
     STORE_COMMIT,
     STORE_FLUSH,
     JOURNAL_CREDIT_WAIT,
@@ -555,6 +558,7 @@ class TranslationScheduleTrace internal constructor(
     private var slowestPageToken: String = TranslationPipelineDiagnostics.NONE
     private var slowestRunMs: Long = 0
     private var lastStateKey: String? = null
+    private val stageNanos = EnumMap<TranslationTraceStage, Long>(TranslationTraceStage::class.java)
 
     // Runs that terminated with a non-success outcome under this
     // schedule. Lets a natural shutdown after a fully successful window emit
@@ -576,6 +580,13 @@ class TranslationScheduleTrace internal constructor(
 
     internal fun exitLane(lane: TranslationTraceLane) {
         accumulator.exit(lane, clock.nowNanos())
+    }
+
+    /** Fixed-size stage attribution across the schedule's page runs and schedule spans. */
+    internal fun recordStage(stage: TranslationTraceStage, durationNanos: Long) {
+        synchronized(stateLock) {
+            stageNanos[stage] = (stageNanos[stage] ?: 0L) + durationNanos.coerceAtLeast(0L)
+        }
     }
 
     /** Records a bounded scheduling decision. Identical consecutive
@@ -714,7 +725,9 @@ class TranslationScheduleTrace internal constructor(
         if (!closed.compareAndSet(false, true)) return false
         val now = clock.nowNanos()
         val snapshot = accumulator.snapshot(now)
-        val (maxQueue, slowestPage) = synchronized(stateLock) { maxQueueMs to slowestPageToken }
+        val (maxQueue, slowestPage, stages) = synchronized(stateLock) {
+            Triple(maxQueueMs, slowestPageToken, TranslationScheduleStageTotals.from(stageNanos))
+        }
         TranslationPipelineDiagnostics.emitScheduleEnd(
             identity = identity,
             pages = pages,
@@ -722,6 +735,7 @@ class TranslationScheduleTrace internal constructor(
             snapshot = snapshot,
             maxQueueMs = maxQueue,
             slowestPage = slowestPage,
+            stages = stages,
             outcome = outcome,
         )
         return true
@@ -772,7 +786,9 @@ class TranslationScheduleStageSpan internal constructor(
     ): Boolean {
         if (!done.compareAndSet(false, true)) return false
         val now = clock.nowNanos()
-        val durationMs = (now - startNanos).coerceAtLeast(0) / 1_000_000
+        val durationNanos = (now - startNanos).coerceAtLeast(0)
+        val durationMs = durationNanos / 1_000_000
+        schedule.recordStage(stage, durationNanos)
         TranslationPipelineDiagnostics.emitStageEnd(
             identity = schedule.identity,
             lane = lane,
@@ -793,6 +809,50 @@ class TranslationScheduleStageSpan internal constructor(
     /** `use { }`/finally-safe alias for [end] with the success outcome. */
     override fun close() {
         end()
+    }
+}
+
+/**
+ * Schedule-end attribution. These are summed span durations, not a partition:
+ * prepared-send wait is inside prepared-queue residence, and persistence may
+ * execute while a deferred-storage-drain span is active.
+ */
+internal data class TranslationScheduleStageTotals(
+    val leaseWaitMs: Long,
+    val nativeQueueMs: Long,
+    val preparedQueueMs: Long,
+    val preparedSendWaitMs: Long,
+    val providerWindowWaitMs: Long,
+    val providerGovernorWaitMs: Long,
+    val translateMs: Long,
+    val renderPermitWaitMs: Long,
+    val deferredStorageDrainMs: Long,
+    val cleanedPersistMs: Long,
+    val storeCommitMs: Long,
+    val storeFlushMs: Long,
+) {
+    companion object {
+        private const val NANOS_PER_MS = 1_000_000L
+
+        fun from(stages: EnumMap<TranslationTraceStage, Long>): TranslationScheduleStageTotals {
+            fun duration(stage: TranslationTraceStage): Long =
+                (stages[stage] ?: 0L) / NANOS_PER_MS
+
+            return TranslationScheduleStageTotals(
+                leaseWaitMs = duration(TranslationTraceStage.LEASE_WAIT),
+                nativeQueueMs = duration(TranslationTraceStage.NATIVE_QUEUE),
+                preparedQueueMs = duration(TranslationTraceStage.PREPARED_QUEUE),
+                preparedSendWaitMs = duration(TranslationTraceStage.PREPARED_SEND_WAIT),
+                providerWindowWaitMs = duration(TranslationTraceStage.PROVIDER_WINDOW_WAIT),
+                providerGovernorWaitMs = duration(TranslationTraceStage.PROVIDER_GOVERNOR_WAIT),
+                translateMs = duration(TranslationTraceStage.TRANSLATE),
+                renderPermitWaitMs = duration(TranslationTraceStage.RENDER_PERMIT_WAIT),
+                deferredStorageDrainMs = duration(TranslationTraceStage.DEFERRED_STORAGE_DRAIN),
+                cleanedPersistMs = duration(TranslationTraceStage.CLEANED_PERSIST),
+                storeCommitMs = duration(TranslationTraceStage.STORE_COMMIT),
+                storeFlushMs = duration(TranslationTraceStage.STORE_FLUSH),
+            )
+        }
     }
 }
 
@@ -888,6 +948,7 @@ class TranslationRunTrace internal constructor(
         synchronized(stageLock) {
             stageNanos[stage] = (stageNanos[stage] ?: 0L) + durationNanos
         }
+        schedule?.recordStage(stage, durationNanos)
         if (TranslationPipelineDiagnostics.isQueueStage(stage)) {
             schedule?.noteQueueWait(durationNanos / 1_000_000)
         }

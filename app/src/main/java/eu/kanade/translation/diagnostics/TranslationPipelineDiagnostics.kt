@@ -88,8 +88,10 @@ object TranslationTraceBudgets {
         TranslationTraceStage.LEASE_WAIT,
         TranslationTraceStage.NATIVE_QUEUE,
         TranslationTraceStage.PREPARED_QUEUE,
+        TranslationTraceStage.PREPARED_SEND_WAIT,
         TranslationTraceStage.PROVIDER_WINDOW_WAIT,
         TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+        TranslationTraceStage.RENDER_PERMIT_WAIT,
         TranslationTraceStage.JOURNAL_CREDIT_WAIT,
     )
 
@@ -108,8 +110,10 @@ object TranslationTraceBudgets {
         TranslationTraceStage.LEASE_WAIT,
         TranslationTraceStage.NATIVE_QUEUE,
         TranslationTraceStage.PREPARED_QUEUE,
+        TranslationTraceStage.PREPARED_SEND_WAIT,
         TranslationTraceStage.PROVIDER_WINDOW_WAIT,
         TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+        TranslationTraceStage.RENDER_PERMIT_WAIT,
         TranslationTraceStage.JOURNAL_CREDIT_WAIT,
         TranslationTraceStage.RENDER_JOIN,
         -> QUEUE_WAIT_MS
@@ -132,6 +136,7 @@ object TranslationTraceBudgets {
         -> RENDER_MS
 
         TranslationTraceStage.CLEANED_PERSIST,
+        TranslationTraceStage.DEFERRED_STORAGE_DRAIN,
         TranslationTraceStage.STORE_COMMIT,
         TranslationTraceStage.STORE_FLUSH,
         TranslationTraceStage.JOURNAL_TERMINAL_LAG,
@@ -328,8 +333,10 @@ object TranslationPipelineDiagnostics {
         TranslationTraceStage.LEASE_WAIT,
         TranslationTraceStage.NATIVE_QUEUE,
         TranslationTraceStage.PREPARED_QUEUE,
+        TranslationTraceStage.PREPARED_SEND_WAIT,
         TranslationTraceStage.PROVIDER_WINDOW_WAIT,
         TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+        TranslationTraceStage.RENDER_PERMIT_WAIT,
         TranslationTraceStage.JOURNAL_CREDIT_WAIT,
         TranslationTraceStage.RENDER_JOIN,
         -> TranslationTraceLane.SCHEDULER
@@ -345,6 +352,7 @@ object TranslationPipelineDiagnostics {
 
         TranslationTraceStage.TRANSLATE -> TranslationTraceLane.PROVIDER
         TranslationTraceStage.CLEANED_PERSIST,
+        TranslationTraceStage.DEFERRED_STORAGE_DRAIN,
         TranslationTraceStage.STORE_COMMIT,
         TranslationTraceStage.STORE_FLUSH,
         TranslationTraceStage.JOURNAL_TERMINAL_LAG,
@@ -379,6 +387,7 @@ object TranslationPipelineDiagnostics {
         snapshot: TranslationLaneOverlapAccumulator.Snapshot,
         maxQueueMs: Long,
         slowestPage: String,
+        stages: TranslationScheduleStageTotals,
         outcome: TranslationTraceOutcome,
     ) {
         try {
@@ -396,6 +405,7 @@ object TranslationPipelineDiagnostics {
                     maxQueueMs = maxQueueMs,
                     slowestPage = slowestPage,
                     bottleneck = bottleneckLaneToken(snapshot),
+                    stages = stages,
                     outcome = outcome,
                 ),
                 terminalPriority(outcome),
@@ -686,6 +696,9 @@ object TranslationPipelineDiagnostics {
             " pages=${pages ?: NONE}" +
             " wallMs=0 nativeBusyMs=0 providerBusyMs=0 renderBusyMs=0" +
             " overlapMs=0 unionActiveMs=0 concurrencySavingsMs=0 workMs=0 criticalPathMs=0" +
+            " leaseWaitMs=0 nativeQueueMs=0 preparedQueueMs=0 preparedSendWaitMs=0" +
+            " providerWindowWaitMs=0 providerGovernorWaitMs=0 translateMs=0 renderPermitWaitMs=0" +
+            " deferredStorageDrainMs=0 cleanedPersistMs=0 storeCommitMs=0 storeFlushMs=0" +
             " maxQueueMs=0 slowestPage=$NONE bottleneck=$NONE" +
             " outcome=${TranslationTraceOutcome.STARTED.token}"
 
@@ -702,6 +715,7 @@ object TranslationPipelineDiagnostics {
         maxQueueMs: Long,
         slowestPage: String,
         bottleneck: String,
+        stages: TranslationScheduleStageTotals,
         outcome: TranslationTraceOutcome,
     ): String =
         identityPrefix(EVENT_SCHEDULE_END, identity) +
@@ -714,6 +728,18 @@ object TranslationPipelineDiagnostics {
             " unionActiveMs=$unionActiveMs" +
             " concurrencySavingsMs=$concurrencySavingsMs" +
             " workMs=${nativeBusyMs + providerBusyMs + renderBusyMs}" +
+            " leaseWaitMs=${stages.leaseWaitMs}" +
+            " nativeQueueMs=${stages.nativeQueueMs}" +
+            " preparedQueueMs=${stages.preparedQueueMs}" +
+            " preparedSendWaitMs=${stages.preparedSendWaitMs}" +
+            " providerWindowWaitMs=${stages.providerWindowWaitMs}" +
+            " providerGovernorWaitMs=${stages.providerGovernorWaitMs}" +
+            " translateMs=${stages.translateMs}" +
+            " renderPermitWaitMs=${stages.renderPermitWaitMs}" +
+            " deferredStorageDrainMs=${stages.deferredStorageDrainMs}" +
+            " cleanedPersistMs=${stages.cleanedPersistMs}" +
+            " storeCommitMs=${stages.storeCommitMs}" +
+            " storeFlushMs=${stages.storeFlushMs}" +
             " criticalPathMs=$wallMs" +
             " maxQueueMs=$maxQueueMs" +
             " slowestPage=$slowestPage" +
