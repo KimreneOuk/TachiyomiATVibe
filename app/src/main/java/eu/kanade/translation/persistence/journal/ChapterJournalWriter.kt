@@ -85,9 +85,17 @@ internal data class ChapterJournalInventoryRecord(
     val expectedPageKeys: List<String>,
     val expectedPageCount: Int,
     val sourceFingerprint: String,
+    /** Only v2 records may assert that this count came from accepted registration truth. */
+    val expectedPageCountTrusted: Boolean = false,
 ) {
+    /** v1 is deliberately never promoted, even if a stray JSON field claims otherwise. */
+    val hasTrustedExpectedPageCount: Boolean
+        get() = schemaVersion == SCHEMA_VERSION && expectedPageCountTrusted
+
     companion object {
-        const val SCHEMA_VERSION = 1
+        const val LEGACY_SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
+        val SUPPORTED_SCHEMA_VERSIONS = setOf(LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
     }
 }
 
@@ -118,6 +126,8 @@ internal data class ChapterJournalInventorySnapshot(
     val expectedPageKeys: Set<String>,
     val expectedPageCount: Int,
     val sourceShaByPageKey: Map<String, String>,
+    /** Defaults conservative; only accepted registration truth may set this. */
+    val expectedPageCountTrusted: Boolean = false,
 ) {
     init {
         require(expectedPageCount >= expectedPageKeys.size) {
@@ -128,7 +138,8 @@ internal data class ChapterJournalInventorySnapshot(
     fun record(chapterIdentityHash: String): ChapterJournalInventoryRecord {
         val sortedKeys = expectedPageKeys.sorted()
         val fingerprintFields = buildList<Any?> {
-            add("journal-source-inventory-v1")
+            add("journal-source-inventory-v2")
+            add(expectedPageCountTrusted)
             add(expectedPageCount)
             sortedKeys.forEach { key ->
                 add(key)
@@ -136,10 +147,12 @@ internal data class ChapterJournalInventorySnapshot(
             }
         }
         return ChapterJournalInventoryRecord(
+            schemaVersion = ChapterJournalInventoryRecord.SCHEMA_VERSION,
             chapterIdentityHash = chapterIdentityHash,
             expectedPageKeys = sortedKeys,
             expectedPageCount = expectedPageCount,
             sourceFingerprint = StageFingerprints.canonicalFingerprint(fingerprintFields),
+            expectedPageCountTrusted = expectedPageCountTrusted,
         )
     }
 
@@ -371,6 +384,9 @@ internal class ChapterJournalWriter(
     private val droppedControlRecords = AtomicLong(0L)
     private val lostTerminalRecords = AtomicLong(0L)
     private val writerFailures = AtomicLong(0L)
+
+    @Volatile
+    private var terminalFailure: Throwable? = null
     private val terminalPayloadRecords = AtomicLong(0L)
     private val offersRejectedAfterTerminal = AtomicLong(0L)
 
@@ -423,12 +439,12 @@ internal class ChapterJournalWriter(
      */
     suspend fun flushToCaptureBarrier(): Long {
         if (writerDone.isCompleted || (!started.get() && !hasJournalEvent.get())) {
-            if (writerFailures.get() > 0L) throw IOException("journal writer failed before capture barrier")
+            if (writerFailures.get() > 0L) throw captureBarrierFailure()
             return ackedHighWaterSeq
         }
         if (!awaitReady()) {
             writerDone.await()
-            if (writerFailures.get() > 0L) throw IOException("journal writer failed before capture barrier")
+            if (writerFailures.get() > 0L) throw captureBarrierFailure()
             return ackedHighWaterSeq
         }
         val done = CompletableDeferred<Long>()
@@ -443,11 +459,14 @@ internal class ChapterJournalWriter(
                 throw IOException("journal capture barrier control slot was unavailable")
             }
             writerDone.await()
-            if (writerFailures.get() > 0L) throw IOException("journal writer failed before capture barrier")
+            if (writerFailures.get() > 0L) throw captureBarrierFailure()
             return ackedHighWaterSeq
         }
         return done.await()
     }
+
+    private fun captureBarrierFailure(): IOException =
+        IOException("journal writer failed before capture barrier", terminalFailure)
 
     /** Credit admission is non-blocking and does not create an empty epoch on disk. */
     suspend fun tryAcquireShadowCredit(foreground: Boolean): ChapterJournalCredit? {
@@ -1163,6 +1182,7 @@ internal class ChapterJournalWriter(
             }
         } catch (failure: Throwable) {
             terminalError = failure
+            terminalFailure = failure
             writerFailures.incrementAndGet()
             if (terminalEndingInProgress) {
                 droppedControlRecords.incrementAndGet()

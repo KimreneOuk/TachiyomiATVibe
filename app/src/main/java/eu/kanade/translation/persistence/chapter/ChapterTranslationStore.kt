@@ -69,11 +69,13 @@ import eu.kanade.translation.persistence.journal.ChapterJournalEpochGcState
 import eu.kanade.translation.persistence.journal.ChapterJournalFormat
 import eu.kanade.translation.persistence.journal.ChapterJournalGcMode
 import eu.kanade.translation.persistence.journal.ChapterJournalInventorySnapshot
+import eu.kanade.translation.persistence.journal.ChapterJournalPageOutcome
 import eu.kanade.translation.persistence.journal.ChapterJournalRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalReplayReducer
 import eu.kanade.translation.persistence.journal.ChapterJournalReplayResult
 import eu.kanade.translation.persistence.journal.ChapterJournalSnapshotCandidate
 import eu.kanade.translation.persistence.journal.ChapterJournalSnapshotManager
+import eu.kanade.translation.persistence.journal.ChapterJournalStorage
 import eu.kanade.translation.persistence.journal.ChapterJournalWriter
 import eu.kanade.translation.persistence.journal.FileChapterJournalSnapshotStorage
 import eu.kanade.translation.persistence.journal.FileChapterJournalStorage
@@ -227,6 +229,17 @@ internal fun retainStagedJournalCredit(
     return existing
 }
 
+/** Diagnostic for the one-time manifest-to-journal bootstrap performed before an opened store is published. */
+internal data class ChapterJournalSeedDiagnostics(
+    val inventoryCaptureRequested: Boolean = false,
+    val pageKeysCaptureRequested: Set<String> = emptySet(),
+    val firstBarrierFrameSeq: Long? = null,
+    val trustedInventoryCaptureRequested: Boolean = false,
+    val trustedBarrierFrameSeq: Long? = null,
+    val completed: Boolean = false,
+    val failure: Throwable? = null,
+)
+
 class ChapterTranslationStore internal constructor(
     // Retained as a source-compatible test seam; artifact-only persistence never
     // invokes this legacy flat-file creator.
@@ -246,6 +259,8 @@ class ChapterTranslationStore internal constructor(
     private val privateStorageIdentity: String? = null,
     journalReplayResult: ChapterJournalReplayResult? = null,
     initialRecoveredPages: Map<String, PublishedPageTranslation>? = null,
+    initialUnverifiedManifestFallbackPageKeys: Set<String> = emptySet(),
+    private val journalStorageFactoryForOpen: ((File, File) -> ChapterJournalStorage)? = null,
 ) {
     /** Explicit memory, lazy-durable, or opened-durable storage mode. */
     internal var engineMode: ChapterStoreEngineMode =
@@ -347,11 +362,23 @@ class ChapterTranslationStore internal constructor(
             inventory = StoreStatusInventory(
                 expectedPageKeys = replay.expectedPageKeys.toSet(),
                 expectedPageCount = replay.expectedPageCount,
-                expectedPageCountTrusted = replay.inventory != null,
+                expectedPageCountTrusted = replay.inventory?.hasTrustedExpectedPageCount == true,
             ),
             durableFailures = replay.durableFailures.toMap(),
         )
     }
+
+    /** Metadata-only manifest fallbacks stay visible but cannot complete seed trust. */
+    private val unverifiedManifestFallbackPageKeys = initialUnverifiedManifestFallbackPageKeys.toMutableSet()
+
+    /** Captures bootstrap failures and durable progress instead of hiding a failed open-time seed. */
+    @Volatile
+    internal var journalSeedDiagnostics = ChapterJournalSeedDiagnostics()
+        private set
+
+    @Volatile
+    private var journalInventoryTrustEstablished =
+        journalReplayResult?.inventory?.hasTrustedExpectedPageCount == true
 
     /**
      * Cleaned-image names retained because the superseded committed bundle
@@ -692,7 +719,8 @@ class ChapterTranslationStore internal constructor(
                             sessionId = sessionId,
                         )
                         ChapterJournalWriter(
-                            storage = FileChapterJournalStorage(epoch.directory, durableRoot = root),
+                            storage = journalStorageFactoryForOpen?.invoke(epoch.directory, root)
+                                ?: FileChapterJournalStorage(epoch.directory, durableRoot = root),
                             dispatcher = persistenceDispatcher,
                             encodeRecord = { record -> JOURNAL_JSON.encodeToString(record).encodeToByteArray() },
                             encodeBulkRecord = { record -> JOURNAL_JSON.encodeToString(record).encodeToByteArray() },
@@ -1021,7 +1049,110 @@ class ChapterTranslationStore internal constructor(
                 pageKeys.size,
             ),
             sourceShaByPageKey = manifest.sourceShaByPageKey,
+            expectedPageCountTrusted = (privateStorageRoot == null || journalInventoryTrustEstablished) &&
+                (
+                    manifest.expectedPageCountTrusted ||
+                        pendingExpectedPageCountTrusted ||
+                        journalStatusSnapshot?.inventory?.expectedPageCountTrusted == true
+                    ) &&
+                unverifiedManifestFallbackPageKeys.isEmpty(),
         )
+    }
+
+    /**
+     * Idempotently seeds hash-verified manifest page snapshots while the store is still private to open.
+     * An untrusted inventory precedes seed frames; a trusted v2 inventory is the commit point and
+     * is written only after every seed frame is synced. Trust is earned only by hash-verified
+     * content; metadata-only fallbacks keep the chapter in union mode until real content exists.
+     */
+    private suspend fun seedJournalFromManifest(
+        seedPages: Map<String, PageTranslation>,
+        inventory: ChapterJournalInventorySnapshot,
+    ) {
+        if (privateStorageRoot == null) return
+        journalSeedDiagnostics = ChapterJournalSeedDiagnostics(inventoryCaptureRequested = true)
+        val capturedPageKeys = linkedSetOf<String>()
+        try {
+            val writer = ensureJournalWriter() ?: return
+            val untrustedInventory = inventory.copy(expectedPageCountTrusted = false)
+            writer.captureInventory(untrustedInventory)
+            seedPages.forEach { (pageKey, _) ->
+                val credit = writer.acquireCredit(foreground = false)
+                var handedOff = false
+                try {
+                    mutex.withLock {
+                        val page = pages[pageKey] ?: return@withLock
+                        val durableFailure = artifactManifest?.durableFailures?.values
+                            ?.firstOrNull { it.pageKey == pageKey }
+                        writer.captureLegacyPersisted(
+                            commitSeq = writer.nextCommitSeq(),
+                            credit = credit,
+                            pageKey = pageKey,
+                            generation = generation,
+                            fencingToken = 0L,
+                            page = page,
+                            durableFailure = durableFailure,
+                            paid = durableFailure != null || page.hasRenderedResult || page.isTextlessTerminal,
+                            artifactContentHash = StageFingerprints.pageSnapshot(page),
+                            inventory = untrustedInventory,
+                        )
+                        handedOff = true
+                        capturedPageKeys += pageKey
+                        journalSeedDiagnostics = journalSeedDiagnostics.copy(
+                            pageKeysCaptureRequested = capturedPageKeys.toSet(),
+                        )
+                    }
+                } finally {
+                    if (!handedOff) credit.releaseIfUnqueued()
+                }
+            }
+
+            val firstBarrierFrameSeq = writer.flushToCaptureBarrier()
+            journalSeedDiagnostics = journalSeedDiagnostics.copy(
+                pageKeysCaptureRequested = capturedPageKeys.toSet(),
+                firstBarrierFrameSeq = firstBarrierFrameSeq,
+            )
+            val seededPrefix = replayJournalForRecovery() ?: return
+            if (!seedPages.keys.all { seededPrefix.pageOutcomes[it] == ChapterJournalPageOutcome.RECORDED }) return
+            if (!inventory.expectedPageCountTrusted) {
+                journalSeedDiagnostics = journalSeedDiagnostics.copy(completed = true)
+                return
+            }
+
+            // The trust bit is the migration-complete marker. It follows the synced page prefix.
+            journalSeedDiagnostics = journalSeedDiagnostics.copy(trustedInventoryCaptureRequested = true)
+            writer.captureInventory(inventory.copy(expectedPageCountTrusted = true))
+            val trustedBarrierFrameSeq = writer.flushToCaptureBarrier()
+            journalSeedDiagnostics = journalSeedDiagnostics.copy(trustedBarrierFrameSeq = trustedBarrierFrameSeq)
+            val completedPrefix = replayJournalForRecovery() ?: return
+            val completedInventory = completedPrefix.inventory ?: return
+            if (!completedInventory.hasTrustedExpectedPageCount ||
+                completedPrefix.expectedPageKeys != inventory.expectedPageKeys ||
+                completedPrefix.expectedPageCount != inventory.expectedPageCount
+            ) {
+                return
+            }
+            mutex.withLock {
+                journalInventoryTrustEstablished = true
+                journalStatusSnapshot = journalStatusSnapshot?.let { status ->
+                    status.copy(
+                        inventory = status.inventory.copy(
+                            expectedPageKeys = inventory.expectedPageKeys,
+                            expectedPageCount = inventory.expectedPageCount,
+                            expectedPageCountTrusted = true,
+                        ),
+                    )
+                }
+            }
+            journalSeedDiagnostics = journalSeedDiagnostics.copy(completed = true)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            journalSeedDiagnostics = journalSeedDiagnostics.copy(failure = failure)
+            logcat(LogPriority.WARN, failure) {
+                "TachiyomiAT journal manifest seed stayed in union mode"
+            }
+        }
     }
 
     /**
@@ -1486,7 +1617,10 @@ class ChapterTranslationStore internal constructor(
             failures["$pageKey:${moved.stage.name}"] = moved
         }
         journalStatusSnapshot = current.copy(
-            inventory = current.inventory.copy(expectedPageKeys = keys),
+            inventory = current.inventory.copy(
+                expectedPageKeys = keys,
+                expectedPageCount = maxOf(current.inventory.expectedPageCount ?: 0, keys.size),
+            ),
             durableFailures = failures.toMap(),
         )
     }
@@ -3886,7 +4020,11 @@ class ChapterTranslationStore internal constructor(
         return true
     }
 
-    /** Lazily creates the artifact store for a chapter that has no manifest yet. */
+    /**
+     * Lazily creates the artifact store for a chapter that has no manifest yet.
+     * This synchronous helper acquires the same per-artifact mutex as suspend opens via IO blocking,
+     * so lazy loads and recovery opens cannot race each other.
+     */
     private fun ensureArtifactStoreLocked(): Boolean {
         if (engineMode is ChapterStoreEngineMode.Durable) {
             return artifactManifest != null
@@ -3903,8 +4041,8 @@ class ChapterTranslationStore internal constructor(
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val store = ChapterArtifactEngine(documents, layout)
-        val manifest = withArtifactOpenLock(parent, fileName) { openLock ->
-            synchronized(openLock.monitor) { store.load().manifest }
+        val manifest = runBlocking(Dispatchers.IO) {
+            withArtifactOpenLock(parent, fileName) { store.load().manifest }
         }
         engineMode = ChapterStoreEngineMode.Durable(store)
         artifactManifest = manifest
@@ -4084,6 +4222,11 @@ class ChapterTranslationStore internal constructor(
             pages = prepared.pages,
             durableFailures = updatedFailures,
             sourceShaByPageKey = updatedSourceSha,
+            expectedPageCount = maxOf(
+                base.expectedPageCount ?: 0,
+                prepared.pages.size,
+                updatedSourceSha.size,
+            ),
             updatedAtEpochMs = System.currentTimeMillis(),
         )
     }
@@ -4513,16 +4656,21 @@ class ChapterTranslationStore internal constructor(
             fileName: String,
             privateStorageRoot: File? = null,
             privateStorageIdentity: String? = null,
+            journalStorageFactory: ((File, File) -> ChapterJournalStorage)? = null,
         ): ChapterTranslationStore = withContext(Dispatchers.IO) {
-            withArtifactOpenLock(parent, fileName) { openLock ->
-                synchronized(openLock.monitor) {
-                    openArtifactOnly(parent, fileName, privateStorageRoot, privateStorageIdentity)
-                }
+            withArtifactOpenLock(parent, fileName) { _ ->
+                openArtifactOnly(
+                    parent,
+                    fileName,
+                    privateStorageRoot,
+                    privateStorageIdentity,
+                    journalStorageFactory,
+                )
             }
         }
 
         private class ArtifactOpenLock {
-            val monitor = Any()
+            val mutex = Mutex()
             var references = 0
         }
 
@@ -4533,10 +4681,10 @@ class ChapterTranslationStore internal constructor(
             return "$parentKey:$fileName"
         }
 
-        private fun <T> withArtifactOpenLock(
+        private suspend fun <T> withArtifactOpenLock(
             parent: UniFile?,
             fileName: String,
-            block: (ArtifactOpenLock) -> T,
+            block: suspend (ArtifactOpenLock) -> T,
         ): T {
             val key = artifactOpenKey(parent, fileName)
             val openLock = checkNotNull(
@@ -4545,7 +4693,7 @@ class ChapterTranslationStore internal constructor(
                 },
             )
             return try {
-                block(openLock)
+                openLock.mutex.withLock { block(openLock) }
             } finally {
                 ARTIFACT_OPEN_LOCKS.compute(key) { _, current ->
                     check(current === openLock)
@@ -4554,11 +4702,18 @@ class ChapterTranslationStore internal constructor(
                 }
             }
         }
-        private fun openArtifactOnly(
+        private data class OpenArtifactPageState(
+            val livePage: PageTranslation,
+            val committedPage: PageTranslation?,
+            val hasContentBackedSnapshot: Boolean,
+        )
+
+        private suspend fun openArtifactOnly(
             parent: UniFile?,
             fileName: String,
             privateStorageRoot: File?,
             privateStorageIdentity: String?,
+            journalStorageFactory: ((File, File) -> ChapterJournalStorage)?,
         ): ChapterTranslationStore {
             if (parent == null) {
                 return ChapterTranslationStore(
@@ -4568,6 +4723,7 @@ class ChapterTranslationStore internal constructor(
                     artifactFileName = fileName,
                     privateStorageRoot = privateStorageRoot,
                     privateStorageIdentity = privateStorageIdentity,
+                    journalStorageFactoryForOpen = journalStorageFactory,
                 )
             }
             val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
@@ -4581,27 +4737,67 @@ class ChapterTranslationStore internal constructor(
             }
             val journalReplay = privateStorageRoot?.let { root ->
                 val chapterIdentityHash = StageFingerprints.sha256Hex(chapterIdentity.toByteArray(Charsets.UTF_8))
-                ChapterJournalReplayReducer.replay(
-                    epochs = ChapterJournalReplayReducer.readAppPrivateEpochs(root, chapterIdentity),
-                    artifactResolver = ChapterJournalReplayReducer.artifactResolver(artifact, manifest),
-                    expectedChapterIdentityHash = chapterIdentityHash,
+                withContext(Dispatchers.IO) {
+                    ChapterJournalReplayReducer.replay(
+                        epochs = ChapterJournalReplayReducer.readAppPrivateEpochs(root, chapterIdentity),
+                        artifactResolver = ChapterJournalReplayReducer.artifactResolver(artifact, manifest),
+                        expectedChapterIdentityHash = chapterIdentityHash,
+                    )
+                }
+            }
+
+            fun readVerifiedSnapshot(fileName: String?, expectedFingerprint: String?): PageTranslation? {
+                if (fileName == null || expectedFingerprint.isNullOrBlank()) return null
+                val page = artifact.readPageSnapshot(fileName) ?: return null
+                return page.takeIf { StageFingerprints.pageSnapshot(it) == expectedFingerprint }
+            }
+
+            val artifactPageStates = manifest.pages.mapValues { (_, record) ->
+                val candidate = record.candidate?.let { metadata ->
+                    readVerifiedSnapshot(metadata.pageSnapshotFileName, metadata.pageSnapshotFingerprint)
+                }
+                val committed = record.committed?.let { metadata ->
+                    readVerifiedSnapshot(metadata.pageSnapshotFileName, metadata.translationFingerprint)
+                }
+                OpenArtifactPageState(
+                    livePage = candidate ?: committed ?: record.toArtifactPageFallback(),
+                    committedPage = committed,
+                    hasContentBackedSnapshot = candidate != null || committed != null,
                 )
             }
-            val committedPages = manifest.pages.mapNotNull { (pageKey, record) ->
-                record.committed?.pageSnapshotFileName
-                    ?.let(artifact::readPageSnapshot)
-                    ?.let { pageKey to it }
-            }.toMap()
-            val livePages = if (journalReplay == null) {
-                manifest.pages.mapNotNull { (pageKey, record) ->
-                    val snapshot = record.candidate?.pageSnapshotFileName?.let(artifact::readPageSnapshot)
-                        ?: record.committed?.pageSnapshotFileName?.let(artifact::readPageSnapshot)
-                        ?: record.toArtifactPageFallback()
-                    pageKey to snapshot
-                }.toMap()
+            val outcomes = journalReplay?.pageOutcomes.orEmpty()
+            val authoritativeJournal = journalReplay?.inventory?.hasTrustedExpectedPageCount == true
+            val blockedManifestKeys = outcomes.filterValues { outcome ->
+                outcome == ChapterJournalPageOutcome.TOMBSTONED || outcome == ChapterJournalPageOutcome.INVALID
+            }.keys
+            val unverifiedFallbackKeys = if (journalReplay != null && !authoritativeJournal) {
+                artifactPageStates.filter { (pageKey, opened) ->
+                    !opened.hasContentBackedSnapshot && pageKey !in outcomes
+                }.keys
+            } else {
+                emptySet()
+            }
+            val recoveredPages: Map<String, PublishedPageTranslation>? = when {
+                journalReplay == null -> null
+                authoritativeJournal -> journalReplay.pages
+                else -> buildMap<String, PublishedPageTranslation> {
+                    putAll(journalReplay.pages)
+                    artifactPageStates.forEach { (pageKey, opened) ->
+                        if (pageKey !in outcomes) put(pageKey, opened.livePage.toPublishedPage())
+                    }
+                }
+            }
+            val legacyPages = if (journalReplay == null) {
+                artifactPageStates.mapValues { it.value.livePage }
             } else {
                 emptyMap()
             }
+            val committedPages = artifactPageStates.mapNotNull { (pageKey, opened) ->
+                val hasJournalWinnerForDisplay = !authoritativeJournal || outcomes[pageKey] == ChapterJournalPageOutcome.RECORDED
+                opened.committedPage
+                    ?.takeIf { pageKey !in blockedManifestKeys && hasJournalWinnerForDisplay }
+                    ?.let { pageKey to it }
+            }.toMap()
             val retiredCleanedImages = manifest.pages.mapNotNull { (pageKey, record) ->
                 val previous = record.previousCommitted ?: return@mapNotNull null
                 val name = previous.displayBase.fileName
@@ -4609,21 +4805,62 @@ class ChapterTranslationStore internal constructor(
                     ?: return@mapNotNull null
                 pageKey to setOf(name)
             }.toMap()
-            return ChapterTranslationStore(
+            val store = ChapterTranslationStore(
                 translationFile = null,
                 fileCreator = null,
-                initialPages = livePages,
+                initialPages = legacyPages,
                 artifactStore = artifact,
                 initialCommittedPages = committedPages,
                 initialArtifactManifest = manifest,
                 journalReplayResult = journalReplay,
-                initialRecoveredPages = journalReplay?.pages,
+                initialRecoveredPages = recoveredPages,
+                initialUnverifiedManifestFallbackPageKeys = unverifiedFallbackKeys,
                 initialRetiredCleanedImages = retiredCleanedImages,
                 artifactParent = parent,
                 artifactFileName = fileName,
                 privateStorageRoot = privateStorageRoot,
                 privateStorageIdentity = privateStorageIdentity,
+                journalStorageFactoryForOpen = journalStorageFactory,
             )
+            if (journalReplay != null) {
+                val manifestKeys = manifest.pages.keys + manifest.sourceShaByPageKey.keys
+                val expectedKeys = journalReplay.expectedPageKeys + manifestKeys
+                val expectedCount = maxOf(
+                    journalReplay.expectedPageCount,
+                    manifest.expectedPageCount ?: 0,
+                    expectedKeys.size,
+                )
+                val manifestFailures = manifest.durableFailures.filterValues { failure ->
+                    failure.pageKey !in outcomes
+                }
+                store.journalStatusSnapshot = StoreStatusSnapshot(
+                    inventory = StoreStatusInventory(
+                        expectedPageKeys = expectedKeys,
+                        expectedPageCount = expectedCount,
+                        expectedPageCountTrusted = authoritativeJournal ||
+                            (manifest.expectedPageCountTrusted && unverifiedFallbackKeys.isEmpty()),
+                    ),
+                    durableFailures = manifestFailures + journalReplay.durableFailures,
+                )
+                store.journalInventoryTrustEstablished = authoritativeJournal
+                if (!authoritativeJournal) {
+                    val seedPages = artifactPageStates.mapNotNull { (pageKey, opened) ->
+                        if (opened.hasContentBackedSnapshot && pageKey !in outcomes) {
+                            pageKey to opened.livePage
+                        } else {
+                            null
+                        }
+                    }.toMap()
+                    val seedInventory = ChapterJournalInventorySnapshot(
+                        expectedPageKeys = expectedKeys,
+                        expectedPageCount = expectedCount,
+                        sourceShaByPageKey = manifest.sourceShaByPageKey,
+                        expectedPageCountTrusted = manifest.expectedPageCountTrusted && unverifiedFallbackKeys.isEmpty(),
+                    )
+                    store.seedJournalFromManifest(seedPages, seedInventory)
+                }
+            }
+            return store
         }
 
         /**

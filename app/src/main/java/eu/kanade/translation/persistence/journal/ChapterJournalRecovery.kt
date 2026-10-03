@@ -41,6 +41,13 @@ internal fun interface ChapterJournalArtifactIdentityResolver {
     ): Boolean
 }
 
+/** Outcome of the winning journal mutation for a page; every non-missing outcome blocks manifest fallback. */
+internal enum class ChapterJournalPageOutcome {
+    RECORDED,
+    TOMBSTONED,
+    INVALID,
+}
+
 internal data class ChapterJournalReplayResult(
     /** Reconstructed pages; tombstones and invalid records are absent. */
     val pages: Map<String, PublishedPageTranslation>,
@@ -59,9 +66,11 @@ internal data class ChapterJournalReplayResult(
     val corruptEpochs: Set<ChapterJournalFormat.EpochOrderKey>,
     /** Latest accepted failure metadata per page, reconstructed from the same durable prefix. */
     val durableFailures: Map<String, DurableFailureMetadata> = emptyMap(),
+    /** Winning per-page journal outcomes distinguish absence from delete and invalidation. */
+    val pageOutcomes: Map<String, ChapterJournalPageOutcome> = emptyMap(),
 ) {
     val hasCompleteInventory: Boolean
-        get() = inventory != null &&
+        get() = inventory?.hasTrustedExpectedPageCount == true &&
             expectedPageCount >= expectedPageKeys.size &&
             missingPageKeys.isEmpty() &&
             pages.keys.containsAll(expectedPageKeys) &&
@@ -103,6 +112,7 @@ internal object ChapterJournalReplayReducer {
         val pages = LinkedHashMap<String, PublishedPageTranslation>()
         val winners = HashMap<String, Winner>()
         val invalidPages = LinkedHashSet<String>()
+        val pageOutcomes = LinkedHashMap<String, ChapterJournalPageOutcome>()
         val durableFailures = LinkedHashMap<String, DurableFailureMetadata>()
         val corruptEpochs = LinkedHashSet<ChapterJournalFormat.EpochOrderKey>()
         var inventory: ChapterJournalInventoryRecord? = null
@@ -125,7 +135,11 @@ internal object ChapterJournalReplayReducer {
                 }
                 when (frame.kind) {
                     ChapterJournalFormat.RecordKind.INVENTORY -> {
-                        val root = versionedPayload(frame.payload, ChapterJournalInventoryRecord.SCHEMA_VERSION, json)
+                        val root = versionedPayload(
+                            frame.payload,
+                            ChapterJournalInventoryRecord.SUPPORTED_SCHEMA_VERSIONS,
+                            json,
+                        )
                         val decoded = root?.let {
                             runCatching { json.decodeFromJsonElement<ChapterJournalInventoryRecord>(it) }.getOrNull()
                         }
@@ -165,6 +179,7 @@ internal object ChapterJournalReplayReducer {
                                 pages = pages,
                                 winners = winners,
                                 invalidPages = invalidPages,
+                                pageOutcomes = pageOutcomes,
                                 durableFailures = durableFailures,
                                 artifactResolver = artifactResolver,
                             )
@@ -207,6 +222,7 @@ internal object ChapterJournalReplayReducer {
                                     pages = pages,
                                     winners = winners,
                                     invalidPages = invalidPages,
+                                    pageOutcomes = pageOutcomes,
                                     durableFailures = durableFailures,
                                     artifactResolver = artifactResolver,
                                 )
@@ -253,6 +269,7 @@ internal object ChapterJournalReplayReducer {
             validFrameCount = validFrames,
             corruptEpochs = corruptEpochs,
             durableFailures = durableFailures.toMap(),
+            pageOutcomes = pageOutcomes.toMap(),
         )
     }
 
@@ -267,20 +284,22 @@ internal object ChapterJournalReplayReducer {
         if (!root.isDirectory) throw IOException("chapter journal path is not a directory")
         val rootChildren = root.listFiles() ?: throw IOException("unable to list chapter journal epochs")
         val rootCanonical = root.canonicalFile.toPath()
+        // Only canonical epoch names participate in replay. Unknown directories are
+        // not treated as empty epochs and cannot prevent valid epoch prefixes from opening.
         return rootChildren
             .asSequence()
             .filter(File::isDirectory)
-            .map { directory ->
+            .mapNotNull { directory ->
                 val match = EPOCH_NAME.matchEntire(directory.name)
-                    ?: throw IOException("unrecognized journal epoch directory: ${directory.name}")
+                    ?: return@mapNotNull null
                 val ordinal = match.groupValues[1].toLongOrNull()
-                    ?: throw IOException("invalid journal epoch ordinal: ${directory.name}")
+                    ?: return@mapNotNull null
                 val generation = match.groupValues[2].toLongOrNull()
-                    ?: throw IOException("invalid journal epoch generation: ${directory.name}")
+                    ?: return@mapNotNull null
                 val sessionId = runCatching { UUID.fromString(match.groupValues[3]) }.getOrNull()
-                    ?: throw IOException("invalid journal epoch session: ${directory.name}")
+                    ?: return@mapNotNull null
                 if (!directory.canonicalFile.toPath().startsWith(rootCanonical)) {
-                    throw IOException("journal epoch escaped chapter root: ${directory.name}")
+                    return@mapNotNull null
                 }
                 val epochCanonical = directory.canonicalFile.toPath()
                 val children = directory.listFiles()
@@ -447,6 +466,7 @@ internal object ChapterJournalReplayReducer {
         pages: MutableMap<String, PublishedPageTranslation>,
         winners: MutableMap<String, Winner>,
         invalidPages: MutableSet<String>,
+        pageOutcomes: MutableMap<String, ChapterJournalPageOutcome>,
         durableFailures: MutableMap<String, DurableFailureMetadata>,
         artifactResolver: ChapterJournalArtifactIdentityResolver?,
     ): Boolean {
@@ -491,15 +511,18 @@ internal object ChapterJournalReplayReducer {
                 pages.remove(record.pageKey)
                 winners[record.pageKey] = winner
                 invalidPages += record.pageKey
+                pageOutcomes[record.pageKey] = ChapterJournalPageOutcome.INVALID
                 return true
             }
             pages[record.pageKey] = state
             winners[record.pageKey] = winner
             invalidPages.remove(record.pageKey)
+            pageOutcomes[record.pageKey] = ChapterJournalPageOutcome.RECORDED
         } else {
             pages.remove(record.pageKey)
             winners[record.pageKey] = winner
             invalidPages.remove(record.pageKey)
+            pageOutcomes[record.pageKey] = ChapterJournalPageOutcome.TOMBSTONED
         }
         return true
     }
