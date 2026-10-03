@@ -84,6 +84,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -544,6 +545,11 @@ class ChapterTranslationStore internal constructor(
         val mutations: LinkedHashMap<String, ChapterJournalRecord> = LinkedHashMap(),
     )
 
+    /** Collects this flush's accepted journal work for one final force; rollover may force a closed segment first. */
+    private class JournalFlushBatch {
+        var hasJournalWork = false
+    }
+
     private data class PageRekeyPlan(
         val generation: Long,
         val pages: PersistentMap<String, PublishedPageTranslation>,
@@ -843,6 +849,7 @@ class ChapterTranslationStore internal constructor(
         durableFailure: DurableFailureMetadata?,
         credit: ChapterJournalCredit?,
         artifactContentHash: String? = null,
+        journalFlushBatch: JournalFlushBatch? = null,
     ) {
         // Capture only the exact immutable value already installed in the store map.
         // The draft argument documents which successful legacy mutation reached this point;
@@ -869,6 +876,7 @@ class ChapterTranslationStore internal constructor(
             return
         }
         val wasAccepting = writer.isShadowCaptureActive
+        journalFlushBatch?.hasJournalWork = true
         val paid = durableFailure != null || published.hasRenderedResult || published.isTextlessTerminal
         writer.captureLegacyPersisted(
             commitSeq = writer.nextCommitSeq(),
@@ -883,6 +891,7 @@ class ChapterTranslationStore internal constructor(
             cleanedImageName = record.cleanedImageName,
             cleanedImageContentHash = record.cleanedImageContentHash,
             inventory = journalInventorySnapshot(artifactManifest),
+            deferSyncUntilBarrier = journalFlushBatch != null,
         )
         if (credit == null && wasAccepting) {
             reportTerminalJournalLag()
@@ -1280,7 +1289,7 @@ class ChapterTranslationStore internal constructor(
      *
      * Caller holds [mutex].
      */
-    internal fun flushLazyMutationsLocked(): Boolean {
+    private fun flushLazyMutationsLocked(journalFlushBatch: JournalFlushBatch? = null): Boolean {
         val pendingLazyMutations = writeDrain.pendingLazyMutations
         if (pendingLazyMutations.isEmpty()) return true
         val pending = pendingLazyMutations.values.toList()
@@ -1298,6 +1307,7 @@ class ChapterTranslationStore internal constructor(
                         updated = mutation.updated,
                         expected = mutation.expected,
                         journalCredit = mutation.journalCredit,
+                        journalFlushBatch = journalFlushBatch,
                     )
                 ) {
                     allAccepted = false
@@ -1322,13 +1332,41 @@ class ChapterTranslationStore internal constructor(
     /**
      * Owns the journal-capture interleave for queued lazy mutations. Reserve
      * credits before taking the capture permit, then acquire the store mutex
-     * inside that permit so lazy frames cannot cross a capture barrier.
+     * inside that permit so lazy frames cannot cross a capture barrier. The
+     * batch gets one final force, plus required pre-close segment forces at
+     * rollover and a segment-header force whenever a new segment is created
+     * (epoch start or rollover).
      */
     internal suspend fun flushPendingLazyMutationsWithJournalCapture() {
         reservePendingLazyJournalCredits()
-        withJournalCapturePermit {
-            mutex.withLock {
-                flushLazyMutationsLocked()
+        val journalFlushBatch = JournalFlushBatch()
+        var flushFailure: Throwable? = null
+        journalCaptureCoordinator.gate.withBarrier {
+            try {
+                mutex.withLock {
+                    flushLazyMutationsLocked(journalFlushBatch)
+                }
+            } catch (failure: Throwable) {
+                flushFailure = failure
+                throw failure
+            } finally {
+                if (journalFlushBatch.hasJournalWork) {
+                    val writer = journalWriter
+                    if (writer != null) {
+                        try {
+                            withContext(NonCancellable) {
+                                writer.flushToCaptureBarrier()
+                            }
+                        } catch (barrierFailure: Throwable) {
+                            val mutationFailure = flushFailure
+                            if (mutationFailure == null) {
+                                throw barrierFailure
+                            } else {
+                                mutationFailure.addSuppressed(barrierFailure)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -3511,6 +3549,7 @@ class ChapterTranslationStore internal constructor(
         expected: PatchPrecondition? = null,
         durableFailure: DurableFailureMetadata? = null,
         journalCredit: ChapterJournalCredit? = null,
+        journalFlushBatch: JournalFlushBatch? = null,
     ): Boolean {
         lastArtifactPublicationRejectionDiagnostic = null
         fun reject(reason: String): Boolean {
@@ -3616,7 +3655,13 @@ class ChapterTranslationStore internal constructor(
                         pendingExpectedPageCount = null
                         pendingExpectedPageCountTrusted = false
                     }
-                    journalWriter?.captureInventory(journalInventorySnapshot(manifest))
+                    journalWriter?.let { writer ->
+                        journalFlushBatch?.hasJournalWork = true
+                        writer.captureInventory(
+                            journalInventorySnapshot(manifest),
+                            deferSyncUntilBarrier = journalFlushBatch != null,
+                        )
+                    }
                 }
                 is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                     logcat(LogPriority.WARN) {
@@ -3750,66 +3795,80 @@ class ChapterTranslationStore internal constructor(
                     }
                 }
                 artifactManifest = manifest
-                captureLegacyPersistedLocked(pageKey, updated, expected, failure, journalCredit)
+                captureLegacyPersistedLocked(
+                    pageKey,
+                    updated,
+                    expected,
+                    failure,
+                    journalCredit,
+                    journalFlushBatch = journalFlushBatch,
+                )
             }
             ArtifactMutation.Direct -> {
-                val persisted = store.persistLiveCandidate(
-                    manifest = manifest,
-                    pageKey = pageKey,
-                    generationId = currentCandidate.generationId,
-                    expectedPageVersion = expectedPageVersion,
-                    expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                    pageSnapshot = updated,
-                    origin = origin,
-                    sourceIdentity = updated.sourceIdentity(pageKey),
-                )
-                manifest = when (persisted) {
-                    is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
-                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
-                        }
-                        return reject("candidate persist rejected: ${persisted.reason}")
-                    }
-                }
-                artifactManifest = manifest
-                if (updated.hasRenderedResult || updated.isTextlessTerminal) {
-                    val promoted = store.promoteLiveCandidate(
+                val immediatelyPromotable = updated.hasRenderedResult || updated.isTextlessTerminal
+                val persisted = if (immediatelyPromotable) {
+                    store.promoteLiveCandidateImmediately(
                         manifest = manifest,
                         pageKey = pageKey,
                         generationId = currentCandidate.generationId,
-                        expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion,
+                        expectedPageVersion = expectedPageVersion,
                         expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
                         pageSnapshot = updated,
                         origin = origin,
                         sourceIdentity = updated.sourceIdentity(pageKey),
                     )
-                    manifest = when (promoted) {
-                        is ChapterArtifactEngine.TransactionOutcome.Committed -> promoted.manifest
-                        is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                            // The candidate persist above already committed the durable
-                            // page state. Preserve that event in the journal even though its
-                            // follow-up promotion was rejected.
-                            artifactManifest = manifest
+                } else {
+                    store.persistLiveCandidate(
+                        manifest = manifest,
+                        pageKey = pageKey,
+                        generationId = currentCandidate.generationId,
+                        expectedPageVersion = expectedPageVersion,
+                        expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                        pageSnapshot = updated,
+                        origin = origin,
+                        sourceIdentity = updated.sourceIdentity(pageKey),
+                    )
+                }
+                when (persisted) {
+                    is ChapterArtifactEngine.TransactionOutcome.Committed -> manifest = persisted.manifest
+                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                        persisted.recoverableCandidateManifest?.takeIf { immediatelyPromotable }?.let { recoverableManifest ->
+                            // The old two-step path had already published its candidate manifest
+                            // before terminal promotion could reject. Preserve that journal
+                            // handoff only when the fused failure path restored the same truth.
+                            manifest = recoverableManifest
+                            artifactManifest = recoverableManifest
                             captureLegacyPersistedLocked(
                                 pageKey,
                                 updated,
                                 expected,
                                 durableFailure,
                                 journalCredit,
+                                journalFlushBatch = journalFlushBatch,
                             )
-                            logcat(LogPriority.WARN) {
-                                "TachiyomiAT artifact candidate promotion rejected: pageKey=$pageKey reason=${promoted.reason}"
-                            }
-                            return reject("candidate promotion rejected: ${promoted.reason}")
                         }
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT artifact ${if (immediatelyPromotable) "terminal publication" else "candidate persist"} " +
+                                "rejected: pageKey=$pageKey reason=${persisted.reason}"
+                        }
+                        return reject(
+                            "${if (immediatelyPromotable) "terminal publication" else "candidate persist"} " +
+                                "rejected: ${persisted.reason}",
+                        )
                     }
-                    artifactManifest = manifest
                 }
+                artifactManifest = manifest
             }
         }
         artifactManifest = manifest
-        captureLegacyPersistedLocked(pageKey, updated, expected, durableFailure, journalCredit)
+        captureLegacyPersistedLocked(
+            pageKey,
+            updated,
+            expected,
+            durableFailure,
+            journalCredit,
+            journalFlushBatch = journalFlushBatch,
+        )
         return true
     }
 

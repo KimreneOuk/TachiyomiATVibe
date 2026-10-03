@@ -798,6 +798,8 @@ class ChapterArtifactEngine(
         data class Rejected(
             val reason: String,
             val candidateOpenState: CandidateOpenState? = null,
+            /** Candidate state durably restored when an immediate terminal publication failed. */
+            val recoverableCandidateManifest: ChapterArtifactManifest? = null,
         ) : TransactionOutcome
     }
 
@@ -1486,6 +1488,64 @@ class ChapterArtifactEngine(
         origin: ArtifactOrigin,
         sourceIdentity: SourceIdentity? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome = promoteLiveCandidateTransaction(
+        manifest = manifest,
+        pageKey = pageKey,
+        generationId = generationId,
+        expectedPageVersion = expectedPageVersion,
+        expectedDependencyFingerprint = expectedDependencyFingerprint,
+        pageSnapshot = pageSnapshot,
+        origin = origin,
+        sourceIdentity = sourceIdentity,
+        nowEpochMs = nowEpochMs,
+        persistCandidateSnapshot = true,
+        seam = "promoteLiveCandidate",
+    )
+
+    /**
+     * Fuses the candidate snapshot and terminal promotion into one recoverable publication.
+     * Used only when the store already knows this mutation is immediately promotable. The
+     * transaction still publishes committed snapshot, generation record, and final manifest in
+     * that order; the existing two-step candidate protocol remains for in-progress mutations.
+     * If terminal publication fails, it restores the candidate snapshot and pointer so reopening
+     * retains the same recoverable work as the two-step path.
+     */
+    fun promoteLiveCandidateImmediately(
+        manifest: ChapterArtifactManifest,
+        pageKey: String,
+        generationId: String,
+        expectedPageVersion: Long,
+        expectedDependencyFingerprint: String,
+        pageSnapshot: PageTranslation,
+        origin: ArtifactOrigin,
+        sourceIdentity: SourceIdentity? = null,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome = promoteLiveCandidateTransaction(
+        manifest = manifest,
+        pageKey = pageKey,
+        generationId = generationId,
+        expectedPageVersion = expectedPageVersion,
+        expectedDependencyFingerprint = expectedDependencyFingerprint,
+        pageSnapshot = pageSnapshot,
+        origin = origin,
+        sourceIdentity = sourceIdentity,
+        nowEpochMs = nowEpochMs,
+        persistCandidateSnapshot = false,
+        seam = "promoteLiveCandidateImmediately",
+    )
+
+    private fun promoteLiveCandidateTransaction(
+        manifest: ChapterArtifactManifest,
+        pageKey: String,
+        generationId: String,
+        expectedPageVersion: Long,
+        expectedDependencyFingerprint: String,
+        pageSnapshot: PageTranslation,
+        origin: ArtifactOrigin,
+        sourceIdentity: SourceIdentity?,
+        nowEpochMs: Long,
+        persistCandidateSnapshot: Boolean,
+        seam: String,
     ): TransactionOutcome = retryOnStaleManifest(
         firstAttempt = promoteLiveCandidateOnce(
             manifest,
@@ -1497,9 +1557,10 @@ class ChapterArtifactEngine(
             origin,
             sourceIdentity,
             nowEpochMs,
+            persistCandidateSnapshot,
         ),
         callerManifest = manifest,
-        seam = "promoteLiveCandidate",
+        seam = seam,
     ) { fresh ->
         promoteLiveCandidateOnce(
             fresh,
@@ -1511,6 +1572,7 @@ class ChapterArtifactEngine(
             origin,
             sourceIdentity,
             nowEpochMs,
+            persistCandidateSnapshot,
         )
     }
 
@@ -1524,6 +1586,7 @@ class ChapterArtifactEngine(
         origin: ArtifactOrigin,
         sourceIdentity: SourceIdentity?,
         nowEpochMs: Long,
+        persistCandidateSnapshot: Boolean,
     ): TransactionOutcome {
         val rejection = candidateWriteRejection(
             manifest,
@@ -1547,17 +1610,52 @@ class ChapterArtifactEngine(
                 return TransactionOutcome.Rejected("unsafe cleaned display file name: pageKey=$pageKey")
             }
         }
-        val candidateFile = candidate.pageSnapshotFileName
-            ?: layout.candidatePageSnapshotFile(pageKey, generationId)
-        val candidateMatches = documents.readValidated<PageTranslation>(candidateFile)?.let {
-            it == pageSnapshot
-        } == true
-        if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
-            return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
+        fun rejectAndRestoreCandidate(reason: String): TransactionOutcome.Rejected {
+            if (persistCandidateSnapshot) return TransactionOutcome.Rejected(reason)
+
+            val candidateFile = candidate.pageSnapshotFileName
+                ?: layout.candidatePageSnapshotFile(pageKey, generationId)
+            val candidateFingerprint = StageFingerprints.pageSnapshot(pageSnapshot)
+            if (!documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
+                return TransactionOutcome.Rejected(
+                    "$reason; recovery candidate snapshot publication failed: pageKey=$pageKey",
+                )
+            }
+            val recoverablePage = page.copy(
+                source = resolvedPage.source,
+                candidate = candidate.copy(
+                    pageSnapshotFileName = candidateFile,
+                    pageSnapshotFingerprint = candidateFingerprint,
+                ),
+                pageVersion = page.pageVersion + 1,
+            )
+            val recoverableManifest = manifest.copy(
+                pages = manifest.pages + (pageKey to recoverablePage),
+                updatedAtEpochMs = nowEpochMs,
+            )
+            if (!publishManifestInternal(recoverableManifest)) {
+                return TransactionOutcome.Rejected(
+                    "$reason; recovery candidate manifest publication failed: pageKey=$pageKey",
+                )
+            }
+            return TransactionOutcome.Rejected(
+                reason = reason,
+                recoverableCandidateManifest = recoverableManifest,
+            )
+        }
+        if (persistCandidateSnapshot) {
+            val candidateFile = candidate.pageSnapshotFileName
+                ?: layout.candidatePageSnapshotFile(pageKey, generationId)
+            val candidateMatches = documents.readValidated<PageTranslation>(candidateFile)?.let {
+                it == pageSnapshot
+            } == true
+            if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
+                return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
+            }
         }
         val committedFile = layout.committedPageSnapshotFile(pageKey, generationId)
         if (!documents.publishJson(committedFile, pageSnapshot.detachedCopy())) {
-            return TransactionOutcome.Rejected("committed page snapshot publication failed: pageKey=$pageKey")
+            return rejectAndRestoreCandidate("committed page snapshot publication failed: pageKey=$pageKey")
         }
         val pageSnapshotFingerprint = StageFingerprints.pageSnapshot(pageSnapshot)
         val displayBase = DisplayBaseReference(
@@ -1591,7 +1689,7 @@ class ChapterArtifactEngine(
             closedAtEpochMs = nowEpochMs,
         )
         if (!documents.publishJson(layout.generationFile(generationId), generationRecord)) {
-            return TransactionOutcome.Rejected("generation record publication failed: generationId=$generationId")
+            return rejectAndRestoreCandidate("generation record publication failed: generationId=$generationId")
         }
         val promotedTranslation = resolvedPage.translation?.copy(
             status = if (pageSnapshot.isTextlessTerminal) {
@@ -1628,7 +1726,10 @@ class ChapterArtifactEngine(
                         PageDisplayState.DISPLAY_READY
                     },
                     translation = promotedTranslation,
-                    pageVersion = page.pageVersion + 1,
+                    // The legacy two-step path persisted the candidate (+1) before promotion
+                    // (+1). Preserve that version transition while omitting the intermediate
+                    // candidate snapshot and manifest publication.
+                    pageVersion = page.pageVersion + if (persistCandidateSnapshot) 1 else 2,
                 )
                 ),
             activeCandidateGenerationIds = manifest.activeCandidateGenerationIds - generationId,
@@ -1636,7 +1737,7 @@ class ChapterArtifactEngine(
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; committed pointer unchanged")
+            return rejectAndRestoreCandidate("manifest publication failed; committed pointer unchanged")
         }
         return TransactionOutcome.Committed(updated, generationId, commitPoint = CommitPoint.PAGE_TERMINAL_PROMOTION)
     }

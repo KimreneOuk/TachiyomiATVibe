@@ -19,6 +19,9 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     /** Owned artifact moves remain available even when this double models URI/SAF. */
     val ownedRenamesToFail = mutableSetOf<String>()
 
+    /** Exact `from` names whose next owned rename must fail once. */
+    val ownedRenamesToFailOnce = mutableSetOf<String>()
+
     /** Injects a target between admission observation and the backend move. */
     var beforeRenameAttempt: ((from: String, to: String) -> Unit)? = null
 
@@ -85,6 +88,7 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
 
     override fun renameOwned(from: String, to: String): Boolean {
         if (from in ownedRenamesToFail) return false
+        if (ownedRenamesToFailOnce.remove(from)) return false
         val bytes = files[from] ?: return false
         beforeOwnedRenameAttempt?.invoke(from, to)
         files.remove(from)

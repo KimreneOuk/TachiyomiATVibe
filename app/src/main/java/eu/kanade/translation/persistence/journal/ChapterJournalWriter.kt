@@ -188,7 +188,17 @@ internal interface ChapterJournalSink : Closeable {
 internal class FileChapterJournalStorage(
     private val directory: File,
     private val durableRoot: File? = null,
+    private val syncDirectoryEntry: (File) -> Unit = { path ->
+        val fd = Os.open(path.absolutePath, OsConstants.O_RDONLY, 0)
+        try {
+            Os.fsync(fd)
+        } finally {
+            Os.close(fd)
+        }
+    },
 ) : ChapterJournalStorage {
+    private var epochDirectoryTreeNeedsSync = false
+
     override fun segmentIndexes(): List<Long> = directory.listFiles().orEmpty()
         .mapNotNull { file ->
             SEGMENT_NAME.matchEntire(file.name)?.groupValues?.get(1)?.toLongOrNull()
@@ -210,7 +220,10 @@ internal class FileChapterJournalStorage(
     }
 
     override fun openSegment(index: Long, create: Boolean): ChapterJournalSink {
-        if (!directory.exists() && !directory.mkdirs()) throw IOException("unable to create journal directory")
+        if (!directory.exists()) {
+            if (!directory.mkdirs() && !directory.exists()) throw IOException("unable to create journal directory")
+            epochDirectoryTreeNeedsSync = true
+        }
         val file = segmentFile(index)
         if (!file.exists() && !create) throw IOException("journal segment is missing")
         val channel = FileChannel.open(
@@ -224,19 +237,16 @@ internal class FileChapterJournalStorage(
     }
 
     override fun syncDirectory() {
-        // Sync every newly-created directory entry up through app-private storage.
+        // New segments and segment deletion change the epoch directory; only a newly-created
+        // epoch directory tree requires syncing its ancestors up through app-private storage.
         val syncRoot = durableRoot ?: directory.parentFile
         var path: File? = directory
         while (path != null) {
-            val fd = Os.open(path.absolutePath, OsConstants.O_RDONLY, 0)
-            try {
-                Os.fsync(fd)
-            } finally {
-                Os.close(fd)
-            }
-            if (path == syncRoot) break
+            syncDirectoryEntry(path)
+            if (!epochDirectoryTreeNeedsSync || path == syncRoot) break
             path = path.parentFile
         }
+        epochDirectoryTreeNeedsSync = false
     }
 
     private fun segmentFile(index: Long): File = File(directory, "segment-${index.toString().padStart(8, '0')}.tjr")
@@ -386,6 +396,7 @@ internal class ChapterJournalWriter(
     private val droppedControlRecords = AtomicLong(0L)
     private val lostTerminalRecords = AtomicLong(0L)
     private val writerFailures = AtomicLong(0L)
+    private val captureBatchAwaitingBarrier = AtomicBoolean(false)
 
     @Volatile
     private var terminalFailure: Throwable? = null
@@ -406,7 +417,7 @@ internal class ChapterJournalWriter(
     private val terminalPayloadSeen = AtomicBoolean(false)
     private val hasJournalEvent = AtomicBoolean(false)
     private val writerDone = CompletableDeferred<Unit>()
-    private var pendingInventory: ChapterJournalInventorySnapshot? = null
+    private var pendingInventory: PendingInventory? = null
     private var inventoryCommandQueued = false
 
     val ackedHighWaterSeq: Long get() = highWater.get()
@@ -501,7 +512,14 @@ internal class ChapterJournalWriter(
     /** Caller holds the store mutex. This sequence belongs only to legacy durable events. */
     fun nextCommitSeq(): Long = assignedCommitSequence.incrementAndGet()
 
-    /** Caller holds the store mutex. Hands off an already-sequenced legacy-persisted page state. */
+    /**
+     * Caller holds the store mutex. Hands off an already-sequenced legacy-persisted page state.
+     * [deferSyncUntilBarrier] is only for a store flush that closes the producer gate and follows
+     * these appends with a capture barrier before returning; it never batches durability across
+     * flushes. Each non-empty flush batch receives one final force, plus required pre-close
+     * segment forces at rollover and the segment-header force whenever a new segment is created
+     * (epoch start or rollover).
+     */
     fun captureLegacyPersisted(
         commitSeq: Long,
         credit: ChapterJournalCredit?,
@@ -515,6 +533,7 @@ internal class ChapterJournalWriter(
         cleanedImageName: String? = page?.cleanedImageName,
         cleanedImageContentHash: String? = page?.cleanedImageContentHash,
         inventory: ChapterJournalInventorySnapshot = ChapterJournalInventorySnapshot.EMPTY,
+        deferSyncUntilBarrier: Boolean = false,
     ): Long {
         val record = ChapterJournalRecord(
             pageKey = pageKey,
@@ -537,7 +556,8 @@ internal class ChapterJournalWriter(
             credit = credit,
             pageKey = pageKey,
             traceRuns = TranslationTrace.currentRuns(),
-            syncImmediately = paid,
+            syncImmediately = paid && !deferSyncUntilBarrier,
+            deferSyncUntilBarrier = deferSyncUntilBarrier,
         )
         return commitSeq
     }
@@ -608,16 +628,20 @@ internal class ChapterJournalWriter(
     }
 
     /** Caller holds the store mutex; inventory is metadata and consumes no credit or commitSeq. */
-    fun captureInventory(inventory: ChapterJournalInventorySnapshot) {
+    fun captureInventory(
+        inventory: ChapterJournalInventorySnapshot,
+        deferSyncUntilBarrier: Boolean = false,
+    ) {
         synchronized(creditAdmissionLock) {
             if (closed.get() || !captureAcceptanceOpen.get()) {
                 droppedControlRecords.incrementAndGet()
                 return
             }
-            if (!enqueueInventoryLocked(inventory)) {
+            if (!enqueueInventoryLocked(inventory, deferSyncUntilBarrier)) {
                 droppedControlRecords.incrementAndGet()
                 return
             }
+            if (deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(true)
             hasJournalEvent.set(true)
             startWriter()
         }
@@ -750,6 +774,7 @@ internal class ChapterJournalWriter(
         pageKey: String,
         traceRuns: List<TranslationRunTrace>,
         syncImmediately: Boolean = false,
+        deferSyncUntilBarrier: Boolean = false,
     ) {
         synchronized(creditAdmissionLock) {
             if (closed.get() || !captureAcceptanceOpen.get()) {
@@ -776,10 +801,25 @@ internal class ChapterJournalWriter(
                     return
                 }
             }
+            // Defensive rollback if the channel-capacity/admission invariants change; with a held
+            // credit, the reserved control slots make a full-channel failure unreachable today.
+            val wasAwaitingBarrier = captureBatchAwaitingBarrier.get()
+            if (deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(true)
             if (commands.trySend(
-                    Command.Append(commitSeq, kind, encode, inventory, credit, pageKey, traceRuns, syncImmediately),
+                    Command.Append(
+                        commitSeq,
+                        kind,
+                        encode,
+                        inventory,
+                        credit,
+                        pageKey,
+                        traceRuns,
+                        syncImmediately,
+                        deferSyncUntilBarrier,
+                    ),
                 ).isFailure
             ) {
+                if (deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(wasAwaitingBarrier)
                 credit.releaseAfterTerminal()
                 markShadowLag(commitSeq, inventory, traceRuns)
                 return
@@ -832,12 +872,19 @@ internal class ChapterJournalWriter(
     }
 
     /** Caller holds creditAdmissionLock; replay only needs the latest inventory before a durable event. */
-    private fun enqueueInventoryLocked(inventory: ChapterJournalInventorySnapshot): Boolean {
+    private fun enqueueInventoryLocked(
+        inventory: ChapterJournalInventorySnapshot,
+        deferSyncUntilBarrier: Boolean = false,
+    ): Boolean {
         if (inventoryCommandQueued) {
-            pendingInventory = inventory
+            val pending = pendingInventory
+            pendingInventory = PendingInventory(
+                inventory = inventory,
+                deferSyncUntilBarrier = deferSyncUntilBarrier || pending?.deferSyncUntilBarrier == true,
+            )
             return true
         }
-        pendingInventory = inventory
+        pendingInventory = PendingInventory(inventory, deferSyncUntilBarrier)
         if (commands.trySend(Command.InventoryWake).isFailure) {
             pendingInventory = null
             return false
@@ -846,7 +893,7 @@ internal class ChapterJournalWriter(
         return true
     }
 
-    private fun takePendingInventory(): ChapterJournalInventorySnapshot? = synchronized(creditAdmissionLock) {
+    private fun takePendingInventory(): PendingInventory? = synchronized(creditAdmissionLock) {
         inventoryCommandQueued = false
         pendingInventory.also { pendingInventory = null }
     }
@@ -940,6 +987,11 @@ internal class ChapterJournalWriter(
             }
         }
 
+        fun markDeferredSync(frameSeq: Long) {
+            unsyncedHighWaterFrameSeq = frameSeq
+            hadUnsyncedFreeWork = true
+        }
+
         fun clearFreeSync() {
             hadUnsyncedFreeWork = false
             freeSyncTimer?.cancel()
@@ -994,6 +1046,7 @@ internal class ChapterJournalWriter(
             inventory: ChapterJournalInventorySnapshot,
             failedCommitSeq: Long,
             traceRuns: List<TranslationRunTrace> = emptyList(),
+            deferSyncUntilBarrier: Boolean = false,
         ): Boolean {
             val record = inventory.record(chapterIdentityHash)
             if (record.sourceFingerprint == lastInventoryFingerprint) return true
@@ -1013,7 +1066,11 @@ internal class ChapterJournalWriter(
                 payload = payload,
             )
             lastInventoryFingerprint = record.sourceFingerprint
-            scheduleFreeSync(frameSeq)
+            if (deferSyncUntilBarrier) {
+                markDeferredSync(frameSeq)
+            } else {
+                scheduleFreeSync(frameSeq)
+            }
             return true
         }
 
@@ -1045,11 +1102,15 @@ internal class ChapterJournalWriter(
                 val command = selectNextCommand(freeSyncTimer)
                 when (command) {
                     Command.FreeSyncDue -> {
-                        syncFreePrefix()
+                        // A store flush already owns the next durability point. Keep its
+                        // frames in the batch instead of letting a previously armed free-work
+                        // timer split the flush into extra forces.
+                        if (!captureBatchAwaitingBarrier.get()) syncFreePrefix()
                         freeSyncTimer = null
                     }
 
                     is Command.Append -> {
+                        if (command.deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(true)
                         activeCredit = command.credit
                         if (terminalCaptureHalted) {
                             command.credit.releaseAfterTerminal()
@@ -1066,7 +1127,14 @@ internal class ChapterJournalWriter(
                                 "legacy commit sequence gap: expected=$nextCommitSeq actual=${command.commitSeq}",
                             )
                         }
-                        if (!appendInventory(command.inventory, command.commitSeq, command.traceRuns)) {
+                        if (
+                            !appendInventory(
+                                command.inventory,
+                                command.commitSeq,
+                                command.traceRuns,
+                                command.deferSyncUntilBarrier,
+                            )
+                        ) {
                             command.credit.releaseAfterTerminal()
                             activeCredit = null
                             continue
@@ -1090,11 +1158,13 @@ internal class ChapterJournalWriter(
                         )
                         lastCommitSeq = command.commitSeq
                         nextCommitSeq = command.commitSeq + 1
-                        if (command.kind == ChapterJournalFormat.RecordKind.PAID_STATE || command.syncImmediately) {
+                        if (command.syncImmediately) {
                             sink?.flush()
                             sink?.sync()
                             highWater.set(stateFrameSeq)
                             clearFreeSync()
+                        } else if (command.deferSyncUntilBarrier) {
+                            markDeferredSync(stateFrameSeq)
                         } else {
                             scheduleFreeSync(stateFrameSeq)
                         }
@@ -1105,7 +1175,14 @@ internal class ChapterJournalWriter(
                     Command.InventoryWake -> {
                         val inventory = takePendingInventory()
                         if (!terminalCaptureHalted) {
-                            inventory?.let { appendInventory(it, lastCommitSeq + 1L) }
+                            inventory?.let { pending ->
+                                if (pending.deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(true)
+                                appendInventory(
+                                    pending.inventory,
+                                    lastCommitSeq + 1L,
+                                    deferSyncUntilBarrier = pending.deferSyncUntilBarrier,
+                                )
+                            }
                         } else {
                             droppedControlRecords.incrementAndGet()
                         }
@@ -1113,10 +1190,15 @@ internal class ChapterJournalWriter(
 
                     is Command.CaptureBarrier -> {
                         activeCaptureBarrier = command.done
-                        sink?.flush()
-                        sink?.sync()
+                        syncFreePrefix()
+                        if (sink != null && highWater.get() < nextFrameSeq - 1L) {
+                            sink?.flush()
+                            sink?.sync()
+                            highWater.set(nextFrameSeq - 1L)
+                            hadUnsyncedFreeWork = false
+                        }
                         clearFreeSync()
-                        if (sink != null) highWater.set(nextFrameSeq - 1L)
+                        captureBatchAwaitingBarrier.set(false)
                         command.done.complete(highWater.get())
                         activeCaptureBarrier = null
                     }
@@ -1361,6 +1443,11 @@ internal class ChapterJournalWriter(
         val sink: ChapterJournalSink,
     )
 
+    private data class PendingInventory(
+        val inventory: ChapterJournalInventorySnapshot,
+        val deferSyncUntilBarrier: Boolean,
+    )
+
     private sealed interface Command {
         data class Append(
             val commitSeq: Long,
@@ -1371,6 +1458,7 @@ internal class ChapterJournalWriter(
             val pageKey: String,
             val traceRuns: List<TranslationRunTrace>,
             val syncImmediately: Boolean,
+            val deferSyncUntilBarrier: Boolean,
         ) : Command
 
         data object InventoryWake : Command
