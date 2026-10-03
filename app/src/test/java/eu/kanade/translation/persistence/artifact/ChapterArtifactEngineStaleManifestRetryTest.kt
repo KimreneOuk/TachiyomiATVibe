@@ -50,21 +50,16 @@ class ChapterArtifactEngineStaleManifestRetryTest {
 
     /**
      * Mirrors the real  writer: the artifact-health republisher republishes
-     * the manifest with the VERIFIED health marker and a bumped timestamp,
+     * the manifest with the chapter timestamp marker and a bumped timestamp,
      * behind the caller's back.
      */
     private fun verifyMarkerPublication(
         manifest: ChapterArtifactManifest,
         nowEpochMs: Long,
-    ): ChapterArtifactManifest {
-        val metadata = (manifest.legacyMigration ?: LegacyMigrationMetadata(sourceFileName = "Chapter 1.json"))
-            .copy(
-                health = LegacyMigrationHealth.VERIFIED,
-                lastVerifiedByVersionCode = 63L,
-                lastVerifiedAtEpochMs = nowEpochMs,
-            )
-        return manifest.copy(legacyMigration = metadata, updatedAtEpochMs = nowEpochMs)
-    }
+    ): ChapterArtifactManifest = manifest.copy(
+        cutoverAtEpochMs = nowEpochMs,
+        updatedAtEpochMs = nowEpochMs,
+    )
 
     /** Publishes [updated] as the durable manifest, simulating the concurrent writer. */
     private fun bumpBehindCallersBack(
@@ -73,7 +68,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         nowEpochMs: Long,
     ) {
         check(artifact.publishManifest(verifyMarkerPublication(current, nowEpochMs))) {
-            "fixture: concurrent verify publication failed"
+            "fixture: concurrent metadata publication failed"
         }
     }
 
@@ -83,22 +78,21 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun `publishActiveRun with a stale snapshot retries once and preserves the concurrent verify marker`() {
+    fun `publishActiveRun with a stale snapshot retries once and preserves the concurrent timestamp marker`() {
         val documents = AtomicChapterDocuments(FakeChapterDocumentIo())
         val artifact = ChapterArtifactEngine(documents, layout)
         var manifest = artifact
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
             cutoverAtEpochMs = 1L,
-            migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
         )
         check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
 
         // The façade caches the pre-verification copy…
         val callerCopy = artifact.readManifest().shouldNotBeNull()
-        // …and the background verify republishes a VERIFIED manifest.
+        // …and the concurrent writer advances the chapter timestamp.
         bumpBehindCallersBack(artifact, callerCopy, nowEpochMs = 2L)
 
         val record = ChapterRunRecord(
@@ -132,7 +126,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         durable.activeRun.shouldNotBeNull().contentFingerprint shouldBe hex64("li4-run-record")
         committed.manifest shouldBe durable
         // …and the concurrent publication's changes were NOT reverted.
-        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.cutoverAtEpochMs shouldBe 2L
         durable.updatedAtEpochMs shouldBe 3L
     }
 
@@ -168,18 +162,9 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 10, 10, 1)),
     )
 
-    private fun identity(tag: String) = LegacySourceIdentity(
-        sha256 = "sha-$tag",
-        lengthBytes = tag.length.toLong(),
-        lastModifiedMs = 1L,
-    )
-
-    private fun legacySnapshot(page: PageTranslation) = ArtifactSeed(
+    private fun seededSnapshot(page: PageTranslation) = ArtifactSeed(
         pages = mapOf("page.jpg" to ArtifactPageFacts(page, CleanedFileState.VALID)),
-        legacyIdentity = identity("v1"),
-        sourceFileName = "Chapter 1.json",
-        migratedByVersionCode = 63L,
-        migratedAtEpochMs = 42L,
+        createdAtEpochMs = 42L,
     )
 
     private class CheckpointFixture(
@@ -201,7 +186,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
             },
         )
         val ocrSnapshot = ocrPage()
-        val migrated = store.loadArtifact(legacySnapshot(ocrSnapshot)).manifest
+        val migrated = store.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
         val opened = store.openCandidate(
             migrated,
             "page.jpg",
@@ -267,7 +252,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     }
 
     @Test
-    fun `checkpointOcr with a stale snapshot retries once and preserves the concurrent verify marker`() {
+    fun `checkpointOcr with a stale snapshot retries once and preserves the concurrent timestamp marker`() {
         val fx = checkpointFixtureWithConcurrentVerify()
         val checkpoint = checkpointFor(fx)
         val callerPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion
@@ -291,7 +276,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         durable.pages.getValue("page.jpg").pageVersion shouldBe callerPageVersion + 1
         committed.manifest shouldBe durable
         // …and the concurrent publication's changes were NOT reverted.
-        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.cutoverAtEpochMs shouldBe 5_000L
     }
 
     @Test
@@ -349,11 +334,10 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     private fun authorityFlipFixture(): ChapterArtifactEngine {
         val artifact = ChapterArtifactEngine(AtomicChapterDocuments(FakeChapterDocumentIo()), layout)
         var manifest = artifact
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
             cutoverAtEpochMs = 1L,
-            migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
         )
         check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
@@ -379,7 +363,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     )
 
     @Test
-    fun `openCandidate with a stale snapshot retries once and preserves the concurrent verify marker`() {
+    fun `openCandidate with a stale snapshot retries once and preserves the concurrent timestamp marker`() {
         val artifact = authorityFlipFixture()
         val callerCopy = artifact.readManifest().shouldNotBeNull()
         bumpBehindCallersBack(artifact, callerCopy, nowEpochMs = 2L)
@@ -401,7 +385,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
             .dependencyFingerprint shouldBe "deps-v1"
         committed.manifest shouldBe durable
         // …and the concurrent publication's changes were NOT reverted.
-        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.cutoverAtEpochMs shouldBe 2L
         durable.updatedAtEpochMs shouldBe 3L
     }
 
@@ -462,7 +446,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     }
 
     @Test
-    fun `persistLiveCandidate with a stale snapshot retries once and preserves the concurrent verify marker`() {
+    fun `persistLiveCandidate with a stale snapshot retries once and preserves the concurrent timestamp marker`() {
         val fx = checkpointFixtureWithConcurrentVerify()
         val callerPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion
 
@@ -483,7 +467,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         durable.pages.getValue("page.jpg").pageVersion shouldBe callerPageVersion + 1
         committed.manifest shouldBe durable
         // …and the concurrent publication's changes were NOT reverted.
-        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.cutoverAtEpochMs shouldBe 5_000L
     }
 
     @Test
@@ -509,7 +493,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     }
 
     @Test
-    fun `promoteLiveCandidate with a stale snapshot retries once and preserves the concurrent verify marker`() {
+    fun `promoteLiveCandidate with a stale snapshot retries once and preserves the concurrent timestamp marker`() {
         val fx = checkpointFixtureWithConcurrentVerify()
         val callerPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion
 
@@ -533,7 +517,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
             .generationId shouldBe fx.generationId
         committed.manifest shouldBe durable
         // …and the concurrent publication's changes were NOT reverted.
-        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.cutoverAtEpochMs shouldBe 5_000L
     }
 
     @Test
@@ -557,7 +541,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     }
 
     @Test
-    fun `retireActiveRun with a stale snapshot retries once and preserves the concurrent verify marker`() {
+    fun `retireActiveRun with a stale snapshot retries once and preserves the concurrent timestamp marker`() {
         val artifact = authorityFlipFixture()
         val record = li4RunRecord("run-li4-retire-1")
         check(
@@ -579,6 +563,6 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         durable.activeRun shouldBe null
         committed.manifest shouldBe durable
         // …and the concurrent publication's changes were NOT reverted.
-        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.cutoverAtEpochMs shouldBe 3L
     }
 }

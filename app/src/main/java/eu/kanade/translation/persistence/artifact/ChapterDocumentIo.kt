@@ -362,12 +362,7 @@ class AtomicChapterDocuments(
             return false
         }
         val written = io.read(tempName)
-        val matches = if (io.isFileBacked() && GroupCommitConfiguration.enabled) {
-            // File-backed storage validates the written payload without a second read.
-            written != null && validate(written)
-        } else {
-            written != null && written.contentEquals(bytes) && validate(written)
-        }
+        val matches = written != null && written.contentEquals(bytes) && validate(written)
         if (!matches) {
             io.delete(tempName)
             logcat(LogPriority.WARN) {

@@ -126,7 +126,7 @@ class ChapterTranslatorTerminalExitsTest {
 
     @Test
     fun `pre-registration rejection produces a typed terminal aborted snapshot and no live tracker`() = runBlocking<Unit> {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         activeStoreResolver = { store }
         // The known ordered keys are rejected by the defunct store: the caller
         // must observe the rejection instead of silently running an empty batch.
@@ -154,7 +154,7 @@ class ChapterTranslatorTerminalExitsTest {
 
     @Test
     fun `missing chapter files produce an aborted terminal snapshot with the reason`() = runBlocking<Unit> {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         activeStoreResolver = { store }
         every { downloadProvider.findChapterDir(any(), any(), any(), any()) } returns null
 
@@ -171,7 +171,7 @@ class ChapterTranslatorTerminalExitsTest {
 
     @Test
     fun `unexpected pipeline exception aborts the tracker with the typed reason`() = runBlocking<Unit> {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         activeStoreResolver = { store }
 
         stubEnumeration()

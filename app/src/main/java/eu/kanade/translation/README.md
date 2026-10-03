@@ -69,7 +69,7 @@ For a new provider, first read `engines/translator/TextTranslator.kt`, `engines/
 
 ## State and durable records
 
-`persistence/chapter/ChapterTranslationStore.kt` is the in-process authority for live page state, guarded mutations, leases, and display flows. Its synchronization, generation fences, and commit coordination work together. `persistence/artifact/ChapterArtifactEngine.kt` owns durable artifact records and crash recovery; manifests and committed document pointers are authoritative after restart. The in-memory store is authoritative for the current process projection. Queue and pending-request records have their own persistence owners.
+`persistence/chapter/ChapterTranslationStore.kt` is the in-process authority for live page state, guarded mutations, leases, and display flows. Its synchronization, generation fences, and commit coordination work together. On open, `ChapterJournalRecovery` replays the durable journal prefix to seed that store; accepted store mutations then remain the single live projection source. `persistence/artifact/ChapterArtifactEngine.kt` owns manifests, immutable page payloads, and committed display pointers. A pre-journal artifact manifest seeds chapters that have not yet acquired a journal. Queue and pending-request records have their own persistence owners.
 
 Candidate output must remain separate from committed display output until artifact commit succeeds. A stale or failed candidate must not replace the last committed page result.
 

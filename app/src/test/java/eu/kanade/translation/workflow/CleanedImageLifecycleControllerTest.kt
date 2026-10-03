@@ -91,7 +91,7 @@ class CleanedImageLifecycleControllerTest {
         every { directory.findFile("$pairedImageName.identity.json") } returns pairedSidecar
         every { provider.findCompanionImageDir(any(), any(), any(), any()) } returns directory
 
-        val store = ChapterTranslationStore(translationFile = null, fileCreator = null)
+        val store = ChapterTranslationStore(artifactParentResolver = null)
         val controller = CleanedImageLifecycleController(
             applicationScopeProvider = { CoroutineScope(SupervisorJob() + Dispatchers.Unconfined) },
             streamRegistryProvider = { TranslationStreamRegistry() },

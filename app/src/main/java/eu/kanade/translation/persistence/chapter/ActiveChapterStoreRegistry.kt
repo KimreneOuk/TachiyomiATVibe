@@ -202,7 +202,7 @@ internal class ActiveChapterStoreRegistry {
         val owned: Boolean,
         /**
          * True only when this call ran [create] — a freshly opened probe may
-         * have performed a one-way rescue and advanced durable truth, so
+         * have recovered or seeded journal-backed state and advanced durable truth, so
          * observers must drop statuses cached before it. A reused probe
          * already had that wipe when it was first created.
          */
@@ -222,20 +222,10 @@ internal class ActiveChapterStoreRegistry {
 
         fun mainStoreFor(chapterKey: String): ChapterTranslationStore? = mainStores[chapterKey]
 
-        fun flushAllActiveStores() {
-            mainStores.values.forEach { store ->
-                store.flushStagedMutationsBlocking()
-            }
-        }
-
         /**
          * Registers an active writer process-wide.
          *
-         * Observability-only while flag OFF: registers and returns an AutoCloseable
-         * token to unregister, but excludes nothing.
-         *
-         * With group commit enabled, second writers use this registry to identify
-         * the active store and request a staged buffer force-flush before publication.
+         * Registers a process-wide writer for diagnostics and inspection.
          */
         fun registerWriter(
             chapterId: Long? = null,
@@ -244,9 +234,6 @@ internal class ActiveChapterStoreRegistry {
             tag: String? = null,
             nowEpochMs: Long = System.currentTimeMillis(),
         ): AutoCloseable = synchronized(globalMutex) {
-            if (eu.kanade.translation.persistence.artifact.GroupCommitConfiguration.enabled && origin != WriterOrigin.MAIN_STORE) {
-                chapterKey?.let { mainStores[it]?.flushStagedMutationsBlocking() }
-            }
             val writer = ActiveWriter(
                 chapterId = chapterId,
                 chapterKey = chapterKey,

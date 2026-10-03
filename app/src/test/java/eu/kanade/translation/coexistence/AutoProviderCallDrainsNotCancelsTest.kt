@@ -90,11 +90,10 @@ class AutoProviderCallDrainsNotCancelsTest {
             ChapterArtifactLayout("D6 Drain Chapter"),
         )
         val manifest = artifactStore
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         return ChapterTranslationStore(
-            translationFile = null as com.hippo.unifile.UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = pageKeys.associateWith { key -> PageTranslation(sourceFileName = key) },
             artifactStore = artifactStore,
             initialArtifactManifest = manifest,

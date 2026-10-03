@@ -37,8 +37,7 @@ import java.io.InputStream
 class CancelSyncStoreWriteTest {
 
     private fun newStore(): ChapterTranslationStore = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = emptyMap(),
     )
 

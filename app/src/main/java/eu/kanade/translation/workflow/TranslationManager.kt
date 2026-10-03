@@ -2,7 +2,6 @@ package eu.kanade.translation.workflow
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
-import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -1176,6 +1175,7 @@ class TranslationManager private constructor(
         }
     }
 
+    /** Synchronous reader entry point; document discovery and open run on IO. */
     fun getChapterTranslation(
         chapterName: String,
         scanlator: String?,
@@ -1183,13 +1183,23 @@ class TranslationManager private constructor(
         source: Source,
     ): Map<String, PageTranslationView> {
         try {
-            val file = provider.findTranslationFile(
-                chapterName,
-                scanlator,
-                title,
-                source,
-            ) ?: return emptyMap()
-            return getChapterTranslation(file)
+            return kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                val parent = provider.findMangaDir(title, source) ?: return@runBlocking emptyMap()
+                val fileName = provider.getTranslationFileName(chapterName, scanlator)
+                val manifestProbe = ChapterTranslationStore.probeArtifactManifest(parent, fileName)
+                if (!manifestProbe.exists) return@runBlocking emptyMap()
+                val registryKey = "${parent.filePath ?: parent.uri}:$fileName"
+                val store = activeStores.getOrCreateFile(registryKey) {
+                    ChapterTranslationStore.openArtifactSuspend(
+                        parent,
+                        fileName,
+                        provider.privateJournalRoot,
+                        provider.privateJournalIdentity(source, title, fileName),
+                    )
+                }
+                durableStatusResolver.clearDurableStatusCache()
+                store?.state?.value.orEmpty()
+            }
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) {
                 "TachiyomiAT failed to read chapter translation for $chapterName"
@@ -1228,26 +1238,6 @@ class TranslationManager private constructor(
         } finally {
             entryStage.end()
         }
-    }
-
-    fun getChapterTranslation(
-        file: UniFile,
-    ): Map<String, PageTranslationView> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
-        if (manifestProbe.exists) {
-            val parent = file.parentFile ?: return@runBlocking emptyMap()
-            val store = activeStores.getOrCreateFile(file.registryKey()) {
-                ChapterTranslationStore.openArtifactSuspend(
-                    parent,
-                    file.name ?: "translation.json",
-                    provider.privateJournalRoot,
-                    provider.privateJournalIdentity(file),
-                )
-            }
-            durableStatusResolver.clearDurableStatusCache()
-            return@runBlocking store?.state?.value.orEmpty()
-        }
-        return@runBlocking emptyMap()
     }
 
     private suspend fun openExistingChapterTranslationStore(
@@ -1293,7 +1283,7 @@ class TranslationManager private constructor(
         }
         if (!hadActive) {
             // See the hadActive comment above: only a fresh open can have
-            // advanced durable truth (rescue / preservation marker).
+            // advanced durable truth through recovery or seeding.
             durableStatusResolver.clearDurableStatusCache()
         }
         return store
@@ -1308,14 +1298,12 @@ class TranslationManager private constructor(
     ): TranslationDocument? =
         durableStatusResolver.findTranslationDocument(chapterName, scanlator, mangaTitle, source)
 
-    private fun UniFile.registryKey(): String = filePath ?: uri.toString()
-
     /** Returns whether this chapter has an existing or active translation store. */
     fun hasTranslationStore(chapter: Chapter, manga: Manga, source: Source): Boolean {
         chapter.id?.let { activeStores.get(it) }?.let { return it.state.value.isNotEmpty() }
-        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-            ?: return false
-        return ChapterTranslationStore.probeArtifactManifest(file).exists
+        val parent = provider.findMangaDir(manga.title, source) ?: return false
+        val fileName = provider.getTranslationFileName(chapter.name, chapter.scanlator)
+        return ChapterTranslationStore.probeArtifactManifest(parent, fileName).exists
     }
 
     /** Re-keys source URL pages to the names written by a completed download. */
@@ -1331,14 +1319,15 @@ class TranslationManager private constructor(
 
         val activeStore = activeStores.get(chapterId)
         val store = activeStore ?: run {
-            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-                ?.takeIf { it.exists() }
-                ?: return
-            activeStores.getOrCreate(chapterId, file.registryKey()) {
-                ChapterTranslationStore.openSuspend(
-                    file,
+            val parent = provider.findMangaDir(manga.title, source) ?: return
+            val fileName = provider.getTranslationFileName(chapter.name, chapter.scanlator)
+            if (!ChapterTranslationStore.probeArtifactManifest(parent, fileName).exists) return
+            activeStores.getOrCreate(chapterId, "${parent.filePath ?: parent.uri}:$fileName") {
+                ChapterTranslationStore.openArtifactSuspend(
+                    parent,
+                    fileName,
                     provider.privateJournalRoot,
-                    provider.privateJournalIdentity(source, manga.title, file.name ?: "translation.json"),
+                    provider.privateJournalIdentity(source, manga.title, fileName),
                 )
             } ?: return
         }
@@ -1454,7 +1443,7 @@ class TranslationManager private constructor(
                 ChapterTranslationStore.lazy(
                     artifactParent = document?.parent,
                     artifactFileName = fileName,
-                    fileCreator = { provider.getMangaDir(mangaTitle, source) },
+                    artifactParentResolver = { provider.getMangaDir(mangaTitle, source) },
                     privateStorageRoot = provider.privateJournalRoot,
                     privateStorageIdentity = provider.privateJournalIdentity(source, mangaTitle, fileName),
                 )

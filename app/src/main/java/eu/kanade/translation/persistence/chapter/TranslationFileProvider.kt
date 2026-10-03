@@ -7,8 +7,6 @@ import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.storage.service.StorageManager
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
@@ -25,11 +23,6 @@ class TranslationFileProvider(
     /** Stable artifact-path identity; the value is hashed before becoming a path. */
     internal fun privateJournalIdentity(source: Source, mangaTitle: String, fileName: String): String =
         "${getSourceDirName(source)}:${getMangaDirName(mangaTitle)}:$fileName"
-
-    /** Mirrors the source-based form using the artifact's containing directory names. */
-    internal fun privateJournalIdentity(file: UniFile): String =
-        "${file.parentFile?.parentFile?.name ?: "<unknown>"}:" +
-            "${file.parentFile?.name ?: "<unknown>"}:${file.name ?: "translation.json"}"
 
     private val translationDir: UniFile?
         get() = storageManager.getTranslationsDirectory()
@@ -79,34 +72,6 @@ class TranslationFileProvider(
     fun findMangaDir(mangaTitle: String, source: Source): UniFile? {
         val sourceDir = findSourceDir(source)
         return sourceDir?.findFile(getMangaDirName(mangaTitle))
-    }
-
-    /**
-     * Returns the translation file for a chapter if it exists.
-     *
-     * @param chapterName the name of the chapter to query.
-     * @param chapterScanlator scanlator of the chapter to query
-     * @param mangaTitle the title of the manga to query.
-     * @param source the source of the chapter.
-     */
-
-    fun findTranslationFile(chapterName: String, chapterScanlator: String?, mangaTitle: String, source: Source): UniFile? {
-        val mangaDir = findMangaDir(mangaTitle, source)
-        return mangaDir?.findFile(getTranslationFileName(chapterName, chapterScanlator))
-    }
-
-    /**
-     * Returns a list of translation directories for the chapters that exist.
-     *
-     * @param chapters the chapters to query.
-     * @param manga the manga of the chapter.
-     * @param source the source of the chapter.
-     */
-    fun findChapterFiles(chapters: List<Chapter>, manga: Manga, source: Source): Pair<UniFile?, List<UniFile>> {
-        val mangaDir = findMangaDir(manga.title, source) ?: return null to emptyList()
-        return mangaDir to chapters.mapNotNull { chapter ->
-            mangaDir.findFile(getTranslationFileName(chapter.name, chapter.scanlator))
-        }
     }
 
     /**

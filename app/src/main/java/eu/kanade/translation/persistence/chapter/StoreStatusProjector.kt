@@ -77,7 +77,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
      * Derives durable artifact status without consulting the legacy summary sidecar.
      *
      * When a durable run record is COMPLETE, its manifest page records are
-     * completion evidence only for legacy artifact-authoritative stores. After
+     * completion evidence only for artifact-only stores without a journal. After
      * journal bootstrap, the record is only a gate: active store pages plus
      * recovered/accepted inventory supply the evidence, and manifest
      * candidates never count. This keeps translated-but-unrendered pages from
@@ -195,7 +195,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
     }
 
     /**
-     * The legacy artifact-authoritative path uses manifest page records only
+     * Artifact-only stores use manifest page records only
      * when the active run record is durably COMPLETE. Trusted expected-page
      * shortfalls count as unevidenced. A committed display bundle, a
      * TEXTLESS_COMPLETE state, or an open candidate snapshot is completion

@@ -9,35 +9,19 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.StageFingerprints
-import eu.kanade.translation.persistence.internal.StorePersistenceScheduler
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
 
 class PageSnapshotLostUpdateTest {
-
-    private fun persistenceScheduler(store: ChapterTranslationStore): Any =
-        ChapterTranslationStore::class.java.getDeclaredField("persistenceScheduler").apply {
-            isAccessible = true
-        }.get(store)
-
-    private suspend fun stagedDebounceJob(store: ChapterTranslationStore): Job? =
-        store.mutex.withLock {
-            StorePersistenceScheduler::class.java.getDeclaredField("stagedDebounceJob").apply {
-                isAccessible = true
-            }.get(persistenceScheduler(store)) as? Job
-        }
 
     @Test
     fun hydration_serializes_with_writers_and_preserves_the_newer_page_state() = runTest {
@@ -68,14 +52,11 @@ class PageSnapshotLostUpdateTest {
             ),
         )
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf(pageKey to PageTranslation(sourceFileName = pageKey)),
             artifactStore = ChapterArtifactEngine(AtomicChapterDocuments(blockingIo), layout),
             initialArtifactManifest = manifest,
         )
-        val previousGroupCommit = GroupCommitConfiguration.enabled
-        GroupCommitConfiguration.enabled = true
         var hydration: kotlinx.coroutines.Deferred<PageTranslation?>? = null
         var writer: kotlinx.coroutines.Deferred<Unit>? = null
 
@@ -102,11 +83,8 @@ class PageSnapshotLostUpdateTest {
             releaseRead.countDown()
             writer?.cancelAndJoin()
             hydration?.cancelAndJoin()
-            val pendingStageFlush = stagedDebounceJob(store)
             store.markDefunct()
-            pendingStageFlush?.join()
             store.closeAndFlush()
-            GroupCommitConfiguration.enabled = previousGroupCommit
         }
     }
 

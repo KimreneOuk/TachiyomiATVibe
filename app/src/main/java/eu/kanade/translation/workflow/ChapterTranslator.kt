@@ -234,33 +234,18 @@ class ChapterTranslator(
         withContext(Dispatchers.IO) {
             runCatching {
                 val active = pipeline.activeStoreResolver?.invoke(translation)
-                val store = active ?: provider.findTranslationFile(
-                    translation.chapter.name,
-                    translation.chapter.scanlator,
-                    translation.manga.title,
-                    translation.source,
-                )?.takeIf { it.exists() }?.let { file ->
-                    ChapterTranslationStore.openSuspend(
-                        file,
+                val store = active ?: provider.findMangaDir(translation.manga.title, translation.source)?.let { parent ->
+                    val fileName = provider.getTranslationFileName(
+                        translation.chapter.name,
+                        translation.chapter.scanlator,
+                    )
+                    ChapterTranslationStore.openArtifactSuspend(
+                        parent,
+                        fileName,
                         provider.privateJournalRoot,
-                        provider.privateJournalIdentity(translation.source, translation.manga.title, file.name ?: "translation.json"),
+                        provider.privateJournalIdentity(translation.source, translation.manga.title, fileName),
                     )
                 }
-                    ?: provider.findMangaDir(translation.manga.title, translation.source)?.let { parent ->
-                        ChapterTranslationStore.openArtifactSuspend(
-                            parent,
-                            provider.getTranslationFileName(
-                                translation.chapter.name,
-                                translation.chapter.scanlator,
-                            ),
-                            provider.privateJournalRoot,
-                            provider.privateJournalIdentity(
-                                translation.source,
-                                translation.manga.title,
-                                provider.getTranslationFileName(translation.chapter.name, translation.chapter.scanlator),
-                            ),
-                        )
-                    }
                 store ?: return@withContext null
                 DurableQueueState(
                     status = store.artifactStatus(),
@@ -675,53 +660,17 @@ class ChapterTranslator(
             // observes the same instance the pipeline writes to.
             store = pipeline.activeStoreResolver?.invoke(translation)
             if (store == null) {
-                val existingFile = provider.findTranslationFile(
+                val parent = provider.getMangaDir(translation.manga.title, translation.source)
+                val fileName = provider.getTranslationFileName(
                     translation.chapter.name,
                     translation.chapter.scanlator,
-                    translation.manga.title,
-                    translation.source,
                 )
-                val translationFile = if (existingFile != null && existingFile.exists()) {
-                    existingFile
-                } else {
-                    val translationMangaDir = provider.getMangaDir(translation.manga.title, translation.source)
-                    val saveFile = provider.getTranslationFileName(
-                        translation.chapter.name,
-                        translation.chapter.scanlator,
-                    )
-                    if (translationMangaDir == null) {
-                        logcat(LogPriority.ERROR) {
-                            "TachiyomiAT cannot resolve artifact directory for ${translation.chapter.name}"
-                        }
-                        translation.status = Translation.State.ERROR
-                        return null
-                    }
-                    store = ChapterTranslationStore.openArtifactSuspend(
-                        translationMangaDir,
-                        saveFile,
-                        provider.privateJournalRoot,
-                        provider.privateJournalIdentity(translation.source, translation.manga.title, saveFile),
-                    )
-                    null
-                }
-                if (translationFile == null && store == null) {
-                    logcat(LogPriority.ERROR) {
-                        "TachiyomiAT cannot open translation artifact for ${translation.chapter.name}"
-                    }
-                    translation.status = Translation.State.ERROR
-                    return null
-                }
-                if (store == null) {
-                    store = ChapterTranslationStore.openSuspend(
-                        translationFile!!,
-                        provider.privateJournalRoot,
-                        provider.privateJournalIdentity(
-                            translation.source,
-                            translation.manga.title,
-                            translationFile!!.name ?: "translation.json",
-                        ),
-                    )
-                }
+                store = ChapterTranslationStore.openArtifactSuspend(
+                    parent,
+                    fileName,
+                    provider.privateJournalRoot,
+                    provider.privateJournalIdentity(translation.source, translation.manga.title, fileName),
+                )
             }
 
             val chapterPath = downloadProvider.findChapterDir(

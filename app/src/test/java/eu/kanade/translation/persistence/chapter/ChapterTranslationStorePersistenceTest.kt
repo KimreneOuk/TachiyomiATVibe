@@ -54,22 +54,6 @@ class ChapterTranslationStorePersistenceTest {
         userEditedAt = userEditedAt,
     )
 
-    @Test
-    fun `failed persist remains dirty for a later retry`() = runTest {
-        val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
-            initialPages = emptyMap(),
-        )
-
-        store.updatePage("page") { PageTranslation(blocks = mutableListOf(block())) }
-        store.flush()
-        store.persistCount shouldBe 1
-
-        store.flush()
-        store.persistCount shouldBe 2
-    }
-
     // ------------------------------------------------------------------
     //  gate 1.5: user-edit authority across checkpoint transitions
     // ------------------------------------------------------------------
@@ -113,7 +97,7 @@ class ChapterTranslationStorePersistenceTest {
         )
 
     private fun lazyStore(): ChapterTranslationStore = ChapterTranslationStore.lazy(
-        fileCreator = { root().createFile("Chapter 1.json")!! },
+        artifactParentResolver = { root().createFile("Chapter 1.json")!! },
         artifactParent = root(),
         artifactFileName = "Chapter 1.json",
     )

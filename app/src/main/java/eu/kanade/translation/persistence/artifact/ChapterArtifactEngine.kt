@@ -9,6 +9,13 @@ import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
@@ -86,6 +93,9 @@ class ChapterArtifactEngine(
 
     /** Bounded retention sweep. */
     private val retentionSweep = ArtifactRetention(io, layout)
+    private val retentionScopeJob = SupervisorJob()
+    private val retentionScope = CoroutineScope(retentionScopeJob + Dispatchers.IO)
+    private val retentionInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
     data class LoadResult(
         val manifest: ChapterArtifactManifest,
@@ -858,7 +868,9 @@ class ChapterArtifactEngine(
                 return TransactionOutcome.Rejected("sidecar publication failed: file=${sidecar.fileName}")
             }
         }
-        val shouldSync = syncToDisk || commitPoint == CommitPoint.EXPLICIT_FLUSH || commitPoint == CommitPoint.CHAPTER_COMPLETE || commitPoint == CommitPoint.BATCH_CHUNK
+        val shouldSync = syncToDisk ||
+            commitPoint == CommitPoint.EXPLICIT_FLUSH ||
+            commitPoint == CommitPoint.CHAPTER_COMPLETE
         val updated = updatePointers(manifest).copy(updatedAtEpochMs = nowEpochMs)
         if (!publishManifestInternal(updated, syncToDisk = shouldSync)) {
             return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
@@ -1535,15 +1547,13 @@ class ChapterArtifactEngine(
                 return TransactionOutcome.Rejected("unsafe cleaned display file name: pageKey=$pageKey")
             }
         }
-        if (!GroupCommitConfiguration.enabled) {
-            val candidateFile = candidate.pageSnapshotFileName
-                ?: layout.candidatePageSnapshotFile(pageKey, generationId)
-            val candidateMatches = documents.readValidated<PageTranslation>(candidateFile)?.let {
-                it == pageSnapshot
-            } == true
-            if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
-                return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
-            }
+        val candidateFile = candidate.pageSnapshotFileName
+            ?: layout.candidatePageSnapshotFile(pageKey, generationId)
+        val candidateMatches = documents.readValidated<PageTranslation>(candidateFile)?.let {
+            it == pageSnapshot
+        } == true
+        if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
+            return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
         }
         val committedFile = layout.committedPageSnapshotFile(pageKey, generationId)
         if (!documents.publishJson(committedFile, pageSnapshot.detachedCopy())) {
@@ -1706,10 +1716,9 @@ class ChapterArtifactEngine(
 
     /**
      * Opens (or idempotently reopens) a candidate generation for one page.
-     * This is the authority cutover point: a LEGACY-authoritative manifest is
-     * flipped to ARTIFACTS so later opens can no longer resync it from legacy
-     * bytes. Preconditions bind the caller to the current page version and
-     * dependency fingerprint (stale workers are rejected).
+     * This records the candidate in the artifact manifest. Preconditions bind
+     * the caller to the current page version and dependency fingerprint (stale
+     * workers are rejected).
      *
      *   /  a stale-manifest CAS rejection (the >8-page open
      * path's background health verify republishing after the façade cached its
@@ -2117,7 +2126,7 @@ class ChapterArtifactEngine(
      * Collects retention candidates outside the facade mutex. It is pure over
      * its inputs (the passed
      * manifest + the immutable layout/IO) and takes minutes of SAF round-trips
-     * on real storage; taking either the facade Mutex or the scheduler mutex
+     * on real storage; taking either the facade mutex or another state lock
      * during it froze every page lease in the pipeline (jdb thread dump,
      * 2026-09-15: 20+ minute batch stall on a 70-page chapter). Pair with
      * [deleteVerifiedRetentionCandidates], which re-verifies each candidate
@@ -2127,6 +2136,61 @@ class ChapterArtifactEngine(
         manifest: ChapterArtifactManifest,
         stagedReachable: Set<String> = emptySet(),
     ): Set<String> = retentionSweep.collectOrphanCandidates(manifest, stagedReachable)
+
+    /**
+     * Runs the long filesystem crawl without a store lock, then delegates the
+     * bounded live-manifest recheck/deletion to the owning store boundary.
+     * The store supplies those two boundaries because it owns the mutable
+     * manifest snapshot and must serialize deletion against page publication.
+     */
+    suspend fun reconcileRetentionOffLock(
+        manifestSnapshot: suspend () -> ChapterArtifactManifest?,
+        deleteAgainstLiveManifest: suspend (Collection<String>) -> RetentionResult,
+    ): RetentionResult? {
+        val manifest = manifestSnapshot() ?: return null
+        val startedAt = System.currentTimeMillis()
+        val candidates = withContext(Dispatchers.IO) {
+            collectRetentionCandidates(manifest)
+        }
+        val result = deleteAgainstLiveManifest(candidates)
+        logRetentionResult(candidates.size, result, startedAt)
+        return result
+    }
+
+    /** Deduplicated fire-and-forget boundary sweep; the store keeps the live recheck lock. */
+    fun reconcileRetentionAsync(
+        manifestSnapshot: suspend () -> ChapterArtifactManifest?,
+        deleteAgainstLiveManifest: suspend (Collection<String>) -> RetentionResult,
+    ) {
+        if (!retentionInFlight.compareAndSet(false, true)) return
+        retentionScope.launch {
+            try {
+                reconcileRetentionOffLock(manifestSnapshot, deleteAgainstLiveManifest)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                logcat(LogPriority.ERROR, failure) {
+                    "TachiyomiAT retention sweep failed: chapter=${layout.chapterKey}"
+                }
+            } finally {
+                retentionInFlight.set(false)
+            }
+        }
+    }
+
+    /** Cancels and joins every asynchronous sweep at a store teardown boundary. */
+    suspend fun cancelRetentionWorkAndJoin() = retentionScopeJob.cancelAndJoin()
+
+    private fun logRetentionResult(
+        candidateCount: Int,
+        result: RetentionResult,
+        startedAt: Long,
+    ) {
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT retention sweep: candidates=$candidateCount " +
+                "deleted=${result.deletedCount} in ${System.currentTimeMillis() - startedAt}ms"
+        }
+    }
 
     /** Re-verifies candidates and deletes them under the facade mutex. */
     fun deleteVerifiedRetentionCandidates(
@@ -2351,7 +2415,7 @@ class ChapterArtifactEngine(
     internal fun backupName(): String = AtomicChapterDocuments.backupNameFor(layout.manifestFileName)
 }
 
-/** Stage sidecar lookup for one page record; shared with the legacy rescue machine. */
+/** Stage sidecar lookup for one page record. */
 internal fun PageArtifactRecord.stage(stage: ArtifactStage): StageArtifactRecord? = when (stage) {
     ArtifactStage.DETECTION -> detection
     ArtifactStage.OCR -> ocr

@@ -1266,8 +1266,7 @@ class ChapterTranslationStoreJournalCaptureTest {
         )
         artifactEngine.publishManifest(manifest) shouldBe true
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf(
                 oldValidKey to committedSnapshot,
                 oldPointerlessKey to pointerlessSnapshot,
@@ -1862,8 +1861,7 @@ class ChapterTranslationStoreJournalCaptureTest {
         )
         check(engine.publishManifest(manifest))
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf(oldKey to page),
             artifactStore = engine,
             initialCommittedPages = mapOf(oldKey to page),

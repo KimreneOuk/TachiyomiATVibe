@@ -9,7 +9,7 @@ class ChapterArtifactLayoutTest {
 
     @Test
     fun `derives sidecar names from the translation file name`() {
-        val layout = ChapterArtifactLayout.fromTranslationFileName("Group_Chapter 1.json")
+        val layout = ChapterArtifactLayout.fromArtifactFileName("Group_Chapter 1.json")
         layout.chapterKey shouldBe "Group_Chapter 1"
         layout.manifestFileName shouldBe "Group_Chapter 1.manifest.json"
         layout.artifactRootDirectoryName shouldBe "Group_Chapter 1_artifacts"

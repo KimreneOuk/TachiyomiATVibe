@@ -172,8 +172,11 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         store.closeAndFlush()
     }
 
-    private fun translationFile(): UniFile =
-        com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir).findFile("Chapter 1.json")!!
+    private fun openChapterStore(): ChapterTranslationStore =
+        ChapterTranslationStore.openArtifact(
+            com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir),
+            "Chapter 1.json",
+        )
 
     private fun readManifest(chapterName: String = "Chapter 1"): ChapterArtifactManifest =
         Json.decodeFromStream<ChapterArtifactManifest>(
@@ -227,7 +230,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val store = ChapterTranslationStore.lazy(
-            fileCreator = { root.createFile("Chapter 2.json")!! },
+            artifactParentResolver = { root.createFile("Chapter 2.json")!! },
             artifactParent = root,
             artifactFileName = "Chapter 2.json",
         )
@@ -253,7 +256,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         File(mangaDir, "Chapter 6_images/p1.cleaned.jpg").writeBytes(pngBytes(100, 100))
         File(mangaDir, "Chapter 6_images/p2.cleaned.jpg").writeBytes(pngBytes(100, 100))
         val store = ChapterTranslationStore.lazy(
-            fileCreator = { error("batch fixture must use artifacts") },
+            artifactParentResolver = { error("batch fixture must use artifacts") },
             artifactParent = root,
             artifactFileName = "Chapter 6.json",
         )
@@ -269,7 +272,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     fun `missing expected pages warn while a durable stage failure remains error`() = runTest {
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val store = ChapterTranslationStore.lazy(
-            fileCreator = { error("artifact-only store must not create the flat file") },
+            artifactParentResolver = { error("artifact-only store must not create the flat file") },
             artifactParent = root,
             artifactFileName = "Chapter 7.json",
         )
@@ -290,7 +293,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     fun `artifact-only lazy store writes pages without materializing flat compatibility file`() = runTest {
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val store = ChapterTranslationStore.lazy(
-            fileCreator = { error("artifact-only store must not create the flat file") },
+            artifactParentResolver = { error("artifact-only store must not create the flat file") },
             artifactParent = root,
             artifactFileName = "Chapter 2.json",
         )
@@ -316,7 +319,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     fun `artifact-authoritative reopen keeps committed display while incomplete candidate resumes`() = runTest {
         installPngHeaderProbe()
         writeArtifactChapter()
-        val first = ChapterTranslationStore.open(translationFile())
+        val first = openChapterStore()
         first.updatePage("page.jpg") { page ->
             page!!.copy(
                 cleanedImageName = null,
@@ -329,7 +332,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         first.flush()
         first.closeAndFlush()
 
-        val afterProcessDeath = ChapterTranslationStore.open(translationFile())
+        val afterProcessDeath = openChapterStore()
         afterProcessDeath.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.abc.jpg"
         afterProcessDeath.state.value.getValue("page.jpg").ocrStatus shouldBe StageStatus.RUNNING
 
@@ -351,7 +354,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         afterProcessDeath.flush()
         afterProcessDeath.closeAndFlush()
 
-        val promotedReopen = ChapterTranslationStore.open(translationFile())
+        val promotedReopen = openChapterStore()
         promotedReopen.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.retried.jpg"
         promotedReopen.drainRetiredCleanedImages("page.jpg") shouldBe listOf("page.cleaned.abc.jpg")
     }
@@ -360,7 +363,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     fun `artifact candidate cancel and failure reopen retain committed display`() = runTest {
         installPngHeaderProbe()
         writeArtifactChapter()
-        val first = ChapterTranslationStore.open(translationFile())
+        val first = openChapterStore()
         first.updatePage("page.jpg") { page ->
             page!!.copy(
                 cleanedImageName = null,
@@ -373,7 +376,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         first.clearTransientQueuePages("test cancel")
         first.flush()
         first.closeAndFlush()
-        val afterCancel = ChapterTranslationStore.open(translationFile())
+        val afterCancel = openChapterStore()
         afterCancel.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.abc.jpg"
 
         afterCancel.updatePage("page.jpg") { page ->
@@ -387,7 +390,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         }
         afterCancel.flush()
         afterCancel.closeAndFlush()
-        val afterFailure = ChapterTranslationStore.open(translationFile())
+        val afterFailure = openChapterStore()
         afterFailure.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.abc.jpg"
         afterFailure.state.value.getValue("page.jpg").ocrStatus shouldBe StageStatus.FAILED
     }
@@ -396,7 +399,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     fun `released batch callbacks cannot overwrite a reacquired artifact candidate`() = runTest {
         installPngHeaderProbe()
         writeArtifactChapter()
-        val store = ChapterTranslationStore.open(translationFile())
+        val store = openChapterStore()
         val pageKey = "page.jpg"
 
         val writerA = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
@@ -443,7 +446,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
         store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
         store.closeAndFlush()
-        val reopened = ChapterTranslationStore.open(translationFile())
+        val reopened = openChapterStore()
         reopened.display.value.getValue(pageKey).cleanedImageName shouldBe "page.cleaned.abc.jpg"
         reopened.state.value.getValue(pageKey).blocks.single().translation shouldBe "B"
         File(mangaDir, "Chapter 1.manifest.json").readBytes() shouldBe manifestAfterB
@@ -454,7 +457,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     fun `production promotion retains a held previous cleaned stream until release`() = runTest {
         installPngHeaderProbe()
         writeArtifactChapter()
-        val store = ChapterTranslationStore.open(translationFile())
+        val store = openChapterStore()
         val imageDir = File(mangaDir, "image-fixtures").apply { mkdirs() }
         val previous = File(imageDir, "page.cleaned.abc.jpg")
         val next = File(imageDir, "page.cleaned.promoted.jpg").also { it.writeBytes(pngBytes(100, 100)) }
@@ -496,7 +499,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         previous.exists() shouldBe false
         next.exists() shouldBe true
         store.closeAndFlush()
-        ChapterTranslationStore.open(translationFile()).display.value.getValue("page.jpg").cleanedImageName shouldBe next.name
+        openChapterStore().display.value.getValue("page.jpg").cleanedImageName shouldBe next.name
     }
 
     @Test
@@ -506,7 +509,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         val store = ChapterTranslationStore.lazy(
             artifactParent = root,
             artifactFileName = "Chapter 2.json",
-            fileCreator = { root.createFile("Chapter 2.json")!! },
+            artifactParentResolver = { root.createFile("Chapter 2.json")!! },
         )
         store.updatePage("page.jpg") {
             PageTranslation(
@@ -555,14 +558,14 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     }
 
     @Test
-    fun `lazy store without parent resolves artifact authority through fileCreator`() = runTest {
+    fun `lazy store without parent resolves artifact authority through artifactParentResolver`() = runTest {
         installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         var creatorCalls = 0
         val store = ChapterTranslationStore.lazy(
             artifactParent = null,
             artifactFileName = "Chapter 8.json",
-            fileCreator = {
+            artifactParentResolver = {
                 creatorCalls++
                 root
             },
@@ -582,10 +585,10 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     }
 
     @Test
-    fun `lazy store without parent rejects mutation when fileCreator fails`() = runTest {
+    fun `lazy store without parent rejects mutation when artifactParentResolver fails`() = runTest {
         val store = ChapterTranslationStore.lazy(
             artifactFileName = "Chapter 8.json",
-            fileCreator = { error("translation directory unavailable") },
+            artifactParentResolver = { error("translation directory unavailable") },
         )
 
         val registration = store.preRegisterPages(listOf("p1.jpg"))

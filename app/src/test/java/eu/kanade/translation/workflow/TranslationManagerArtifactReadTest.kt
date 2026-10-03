@@ -1,7 +1,6 @@
 package eu.kanade.translation.workflow
 
 import com.hippo.unifile.FakeUniFile
-import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -69,15 +68,16 @@ class TranslationManagerArtifactReadTest {
         store.closeAndFlush()
     }
 
-    private fun translationFile(chapterName: String): UniFile =
-        FakeUniFile(parent = null, backing = mangaDir).findFile("$chapterName.json")!!
+    private fun artifactParent() = FakeUniFile(parent = null, backing = mangaDir)
 
-    private fun newManager(file: UniFile): TranslationManager {
+    private fun artifactFileName(chapterName: String): String = "$chapterName.json"
+
+    private fun newManager(fileName: String): TranslationManager {
         val source = mockk<Source>(relaxed = true)
         every { source.id } returns 77L
         val provider = mockk<TranslationFileProvider>(relaxed = true)
-        every { provider.findTranslationFile(any(), any(), any(), any()) } returns file
-        every { provider.findMangaDir(any(), any()) } returns FakeUniFile(parent = null, backing = mangaDir)
+        every { provider.findMangaDir(any(), any()) } returns artifactParent()
+        every { provider.getTranslationFileName(any(), any()) } returns fileName
         val sourceManager = mockk<SourceManager>(relaxed = true)
         every { sourceManager.get(77L) } returns source
         val translator = mockk<ChapterTranslator>(relaxed = true)
@@ -117,18 +117,19 @@ class TranslationManagerArtifactReadTest {
     fun `artifact authority status and reader reads survive a fresh manager`() = runTest {
         installImageProbe()
         writeArtifactChapter("Chapter 1")
-        val file = translationFile("Chapter 1")
-        val store = ChapterTranslationStore.open(file)
+        val fileName = artifactFileName("Chapter 1")
+        val root = artifactParent()
+        val store = ChapterTranslationStore.openArtifact(root, fileName)
         store.updatePage("page.jpg") { current ->
             current!!.apply { blocks.single().userEditedAt = 42L }
         }
         store.closeAndFlush()
 
-        ChapterTranslationStore.probeArtifactManifest(file).manifest?.expectedPageCount shouldBe 1
-        ChapterTranslationStore.probeArtifactManifest(file).manifest?.expectedPageCountTrusted shouldBe false
+        ChapterTranslationStore.probeArtifactManifest(root, fileName).manifest?.expectedPageCount shouldBe 1
+        ChapterTranslationStore.probeArtifactManifest(root, fileName).manifest?.expectedPageCountTrusted shouldBe false
         File(mangaDir, "Chapter 1.summary.json").exists() shouldBe false
 
-        val manager = newManager(file)
+        val manager = newManager(fileName)
         manager.getChapterTranslationStatus(42L, "Chapter 1", null, "Manga", 77L) shouldBe
             Translation.State.READY_WITH_WARNINGS
         val pages = manager.getChapterTranslationForReader(42L, "Chapter 1", null, "Manga", mockk<Source>(relaxed = true))
@@ -140,8 +141,8 @@ class TranslationManagerArtifactReadTest {
     fun `artifact status reports warnings for a partial page after restart`() = runTest {
         installImageProbe()
         writeArtifactChapter("Chapter 4")
-        val file = translationFile("Chapter 4")
-        val store = ChapterTranslationStore.open(file)
+        val fileName = artifactFileName("Chapter 4")
+        val store = ChapterTranslationStore.openArtifact(artifactParent(), fileName)
         store.updatePage("page.jpg") { current ->
             current!!.copy(
                 blocks = mutableListOf(),
@@ -153,7 +154,7 @@ class TranslationManagerArtifactReadTest {
         }
         store.closeAndFlush()
 
-        val manager = newManager(file)
+        val manager = newManager(fileName)
         manager.getChapterTranslationStatus(45L, "Chapter 4", null, "Manga", 77L) shouldBe
             Translation.State.READY_WITH_WARNINGS
     }
@@ -173,7 +174,7 @@ class TranslationManagerArtifactReadTest {
         File(mangaDir, "Chapter 5_images").mkdirs()
         File(mangaDir, "Chapter 5_images/p1.cleaned.jpg").writeBytes(byteArrayOf(1))
         val store = ChapterTranslationStore.lazy(
-            fileCreator = { error("in-flight fixture must use artifacts") },
+            artifactParentResolver = { error("in-flight fixture must use artifacts") },
             artifactParent = root,
             artifactFileName = "Chapter 5.json",
         )
@@ -184,7 +185,7 @@ class TranslationManagerArtifactReadTest {
         store.closeAndFlush()
         file.delete()
 
-        val manager = newManager(file)
+        val manager = newManager(artifactFileName("Chapter 5"))
         manager.getChapterTranslationStatus(46L, "Chapter 5", null, "Manga", 77L) shouldBe
             Translation.State.ERROR
     }

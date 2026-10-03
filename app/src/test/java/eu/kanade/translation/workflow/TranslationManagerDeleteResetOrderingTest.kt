@@ -107,11 +107,8 @@ class TranslationManagerDeleteResetOrderingTest {
         coEvery { translator.cancelTranslatorJobAndJoin() } answers { log("cancelTranslatorJobAndJoin") }
 
         val provider = mockk<TranslationFileProvider>(relaxed = true)
-        every { provider.findMangaDir(any(), any()) } returns null
-        every {
-            provider.findTranslationFile(any(), any(), any(), any())
-        } answers {
-            log("findTranslationFile")
+        every { provider.findMangaDir(any(), any()) } answers {
+            log("findMangaDir")
             null
         }
         every { provider.findCompanionImageDir(any(), any(), any(), any()) } answers {
@@ -188,7 +185,7 @@ class TranslationManagerDeleteResetOrderingTest {
         assertTrue(
             events == listOf(
                 // Preamble: capture the durable truth before any teardown (SAF reads).
-                "findTranslationFile",
+                "findMangaDir",
                 // Step 1: cancelAutoTranslations stops new auto dispatch.
                 "cancelAutoTranslations",
                 // Step 2: cancelPageTranslations cancels + joins single-page jobs.

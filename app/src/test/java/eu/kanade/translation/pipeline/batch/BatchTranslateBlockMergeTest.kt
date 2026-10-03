@@ -25,8 +25,7 @@ import org.junit.jupiter.api.Test
 class BatchTranslateBlockMergeTest {
 
     private fun store() = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = emptyMap(),
     )
 

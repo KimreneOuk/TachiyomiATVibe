@@ -1,6 +1,5 @@
 package eu.kanade.translation.coexistence
 
-import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -61,8 +60,7 @@ class NextPageAdmittedDuringParkedPublicationTest {
             // every stage and resume-skips before the decode seam — an absent
             // record plans a fresh native run).
             val store = ChapterTranslationStore(
-                translationFile = null as UniFile?,
-                fileCreator = null,
+                artifactParentResolver = null,
                 initialPages = mapOf("p0" to resumeInpaintP0()),
             )
             val harness = TranslationCoexistenceHarness.create(

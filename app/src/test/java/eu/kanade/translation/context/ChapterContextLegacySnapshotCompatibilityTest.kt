@@ -16,7 +16,6 @@ import eu.kanade.translation.persistence.artifact.FactProvenance
 import eu.kanade.translation.persistence.artifact.FactScope
 import eu.kanade.translation.persistence.artifact.FactType
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.persistence.artifact.GroupCommitConfiguration
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.ProfileFact
@@ -35,13 +34,11 @@ class ChapterContextLegacySnapshotCompatibilityTest {
 
     @BeforeEach
     fun setUp() {
-        GroupCommitConfiguration.enabled = true
         ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 100) }
     }
 
     @AfterEach
     fun tearDown() {
-        GroupCommitConfiguration.enabled = false
         ChapterTranslationStore.artifactImageProbe =
             eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
     }
@@ -83,8 +80,7 @@ class ChapterContextLegacySnapshotCompatibilityTest {
             displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) },
         )
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = emptyMap(),
             artifactStore = artifact,
             initialArtifactManifest = manifest,
@@ -156,8 +152,7 @@ class ChapterContextLegacySnapshotCompatibilityTest {
             displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) },
         )
         val store = ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = emptyMap(),
             artifactStore = artifact,
             initialArtifactManifest = manifest,

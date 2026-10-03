@@ -96,8 +96,7 @@ class ForegroundProviderWindowFairnessTest {
     fun `reader-only provider window pauses an over-budget request with typed outcome`() =
         runBlocking<Unit> {
             val store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
+                artifactParentResolver = null,
                 initialPages = emptyMap(),
             )
             val harness = TranslationCoexistenceHarness.create(

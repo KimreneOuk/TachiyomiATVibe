@@ -321,9 +321,11 @@ internal class ChapterJournalCredit internal constructor(
 }
 
 /**
- * Single-writer CRC-framed journal. E16a only captures shadow records; the legacy artifact path stays authoritative.
- * In shadow mode credit acquisition is nonblocking: exhaustion writes one terminal marker and disables later
- * capture for this writer so a missing sequence can never be bridged. E16c owns producer backpressure.
+ * Single-writer CRC-framed journal for accepted chapter-store mutations. Recovery
+ * replays this prefix to seed the live store; artifact documents retain the
+ * immutable page payloads and committed pointers. Credit acquisition is
+ * nonblocking: exhaustion writes one terminal marker and disables later capture
+ * for this writer so a missing sequence can never be bridged.
  */
 internal class ChapterJournalWriter(
     private val storage: ChapterJournalStorage,

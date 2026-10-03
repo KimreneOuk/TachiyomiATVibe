@@ -256,8 +256,7 @@ internal class TranslationCoexistenceHarness private constructor(
             // single-page (manual/auto) suites keep their baseline fixture —
             // the reader per-page path is untouched by.
             val store = storeOverride ?: ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
+                artifactParentResolver = null,
                 initialPages = if (preRegisterInStore) {
                     pageKeys.associateWith { key -> PageTranslation(sourceFileName = key) }
                 } else {
@@ -896,17 +895,15 @@ internal class TranslationCoexistenceHarness private constructor(
                 displayBaseProbe = { eu.kanade.translation.persistence.artifact.ProbedImage(100, 100) },
             )
             var manifest = artifact
-                .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+                .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
                 .manifest
             manifest = manifest.copy(
                 cutoverAtEpochMs = 1L,
-                migratedFromLegacyAtEpochMs = 1L,
                 updatedAtEpochMs = 1L,
             )
             check(artifact.publishManifest(manifest)) { "harness: authority flip publish failed" }
             return ChapterTranslationStore(
-                translationFile = null as UniFile?,
-                fileCreator = null,
+                artifactParentResolver = null,
                 initialPages = if (preRegisterInStore) {
                     pageKeys.associateWith { key -> PageTranslation(sourceFileName = key) }
                 } else {

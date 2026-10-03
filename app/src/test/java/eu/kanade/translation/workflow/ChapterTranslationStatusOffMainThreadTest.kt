@@ -50,13 +50,11 @@ class ChapterTranslationStatusOffMainThreadTest {
     /** Fake whose slow lookup blocks an IO worker, never the caller. */
     private fun blockingProvider(lookupStarted: CountDownLatch, releaseLookup: CountDownLatch): TranslationFileProvider =
         mockk {
-            every { findTranslationFile(any(), any(), any(), any()) } answers {
+            every { findMangaDir(any(), any()) } answers {
                 lookupStarted.countDown()
                 releaseLookup.await(10, TimeUnit.SECONDS)
                 null
             }
-            // Absent manga dir → absent document → null (transient) result.
-            every { findMangaDir(any(), any()) } returns null
         }
 
     /**

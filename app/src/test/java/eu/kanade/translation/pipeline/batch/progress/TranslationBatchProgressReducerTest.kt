@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 class TranslationBatchProgressReducerTest {
     @Test
     fun `independent active page stages remain concurrent in reducer projection`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         store.preRegisterPages(listOf("001.jpg", "002.jpg"))
         val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg", "002.jpg"), this)
 

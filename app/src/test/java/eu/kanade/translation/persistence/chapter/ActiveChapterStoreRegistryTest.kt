@@ -24,13 +24,13 @@ class ActiveChapterStoreRegistryTest {
                 registry.getOrCreate(101) {
                     createCount++
                     delay(10)
-                    ChapterTranslationStore(null, null)
+                    ChapterTranslationStore()
                 }
             },
             async {
                 registry.getOrCreate(101) {
                     createCount++
-                    ChapterTranslationStore(null, null)
+                    ChapterTranslationStore()
                 }
             },
         ).awaitAll()
@@ -51,13 +51,13 @@ class ActiveChapterStoreRegistryTest {
                 registry.getOrCreate(101, fileKey) {
                     createCount++
                     delay(10)
-                    ChapterTranslationStore(null, null)
+                    ChapterTranslationStore()
                 }
             },
             async {
                 registry.getOrCreateFile(fileKey) {
                     createCount++
-                    ChapterTranslationStore(null, null)
+                    ChapterTranslationStore()
                 }
             },
         ).awaitAll()
@@ -71,8 +71,8 @@ class ActiveChapterStoreRegistryTest {
     @Test
     fun `register never replaces an existing chapter authority`() = runTest {
         val registry = ActiveChapterStoreRegistry()
-        val first = ChapterTranslationStore(null, null)
-        val competing = ChapterTranslationStore(null, null)
+        val first = ChapterTranslationStore()
+        val competing = ChapterTranslationStore()
 
         registry.register(101, first) shouldBe true
         registry.register(101, competing) shouldBe false
@@ -82,8 +82,8 @@ class ActiveChapterStoreRegistryTest {
     @Test
     fun `chapter selection remains isolated across alternating active stores and clears after removal`() = runTest {
         val registry = ActiveChapterStoreRegistry()
-        val chapterA = ChapterTranslationStore(null, null).apply { preRegisterPages(listOf("a-1.jpg")) }
-        val chapterB = ChapterTranslationStore(null, null).apply { preRegisterPages(listOf("b-1.jpg")) }
+        val chapterA = ChapterTranslationStore().apply { preRegisterPages(listOf("a-1.jpg")) }
+        val chapterB = ChapterTranslationStore().apply { preRegisterPages(listOf("b-1.jpg")) }
         val selectedA = mutableListOf<Set<String>>()
         val selectedB = mutableListOf<Set<String>>()
 
@@ -129,17 +129,17 @@ class ActiveChapterStoreRegistryTest {
     fun `durable probe is evicted unless an active chapter adopts it`() = runTest {
         val registry = ActiveChapterStoreRegistry()
         val fileKey = "probe-file"
-        val probe = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+        val probe = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore() }!!
 
         registry.releaseProbe(fileKey, probe.store) shouldBe true
         registry.getByFile(fileKey) shouldBe null
         // Per-creation, not per-store: after release the next probe pass is a
         // real creation again and must re-arm the invalidating wipe (F5.2).
-        val recreated = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+        val recreated = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore() }!!
         recreated.store shouldNotBe probe.store
         recreated.created shouldBe true
 
-        val adopted = registry.getOrCreateProbe("adopted-file") { ChapterTranslationStore(null, null) }!!
+        val adopted = registry.getOrCreateProbe("adopted-file") { ChapterTranslationStore() }!!
         registry.getOrCreate(909, "adopted-file") { error("probe should be promoted") } shouldBe adopted.store
         registry.releaseProbe("adopted-file", adopted.store) shouldBe false
         registry.get(909) shouldBe adopted.store
@@ -150,7 +150,7 @@ class ActiveChapterStoreRegistryTest {
         val registry = ActiveChapterStoreRegistry()
         val fileKey = "created-flag"
 
-        val first = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+        val first = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore() }!!
         first.owned shouldBe true
         first.created shouldBe true
 
@@ -174,7 +174,7 @@ class ActiveChapterStoreRegistryTest {
     fun `file-keyed open adopts durable probe before it can be evicted`() = runTest {
         val registry = ActiveChapterStoreRegistry()
         val fileKey = "file-probe"
-        val probe = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+        val probe = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore() }!!
 
         registry.getOrCreateFile(fileKey) { error("file open should adopt the probe") } shouldBe probe.store
         registry.releaseProbe(fileKey, probe.store) shouldBe false
@@ -200,7 +200,7 @@ class ActiveChapterStoreRegistryTest {
                 error("file open must adopt the probe")
             }
         }
-        val probeStore = ChapterTranslationStore(null, null)
+        val probeStore = ChapterTranslationStore()
         created.complete(probeStore)
 
         val probe = probeDeferred.await()

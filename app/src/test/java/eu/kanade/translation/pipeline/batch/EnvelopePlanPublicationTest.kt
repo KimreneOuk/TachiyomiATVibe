@@ -10,8 +10,6 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.persistence.artifact.LegacyMigrationHealth
-import eu.kanade.translation.persistence.artifact.LegacyMigrationMetadata
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -131,7 +129,7 @@ class EnvelopePlanPublicationTest {
     // ------------------------------------------------------------------
     //  LI-x: the resume rebuild adopts durable checkpoints page by page
     // (each adoption republishing the manifest) and the >8-page open path's
-    // background health verify republishes the VERIFIED manifest behind the
+    // concurrent metadata publication advances the chapter timestamp behind the
     // façade's back — so the caller's plan-publish snapshot is stale by
     // construction and the whole batch aborted with PERSISTENCE_REJECTED.
     // The publication now rebases onto the fresh durable manifest ONCE on a
@@ -139,28 +137,24 @@ class EnvelopePlanPublicationTest {
     // ------------------------------------------------------------------
 
     /**
-     * Mirrors the real background artifact-health writer
+     * Mirrors the real concurrent metadata writer
      * republishes the manifest with the VERIFIED health marker and a bumped
      * timestamp, behind the caller's back.
      */
     private fun bumpBehindCallersBack(nowEpochMs: Long) {
         val current = manifest()
-        val metadata = (current.legacyMigration ?: LegacyMigrationMetadata(sourceFileName = "Chapter 1.json"))
-            .copy(
-                health = LegacyMigrationHealth.VERIFIED,
-                lastVerifiedByVersionCode = 63L,
-                lastVerifiedAtEpochMs = nowEpochMs,
-            )
-        check(artifact.publishManifest(current.copy(legacyMigration = metadata, updatedAtEpochMs = nowEpochMs))) {
-            "fixture: concurrent verify publication failed"
-        }
+        check(
+            artifact.publishManifest(
+                current.copy(cutoverAtEpochMs = nowEpochMs, updatedAtEpochMs = nowEpochMs),
+            ),
+        ) { "fixture: concurrent metadata publication failed" }
     }
 
     @Test
     fun `plan publication rebases onto a drifted durable manifest and preserves the concurrent change`() {
         bootstrapManifest()
         val callerSnapshot = manifest()
-        // The rebuild's adoptions / background verify drift the durable
+        // The rebuild's adoptions / concurrent metadata write changes the durable
         // manifest AFTER the caller cached its snapshot.
         bumpBehindCallersBack(nowEpochMs = 2L)
 
@@ -173,7 +167,7 @@ class EnvelopePlanPublicationTest {
         durable.envelopePlan.shouldNotBeNull().contentFingerprint shouldBe plan.planFingerprint
         committed.manifest shouldBe durable
         // …and the intervening durable change was NOT reverted.
-        durable.legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        durable.cutoverAtEpochMs shouldBe 2L
         durable.updatedAtEpochMs shouldBe 3L
         EnvelopePlanPublication.readValidatedPlan(artifact, durable)
             .shouldBeInstanceOf<EnvelopePlanPublication.EnvelopePlanRead.Usable>()
@@ -218,9 +212,9 @@ class EnvelopePlanPublicationTest {
         rejected.reason shouldContain "stale manifest snapshot"
         // Exactly ONE sidecar write attempt (the retry; the stale first
         // attempt never reaches the sidecar), and NOTHING was published —
-        // the concurrent VERIFIED marker stands, no plan pointer moved.
+        // the concurrent timestamp marker stands, no plan pointer moved.
         io.writtenNames.count { it.contains(fileName) } shouldBe 1
         manifest().envelopePlan shouldBe null
-        manifest().legacyMigration.shouldNotBeNull().health shouldBe LegacyMigrationHealth.VERIFIED
+        manifest().cutoverAtEpochMs shouldBe 2L
     }
 }

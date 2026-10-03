@@ -105,8 +105,8 @@ internal class ChapterDataResetController(
 
     suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
         val chapterId = chapter.id ?: return
-        // Capture the validated authority/legacy-preservation marker before any
-        // teardown can evict the only store that still knows the exact names.
+        // Capture the current artifact authority before teardown can evict the
+        // only store that still knows the chapter's artifact names.
         // This is read-only and runs off the caller thread because SAF reads can
         // block; the cancellation ordering below remains unchanged.
         val deletionDocument = withContext(Dispatchers.IO) {
@@ -133,7 +133,7 @@ internal class ChapterDataResetController(
         //      batch worker (plain removeFrom only cancel()s) so it releases the translator permit before deletion.
         //   4. unregisterActiveTranslationStore marks the store defunct so a still-unwinding worker's late writes no-op.
         //   5. streamRegistry.clearChapter drops stale reader closures pointing at the about-to-be-deleted PNGs.
-        //   6. Only once all work is wound down is it safe to delete the on-disk file + companion images.
+        //   6. Only once all work is wound down is it safe to delete the artifact tree and companion images.
         scheduler.cancelAutoTranslations(chapterId)
         cancelPageTranslations(chapterId)
         removeFromTranslationQueue(chapter)
@@ -151,8 +151,6 @@ internal class ChapterDataResetController(
                 "TachiyomiAT chapter artifact deletion: chapter=${chapter.name} " +
                     "manifestRemoved=${result.manifestRemoved} " +
                     "artifactTreeRemoved=${result.artifactTreeRemoved} " +
-                    "deletedLegacy=${result.deletedLegacyNames.size} " +
-                    "retainedLegacy=${result.retainedLegacyNames.size} " +
                     "failures=${result.failures.size}"
             }
             // Legacy flat files are deliberately retained; deletion only owns manifest artifacts.

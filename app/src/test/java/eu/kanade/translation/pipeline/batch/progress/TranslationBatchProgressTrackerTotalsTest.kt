@@ -46,7 +46,7 @@ class TranslationBatchProgressTrackerTotalsTest {
 
     @Test
     fun `total is nonzero immediately from ordered keys with an empty store`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         val tracker = TranslationBatchProgressTracker(
             1,
             store,
@@ -68,8 +68,6 @@ class TranslationBatchProgressTrackerTotalsTest {
     @Test
     fun `completed counts come only from the store intersection`() = runTest {
         val store = ChapterTranslationStore(
-            null,
-            null,
             initialPages = mapOf("001.jpg" to readyPage()),
         )
         val tracker = TranslationBatchProgressTracker(
@@ -92,7 +90,7 @@ class TranslationBatchProgressTrackerTotalsTest {
 
     @Test
     fun `placeholder registration does not inflate completed counts`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         val tracker = TranslationBatchProgressTracker(
             1,
             store,
@@ -113,7 +111,7 @@ class TranslationBatchProgressTrackerTotalsTest {
 
     @Test
     fun `phase events apply to placeholders so a rejected store still shows failures`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         val tracker = TranslationBatchProgressTracker(
             1,
             store,
@@ -133,7 +131,7 @@ class TranslationBatchProgressTrackerTotalsTest {
 
     @Test
     fun `aborted terminal snapshot keeps the known totals with the typed reason`() = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         val tracker = TranslationBatchProgressTracker(
             1,
             store,
@@ -165,8 +163,6 @@ class TranslationBatchProgressTrackerTotalsTest {
     @Test
     fun `completion render-skip settle completes the 5 of 5 terminal fraction`() = runTest {
         val store = ChapterTranslationStore(
-            null,
-            null,
             initialPages = mapOf("p0" to zeroLegacyTerminalPage("p0")),
         )
         // The reader re-derived the display: a committed display bundle exists

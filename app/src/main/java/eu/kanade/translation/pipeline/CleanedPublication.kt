@@ -390,7 +390,7 @@ internal class CleanedPublication(
                     // A write failure must not leave the live page pointing at
                     // a name that never reached storage. This guarded update
                     // is itself memory-first and will be coalesced into the
-                    // next scheduler flush.
+                    // next store drain.
                     store.patchPage(
                         pageKey = pageKey,
                         expected = store.snapshot(pageKey).toPrecondition(),

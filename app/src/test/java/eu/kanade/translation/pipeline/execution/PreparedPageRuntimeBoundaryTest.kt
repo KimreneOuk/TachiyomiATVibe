@@ -34,8 +34,7 @@ import org.junit.jupiter.api.Test
 class PreparedPageRuntimeBoundaryTest {
 
     private fun newStore(): ChapterTranslationStore = ChapterTranslationStore(
-        translationFile = null,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = emptyMap(),
     )
 

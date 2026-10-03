@@ -23,11 +23,7 @@ enum class CleanedFileState {
 
 data class ArtifactSeed(
     val pages: Map<String, ArtifactPageFacts> = emptyMap(),
-    val translationFileCorrupt: Boolean = false,
-    val legacyIdentity: LegacySourceIdentity? = null,
-    val sourceFileName: String? = null,
-    val migratedByVersionCode: Long = 0L,
-    val migratedAtEpochMs: Long = 0L,
+    val createdAtEpochMs: Long = 0L,
 )
 
 /** Seeds only the artifact manifest needed by a durability test, then reloads it. */
@@ -56,7 +52,7 @@ fun ChapterArtifactEngine.loadArtifact(seed: ArtifactSeed = ArtifactSeed()): Cha
             generationId = "fixture-$pageKey",
             displayBase = DisplayBaseReference(DisplayBaseKind.ORIGINAL_SOURCE),
             origin = ArtifactOrigin.BATCH,
-            promotedAtEpochMs = seed.migratedAtEpochMs,
+            promotedAtEpochMs = seed.createdAtEpochMs,
         )
         pageKey to PageArtifactRecord(
             pageKey = pageKey,
@@ -67,7 +63,7 @@ fun ChapterArtifactEngine.loadArtifact(seed: ArtifactSeed = ArtifactSeed()): Cha
     }.toMap()
     manifest = manifest.copy(
         pages = pages,
-        updatedAtEpochMs = seed.migratedAtEpochMs,
+        updatedAtEpochMs = seed.createdAtEpochMs,
     )
     check(publishManifest(manifest)) { "artifact test fixture publication failed" }
     return ChapterArtifactEngine.LoadResult(manifest)

@@ -1,6 +1,5 @@
 package eu.kanade.translation.coexistence
 
-import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
 import eu.kanade.translation.engines.translator.ProviderFailureKind
@@ -67,8 +66,7 @@ class P5HonestOutcomeTypingTest {
     @Test
     fun `condition A - resume success must not be typed as a native timeout`() = runBlocking<Unit> {
         val store = ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf("p0" to resumeInpaintP0()),
         )
         val h = TranslationCoexistenceHarness.create(listOf("p0", "p1"), storeOverride = store)
@@ -384,8 +382,7 @@ class P5HonestOutcomeTypingTest {
 
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val store = ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = mapOf(
                 "p0" to PageTranslation(sourceFileName = "p0"),
                 "p1" to PageTranslation(sourceFileName = "p1"),

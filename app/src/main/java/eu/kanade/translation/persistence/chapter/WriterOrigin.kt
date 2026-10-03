@@ -2,12 +2,8 @@ package eu.kanade.translation.persistence.chapter
 
 /**
  * Process-wide registry of active chapter writers in [ActiveChapterStoreRegistry].
- * With group commit disabled, registration is observability-only: it records writers
- * but excludes nothing, preserving existing probe/status-resolver choreography.
- *
- * With group commit enabled, a second writer
- * (probe store or status resolver) force-flushes the owning
- * store's staged buffer before its own publication and re-reads durable truth.
+ * Registration is observability-only: it records writers but excludes
+ * nothing, preserving probe/status-resolver choreography.
  */
 enum class WriterOrigin(val description: String) {
     MAIN_STORE("main chapter translation store"),

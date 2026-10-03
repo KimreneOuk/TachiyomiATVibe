@@ -2,19 +2,18 @@ package eu.kanade.translation.persistence.artifact
 
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+
 /** Result of a chapter artifact deletion attempt. */
 data class ChapterArtifactDeletionResult(
     val manifestRemoved: Boolean,
     val artifactTreeRemoved: Boolean,
-    val deletedLegacyNames: List<String>,
-    val retainedLegacyNames: List<String>,
     val failures: List<String>,
 ) {
     val complete: Boolean get() = failures.isEmpty()
 }
 
 /**
- * Captures the exact owned paths and migration identities before chapter teardown.
+ * Captures the exact artifact-owned paths before chapter teardown.
  * The plan is deliberately read-only until [delete] is called after all workers have
  * been cancelled and joined.
  */
@@ -44,8 +43,6 @@ class ChapterArtifactDeletionPlan private constructor(
             return ChapterArtifactDeletionResult(
                 manifestRemoved = false,
                 artifactTreeRemoved = false,
-                deletedLegacyNames = emptyList(),
-                retainedLegacyNames = emptyList(),
                 failures = failures,
             )
         }
@@ -54,8 +51,6 @@ class ChapterArtifactDeletionPlan private constructor(
         return ChapterArtifactDeletionResult(
             manifestRemoved = true,
             artifactTreeRemoved = artifactTreeRemoved,
-            deletedLegacyNames = emptyList(),
-            retainedLegacyNames = emptyList(),
             failures = failures,
         )
     }
@@ -68,9 +63,9 @@ class ChapterArtifactDeletionPlan private constructor(
     }
 
     companion object {
-        /** Captures a deletion plan without opening or migrating a translation store. */
-        fun capture(io: ChapterDocumentIo, translationFileName: String): ChapterArtifactDeletionPlan? {
-            val layout = ChapterArtifactLayout.fromTranslationFileName(translationFileName)
+        /** Captures a deletion plan without opening a translation store. */
+        fun capture(io: ChapterDocumentIo, artifactFileName: String): ChapterArtifactDeletionPlan? {
+            val layout = ChapterArtifactLayout.fromArtifactFileName(artifactFileName)
             val documents = AtomicChapterDocuments(io)
             val manifest = runCatching {
                 documents.readValidated<ChapterArtifactManifest>(layout.manifestFileName)

@@ -126,7 +126,7 @@ class StrandedPageTerminalRoutingTest {
         )
 
     private fun lazyStore(): ChapterTranslationStore = ChapterTranslationStore.lazy(
-        fileCreator = { root().createFile("Chapter 1.json")!! },
+        artifactParentResolver = { root().createFile("Chapter 1.json")!! },
         artifactParent = root(),
         artifactFileName = "Chapter 1.json",
     )

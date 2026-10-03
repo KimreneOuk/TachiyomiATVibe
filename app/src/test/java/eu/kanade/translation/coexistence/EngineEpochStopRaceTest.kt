@@ -1,6 +1,5 @@
 package eu.kanade.translation.coexistence
 
-import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -126,11 +125,10 @@ class EngineEpochStopRaceTest {
             imageProbe,
         )
         val manifest = artifactStore
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         return ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = emptyMap(),
             artifactStore = artifactStore,
             initialArtifactManifest = manifest,

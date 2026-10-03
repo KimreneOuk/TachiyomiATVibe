@@ -19,7 +19,7 @@ import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 
-class StorePersistenceSchedulerCloseTest {
+class StoreArtifactRetentionCloseTest {
 
     @Test
     fun `closeAndFlush joins a retention crawl before returning`(@TempDir tempDir: Path) {
@@ -28,8 +28,7 @@ class StorePersistenceSchedulerCloseTest {
             val io = BlockingRetentionIo(FakeChapterDocumentIo())
             val engine = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
             val store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
+                artifactParentResolver = null,
                 artifactStore = engine,
                 initialArtifactManifest = ChapterArtifactManifest(chapterKey = layout.chapterKey),
                 artifactParent = FakeUniFile(parent = null, backing = tempDir.toFile()),
@@ -44,7 +43,7 @@ class StorePersistenceSchedulerCloseTest {
                     store.closeAndFlush()
                 }
                 // The crawl is held inside list(); closeAndFlush must still be
-                // suspended in cancelAndJoin until that scheduler child exits.
+                // suspended in the artifact-engine retention join until the crawl exits.
                 closeBarrier.isCompleted shouldBe false
 
                 io.releaseCrawl()

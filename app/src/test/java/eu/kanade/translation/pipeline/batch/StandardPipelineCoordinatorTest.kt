@@ -117,7 +117,7 @@ class StandardPipelineCoordinatorTest {
         )
 
     private fun lazyStore(): ChapterTranslationStore = ChapterTranslationStore.lazy(
-        fileCreator = { root().createFile("Chapter 1.json")!! },
+        artifactParentResolver = { root().createFile("Chapter 1.json")!! },
         artifactParent = root(),
         artifactFileName = "Chapter 1.json",
     )
@@ -514,7 +514,7 @@ class StandardPipelineCoordinatorTest {
         }
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
     }
@@ -565,7 +565,7 @@ class StandardPipelineCoordinatorTest {
         durableRunRecord(store).shouldNotBeNull().state shouldBe ChapterRunState.COMPLETE
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
     }
@@ -634,7 +634,7 @@ class StandardPipelineCoordinatorTest {
             ChapterProfileBatchCoordinator.runConfigFingerprint(google.copy(flagProfilePipeline = false))
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
     }
@@ -710,7 +710,7 @@ class StandardPipelineCoordinatorTest {
         }
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
     }
@@ -769,7 +769,7 @@ class StandardPipelineCoordinatorTest {
         resumeSeam.invoked shouldBe emptyList()
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
     }
@@ -830,7 +830,7 @@ class StandardPipelineCoordinatorTest {
         }
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
     }
@@ -893,7 +893,7 @@ class StandardPipelineCoordinatorTest {
         activeRunPointer(store) shouldBe pointerAfterRun1
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist + fire-and-forget retention sweep)
+        // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
     }

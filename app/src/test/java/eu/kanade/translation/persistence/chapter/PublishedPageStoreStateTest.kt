@@ -85,8 +85,7 @@ class PublishedPageStoreStateTest {
                 "page-$index" to PageTranslation(sourceFileName = "page-$index")
             }
             val store = ChapterTranslationStore(
-                translationFile = null,
-                fileCreator = null,
+                artifactParentResolver = null,
                 initialPages = initialPages,
             )
             val emissions = mutableListOf<List<PageTranslationView>>()

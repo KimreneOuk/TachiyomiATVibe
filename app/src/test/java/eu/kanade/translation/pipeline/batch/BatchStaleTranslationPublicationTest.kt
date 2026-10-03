@@ -35,8 +35,7 @@ class BatchStaleTranslationPublicationTest {
     private fun store(dispatcher: CoroutineDispatcher): ChapterTranslationStore {
         val parent = root()
         return ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = { parent.createFile("Chapter 1.json")!! },
+            artifactParentResolver = { parent.createFile("Chapter 1.json")!! },
             artifactParent = parent,
             artifactFileName = "Chapter 1.json",
             persistenceDispatcher = dispatcher,
@@ -243,7 +242,7 @@ class BatchStaleTranslationPublicationTest {
 
     @Test
     fun `typed artifact rejection fails but the same untyped wording defers`(): Unit = runTest {
-        val store = ChapterTranslationStore(null, null)
+        val store = ChapterTranslationStore()
         store.preRegisterPages(listOf(PAGE))
         val tracker = TranslationBatchProgressTracker(1L, store, listOf(PAGE), this)
 

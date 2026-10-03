@@ -1,6 +1,5 @@
 package eu.kanade.translation.workflow
 
-import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
@@ -34,15 +33,13 @@ class DurableDocumentMemoTest {
     }
 
     private fun documentProvider(walkCounter: () -> Unit): TranslationFileProvider {
-        val file = mockk<UniFile>()
-        val parent = mockk<UniFile>()
-        every { file.parentFile } returns parent
-        every { file.name } returns "Chapter 1.json"
-        val provider = mockk<TranslationFileProvider>()
-        every { provider.findTranslationFile(any(), any(), any(), any()) } answers {
+        val parent = mockk<com.hippo.unifile.UniFile>(relaxed = true)
+        val provider = mockk<TranslationFileProvider>(relaxed = true)
+        every { provider.findMangaDir(any(), any()) } answers {
             walkCounter()
-            file
+            parent
         }
+        every { provider.getTranslationFileName(any(), any()) } returns "Chapter 1.json"
         return provider
     }
 
@@ -91,11 +88,11 @@ class DurableDocumentMemoTest {
     fun `negative lookups are not memoized`() {
         var providerWalks = 0
         val absentProvider = mockk<TranslationFileProvider>()
-        every { absentProvider.findTranslationFile(any(), any(), any(), any()) } answers {
+        every { absentProvider.findMangaDir(any(), any()) } answers {
             providerWalks++
             null
         }
-        every { absentProvider.findMangaDir(any(), any()) } returns null
+        every { absentProvider.getTranslationFileName(any(), any()) } returns "Chapter 1.json"
         val resolver = resolverWith(absentProvider)
         val cache = documentCache(resolver)
 

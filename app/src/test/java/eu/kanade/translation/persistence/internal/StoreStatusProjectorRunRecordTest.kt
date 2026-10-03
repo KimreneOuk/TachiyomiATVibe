@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence.internal
 
-import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
@@ -92,14 +91,13 @@ class StoreStatusProjectorRunRecordTest {
             ChapterArtifactLayout("Chapter 1"),
         )
         var manifest = artifact
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
             pages = pages,
             expectedPageCount = expectedPageCount,
             expectedPageCountTrusted = expectedPageCount != null,
             cutoverAtEpochMs = 1L,
-            migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
         )
         check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
@@ -136,8 +134,7 @@ class StoreStatusProjectorRunRecordTest {
             contentFingerprint = hex64("complete-run-record"),
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         return ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = emptyMap(),
             artifactStore = artifact,
             initialArtifactManifest = publication.manifest,
@@ -148,8 +145,7 @@ class StoreStatusProjectorRunRecordTest {
         artifact: ChapterArtifactEngine,
         manifest: ChapterArtifactManifest,
     ): ChapterTranslationStore = ChapterTranslationStore(
-        translationFile = null as UniFile?,
-        fileCreator = null,
+        artifactParentResolver = null,
         initialPages = emptyMap(),
         artifactStore = artifact,
         initialArtifactManifest = manifest,

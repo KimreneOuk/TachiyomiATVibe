@@ -66,7 +66,7 @@ class BatchLeaseFlipHealTest {
     private fun lazyStore(): ChapterTranslationStore {
         artifactStore() // establish the artifact layout under the temp root
         return ChapterTranslationStore.lazy(
-            fileCreator = { root().createFile("Chapter 1.json")!! },
+            artifactParentResolver = { root().createFile("Chapter 1.json")!! },
             artifactParent = root(),
             artifactFileName = "Chapter 1.json",
         )
@@ -213,7 +213,7 @@ class BatchLeaseFlipHealTest {
         store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist) so @TempDir's recursive delete
+        // Store drain (debounced write) so @TempDir's recursive delete
         // cannot race it on Windows.
         store.closeAndFlush()
     }
@@ -250,7 +250,7 @@ class BatchLeaseFlipHealTest {
         store.snapshot(pageKey).leaseToken shouldBe siblingToken
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist) so @TempDir's recursive delete
+        // Store drain (debounced write) so @TempDir's recursive delete
         // cannot race it on Windows.
         store.closeAndFlush()
     }
@@ -374,7 +374,7 @@ class BatchLeaseFlipHealTest {
         typed.pageKey shouldBe pageKey
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist) so @TempDir's recursive delete
+        // Store drain (debounced write) so @TempDir's recursive delete
         // cannot race it on Windows.
         store.closeAndFlush()
     }
@@ -424,7 +424,7 @@ class BatchLeaseFlipHealTest {
         store.snapshot(pageKey).leaseToken shouldBe siblingToken
 
         //  flake hardening (diagnosis §4): flush and cancel the store's
-        // persistScope (debounced persist) so @TempDir's recursive delete
+        // Store drain (debounced write) so @TempDir's recursive delete
         // cannot race it on Windows.
         store.closeAndFlush()
     }

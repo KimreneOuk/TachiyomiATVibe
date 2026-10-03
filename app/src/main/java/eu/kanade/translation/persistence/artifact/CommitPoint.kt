@@ -1,10 +1,8 @@
 package eu.kanade.translation.persistence.artifact
 
 /**
- * Defines the authoritative set of store operations that require durable manifest
- * publication. When group commit is enabled, mutations outside these points
- * accumulate in an in-memory staged buffer and publish at the next commit point
- * or 250ms debounce window.
+ * Defines the named store operations that require a durable manifest
+ * publication as part of their completion contract.
  *
  * CommitPoint = {
  *   OCR checkpoint CLOSE;
@@ -15,8 +13,8 @@ package eu.kanade.translation.persistence.artifact
  *   explicit flush requests from fenced CAS seams
  * }
  *
- * Everything else (intermediate candidate writes, live candidate patch/stage,
- * transient candidate updates) becomes stageable.
+ * Other writes still publish through the artifact engine, but have no named
+ * commit-point label.
  */
 enum class CommitPoint(val description: String) {
     /** Finalizing an OCR checkpoint (OcrCheckpointMode.CLOSE). */
@@ -37,8 +35,6 @@ enum class CommitPoint(val description: String) {
     /** Explicit flush requests from fenced CAS seams or direct flush calls. */
     EXPLICIT_FLUSH("explicit flush requests from fenced CAS seams"),
 
-    /** Batch chunk accumulation boundary (e.g. every MAX_STAGED_PAGES pages). */
-    BATCH_CHUNK("batch chunk accumulation boundary"),
     ;
 
     /** Returns true if this mutation must trigger durable publication immediately. */
@@ -47,13 +43,8 @@ enum class CommitPoint(val description: String) {
     companion object {
         /**
          * Returns true if [point] represents a mandatory commit point.
-         * Null represents stageable intermediate mutations.
+         * Null represents an operation without a named commit point.
          */
         fun isCommitPoint(point: CommitPoint?): Boolean = point != null
-
-        /**
-         * Returns true if the operation is stageable under group commit.
-         */
-        fun isStageable(point: CommitPoint?): Boolean = point == null
     }
 }

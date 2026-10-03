@@ -89,8 +89,7 @@ class ProjectorRebuildTruthTest {
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         return ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             artifactStore = artifact,
             initialArtifactManifest = committed.manifest,
         )
@@ -180,7 +179,7 @@ class ProjectorRebuildTruthTest {
     @Test
     fun `a chapter without a run record stays untouched`() = runTest {
         // Memory-only store: no artifact manifest, no active run pointer.
-        val snapshot = firstSnapshot(ChapterTranslationStore(null, null))
+        val snapshot = firstSnapshot(ChapterTranslationStore())
 
         snapshot.batchPhase shouldBe TranslationBatchPhase.FIRST_PASS
         snapshot.rebuildProgress.shouldBeNull()

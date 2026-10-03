@@ -27,12 +27,6 @@ class ChapterArtifactSchemaGuardCacheTest {
             .digest(tag.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
 
-    private fun identity(tag: String) = LegacySourceIdentity(
-        sha256 = "sha-$tag",
-        lengthBytes = tag.length.toLong(),
-        lastModifiedMs = 1L,
-    )
-
     private fun block(userEditedAt: Long? = null) = eu.kanade.translation.model.TranslationBlock(
         text = "source",
         translation = "target",
@@ -58,19 +52,15 @@ class ChapterArtifactSchemaGuardCacheTest {
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
     )
 
-    private fun legacySnapshot(identityTag: String = "v1") = ArtifactSeed(
+    private fun seededSnapshot() = ArtifactSeed(
         pages = mapOf(
             "page.jpg" to ArtifactPageFacts(
                 displayablePage(),
                 CleanedFileState.VALID,
             ),
         ),
-        legacyIdentity = identity(identityTag),
-        sourceFileName = "Chapter 1.json",
-        migratedByVersionCode = 63L,
-        migratedAtEpochMs = 42L,
+        createdAtEpochMs = 42L,
     )
-
     private fun createStore(io: FakeChapterDocumentIo): ChapterArtifactEngine =
         ChapterArtifactEngine(
             AtomicChapterDocuments(io),
@@ -105,7 +95,7 @@ class ChapterArtifactSchemaGuardCacheTest {
         val store = createStore(io)
 
         // First open loads the legacy snapshot and creates a normal v3 primary
-        val first = store.loadArtifact(legacySnapshot(identityTag = "v1"))
+        val first = store.loadArtifact(seededSnapshot())
         first.manifest.schemaVersion shouldBe ChapterArtifactManifest.SCHEMA_VERSION
 
         // A newer build writes a future-schema backup (schema 99) mid-instance
@@ -117,7 +107,7 @@ class ChapterArtifactSchemaGuardCacheTest {
 
         // The next loadArtifact call MUST read fresh from disk (not a cached guard)
         // and see the future backup untouched
-        val second = store.loadArtifact(legacySnapshot(identityTag = "v1"))
+        val second = store.loadArtifact(seededSnapshot())
         second.manifest shouldBe first.manifest
 
         // Fast path must not delete or overwrite the future backup
@@ -129,7 +119,7 @@ class ChapterArtifactSchemaGuardCacheTest {
         val io = FakeChapterDocumentIo()
         val store = createStore(io)
 
-        store.loadArtifact(legacySnapshot(identityTag = "v1"))
+        store.loadArtifact(seededSnapshot())
 
         // Mid-instance, primary is replaced by a future-schema primary
         val future = ChapterArtifactManifest(schemaVersion = 99, chapterKey = "Chapter 1")
@@ -138,7 +128,7 @@ class ChapterArtifactSchemaGuardCacheTest {
             json.encodeToString(future).toByteArray(Charsets.UTF_8),
         )
 
-        val result = store.loadArtifact(legacySnapshot(identityTag = "v1"))
+        val result = store.loadArtifact(seededSnapshot())
         result.manifest.schemaVersion shouldBe 99
     }
 }

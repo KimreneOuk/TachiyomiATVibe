@@ -14,7 +14,7 @@ class TranslationBatchTrackerRegistryTest {
     @Test
     fun `normal completion caches terminal snapshot before disposing live tracker`() = runTest {
         val registry = TranslationBatchTrackerRegistry()
-        val tracker = registry.createTracker(1, ChapterTranslationStore(null, null), emptyList(), this)
+        val tracker = registry.createTracker(1, ChapterTranslationStore(), emptyList(), this)
 
         tracker.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0))
         runCurrent()
@@ -27,7 +27,7 @@ class TranslationBatchTrackerRegistryTest {
     @Test
     fun `cancellation caches terminal snapshot before disposing live tracker`() = runTest {
         val registry = TranslationBatchTrackerRegistry()
-        val tracker = registry.createTracker(2, ChapterTranslationStore(null, null), emptyList(), this)
+        val tracker = registry.createTracker(2, ChapterTranslationStore(), emptyList(), this)
 
         tracker.abort(emptySet(), "Cancelled")
         runCurrent()
@@ -66,12 +66,12 @@ class TranslationBatchTrackerRegistryTest {
     @Test
     fun `late terminal from replaced tracker cannot close or cache over newer owner`() = runTest {
         val registry = TranslationBatchTrackerRegistry()
-        val old = registry.createTracker(7, ChapterTranslationStore(null, null), emptyList(), this)
+        val old = registry.createTracker(7, ChapterTranslationStore(), emptyList(), this)
         // Queue a real terminal event before replacement. The tracker keeps
         // that accepted event drainable after close so the production callback
         // runs against the newer registry owner and is identity-rejected.
         old.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0))
-        val newer = registry.createTracker(7, ChapterTranslationStore(null, null), emptyList(), this)
+        val newer = registry.createTracker(7, ChapterTranslationStore(), emptyList(), this)
         runCurrent()
 
         registry.getLive(7) shouldBe newer

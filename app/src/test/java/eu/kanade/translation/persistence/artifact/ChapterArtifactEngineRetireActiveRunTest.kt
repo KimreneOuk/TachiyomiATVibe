@@ -30,11 +30,10 @@ class ChapterArtifactEngineRetireActiveRunTest {
         val documents = AtomicChapterDocuments(FakeChapterDocumentIo())
         val artifact = ChapterArtifactEngine(documents, ChapterArtifactLayout("Chapter 1"))
         var manifest = artifact
-            .loadArtifact(ArtifactSeed(migratedAtEpochMs = 1L))
+            .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
             .manifest
         manifest = manifest.copy(
             cutoverAtEpochMs = 1L,
-            migratedFromLegacyAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
         )
         check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }

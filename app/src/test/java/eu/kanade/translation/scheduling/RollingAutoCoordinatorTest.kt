@@ -66,8 +66,7 @@ class RollingAutoCoordinatorTest {
 
     private fun newStore(pages: List<Pair<String, PageTranslation>> = emptyList()): ChapterTranslationStore =
         ChapterTranslationStore(
-            translationFile = null,
-            fileCreator = null,
+            artifactParentResolver = null,
             initialPages = pages.associate { it.first to it.second },
         )
 

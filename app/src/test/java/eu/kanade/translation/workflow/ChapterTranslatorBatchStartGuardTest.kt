@@ -110,7 +110,7 @@ class ChapterTranslatorBatchStartGuardTest {
         }
         // Fast ERROR exit after the resolver: no artifact directory resolves,
         // and no chapter dir means the typed pre-pipeline failure exit.
-        every { provider.findTranslationFile(any(), any(), any(), any()) } returns null
+        every { provider.findMangaDir(any(), any()) } returns null
         every { downloadProvider.findChapterDir(any(), any(), any(), any()) } returns null
         every { pipeline.batchTrackerFactory } returns null
     }
