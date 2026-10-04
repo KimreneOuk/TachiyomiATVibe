@@ -46,4 +46,18 @@ class PaddleOcrV6SmallEngineTest {
     fun `prefersHorizontalText is true for PP-OCRv6`() {
         engine.prefersHorizontalText shouldBe true
     }
+
+    @Test
+    fun `calculateTargetWidth computes 48px aspect ratio with minimum 16 and maximum 1600`() {
+        // Square crop: 48 * 1 = 48
+        engine.calculateTargetWidth(100, 100) shouldBe 48
+        // 2:1 landscape crop: 48 * 2 = 96
+        engine.calculateTargetWidth(200, 100) shouldBe 96
+        // 3:1 landscape crop: 48 * 3 = 144
+        engine.calculateTargetWidth(300, 100) shouldBe 144
+        // Narrow crop: 48 * (5 / 100) = 2.4 -> clamped to MIN_RECOGNITION_WIDTH (16)
+        engine.calculateTargetWidth(5, 100) shouldBe 16
+        // Extremely wide crop clamped to MAX_RECOGNITION_WIDTH (1600)
+        engine.calculateTargetWidth(5000, 48) shouldBe 1600
+    }
 }

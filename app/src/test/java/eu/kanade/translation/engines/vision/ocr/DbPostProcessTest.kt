@@ -32,18 +32,35 @@ class DbPostProcessTest {
     }
 
     @Test
-    fun `single high-prob rectangle yields one line, raw bbox`() {
+    fun `single high-prob rectangle with unclip 0 yields raw bbox`() {
         // 6x3 rectangle in the middle, prob well above both thresholds.
+        val map = probMapWith(intArrayOf(5, 4, 10, 6), boxProb = 0.9f)
+        val lines = DbPostProcess.detectLines(map, width, height, unclipRatio = 0f)
+        lines shouldHaveSize 1
+        val b = lines[0].bbox
+        b.toList() shouldBe listOf(5, 4, 10, 6)
+        abs(lines[0].meanScore - 0.9f) shouldBeLessThan 1e-4f
+    }
+
+    @Test
+    fun `single high-prob rectangle with default unclip 1_4 expands bbox`() {
+        // 6x3 rectangle in the middle: area = 18, perimeter = 18, offset = round(18 * 1.4 / 18) = 1
         val map = probMapWith(intArrayOf(5, 4, 10, 6), boxProb = 0.9f)
         val lines = DbPostProcess.detectLines(map, width, height)
         lines shouldHaveSize 1
         val b = lines[0].bbox
-        // No unclip; raw inclusive bbox from the component.
-        b.toList() shouldBe listOf(5, 4, 10, 6)
-        // Score is the mean prob over the component (uniform 0.9). Use an
-        // approximate comparison — summing 18 copies of 0.9f and dividing drifts
-        // to 0.89999986f in IEEE-754 single precision; exact equality is brittle.
-        abs(lines[0].meanScore - 0.9f) shouldBeLessThan 1e-4f
+        b.toList() shouldBe listOf(4, 3, 11, 7)
+    }
+
+    @Test
+    fun `unclip calculates constant polygon offset accurately`() {
+        // 10x10 square: area = 100, perimeter = 40, offset = round(100 * 1.4 / 40) = round(3.5) = 4
+        val unclipped = DbPostProcess.unclip(10, 10, 19, 19, unclipRatio = 1.4f)
+        unclipped.toList() shouldBe listOf(6, 6, 23, 23)
+
+        // unclip with ratio 0 returns original
+        val raw = DbPostProcess.unclip(10, 10, 19, 19, unclipRatio = 0f)
+        raw.toList() shouldBe listOf(10, 10, 19, 19)
     }
 
     @Test
@@ -53,59 +70,50 @@ class DbPostProcessTest {
         for (y in 1..5) for (x in 1..5) map[y * width + x] = 0.8f
         // Bottom-right rectangle, area 5x5=25
         for (y in 8..12) for (x in 12..16) map[y * width + x] = 0.8f
-        val lines = DbPostProcess.detectLines(map, width, height)
+        val lines = DbPostProcess.detectLines(map, width, height, unclipRatio = 0f)
         lines shouldHaveSize 2
-        // No unclip; raw y values: top rect minY=1, bottom rect minY=8.
         lines[0].bbox[1] shouldBe 1
         lines[1].bbox[1] shouldBe 8
     }
 
     @Test
-    fun `component larger than half the map is dropped`() {
-        // 15x12 = 180 > 0.5 * 320 = 160 → dropped.
-        val bigMap = probMapWith(intArrayOf(0, 0, 14, 11), boxProb = 0.9f)
+    fun `component larger than 95 percent of the map is dropped`() {
+        // 20x16 = 320 > 0.95 * 320 = 304 → dropped.
+        val bigMap = probMapWith(intArrayOf(0, 0, 19, 15), boxProb = 0.9f)
         DbPostProcess.detectLines(bigMap, width, height) shouldBe emptyList()
-        // Small component (6x3=18 < 160) survives.
-        val smallMap = probMapWith(intArrayOf(5, 4, 10, 6), boxProb = 0.9f)
-        DbPostProcess.detectLines(smallMap, width, height) shouldHaveSize 1
+        // Bubble-filling component (15x12=180, ~56% of map) now survives cleanly.
+        val bubbleMap = probMapWith(intArrayOf(0, 0, 14, 11), boxProb = 0.9f)
+        DbPostProcess.detectLines(bubbleMap, width, height) shouldHaveSize 1
     }
 
     @Test
     fun `rectangle below box_thresh is dropped`() {
-        // mean prob 0.3 < default box_thresh 0.45 -> dropped even though > thresh 0.2
-        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.3f)
+        // mean prob 0.20 < default box_thresh 0.25 -> dropped even though > thresh 0.15
+        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.20f)
         DbPostProcess.detectLines(map, width, height) shouldBe emptyList()
     }
 
     @Test
     fun `lowering box_thresh recovers the weak rectangle`() {
-        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.3f)
-        val lines = DbPostProcess.detectLines(map, width, height, boxThreshold = 0.2f)
+        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.20f)
+        val lines = DbPostProcess.detectLines(map, width, height, boxThreshold = 0.15f)
         lines shouldHaveSize 1
     }
 
     @Test
     fun `thresh param is threaded to the binarization step`() {
-        // TachiyomiAT: proves the inpaint path's lowered `thresh` (0.18) actually
-        // changes detection vs the default (0.2). A prob map at 0.19 is BELOW the
-        // default thresh (0.2) → no lines — but ABOVE 0.18 → one line. This is the
-        // exact contract PaddleOcrV6DetEngine.detectLines(thresh=0.18) relies on to
-        // find the same text for erasing that the default-threshold rec path might
-        // under-detect.
-        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.19f)
-        // Default thresh 0.2 > 0.19 → binarized to nothing.
+        // prob map at 0.14 is BELOW default thresh (0.15) -> no lines
+        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.14f)
         DbPostProcess.detectLines(map, width, height) shouldBe emptyList()
-        // Inpaint thresh 0.18 < 0.19 → binarized, and box_thresh default (0.45)
-        // drops it (mean 0.19 < 0.45); so also lower box_thresh to recover it,
-        // matching how the inpaint path calls both lowered thresholds together.
-        val lines = DbPostProcess.detectLines(map, width, height, threshold = 0.18f, boxThreshold = 0.1f)
+        // lowered threshold 0.12 < 0.14 -> binarized, and lowered box_thresh recovers it
+        val lines = DbPostProcess.detectLines(map, width, height, threshold = 0.12f, boxThreshold = 0.10f)
         lines shouldHaveSize 1
     }
 
     @Test
     fun `sub-threshold noise is ignored`() {
-        // prob below thresh (0.2) -> never becomes a binary-region pixel.
-        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.1f)
+        // prob below thresh (0.15) -> never becomes a binary-region pixel.
+        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.10f)
         DbPostProcess.detectLines(map, width, height) shouldBe emptyList()
     }
 

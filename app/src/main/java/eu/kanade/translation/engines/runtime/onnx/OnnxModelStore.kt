@@ -331,7 +331,7 @@ class OnnxModelStore(private val context: Context) {
         // already auto-detects byte-level changes to a cached file. This label
         // exists so a forced re-deploy can ship WITHOUT a byte change (e.g.
         // fixing a corrupt bundle whose hash happens to match an older cache).
-        const val MODEL_ASSET_VERSION = "aot-qaihub-2026-08-17-v1"
+        const val MODEL_ASSET_VERSION = "ppocrv6-manga-v0.2-fp16-2026-10-04"
 
         // Real models are multi-MB (AOT ~23MB); below 64 KiB is certainly truncated.
         const val MIN_VALID_ONNX_BYTES = 64L * 1024L

@@ -61,19 +61,20 @@ data class TextLine(
  */
 object DbPostProcess {
 
-    /** Default thresholds — match `inference.yml` of `PP-OCRv6_small_det_onnx`. */
+    /** Default thresholds — match PP-OCRv6_manga v0.2 reference pipeline. */
     object Defaults {
-        const val THRESH = 0.2f
-        const val BOX_THRESH = 0.45f
+        const val THRESH = 0.15f
+        const val BOX_THRESH = 0.25f
+        const val UNCLIP_RATIO = 1.4f
         const val MAX_CANDIDATES = 3000
     }
 
     /**
      * Minimum component area (in map pixels) to keep. The reference caps via
      * `max_candidates` and a min-area floor; tiny specks are noise. Sized in map
-     * space so it is resolution-independent relative to the 736-px map.
+     * space so it is resolution-independent relative to the map.
      */
-    private const val MAX_COMPONENT_AREA_FRAC = 0.5f
+    private const val MAX_COMPONENT_AREA_FRAC = 0.95f
     private const val MIN_AREA_PX = 16
 
     // line-merge thresholds for [mergeLineFragments]. Tuned in the
@@ -97,6 +98,7 @@ object DbPostProcess {
         height: Int,
         threshold: Float = Defaults.THRESH,
         boxThreshold: Float = Defaults.BOX_THRESH,
+        unclipRatio: Float = Defaults.UNCLIP_RATIO,
         maxCandidates: Int = Defaults.MAX_CANDIDATES,
     ): List<TextLine> {
         if (width <= 0 || height <= 0 || probabilityMap.size < width * height) return emptyList()
@@ -130,11 +132,33 @@ object DbPostProcess {
                 if (components.size >= maxCandidates) {
                     // PaddleOCR's max_candidates cap; stop early so pathological
                     // pages don't stall the OCR loop.
-                    return finalize(components, boxThreshold, width, height)
+                    return finalize(components, boxThreshold, width, height, unclipRatio)
                 }
             }
         }
-        return finalize(components, boxThreshold, width, height)
+        return finalize(components, boxThreshold, width, height, unclipRatio)
+    }
+
+    /**
+     * Constant polygon offset: offsetDistance = polygonArea * unclipRatio / polygonPerimeter.
+     * Expands bounding box coordinates outward to compensate for DB kernel shrinkage.
+     */
+    fun unclip(
+        minX: Int,
+        minY: Int,
+        maxX: Int,
+        maxY: Int,
+        unclipRatio: Float = Defaults.UNCLIP_RATIO,
+    ): IntArray {
+        val w = (maxX - minX + 1).toFloat()
+        val h = (maxY - minY + 1).toFloat()
+        val area = w * h
+        val perimeter = 2f * (w + h)
+        if (area <= 0f || perimeter <= 0f || unclipRatio <= 0f) {
+            return intArrayOf(minX, minY, maxX, maxY)
+        }
+        val distance = kotlin.math.round(area * unclipRatio / perimeter).toInt()
+        return intArrayOf(minX - distance, minY - distance, maxX + distance, maxY + distance)
     }
 
     private fun finalize(
@@ -142,6 +166,7 @@ object DbPostProcess {
         boxThreshold: Float,
         width: Int,
         height: Int,
+        unclipRatio: Float = Defaults.UNCLIP_RATIO,
     ): List<TextLine> {
         val out = ArrayList<TextLine>(components.size)
         for (component in components) {
@@ -150,8 +175,17 @@ object DbPostProcess {
             if (meanScore < boxThreshold) continue
             val area = (component.maxX - component.minX + 1).toLong() * (component.maxY - component.minY + 1).toLong()
             if (area > (MAX_COMPONENT_AREA_FRAC * width * height).toLong()) continue
-            val rawBox = intArrayOf(component.minX, component.minY, component.maxX, component.maxY)
-            out.add(TextLine(bbox = rawBox, meanScore = meanScore))
+
+            val box = if (unclipRatio > 0f) {
+                unclip(component.minX, component.minY, component.maxX, component.maxY, unclipRatio)
+            } else {
+                intArrayOf(component.minX, component.minY, component.maxX, component.maxY)
+            }
+            val bw = box[2] - box[0] + 1
+            val bh = box[3] - box[1] + 1
+            if (min(bw, bh) < 3) continue
+
+            out.add(TextLine(bbox = box, meanScore = meanScore))
         }
         // Merge fragments the axis-aligned CC step splits apart: normal inter-
         // character spacing becomes a component boundary, so a horizontal CJK line

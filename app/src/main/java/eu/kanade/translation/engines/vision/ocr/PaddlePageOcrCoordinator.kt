@@ -304,7 +304,11 @@ internal class PaddlePageOcrCoordinator(
             nextTraceSequence++
         },
         recognizeBatch = { crops, widthBucket, requestedBatchSize ->
-            engine.recognizeBucketBatch(crops, widthBucket.paddedWidth, requestedBatchSize.value)
+            if (requestedBatchSize == PaddleOcrBatchSize.B1) {
+                crops.map { engine.recognizeWithConf(it) }
+            } else {
+                engine.recognizeBucketBatch(crops, widthBucket.paddedWidth, requestedBatchSize.value)
+            }
         },
     )
 
@@ -365,7 +369,7 @@ internal class PaddlePageOcrCoordinator(
             regionIndex = regionIndex,
             bbox = bbox.copyOf(),
             initialPlan = plan,
-            needsUnpaddedReread = paddleMultiLine && isVerticalLanguage && boxHeight > boxWidth,
+            needsUnpaddedReread = paddleMultiLine && isVerticalLanguage && boxHeight > boxWidth * 1.5f,
             rotatedForOcr = paddleVerticalHeuristic || tallVertical,
         )
     }

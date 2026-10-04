@@ -79,21 +79,26 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         dictionary = BufferedReader(InputStreamReader(dictionaryFile.inputStream(), Charsets.UTF_8)).use { reader ->
             reader.lineSequence().map { it.trimEnd() }.toList()
         }
-        try {
-            val createdSession = when {
+        fun createSessionWithOptFallback(optLevel: OrtSession.SessionOptions.OptLevel): OrtSession {
+            val configure = { opts: OrtSession.SessionOptions ->
+                opts.setOptimizationLevel(optLevel)
+            }
+            return when {
                 providerConfiguration != null -> {
                     // Use the explicit provider override.
                     OnnxRuntimeProvider.createSessionForPaddleProvider(
                         modelPath = modelFile.absolutePath,
                         configuration = providerConfiguration,
+                        configure = configure,
                         providerSink = { executionProviderLabel = it },
                     )
                 }
                 providerResolution != null -> {
-                    //  Paddle-v6 provider selector path.
+                    // Paddle-v6 provider selector path.
                     PaddleOcrSessionFactory.createSession(
                         modelPath = modelFile.absolutePath,
                         resolution = providerResolution,
+                        configure = configure,
                         providerSink = { executionProviderLabel = it },
                     )
                 }
@@ -103,9 +108,18 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
                     OnnxRuntimeProvider.createSessionWithFallback(
                         modelPath = modelFile.absolutePath,
                         useAccelerator = true,
+                        configure = configure,
                         providerSink = { executionProviderLabel = it },
                     )
                 }
+            }
+        }
+        try {
+            val createdSession = try {
+                createSessionWithOptFallback(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "PaddleOCR v6 small BASIC_OPT failed, retrying with NO_OPT" }
+                createSessionWithOptFallback(OrtSession.SessionOptions.OptLevel.NO_OPT)
             }
             if (this.strictProviderMode && executionProviderLabel.isCpuLikeProvider()) {
                 createdSession.close()
@@ -138,6 +152,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
                     "inputs=${createdSession.inputNames}, outputs=${createdSession.outputNames})"
             }
         } catch (e: Exception) {
+            android.util.Log.e("PaddleOCR", "PaddleOCR v6 small session init failed", e)
             logcat(LogPriority.ERROR, e) { "PaddleOCR v6 small session init failed" }
             throw e
         }
@@ -209,7 +224,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
                 widthBucket = widthBucket,
                 maxBatch = maxBatch,
             ) { crop, destination, baseOffset, _ ->
-                val actualWidth = preprocess(crop, destination, baseOffset)
+                val actualWidth = preprocess(crop, destination, baseOffset, widthBucket)
                 check(actualWidth == widthBucket) {
                     "Paddle OCR crop aligned to $actualWidth but batch bucket is $widthBucket"
                 }
@@ -251,36 +266,45 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         batchBufferPool?.clear()
     }
 
-    private fun preprocess(crop: Bitmap, out: FloatBuffer, baseOffset: Int = 0): Int {
+    private fun preprocess(
+        crop: Bitmap,
+        out: FloatBuffer,
+        baseOffset: Int = 0,
+        targetWidthBucket: Int? = null,
+    ): Int {
         val safeWidth = crop.width.coerceAtLeast(1)
         val safeHeight = crop.height.coerceAtLeast(1)
-        // match the reference PP-OCR pipeline (comic-translate's
-        // ppocr module). Correcting the width/alignment here is a prerequisite
-        // for vertical-column splitting (handled by RoiPageRecognitionEngine).
-        val scaledWidth = ceil(safeWidth * (RECOGNITION_HEIGHT.toFloat() / safeHeight)).toInt()
-            .coerceIn(1, MAX_RECOGNITION_WIDTH)
-        val inputWidth = alignWidth(scaledWidth)
+        val targetWidth = calculateTargetWidth(safeWidth, safeHeight)
+
+        val inputWidth = targetWidthBucket ?: targetWidth
+        val drawWidth = if (targetWidthBucket != null) {
+            targetWidth.coerceAtMost(targetWidthBucket)
+        } else {
+            targetWidth
+        }
 
         var resized: Bitmap? = null
         var padded: Bitmap? = null
         try {
-            resized = BitmapPool.getARGB8888(scaledWidth, RECOGNITION_HEIGHT)
+            resized = BitmapPool.getARGB8888(drawWidth, RECOGNITION_HEIGHT)
             Canvas(resized).drawBitmap(
                 crop,
                 null,
-                RectF(0f, 0f, scaledWidth.toFloat(), RECOGNITION_HEIGHT.toFloat()),
+                RectF(0f, 0f, drawWidth.toFloat(), RECOGNITION_HEIGHT.toFloat()),
                 Paint(Paint.FILTER_BITMAP_FLAG),
             )
 
-            padded = BitmapPool.getARGB8888(inputWidth, RECOGNITION_HEIGHT)
-            // Pad with mid-gray (128) so that after normalize() the pad region is
-            // 0.0 — the normalization mean — matching the reference pipeline's
-            // np.zeros padding. White (255) normalized to 1.0 skewed recognition.
-            padded.eraseColor(PAD_GRAY)
-            Canvas(padded).drawBitmap(resized, 0f, 0f, null)
+            val sourceBitmap = if (targetWidthBucket != null && targetWidthBucket > drawWidth) {
+                padded = BitmapPool.getARGB8888(inputWidth, RECOGNITION_HEIGHT)
+                padded.eraseColor(PAD_GRAY)
+                Canvas(padded).drawBitmap(resized, 0f, 0f, null)
+                padded
+            } else {
+                resized
+            }
 
             val pixels = IntArray(inputWidth * RECOGNITION_HEIGHT)
-            padded.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, RECOGNITION_HEIGHT)
+            sourceBitmap.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, RECOGNITION_HEIGHT)
             // NCHW RGB, written via absolute puts into the direct buffer (no
             // intermediate FloatArray; leaves the buffer position untouched).
             val planeSize = RECOGNITION_HEIGHT * inputWidth
@@ -300,6 +324,13 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         }
     }
 
+    internal fun calculateTargetWidth(cropWidth: Int, cropHeight: Int): Int {
+        val safeWidth = cropWidth.coerceAtLeast(1)
+        val safeHeight = cropHeight.coerceAtLeast(1)
+        return Math.round(RECOGNITION_HEIGHT.toDouble() * safeWidth / safeHeight).toInt()
+            .coerceIn(MIN_RECOGNITION_WIDTH, MAX_RECOGNITION_WIDTH)
+    }
+
     internal fun normalize(value: Int): Float {
         return (value / 255.0f - 0.5f) / 0.5f
     }
@@ -315,6 +346,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
     internal companion object {
         const val RECOGNITION_HEIGHT = 48
+        const val MIN_RECOGNITION_WIDTH = 16
 
         // PP-OCR rec is trained on (3, 48, 320); width bucketing aligns inputs
         // <= 640 to 640 and > 640 to 1600 (MAX_RECOGNITION_WIDTH).

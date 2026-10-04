@@ -78,8 +78,7 @@ internal object VerticalLineOcr {
     ): String {
         if (paddleDet != null) {
             try {
-                // Use the standard DB BOX_THRESH (0.45f) for the rec path; 0.34 admitted noise.
-                val lines = paddleDet.detectLines(crop, thresh = 0.2f, boxThresh = DbPostProcess.Defaults.BOX_THRESH)
+                val lines = paddleDet.detectLines(crop, thresh = DbPostProcess.Defaults.THRESH, boxThresh = DbPostProcess.Defaults.BOX_THRESH)
                 if (lines.isNotEmpty()) {
                     return recognizeDetColumns(engine, crop, lines, language, isClosed)
                 }
@@ -120,7 +119,7 @@ internal object VerticalLineOcr {
     ): PaddleVerticalRecognitionPlan {
         if (paddleDet != null) {
             val lines = try {
-                paddleDet.detectLines(crop, thresh = 0.2f, boxThresh = DbPostProcess.Defaults.BOX_THRESH)
+                paddleDet.detectLines(crop, thresh = DbPostProcess.Defaults.THRESH, boxThresh = DbPostProcess.Defaults.BOX_THRESH)
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) {
                     "[paddle_det] failed while planning; falling back to " +
@@ -194,9 +193,9 @@ internal object VerticalLineOcr {
         )
     }
 
-    private suspend fun planDetColumns(
+    internal suspend fun planDetColumns(
         crop: Bitmap,
-        lines: List<eu.kanade.translation.engines.vision.ocr.TextLine>,
+        lines: List<TextLine>,
         language: TextRecognizerLanguage,
         prefersHorizontalText: Boolean,
         isClosed: () -> Boolean,
@@ -209,20 +208,21 @@ internal object VerticalLineOcr {
             val height = bbox[3] - bbox[1]
             if (width < MIN_DET_LINE_PX || height < MIN_DET_LINE_PX) return@mapNotNull null
             if (width > MAX_COLUMN_WIDTH_PX || height > MAX_COLUMN_HEIGHT_PX) return@mapNotNull null
-            val vertical = height > width * 1.5f
+            val vertical = height > width
             val sortKey = if (vertical) -(bbox[0] + bbox[2]) / 2 else (bbox[1] + bbox[3]) / 2
             Item(bbox, vertical, sortKey)
         }.sortedBy { it.sortKey }
 
         if (items.isEmpty()) {
-            val rotated = rotateCcw(crop)
+            val shouldRotate = crop.height > crop.width
+            val rotated = if (shouldRotate) rotateCcw(crop) else cropBitmap(crop, 0, 0, crop.width, crop.height)
             return PaddleVerticalRecognitionPlan(
                 leaves = listOf(
                     PaddleVerticalLeafPlan(
                         crop = rotated,
                         lineIndex = null,
                         glyphIndex = null,
-                        rotation = PaddleOcrRotation.CCW_90,
+                        rotation = if (shouldRotate) PaddleOcrRotation.CCW_90 else PaddleOcrRotation.NONE,
                         fallbackKind = PaddleOcrFallbackKind.WHOLE_REGION,
                     ),
                 ),
@@ -232,9 +232,6 @@ internal object VerticalLineOcr {
             )
         }
 
-        val verticalCjk = language == TextRecognizerLanguage.JAPANESE ||
-            language == TextRecognizerLanguage.CHINESE ||
-            language == TextRecognizerLanguage.KOREAN
         val leaves = ArrayList<PaddleVerticalLeafPlan>()
         val groups = ArrayList<List<Int>>(items.size)
         try {
@@ -244,17 +241,6 @@ internal object VerticalLineOcr {
                 val columnCrop = cropBitmap(crop, item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3])
                 try {
                     when {
-                        item.vertical && verticalCjk && prefersHorizontalText -> {
-                            addVerticalGlyphLeaves(
-                                columnCrop = columnCrop,
-                                lineIndex = lineIndex,
-                                fallbackKind = PaddleOcrFallbackKind.GLYPH,
-                                leaves = leaves,
-                                group = lineGroup,
-                                isClosed = isClosed,
-                            )
-                        }
-
                         item.vertical && prefersHorizontalText -> {
                             val rotated = rotateCcw(columnCrop)
                             leaves += PaddleVerticalLeafPlan(
@@ -297,9 +283,6 @@ internal object VerticalLineOcr {
         isClosed: () -> Boolean,
     ): PaddleVerticalRecognitionPlan {
         val columns = detectVerticalColumns(crop)
-        val verticalCjk = language == TextRecognizerLanguage.JAPANESE ||
-            language == TextRecognizerLanguage.CHINESE ||
-            language == TextRecognizerLanguage.KOREAN
         if (columns.size <= 1) {
             val rotated = rotateCcw(crop)
             return PaddleVerticalRecognitionPlan(
@@ -329,26 +312,15 @@ internal object VerticalLineOcr {
                 val lineGroup = ArrayList<Int>()
                 val columnCrop = Bitmap.createBitmap(crop, x0, 0, x1 - x0, crop.height)
                 try {
-                    if (verticalCjk) {
-                        addVerticalGlyphLeaves(
-                            columnCrop = columnCrop,
-                            lineIndex = lineIndex,
-                            fallbackKind = PaddleOcrFallbackKind.HEURISTIC_LINE,
-                            leaves = leaves,
-                            group = lineGroup,
-                            isClosed = isClosed,
-                        )
-                    } else {
-                        val rotated = rotateCcw(columnCrop)
-                        leaves += PaddleVerticalLeafPlan(
-                            crop = rotated,
-                            lineIndex = lineIndex,
-                            glyphIndex = null,
-                            rotation = PaddleOcrRotation.CCW_90,
-                            fallbackKind = PaddleOcrFallbackKind.HEURISTIC_LINE,
-                        )
-                        lineGroup += leaves.lastIndex
-                    }
+                    val rotated = rotateCcw(columnCrop)
+                    leaves += PaddleVerticalLeafPlan(
+                        crop = rotated,
+                        lineIndex = lineIndex,
+                        glyphIndex = null,
+                        rotation = PaddleOcrRotation.CCW_90,
+                        fallbackKind = PaddleOcrFallbackKind.HEURISTIC_LINE,
+                    )
+                    lineGroup += leaves.lastIndex
                 } finally {
                     columnCrop.recycle()
                 }
@@ -435,14 +407,15 @@ internal object VerticalLineOcr {
             // squashed a tall bubble into garbage. 4px only rejects fragments.
             if (w < MIN_DET_LINE_PX || h < MIN_DET_LINE_PX) return@mapNotNull null
             if (w > MAX_COLUMN_WIDTH_PX || h > MAX_COLUMN_HEIGHT_PX) return@mapNotNull null
-            val vertical = h > w * 1.5f
+            val vertical = h > w
             // Vertical: sort by x-center DESC (right-to-left). Horizontal: by y ASC.
             val key = if (vertical) -(b[0] + b[2]) / 2 else (b[1] + b[3]) / 2
             Item(b, vertical, key)
         }.sortedBy { it.sortKey }
 
         if (items.isEmpty()) {
-            val rotated = rotateCcw(crop)
+            val shouldRotate = crop.height > crop.width
+            val rotated = if (shouldRotate) rotateCcw(crop) else cropBitmap(crop, 0, 0, crop.width, crop.height)
             return try {
                 val part = engine.recognizeWithConf(rotated).first
                 if (part.isNotEmpty() && OcrTextFilter.isUsable(part, language)) part else ""
@@ -451,20 +424,15 @@ internal object VerticalLineOcr {
             }
         }
 
-        val verticalCjk = language == TextRecognizerLanguage.JAPANESE ||
-            language == TextRecognizerLanguage.CHINESE ||
-            language == TextRecognizerLanguage.KOREAN
         val parts = ArrayList<String>(items.size)
         for (it in items) {
             if (isClosed()) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
             val b = it.bbox
             val columnCrop = cropBitmap(crop, b[0], b[1], b[2], b[3])
             try {
-                // CJK vertical columns are split into individual glyphs before rec
-                // (the rec CTC head misreads a rotated whole column); other vertical
-                // boxes are rotated whole. Horizontal boxes are read as-is.
+                // With PP-OCRv6 manga, vertical columns are rotated 90° CCW whole
+                // without glyph splitting, matching the reference pipeline.
                 val part = when {
-                    it.vertical && verticalCjk && engine.prefersHorizontalText -> recognizeVerticalColumnPerChar(engine, columnCrop, language, isClosed)
                     it.vertical && engine.prefersHorizontalText -> {
                         val rotated = rotateCcw(columnCrop)
                         try {
@@ -503,9 +471,6 @@ internal object VerticalLineOcr {
                 rotated.recycle()
             }
         }
-        val verticalCjk = language == TextRecognizerLanguage.JAPANESE ||
-            language == TextRecognizerLanguage.CHINESE ||
-            language == TextRecognizerLanguage.KOREAN
         val parts = ArrayList<String>(columns.size)
         // Manga vertical text reads right-to-left. [detectVerticalColumns] returns
         // columns in left-to-right pixel order, so iterate them in reverse.
@@ -514,9 +479,7 @@ internal object VerticalLineOcr {
             if (x1 - x0 < MIN_COLUMN_WIDTH_PX) continue
             val columnCrop = Bitmap.createBitmap(crop, x0, 0, x1 - x0, crop.height)
             try {
-                val part = if (verticalCjk && engine.prefersHorizontalText) {
-                    recognizeVerticalColumnPerChar(engine, columnCrop, language, isClosed)
-                } else if (engine.prefersHorizontalText) {
+                val part = if (engine.prefersHorizontalText) {
                     val rotated = rotateCcw(columnCrop)
                     try {
                         recognizeSingleLine(engine, rotated, language)

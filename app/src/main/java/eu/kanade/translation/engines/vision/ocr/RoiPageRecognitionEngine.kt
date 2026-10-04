@@ -176,9 +176,7 @@ class RoiPageRecognitionEngine(
     private suspend fun initialize() {
         initMutex.withLock {
             if (initialized) return
-            if (initFailed) {
-                throw IllegalStateException("ONNX recognition engine failed to initialize previously")
-            }
+            initFailed = false
             val startTime = System.nanoTime()
             try {
                 val paths = modelStore.ensureModels()
@@ -325,6 +323,7 @@ class RoiPageRecognitionEngine(
                 logcat(LogPriority.INFO) { "RoiPageRecognitionEngine initialized in ${elapsedMs}ms" }
             } catch (e: Exception) {
                 initFailed = true
+                android.util.Log.e("PaddleOCR", "RoiPageRecognitionEngine init failed", e)
                 logcat(LogPriority.ERROR, e) { "RoiPageRecognitionEngine init failed, marking unavailable" }
                 throw e
             }
@@ -481,10 +480,7 @@ class RoiPageRecognitionEngine(
                 val isWebtoonMode = WebtoonSlidingDetector.isTallImage(bitmap.width, bitmap.height) ||
                     language == TextRecognizerLanguage.KOREAN ||
                     !resolveReadingOrderRtl()
-                val isVerticalLanguage = (
-                    language == TextRecognizerLanguage.JAPANESE ||
-                        language == TextRecognizerLanguage.CHINESE
-                    ) &&
+                val isVerticalLanguage = (language == TextRecognizerLanguage.JAPANESE) &&
                     !isWebtoonMode
 
                 val ocrStart = System.nanoTime()

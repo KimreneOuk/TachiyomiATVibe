@@ -298,12 +298,14 @@ object OnnxRuntimeProvider {
     fun createSessionForPaddleProvider(
         modelPath: String,
         configuration: PaddleOcrProviderOverride,
+        configure: (OrtSession.SessionOptions) -> Unit = {},
         providerSink: (String) -> Unit = {},
     ): OrtSession {
         val optionsWithRegistration = createSessionOptionsWithRegistration(
             useAccelerator = configuration.target.isAccelerator,
             useXnnpack = configuration.target == PaddleOcrProviderTarget.CPU,
             routeOverride = configuration.route,
+            configure = configure,
         )
         val options = optionsWithRegistration.options
         val registeredLabel = optionsWithRegistration.registered.wireLabel
