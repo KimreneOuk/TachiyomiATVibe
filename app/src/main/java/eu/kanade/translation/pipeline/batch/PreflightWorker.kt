@@ -501,8 +501,10 @@ internal class PreflightWorker(
                     when (outcome) {
                         is CheckpointOcrResult.Committed -> {
                             checkpointedPages++
-                            readCheckpointFingerprint(artifact, pageKey)?.let { fingerprint ->
-                                corpusFingerprints += pageKey to fingerprint
+                            val fingerprint = outcome.ocrContentFingerprint
+                                ?: readCheckpointFingerprint(artifact, pageKey)
+                            fingerprint?.let {
+                                corpusFingerprints += pageKey to it
                             }
                         }
                         is CheckpointOcrResult.Rejected -> {

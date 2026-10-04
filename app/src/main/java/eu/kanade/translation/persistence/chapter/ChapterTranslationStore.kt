@@ -111,6 +111,7 @@ sealed interface CheckpointOcrResult {
     data class Committed(
         val snapshot: ChapterTranslationStore.PageSnapshot,
         val manifest: ChapterArtifactManifest,
+        val ocrContentFingerprint: String? = null,
     ) : CheckpointOcrResult
 
     data class Rejected(val reason: String) : CheckpointOcrResult
@@ -2593,7 +2594,11 @@ class ChapterTranslationStore internal constructor(
                                 credit = journalCredit,
                                 artifactContentHash = snapshotFingerprint,
                             )
-                            CheckpointOcrResult.Committed(snapshotLocked(pageKey), outcome.manifest)
+                            CheckpointOcrResult.Committed(
+                                snapshot = snapshotLocked(pageKey),
+                                manifest = outcome.manifest,
+                                ocrContentFingerprint = checkpoint.ocrContentFingerprint,
+                            )
                         }
                         is ChapterArtifactEngine.TransactionOutcome.Rejected ->
                             rejectedCheckpoint(description, outcome.reason)

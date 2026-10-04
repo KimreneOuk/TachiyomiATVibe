@@ -768,15 +768,17 @@ class RollingAutoCoordinator(
         preparedChannel: Channel<PreparedWork>,
     ): Boolean {
         if (!isGenerationActive(spec.generation)) return false
+        val resolvedPages = mutableMapOf<Int, PageWorkItem?>()
+        val resolver: (Int) -> PageWorkItem? = { idx -> resolvedPages.getOrPut(idx) { spec.pageResolver(idx) } }
         val bounds = AutoWindowBounds(
             visiblePageIndex = spec.visiblePageIndex,
             configuredAheadTarget = spec.configuredAheadTarget,
             pageCount = spec.pageCount,
         )
-        val desired = computeDesiredSet(spec, bounds)
+        val desired = computeDesiredSet(spec, bounds, resolver)
         evictObsolete(desired, spec.generation)
         if (!isGenerationActive(spec.generation)) return false
-        publishSnapshot(spec.generation)
+        publishSnapshot(spec.generation, resolver)
 
         // Memory pressure pauses background prefetch only: the visible
         // foreground page stays highest priority and bypasses this headroom
@@ -800,7 +802,7 @@ class RollingAutoCoordinator(
                     )
                 }
             }
-            publishSnapshot(spec.generation)
+            publishSnapshot(spec.generation, resolver)
         }
 
         for (idx in orderedDesired) {
@@ -809,7 +811,7 @@ class RollingAutoCoordinator(
             val isForeground = idx == spec.visiblePageIndex
             if (!memoryOk && !isForeground) continue
 
-            val item = spec.pageResolver(idx)
+            val item = resolver(idx)
             if (item == null) {
                 // Stream not available yet. Surface the deferral and keep
                 // scanning — a later page may still be eligible. The slot is
@@ -823,7 +825,7 @@ class RollingAutoCoordinator(
                         nativeActive = nativeAdmitted.size,
                         providerActive = translateAdmitted.size,
                     )
-                    publishSnapshot(spec.generation)
+                    publishSnapshot(spec.generation, resolver)
                 }
                 continue
             }
@@ -994,7 +996,7 @@ class RollingAutoCoordinator(
             } finally {
                 removeNativeAdmitted(idx, spec.generation)
             }
-            publishSnapshot(spec.generation)
+            publishSnapshot(spec.generation, resolver)
             return true
         }
         return false
@@ -1013,18 +1015,22 @@ class RollingAutoCoordinator(
             !pausedTranslations.containsKey(idx) &&
             slotStates[idx] !is AutoSlotState.Failed
 
-    private fun computeDesiredSet(spec: WindowSpec, bounds: AutoWindowBounds): Set<Int> {
+    private fun computeDesiredSet(
+        spec: WindowSpec,
+        bounds: AutoWindowBounds,
+        pageResolver: (Int) -> PageWorkItem? = spec.pageResolver,
+    ): Set<Int> {
         val desired = mutableSetOf<Int>()
         val store = spec.session.store
         if (bounds.hasVisiblePage) {
-            val visibleItem = spec.pageResolver(spec.visiblePageIndex)
+            val visibleItem = pageResolver(spec.visiblePageIndex)
             val visiblePage = visibleItem?.let { store.state.value[it.pageKey] }
             if (visibleItem == null || visiblePage == null || !visiblePage.isTranslationDisplayReady) {
                 desired.add(spec.visiblePageIndex)
             }
         }
         for (index in bounds.aheadPageIndices) {
-            val item = spec.pageResolver(index)
+            val item = pageResolver(index)
             val page = item?.let { store.state.value[it.pageKey] }
             if (item == null || page == null || !page.isTranslationDisplayReady) {
                 desired.add(index)
@@ -1138,7 +1144,10 @@ class RollingAutoCoordinator(
      * display-ready page counts as Ready even if the coordinator never touched
      * it. readyAheadCount therefore always matches durable display results.
      */
-    private fun publishSnapshot(expectedGeneration: Long? = null) {
+    private fun publishSnapshot(
+        expectedGeneration: Long? = null,
+        pageResolverOverride: ((Int) -> PageWorkItem?)? = null,
+    ) {
         val inputs = synchronized(lifecycleLock) {
             val spec = currentSpec ?: return
             if (expectedGeneration != null && !isGenerationActiveLocked(expectedGeneration)) return
@@ -1148,7 +1157,7 @@ class RollingAutoCoordinator(
                 stateSequence = stateSequence,
             )
         }
-        val snapshot = buildSnapshot(inputs)
+        val snapshot = buildSnapshot(inputs, pageResolverOverride)
 
         // The generation/identity check and StateFlow assignment are serialized
         // with lifecycle transitions, but the assignment itself is intentionally
@@ -1183,8 +1192,12 @@ class RollingAutoCoordinator(
             currentSpec?.session?.store === inputs.spec.session.store &&
             stateSequence == inputs.stateSequence
 
-    private fun buildSnapshot(inputs: SnapshotInputs): AutoTranslationSnapshot {
+    private fun buildSnapshot(
+        inputs: SnapshotInputs,
+        pageResolverOverride: ((Int) -> PageWorkItem?)? = null,
+    ): AutoTranslationSnapshot {
         val spec = inputs.spec
+        val resolver = pageResolverOverride ?: spec.pageResolver
         val bounds = AutoWindowBounds(
             visiblePageIndex = spec.visiblePageIndex,
             configuredAheadTarget = spec.configuredAheadTarget,
@@ -1199,14 +1212,14 @@ class RollingAutoCoordinator(
             // visible page that has not been admitted yet is modeled Queued so
             // the reader sees immediate acknowledgement.
             inputs.slotStates[spec.visiblePageIndex]?.let { AutoWindowSlot(spec.visiblePageIndex, it) }
-                ?: if (needsAutoWork(spec, spec.visiblePageIndex)) {
+                ?: if (needsAutoWork(spec, spec.visiblePageIndex, resolver)) {
                     AutoWindowSlot(spec.visiblePageIndex, AutoSlotState.Queued)
                 } else {
                     null
                 }
         }
         val aheadSlots = bounds.aheadPageIndices.map { idx ->
-            AutoWindowSlot(idx, aheadSlotState(spec, idx, inputs.slotStates))
+            AutoWindowSlot(idx, aheadSlotState(spec, idx, inputs.slotStates, resolver))
         }
         return AutoTranslationSnapshot(
             identity = spec.identity,
@@ -1258,9 +1271,10 @@ class RollingAutoCoordinator(
         spec: WindowSpec,
         idx: Int,
         capturedSlotStates: Map<Int, AutoSlotState>,
+        pageResolver: (Int) -> PageWorkItem? = spec.pageResolver,
     ): AutoSlotState {
         capturedSlotStates[idx]?.let { return it }
-        val storeState = storePage(spec, idx)
+        val storeState = storePage(spec, idx, pageResolver)
         if (storeState != null && storeState.isTranslationDisplayReady) {
             return AutoSlotState.Ready
         }
@@ -1269,13 +1283,21 @@ class RollingAutoCoordinator(
         return AutoSlotState.Queued
     }
 
-    private fun needsAutoWork(spec: WindowSpec, idx: Int): Boolean {
-        val storeState = storePage(spec, idx)
+    private fun needsAutoWork(
+        spec: WindowSpec,
+        idx: Int,
+        pageResolver: (Int) -> PageWorkItem? = spec.pageResolver,
+    ): Boolean {
+        val storeState = storePage(spec, idx, pageResolver)
         return storeState == null || !storeState.isTranslationDisplayReady
     }
 
-    private fun storePage(spec: WindowSpec, idx: Int): PageTranslationView? {
-        val key = spec.pageResolver(idx)?.pageKey ?: return null
+    private fun storePage(
+        spec: WindowSpec,
+        idx: Int,
+        pageResolver: (Int) -> PageWorkItem? = spec.pageResolver,
+    ): PageTranslationView? {
+        val key = pageResolver(idx)?.pageKey ?: return null
         return spec.session.store.state.value[key]
     }
 

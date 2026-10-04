@@ -8,7 +8,9 @@ import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.CleanedImageIdentity
+import eu.kanade.translation.persistence.artifact.CleanedImageIdentitySidecar
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.CleanedImagePublisher
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
@@ -16,11 +18,12 @@ import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.decodeFromString
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
-import java.io.OutputStream
+import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -121,7 +124,6 @@ internal class CleanedPublication(
     ): ChapterTranslationStore.PageSnapshot? = withContext(Dispatchers.IO) {
         val directory = companionDir
         val previousName = pageTranslation.cleanedImageName
-        val expectedContentHash = jpegContentSha256(cleanedBitmap)
         val precondition = expectedPrecondition ?: store.snapshot(pageKey).let { snapshot ->
             ChapterTranslationStore.PatchPrecondition(
                 generation = snapshot.generation,
@@ -133,10 +135,13 @@ internal class CleanedPublication(
                 artifactPageVersion = snapshot.artifactPageVersion,
             )
         }
+        var writtenImage: CleanedImageWriteResult? = null
         val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
             override fun writeVerifiedVersionedFile(): String {
                 check(directory != null) { "translation output folder is unavailable" }
-                return writeVerifiedCleanedImage(directory, pageKey, cleanedBitmap, expectedContentHash)
+                val written = writeVerifiedCleanedImage(directory, pageKey, cleanedBitmap)
+                writtenImage = written
+                return written.name
             }
 
             override fun delete(name: String): Boolean {
@@ -152,6 +157,7 @@ internal class CleanedPublication(
                 pageKey,
                 previousName,
                 commit = { newName ->
+                    val writtenHash = writtenImage?.contentSha256
                     store.patchPage(
                         pageKey,
                         precondition,
@@ -159,7 +165,7 @@ internal class CleanedPublication(
                     ) { current ->
                         (current ?: pageTranslation).apply {
                             cleanedImageName = newName
-                            cleanedImageContentHash = expectedContentHash
+                            cleanedImageContentHash = writtenHash
                             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                             inpaintingModeUsed = currentInpaintingMode().name
                             inpaintFingerprint = pageTranslation.inpaintFingerprint
@@ -200,7 +206,7 @@ internal class CleanedPublication(
         ) {
             is CleanedImagePublisher.Result.Published -> {
                 pageTranslation.cleanedImageName = result.name
-                pageTranslation.cleanedImageContentHash = expectedContentHash
+                pageTranslation.cleanedImageContentHash = writtenImage?.contentSha256
                 pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                 pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
                 pageTranslation.inpaintStatus = StageStatus.READY
@@ -288,7 +294,6 @@ internal class CleanedPublication(
         val store = result.store
         val pageTranslation = result.pageTranslation
         val previousName = pageTranslation.cleanedImageName
-        val expectedContentHash = jpegContentSha256(cleanedBitmap)
         val precondition = result.commitPrecondition ?: store.snapshot(pageKey).toPrecondition()
         val finalName = newCleanedImageName(pageKey)
         val livePatch = store.patchPage(
@@ -298,7 +303,7 @@ internal class CleanedPublication(
         ) { current ->
             (current ?: pageTranslation).apply {
                 cleanedImageName = finalName
-                cleanedImageContentHash = expectedContentHash
+                cleanedImageContentHash = null
                 inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                 inpaintingModeUsed = currentInpaintingMode().name
                 inpaintFingerprint = pageTranslation.inpaintFingerprint
@@ -323,7 +328,7 @@ internal class CleanedPublication(
         val accepted = livePatch as? ChapterTranslationStore.PatchResult.Accepted
             ?: return null
         pageTranslation.cleanedImageName = finalName
-        pageTranslation.cleanedImageContentHash = expectedContentHash
+        pageTranslation.cleanedImageContentHash = null
         pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
         pageTranslation.inpaintStatus = StageStatus.READY
@@ -337,16 +342,17 @@ internal class CleanedPublication(
                 chapter.name,
                 chapter.scanlator,
             )
+            var writtenImage: CleanedImageWriteResult? = null
             val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
                 override fun writeVerifiedVersionedFile(): String {
                     check(companionDir != null) { "translation output folder is unavailable" }
-                    writeVerifiedCleanedImage(
-                        companionDir,
-                        pageKey,
-                        cleanedBitmap,
-                        expectedContentHash,
-                        finalName,
+                    val written = writeVerifiedCleanedImage(
+                        directory = companionDir,
+                        pageKey = pageKey,
+                        bitmap = cleanedBitmap,
+                        name = finalName,
                     )
+                    writtenImage = written
                     return finalName
                 }
 
@@ -364,6 +370,17 @@ internal class CleanedPublication(
                     previousName = previousName,
                     commit = {
                         if (store.isLazyGenerationCurrent(generation)) {
+                            val hash = writtenImage?.contentSha256
+                            if (hash != null) {
+                                pageTranslation.cleanedImageContentHash = hash
+                                store.patchPage(
+                                    pageKey = pageKey,
+                                    expected = store.snapshot(pageKey).toPrecondition(),
+                                    description = "record lazy cleaned image content hash",
+                                ) { current ->
+                                    (current ?: pageTranslation).apply { cleanedImageContentHash = hash }
+                                }
+                            }
                             ChapterTranslationStore.PatchResult.Accepted(accepted.snapshot)
                         } else {
                             ChapterTranslationStore.PatchResult.Rejected("store generation changed")
@@ -407,13 +424,17 @@ internal class CleanedPublication(
         )
     }
 
+    internal data class CleanedImageWriteResult(
+        val name: String,
+        val contentSha256: String,
+    )
+
     private fun writeVerifiedCleanedImage(
         directory: UniFile,
         pageKey: String,
         bitmap: Bitmap,
-        expectedContentSha256: String,
         name: String = newCleanedImageName(pageKey),
-    ): String {
+    ): CleanedImageWriteResult {
         val identityName = CleanedImageIdentity.sidecarName(name)
         val existingImage = directory.findFile(name)?.takeIf(UniFile::exists)
         val existingIdentity = directory.findFile(identityName)?.takeIf(UniFile::exists)
@@ -421,28 +442,38 @@ internal class CleanedPublication(
             val sidecarBytes = runCatching {
                 existingIdentity?.openInputStream()?.use { it.readBytes() }
             }.getOrNull()
-            val matches = CleanedImageIdentity.verifyExisting(
-                sidecarBytes = sidecarBytes,
-                imageName = name,
-                expectedContentSha256 = expectedContentSha256,
-            ) { existingImage?.openInputStream() }
+            val sidecar = runCatching {
+                sidecarBytes?.let { ArtifactDocumentJson.decodeFromString<CleanedImageIdentitySidecar>(it.decodeToString()) }
+            }.getOrNull()
+            val matches = sidecar != null &&
+                CleanedImageIdentity.verifyExisting(
+                    sidecarBytes = sidecarBytes,
+                    imageName = name,
+                    expectedContentSha256 = sidecar.contentSha256,
+                ) { existingImage?.openInputStream() }
             check(matches) { "cleaned image name is already bound to different or unverified bytes" }
-            return name
+            return CleanedImageWriteResult(name, sidecar!!.contentSha256)
         }
         val imageFile = directory.createFile(name)
         check(imageFile != null) { "could not create final cleaned image" }
         var identityFile: UniFile? = null
         try {
-            imageFile.openOutputStream().use { output ->
-                check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) { "JPEG encoding returned false" }
+            val digest = MessageDigest.getInstance("SHA-256")
+            imageFile.openOutputStream().use { fileOut ->
+                DigestOutputStream(fileOut, digest).use { digestOut ->
+                    check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, digestOut)) {
+                        "JPEG encoding returned false"
+                    }
+                    digestOut.flush()
+                }
             }
             check(imageFile.exists() && imageFile.length() > 0L) { "published cleaned image is unavailable" }
-            val identity = imageFile.openInputStream().use { input ->
-                CleanedImageIdentity.create(pageKey, name, input)
-            }
-            check(identity.contentSha256 == expectedContentSha256) {
-                "written cleaned image bytes differ from the captured publication identity"
-            }
+            val contentSha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+            val identity = CleanedImageIdentitySidecar(
+                pageKey = pageKey,
+                imageName = name,
+                contentSha256 = contentSha256,
+            )
             val createdIdentityFile = directory.createFile(identityName)
             check(createdIdentityFile != null) { "could not create cleaned image identity" }
             identityFile = createdIdentityFile
@@ -453,30 +484,12 @@ internal class CleanedPublication(
             check(createdIdentityFile.exists() && createdIdentityFile.length() > 0L) {
                 "cleaned image identity is unavailable"
             }
-            return name
+            return CleanedImageWriteResult(name, contentSha256)
         } catch (failure: Throwable) {
             identityFile?.delete()
             imageFile.delete()
             throw failure
         }
-    }
-
-    /** Hashes the intended JPEG without buffering a second full-size image in memory. */
-    private fun jpegContentSha256(bitmap: Bitmap): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val digestSink = object : OutputStream() {
-            override fun write(byte: Int) {
-                digest.update(byte.toByte())
-            }
-
-            override fun write(bytes: ByteArray, offset: Int, length: Int) {
-                digest.update(bytes, offset, length)
-            }
-        }
-        check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, digestSink)) {
-            "JPEG encoding returned false while verifying an existing cleaned image"
-        }
-        return digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
     }
 
     private fun newCleanedImageName(pageKey: String): String {

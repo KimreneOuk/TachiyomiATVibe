@@ -11,6 +11,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import java.util.concurrent.ConcurrentHashMap
 
 private const val MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP = 64
 private const val ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS = 30_000L
@@ -31,6 +32,8 @@ internal class CleanedImageLifecycleController(
     private val streamRegistry get() = streamRegistryProvider()
 
     private val provider get() = providerProvider()
+
+    private val activeCleanupChapters = ConcurrentHashMap.newKeySet<Long>()
 
     /**
      * Reclaims previous committed cleaned images discovered while opening a
@@ -53,49 +56,54 @@ internal class CleanedImageLifecycleController(
         mangaId: Long?,
     ) {
         val stableMangaId = mangaId ?: return
+        if (!activeCleanupChapters.add(chapterId)) return
         applicationScope.launch {
-            store.state.value.keys.forEach { pageKey ->
-                store.drainRetiredCleanedImages(pageKey).forEach { imageName ->
-                    streamRegistry.retireCleanedImage(
-                        sourceId = source.id,
-                        mangaId = stableMangaId,
-                        chapterId = chapterId,
-                        pageKey = pageKey,
-                        imageName = imageName,
-                    ) {
-                        if (!store.mayDeleteCleanedImage(pageKey, imageName)) return@retireCleanedImage
-                        val deleted = provider.findPageCleanedImage(
-                            mangaTitle,
-                            source,
-                            chapterName,
-                            scanlator,
-                            imageName,
-                        )?.delete() == true
-                        if (deleted) {
-                            provider.findPageCleanedImage(
+            try {
+                store.state.value.keys.forEach { pageKey ->
+                    store.drainRetiredCleanedImages(pageKey).forEach { imageName ->
+                        streamRegistry.retireCleanedImage(
+                            sourceId = source.id,
+                            mangaId = stableMangaId,
+                            chapterId = chapterId,
+                            pageKey = pageKey,
+                            imageName = imageName,
+                        ) {
+                            if (!store.mayDeleteCleanedImage(pageKey, imageName)) return@retireCleanedImage
+                            val deleted = provider.findPageCleanedImage(
                                 mangaTitle,
                                 source,
                                 chapterName,
                                 scanlator,
-                                CleanedImageIdentity.sidecarName(imageName),
-                            )?.delete()
-                        }
-                        logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
-                            "TachiyomiAT chapter-load retired cleaned image drain: " +
-                                "pageKey=$pageKey file=$imageName deleted=$deleted"
+                                imageName,
+                            )?.delete() == true
+                            if (deleted) {
+                                provider.findPageCleanedImage(
+                                    mangaTitle,
+                                    source,
+                                    chapterName,
+                                    scanlator,
+                                    CleanedImageIdentity.sidecarName(imageName),
+                                )?.delete()
+                            }
+                            logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
+                                "TachiyomiAT chapter-load retired cleaned image drain: " +
+                                    "pageKey=$pageKey file=$imageName deleted=$deleted"
+                            }
                         }
                     }
                 }
+                sweepOrphanedCleanedImages(
+                    store = store,
+                    chapterId = chapterId,
+                    chapterName = chapterName,
+                    scanlator = scanlator,
+                    mangaTitle = mangaTitle,
+                    source = source,
+                    mangaId = stableMangaId,
+                )
+            } finally {
+                activeCleanupChapters.remove(chapterId)
             }
-            sweepOrphanedCleanedImages(
-                store = store,
-                chapterId = chapterId,
-                chapterName = chapterName,
-                scanlator = scanlator,
-                mangaTitle = mangaTitle,
-                source = source,
-                mangaId = stableMangaId,
-            )
         }
     }
 
