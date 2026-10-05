@@ -587,7 +587,8 @@ internal object ChapterJournalReplayReducer {
         // Bind the replay payload itself before consulting any manifest pointer.
         val embeddedStateMatches = cleanedImageIdentityMatches &&
             runCatching { StageFingerprints.pageSnapshot(state) == hash }.getOrDefault(false)
-        return embeddedStateMatches && artifactResolver != null &&
+        return embeddedStateMatches &&
+            artifactResolver != null &&
             runCatching { artifactResolver.matches(record.pageKey, hash, state) }.getOrDefault(false)
     }
 

@@ -27,10 +27,12 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.persistence.artifact.EvidenceRef
@@ -42,12 +44,16 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -260,6 +266,7 @@ class StrandedPageTerminalRoutingTest {
     private fun responseFor(
         chunk: TranslationContextChunk,
         omit: Set<String> = emptySet(),
+        translate: (TranslationBlock) -> String = { sourceBlock -> "translated-${sourceBlock.blockId}" },
     ): ContextualTranslationBatch {
         val request = ContextualRequestBuilder.build(
             chunk,
@@ -267,10 +274,12 @@ class StrandedPageTerminalRoutingTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val results = request.orderedIds.filterNot(omit::contains).map { id ->
+            val location = request.locations.getValue(id)
+            val sourceBlock = chunk.pages.getValue(location.pageKey).blocks[location.blockIndex]
             ContextualTranslationResult(
                 id = id,
                 targetKey = request.idMap[id],
-                text = "translated-$id",
+                text = translate(sourceBlock),
                 status = ContextualTranslationResult.Status.TRANSLATED,
             )
         }
@@ -341,12 +350,16 @@ class StrandedPageTerminalRoutingTest {
         // translation-PENDING while its only block is no longer requestable.
         val worker = FakePreflightOcrWorker(store, blocksFor = { pageKey ->
             if (pageKey == "p2") {
-                listOf(block("b1", "source-p2").apply { translation = "translated-p2" })
+                listOf(block("b1", "OK!").apply { translation = "OK!" })
             } else {
                 listOf(block("b1", "source-$pageKey"))
             }
         })
-        val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
+        val translator = FakeTranslator { _, chunk ->
+            responseFor(chunk) { sourceBlock ->
+                if (sourceBlock.text == "OK!") "OK!" else "translated-${sourceBlock.blockId}"
+            }
+        }
 
         val outcome = coordinator(store, worker, pages, translator, newScheduler(store, pageKeys))
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -361,12 +374,181 @@ class StrandedPageTerminalRoutingTest {
         store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
         val p2 = store.snapshot("p2").page.shouldNotBeNull()
         p2.translationStatus shouldBe StageStatus.READY
-        p2.blocks.single().translation shouldBe "translated-p2"
+        p2.blocks.single().translation shouldBe "OK!"
         store.durableFailure("p2").shouldBeNull()
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_STRANDED_RECONCILED] shouldBe 0
 
-        // The dead block was never re-paid: only p1's block is requested.
+        // The Japanese→English scriptless invariant is adopted from the
+        // interrupted checkpoint, so p2 is never sent to the translator.
         translator.requests.size shouldBe 1
+        translator.requests.flatMap { chunk ->
+            chunk.pages.values.flatMap { page -> page.blocks.map { it.text } }
+        }.contains("OK!") shouldBe false
+    }
+
+    @Test
+    fun `scriptless checkpoint equality is not dispatched but meaningful Japanese echo pauses the coordinator`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val worker = FakePreflightOcrWorker(store, blocksFor = {
+            listOf(
+                block("b1", "OK!").apply { translation = "OK!" },
+                block("b2", "待て！").apply { translation = "待て！" },
+            )
+        })
+        val translator = FakeTranslator { _, chunk ->
+            responseFor(chunk) { sourceBlock -> sourceBlock.text }
+        }
+
+        val outcome = coordinator(store, worker, pages, translator, newScheduler(store, pageKeys))
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        outcome.status shouldBe BatchPass1Status.PAUSED
+        val durableRun = runRecord(store)
+        durableRun.frozenConfig.sourceLang shouldBe "ja"
+        durableRun.frozenConfig.targetLang shouldBe "en"
+        val requestedSourceTexts = translator.requests.flatMap { chunk ->
+            chunk.pages.values.flatMap { page -> page.blocks.map { it.text } }
+        }
+        requestedSourceTexts.isNotEmpty() shouldBe true
+        requestedSourceTexts.contains("OK!") shouldBe false
+        requestedSourceTexts.all { it == "待て！" } shouldBe true
+        // This is the TRANSLATE pause path. EnvelopeDispatcher does not call
+        // FINALIZE after this outcome, so the dedicated finalizer witness
+        // below owns the stranded-reason assertion.
+        store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldNotBe StageStatus.READY
+    }
+
+    @Test
+    fun `FINALIZE recovery counts only the meaningful Japanese echo as unfinished`() = runTest {
+        val store = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
+        val pageKeys: List<PageKey> = listOf("p1" to 0)
+        store.preRegisterPages(pageKeys.map { it.first })
+
+        val blocks = listOf(
+            block("b1", "OK!").apply { translation = "OK!" },
+            block("b2", "待て！").apply { translation = "待て！" },
+        )
+        val lease = store.tryAcquirePageStageLease("p1", PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val before = store.snapshot("p1")
+        store.mergeOcr(
+            OcrStagePatch(
+                pageKey = "p1",
+                generation = before.generation,
+                expectedPageVersion = before.pageVersion,
+                expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
+                ocrResult = ocrPage("p1", blocks),
+                expectedLeaseToken = lease.token,
+            ),
+            description = "t935 finalize language-aware recovery witness seed",
+        ).shouldBeInstanceOf<StagePatchResult.Accepted>()
+        store.releasePageStageLease("p1", PageWriteOrigin.BATCH)
+
+        val seeded = store.snapshot("p1").page.shouldNotBeNull()
+        seeded.translationStatus shouldBe StageStatus.PENDING
+        seeded.blocks.map { it.text to it.translation } shouldBe listOf(
+            "OK!" to "OK!",
+            "待て！" to "待て！",
+        )
+
+        val frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
+            sourceLang = "ja",
+            targetLang = "en",
+            ocrEngine = "FakeOcrEngine",
+            inpaintMode = "OFF",
+            providerKey = "fake:provider",
+        )
+        val sourcePairs = listOf("p1" to hex64("source-p1"))
+        val nowEpochMs = System.currentTimeMillis() + 1L
+        val recovery = RecoveryWorker(
+            RecoveryWorkerContext(
+                store = store,
+                nowEpochMs = { nowEpochMs },
+                drainFinalize = { _, _, _, _, _ ->
+                    error("the finalizer witness does not enter recovery resume")
+                },
+            ),
+        )
+        val artifact = store.withArtifactEngineLocked { it }.shouldNotBeNull()
+        val reasonCalls = mutableListOf<String>()
+        val finalizer = FinalizeWorker(
+            FinalizeWorkerContext(
+                store = store,
+                frozenConfig = frozenConfig,
+                effectiveSourcePairs = sourcePairs,
+                overlapScheduler = null,
+                renderJoin = null,
+                publishRecord = { artifact, record ->
+                    val serialized = ArtifactDocumentJson.encodeToString(record)
+                    val manifest = artifact.readManifest().shouldNotBeNull()
+                    artifact.publishActiveRun(
+                        manifest = manifest,
+                        record = record,
+                        contentFingerprint = ChapterProfileBatchCoordinator.sha256Hex(serialized.encodeToByteArray()),
+                        nowEpochMs = nowEpochMs,
+                    ).also { outcome ->
+                        if (outcome is ChapterArtifactEngine.TransactionOutcome.Committed) {
+                            store.artifactManifest = outcome.manifest
+                        }
+                    }
+                },
+                record = { runId, state, frozenFingerprint, sourceDigest, counters, corpusFingerprint ->
+                    ChapterRunRecord(
+                        runId = runId,
+                        state = state,
+                        frozenConfig = frozenConfig,
+                        frozenRunConfigFingerprint = frozenFingerprint,
+                        orderedSourceDigest = sourceDigest,
+                        ocrCorpusFingerprint = corpusFingerprint,
+                        analysisPolicyFingerprint = ChapterProfileBatchCoordinator.policyFingerprint(
+                            "analysis-policy-v1",
+                            frozenConfig.analysisPolicy.overlapPages,
+                        ),
+                        envelopePolicyFingerprint = ChapterProfileBatchCoordinator.policyFingerprint(
+                            "envelope-policy-v1",
+                            frozenConfig.envelopePolicy.maxBlocks,
+                            frozenConfig.envelopePolicy.maxPages,
+                        ),
+                        phaseCounters = counters,
+                        createdAtEpochMs = nowEpochMs,
+                        updatedAtEpochMs = nowEpochMs,
+                    )
+                },
+                drainDisplayTailBeforeComplete = {
+                    RecoveryWorker.DisplayTailDrain(drained = 0, failed = emptyList())
+                },
+                t924PageTerminalAtFinalize = { _, _ -> false },
+                strandedPageReason = { page ->
+                    val persistedRun = store.readActiveRunRecord().shouldNotBeNull()
+                    persistedRun.state shouldBe ChapterRunState.FINALIZE
+                    val persistedConfig = persistedRun.frozenConfig
+                    persistedConfig.sourceLang shouldBe "ja"
+                    persistedConfig.targetLang shouldBe "en"
+                    recovery.strandedPageReason(page).also { reasonCalls += it }
+                },
+                persistEnvelopeStructuralFailure = { pageKey, reason, carrier ->
+                    recovery.persistEnvelopeStructuralFailure(pageKey, reason, carrier)
+                },
+            ),
+        )
+
+        val outcome = finalizer.runPhase(
+            artifact = artifact,
+            runId = "run-language-aware-finalize",
+            orderedPages = pageKeys,
+            corpusFingerprint = hex64("corpus-p1"),
+            baseCounters = emptyMap(),
+        )
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        reasonCalls.size shouldBe 1
+        reasonCalls.single() shouldContain "unfinished=1"
+        val durableFailure = store.durableFailure("p1").shouldNotBeNull()
+        durableFailure.lastFailureMessage shouldContain "unfinished=1"
+        store.readActiveRunRecord()?.state shouldBe ChapterRunState.COMPLETE
     }
 
     @Test

@@ -18,7 +18,6 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.nio.FloatBuffer
-import kotlin.math.ceil
 
 class PaddleOcrV6SmallEngine : RoiOcrEngine {
 

@@ -2,11 +2,14 @@ package eu.kanade.translation.persistence.artifact
 
 /** In-memory [ChapterDocumentIo] double for unit tests. */
 class FakeChapterDocumentIo : ChapterDocumentIo {
+    data class WriteAttempt(val name: String, val submittedBytes: Int, val succeeded: Boolean)
+
     val files = LinkedHashMap<String, ByteArray>()
     val directories = mutableSetOf<String>()
     val deletedNames = mutableListOf<String>()
     val renamed = mutableListOf<Pair<String, String>>()
     val writtenNames = mutableListOf<String>()
+    val writeAttempts = mutableListOf<WriteAttempt>()
     val listedDirectories = mutableListOf<String>()
     val lastModifiedTimes = mutableMapOf<String, Long>()
     var failWrites = false
@@ -62,7 +65,9 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     val syncedWrites = mutableListOf<String>()
 
     override fun write(name: String, bytes: ByteArray, syncToDisk: Boolean): Boolean {
-        if (failWrites || writeNamesToFail.any { fragment -> name.contains(fragment) }) return false
+        val succeeded = !failWrites && writeNamesToFail.none { fragment -> name.contains(fragment) }
+        writeAttempts += WriteAttempt(name, bytes.size, succeeded)
+        if (!succeeded) return false
         writtenNames += name
         if (syncToDisk) syncedWrites += name
         files[name] = bytes.copyOf()

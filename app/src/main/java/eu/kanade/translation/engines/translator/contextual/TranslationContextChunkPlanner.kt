@@ -62,11 +62,15 @@ object TranslationContextChunkPlanner {
         requestedOutputTokens: Int,
         profile: Profile = Profile.DEFAULT,
         pageIndexes: Map<String, Int> = emptyMap(),
+        sourceLanguageCode: String? = null,
+        targetLanguageCode: String? = null,
     ): Result {
         val planner = StreamingChunkPlanner(
             requestedOutputTokens = requestedOutputTokens,
             profile = profile,
             naturalPageIndexes = pageIndexes,
+            sourceLanguageCode = sourceLanguageCode,
+            targetLanguageCode = targetLanguageCode,
         )
         pages.forEach { (k, v) -> planner.accept(k, v) }
         val flush = planner.flushRemaining()
@@ -224,7 +228,18 @@ data class TranslationContextChunk(
     val maxOutputTokens: Int,
     val protocol: ContextualRequestProtocol = ContextualRequestProtocol.LEGACY,
     val pageIndexes: Map<String, Int> = emptyMap(),
+    /** In-memory-only hint for the one unresolved-only semantic repair request. */
+    val correctionHint: TranslationCorrectionHint? = null,
 )
+
+data class TranslationCorrectionHint(
+    val sourceEcho: Boolean = false,
+    val wrongTargetLanguage: Boolean = false,
+) {
+    init {
+        require(sourceEcho || wrongTargetLanguage) { "Correction hint requires classified evidence" }
+    }
+}
 
 interface ContextualTextTranslator : TextTranslator {
     /** Applies the returned batch exactly once and exposes it to the live retry controller. */

@@ -1,12 +1,19 @@
 package eu.kanade.translation.engines.translator
 
+import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
+import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
+import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.engines.translator.contextual.TranslationCorrectionHint
+import eu.kanade.translation.engines.translator.providers.AiTranslator
 import eu.kanade.translation.engines.translator.providers.DeepSeekTranslator
 import eu.kanade.translation.engines.translator.providers.GeminiTranslator
 import eu.kanade.translation.engines.translator.providers.LmStudioTranslator
 import eu.kanade.translation.engines.translator.providers.OpenRouterTranslator
+import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
+import eu.kanade.translation.model.TranslationBlock
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
@@ -37,6 +44,21 @@ import kotlin.math.ceil
 class InputAccountingContractTest {
 
     private class AdmissionInterceptException(val event: ProviderAdmissionEvent) : RuntimeException("Intercepted at governor admission")
+
+    private class CapturingAccountingContract(
+        override val providerBackend: String,
+        override val model: String,
+    ) : InputAccountingContract {
+        val payloads = mutableListOf<String>()
+
+        override val isCertified: Boolean = true
+        override val accountingMode: AccountingMode = AccountingMode.EXACT
+
+        override fun countFinalTokens(payload: String): Int {
+            payloads += payload
+            return TranslationContextChunkPlanner.estimateTokens(payload)
+        }
+    }
 
     private fun interceptingGovernor(): Pair<ProviderRequestGovernor, MutableList<ProviderAdmissionEvent>> {
         val events = mutableListOf<ProviderAdmissionEvent>()
@@ -643,5 +665,124 @@ class InputAccountingContractTest {
                 thinkingMode = GeminiThinkingMode.DISABLED,
             ).payload,
         )
+    }
+
+    @Test
+    fun `all contextual provider payloads carry selected languages and request-local numeric IDs`() = runTest {
+        val (governor, _) = interceptingGovernor()
+        val lmStudioContract = CapturingAccountingContract("lm_studio", "fixture")
+        val deepSeekContract = CapturingAccountingContract("deepseek", "fixture")
+        val openRouterContract = CapturingAccountingContract("openrouter", "fixture")
+        val geminiContract = CapturingAccountingContract("gemini", "fixture")
+        val providers: List<Pair<CapturingAccountingContract, AiTranslator>> = listOf(
+            lmStudioContract to LmStudioTranslator(
+                fromLang = TextRecognizerLanguage.JAPANESE,
+                toLang = TextTranslatorLanguage.KOREAN,
+                baseUrl = "http://localhost:1234/v1",
+                modelName = "fixture",
+                maxOutputToken = 128,
+                temperature = 0.2f,
+                requestGovernor = governor,
+                customAccountingContract = lmStudioContract,
+            ),
+            deepSeekContract to DeepSeekTranslator(
+                fromLang = TextRecognizerLanguage.JAPANESE,
+                toLang = TextTranslatorLanguage.KOREAN,
+                apiKey = "sk-test",
+                modelName = "fixture",
+                maxOutputToken = 128,
+                temperature = 0.2f,
+                requestGovernor = governor,
+                customAccountingContract = deepSeekContract,
+            ),
+            openRouterContract to OpenRouterTranslator(
+                fromLang = TextRecognizerLanguage.JAPANESE,
+                toLang = TextTranslatorLanguage.KOREAN,
+                apiKey = "sk-or-test",
+                modelName = "fixture",
+                maxOutputToken = 128,
+                temperature = 0.2f,
+                requestGovernor = governor,
+                customAccountingContract = openRouterContract,
+            ),
+            geminiContract to GeminiTranslator(
+                fromLang = TextRecognizerLanguage.JAPANESE,
+                toLang = TextTranslatorLanguage.KOREAN,
+                apiKey = "test-gemini-key",
+                modelName = "fixture",
+                maxOutputToken = 128,
+                temp = 0.2f,
+                requestGovernor = governor,
+                customAccountingContract = geminiContract,
+            ),
+        )
+        val sourceBlock = TranslationBlock(
+            blockId = "b17",
+            text = "待て！",
+            translation = "",
+            width = 10f,
+            height = 10f,
+            x = 0f,
+            y = 0f,
+            symHeight = 1f,
+            symWidth = 1f,
+            angle = 0f,
+        )
+        val chunk = TranslationContextChunk(
+            pages = linkedMapOf("page.jpg" to PageTranslation(blocks = mutableListOf(sourceBlock))),
+            blockCount = 1,
+            rollingContext = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = 128,
+            protocol = ContextualRequestProtocol.BATCH_V1,
+            pageIndexes = mapOf("page.jpg" to 0),
+        )
+
+        providers.forEach { (_, translator) ->
+            shouldThrow<AdmissionInterceptException> {
+                translator.translateContextualStructured(chunk)
+            }
+        }
+        val hintedChunk = chunk.copy(correctionHint = TranslationCorrectionHint(sourceEcho = true))
+        providers.forEach { (_, translator) ->
+            shouldThrow<AdmissionInterceptException> {
+                translator.translateContextualStructured(hintedChunk)
+            }
+        }
+
+        // Each contract captured the complete serialized payload before the
+        // governor prevented network access.
+        val payloadsByProvider = providers.map { (contract, _) -> contract.payloads.toList() }
+        payloadsByProvider.size shouldBe 4
+        payloadsByProvider.forEach { payloads ->
+            payloads.size shouldBe 2
+            val plainPayload = payloads.first()
+            val hintedPayload = payloads.last()
+            plainPayload.contains("CORRECTIVE INSTRUCTION:") shouldBe false
+            hintedPayload shouldContain "CORRECTIVE INSTRUCTION:"
+            hintedPayload shouldContain "Translate source-language text into Korean; do not copy it unchanged."
+            // The source text remains a clean input item; the correction is a
+            // separate instruction and never quotes failed model output.
+            hintedPayload shouldContain "1|待て！"
+            hintedPayload.contains("待て！待て！") shouldBe false
+            listOf(plainPayload, hintedPayload).forEach { payload ->
+                payload shouldContain "Japanese"
+                payload shouldContain "Korean"
+                payload shouldContain "1|待て！"
+                payload.contains("p0_b0") shouldBe false
+                payload.contains("b17") shouldBe false
+            }
+        }
+
+        // The legacy reader contract intentionally retains its page-local bN IDs.
+        val legacyChunk = chunk.copy(protocol = ContextualRequestProtocol.LEGACY, pageIndexes = emptyMap())
+        val legacyRequest = ContextualRequestBuilder.buildFor(
+            legacyChunk,
+            TextRecognizerLanguage.JAPANESE,
+            TextTranslatorLanguage.KOREAN,
+        )
+        legacyRequest.promptLines shouldBe listOf("b0|待て！")
+        ContextualRequestBuilder.renderPrompt(legacyRequest, legacyChunk.rollingContext)
+            .shouldContain("b0|待て！")
     }
 }

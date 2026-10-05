@@ -3,6 +3,8 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
+import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -102,15 +104,15 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
 
-        request.orderedIds shouldBe listOf("p7_b0", "p2_b0")
-        request.locations["p7_b0"] shouldBe TargetLocation("page-2.jpg", 0)
-        request.locations["p2_b0"] shouldBe TargetLocation("page-7.jpg", 0)
-        request.idMap["p7_b0"] shouldBe AnchoredTargetKey(7, 0)
-        request.idMap["p2_b0"] shouldBe AnchoredTargetKey(2, 0)
+        request.orderedIds shouldBe listOf("1", "2")
+        request.locations["1"] shouldBe TargetLocation("page-7.jpg", 0)
+        request.locations["2"] shouldBe TargetLocation("page-2.jpg", 0)
+        request.idMap["1"] shouldBe AnchoredTargetKey(2, 0)
+        request.idMap["2"] shouldBe AnchoredTargetKey(7, 0)
     }
 
     @Test
-    fun `missing builder page indexes avoid supplied natural index collisions`() {
+    fun `batch builder rejects missing plan page indexes instead of falling back to map order`() {
         val chunk = TranslationContextChunk(
             pages = linkedMapOf(
                 "missing.jpg" to PageTranslation(blocks = mutableListOf(block("missing"))),
@@ -123,13 +125,26 @@ class ContextualResponseParserTest {
             pageIndexes = mapOf("natural.jpg" to 0),
         )
 
-        val request = ContextualRequestBuilder.build(
-            chunk,
-            TextRecognizerLanguage.JAPANESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
+        shouldThrow<IllegalArgumentException> {
+            ContextualRequestBuilder.build(
+                chunk,
+                TextRecognizerLanguage.JAPANESE,
+                TextTranslatorLanguage.ENGLISH,
+            )
+        }
 
-        request.orderedIds shouldBe listOf("p1_b0", "p0_b0")
+        listOf(
+            mapOf("missing.jpg" to 0, "natural.jpg" to 0),
+            mapOf("missing.jpg" to -1, "natural.jpg" to 0),
+        ).forEach { invalidPlanIndexes ->
+            shouldThrow<IllegalArgumentException> {
+                ContextualRequestBuilder.build(
+                    chunk.copy(pageIndexes = invalidPlanIndexes),
+                    TextRecognizerLanguage.JAPANESE,
+                    TextTranslatorLanguage.ENGLISH,
+                )
+            }
+        }
     }
 
     @Test
@@ -155,20 +170,24 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
 
-        request.orderedIds shouldBe listOf(idsByText.getValue("right"), idsByText.getValue("left"))
+        request.orderedIds shouldBe listOf("1", "2")
+        request.idMap["1"] shouldBe AnchoredTargetKey(3, 1)
+        request.idMap["2"] shouldBe AnchoredTargetKey(3, 0)
+        request.promptLines shouldBe listOf("1|right", "2|left")
     }
 
     @Test
-    fun `strict malformed batch response flags errors but applies valid blocks`() {
+    fun `strict malformed batch response salvages unique rows and leaves conflicting ids unresolved`() {
         val page = PageTranslation(
             blocks = mutableListOf(
                 block("first"),
                 block("second", x = 20f),
+                block("third", x = 40f),
             ),
         )
         val chunk = TranslationContextChunk(
             pages = linkedMapOf("page.jpg" to page),
-            blockCount = 2,
+            blockCount = 3,
             rollingContext = "",
             estimatedPromptTokens = 0,
             maxOutputTokens = 256,
@@ -180,21 +199,66 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val rawResponse = """
-            p0_b0|First translation
-            p0_b0|Duplicate translation
-            p0_b1|${" ".repeat(3)}
-            p0_b2|Unknown translation
+            1|First translation
+            1|Conflicting translation
+            2|Second translation
+            3|${" ".repeat(3)}
+            4|Unknown translation
         """.trimIndent()
 
         val batch = ContextualResponseParser.parseBatch(rawResponse, request)
         assertFalse(batch.isStructurallyValid)
-        assertTrue(batch.duplicateIds.contains("p0_b0"))
-        assertTrue(batch.unknownIds.contains("p0_b2"))
+        assertTrue(batch.duplicateIds.contains("1"))
+        assertTrue(batch.unknownIds.contains("4"))
         assertTrue(batch.validationErrors.any { it.contains("Blank required output") })
 
         applyBatchToChunk(chunk, batch)
-        page.blocks[0].translation shouldBe "First translation"
-        page.blocks[1].translation shouldBe ""
+        page.blocks[0].translation shouldBe ""
+        page.blocks[1].translation shouldBe "Second translation"
+        page.blocks[2].translation shouldBe ""
+
+        val refusedBatch = ContextualResponseParser.parseBatch(
+            "I can't assist with that request.\n1|Must not be applied",
+            request,
+        )
+        applyBatchToChunk(chunk, refusedBatch)
+        page.blocks[0].translation shouldBe ""
+        assertTrue(refusedBatch.validationErrors.contains(STRUCTURAL_REFUSAL_DIAGNOSTIC))
+        assertFalse(refusedBatch.validationErrors.any { it.contains("can't assist") })
+
+        val (duplicateChunk, duplicateRequest) = singlePageRequest("first", "second")
+        val identicalAndBlankDuplicates = ContextualResponseParser.parseBatch(
+            "01|First translation\n" +
+                "1:First translation\n" +
+                "2|   \n" +
+                "02>Second translation\n" +
+                "99|unrequested extra",
+            duplicateRequest,
+        )
+        identicalAndBlankDuplicates.accepted.map { it.id to it.text } shouldContainExactly listOf(
+            "1" to "First translation",
+            "2" to "Second translation",
+        )
+        applyBatchToChunk(duplicateChunk, identicalAndBlankDuplicates)
+        duplicateChunk.pages.getValue("page.jpg").blocks.map { it.translation } shouldContainExactly listOf(
+            "First translation",
+            "Second translation",
+        )
+
+        val (unicodeChunk, unicodeRequest) = singlePageRequest("first", "second")
+        val canonicalDuplicate = ContextualResponseParser.parseBatch(
+            "1|caf\u00e9\n01:cafe\u0301\n2|Second translation",
+            unicodeRequest,
+        )
+        canonicalDuplicate.accepted.map { it.id to it.text } shouldContainExactly listOf(
+            "1" to "caf\u00e9",
+            "2" to "Second translation",
+        )
+        applyBatchToChunk(unicodeChunk, canonicalDuplicate)
+        unicodeChunk.pages.getValue("page.jpg").blocks.map { it.translation } shouldContainExactly listOf(
+            "caf\u00e9",
+            "Second translation",
+        )
     }
 
     @Test
@@ -216,14 +280,14 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val rawResponse = """
-            p99_b99|Unknown id
+            99|Unknown id
         """.trimIndent()
 
         val batch = ContextualResponseParser.parseBatch(rawResponse, request)
         assertFalse(batch.isStructurallyValid)
-        assertTrue(batch.missingIds.contains("p0_b0"))
-        assertTrue(batch.missingIds.contains("p0_b1"))
-        assertTrue(batch.unknownIds.contains("p99_b99"))
+        assertTrue(batch.missingIds.contains("1"))
+        assertTrue(batch.missingIds.contains("2"))
+        assertTrue(batch.unknownIds.contains("99"))
     }
 
     @Test
@@ -245,8 +309,8 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val rawResponse = """
-            p0000_b0000|First translation
-            p0000_b0001|Second translation
+            1|First translation
+            2|Second translation
         """.trimIndent()
 
         val batch = ContextualResponseParser.parseBatch(rawResponse, request)
@@ -273,7 +337,7 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val rawResponse = """
-            p0000_b0000|Translated target${"   \t"}
+            1|Translated target${"   \t"}
         """.trimIndent()
 
         val batch = ContextualResponseParser.parseBatch(rawResponse, request)
@@ -301,18 +365,18 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val missingSecondPage = """
-            p0000_b0000|First
+            1|First
         """.trimIndent()
         val completeResponse = """
-            p0000_b0000|First
-            p0001_b0000|Second
+            1|First
+            2|Second
         """.trimIndent()
 
         val missingBatch = ContextualResponseParser.parseBatch(missingSecondPage, request)
         val validBatch = ContextualResponseParser.parseBatch(completeResponse, request)
 
         assertFalse(missingBatch.isStructurallyValid)
-        assertTrue(missingBatch.missingIds.contains("p1_b0"))
+        assertTrue(missingBatch.missingIds.contains("2"))
         assertTrue(validBatch.isStructurallyValid)
     }
 
@@ -334,7 +398,7 @@ class ContextualResponseParserTest {
         )
 
         val batch = ContextualResponseParser.parseBatch(
-            "p0000_b0000|First translation\np0000_b0001|Second translation",
+            "1|First translation\n2|Second translation",
             request,
         )
 
@@ -361,13 +425,13 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
 
-        val missing = ContextualResponseParser.parseBatch("p0000_b0000|Only one", request)
+        val missing = ContextualResponseParser.parseBatch("1|Only one", request)
         val duplicate = ContextualResponseParser.parseBatch(
-            "p0000_b0000|First\np0000_b0000|Again\np0000_b0001|Second",
+            "1|First\n1|Again\n2|Second",
             request,
         )
         val unknown = ContextualResponseParser.parseBatch(
-            "p0000_b0000|First\np0000_b0001|Second\np0000_b9999|Unknown",
+            "1|First\n2|Second\n99|Unknown",
             request,
         )
 
@@ -406,7 +470,7 @@ class ContextualResponseParserTest {
     fun `salvage accepts corrupted separator with exact requested id`() {
         val (chunk, request) = singlePageRequest("first", "second")
         val batch = ContextualResponseParser.parseBatch(
-            "p0_b0|First translation\np0_b1>Hnn...!",
+            "1|First translation\n2>Hnn...!",
             request,
         )
 
@@ -422,7 +486,7 @@ class ContextualResponseParserTest {
     fun `salvage accepts colon and full-width colon separators`() {
         val (chunk, request) = singlePageRequest("first", "second", "third")
         val batch = ContextualResponseParser.parseBatch(
-            "p0_b0:First translation\np0_b1：Second translation\np0_b2|Third translation",
+            "1:First translation\n2：Second translation\n3|Third translation",
             request,
         )
 
@@ -435,10 +499,10 @@ class ContextualResponseParserTest {
     @Test
     fun `salvage rejects unknown block id with corrupted separator`() {
         val (chunk, request) = singlePageRequest("first")
-        val batch = ContextualResponseParser.parseBatch("p0_b9>Hnn...!", request)
+        val batch = ContextualResponseParser.parseBatch("9>Hnn...!", request)
 
         assertFalse(batch.isStructurallyValid)
-        assertTrue(batch.validationErrors.any { it.contains("Malformed line") })
+        assertTrue(batch.validationErrors.any { it.startsWith("Unknown id") })
         applyBatchToChunk(chunk, batch)
         chunk.pages.getValue("page.jpg").blocks.single().translation shouldBe ""
     }
@@ -447,15 +511,17 @@ class ContextualResponseParserTest {
     fun `salvage rejects blank remainder and digit-extended ids`() {
         val (chunk, request) = singlePageRequest(*Array(7) { "gasp$it" }, naturalPageIndex = 12)
         val batch = ContextualResponseParser.parseBatch(
-            "p12_b0|Hnn...!\n" +
-                "p12_b6>\n" +
-                "p12_b67>Ku...!\n" +
-                "p12_b6",
+            "1|Hnn...!\n" +
+                "7>\n" +
+                "67>Ku...!\n" +
+                "7",
             request,
         )
 
         assertFalse(batch.isStructurallyValid)
-        assertTrue(batch.validationErrors.all { it.contains("Malformed line") || it.startsWith("Missing") })
+        assertTrue(batch.validationErrors.any { it.startsWith("Blank required output") })
+        assertTrue(batch.validationErrors.any { it.startsWith("Unknown id") })
+        assertTrue(batch.validationErrors.any { it.startsWith("Malformed line") })
         applyBatchToChunk(chunk, batch)
         val page = chunk.pages.getValue("page.jpg")
         page.blocks[0].translation shouldBe "Hnn...!"
@@ -466,20 +532,20 @@ class ContextualResponseParserTest {
     fun `duplicate handling unchanged with mixed valid and salvaged lines`() {
         val (chunk, request) = singlePageRequest("first", "second")
         val batch = ContextualResponseParser.parseBatch(
-            "p0_b0|First.\n" +
-                "p0_b0>Salvaged duplicate.\n" +
-                "p0_b1>Salvaged second.\n" +
-                "p0_b1|Valid duplicate.",
+            "1|First.\n" +
+                "1>Conflicting duplicate.\n" +
+                "2>Salvaged second.\n" +
+                "2|Conflicting duplicate.",
             request,
         )
 
         assertFalse(batch.isStructurallyValid)
-        assertTrue(batch.duplicateIds.contains("p0_b0"))
-        assertTrue(batch.duplicateIds.contains("p0_b1"))
+        assertTrue(batch.duplicateIds.contains("1"))
+        assertTrue(batch.duplicateIds.contains("2"))
         applyBatchToChunk(chunk, batch)
         val page = chunk.pages.getValue("page.jpg")
-        page.blocks[0].translation shouldBe "First."
-        page.blocks[1].translation shouldBe "Salvaged second."
+        page.blocks[0].translation shouldBe ""
+        page.blocks[1].translation shouldBe ""
     }
 
     @Test
@@ -511,10 +577,10 @@ class ContextualResponseParserTest {
         )
 
         val batch = ContextualResponseParser.parseBatch(
-            "p8_b0|He stepped closer.\n" +
-                "p12_b0>Ku...!\n" +
-                "p12_b1>Hnn...!\n" +
-                "p12_b2>Ahh...!",
+            "1|He stepped closer.\n" +
+                "2>Ku...!\n" +
+                "3>Hnn...!\n" +
+                "4>Ahh...!",
             request,
         )
 
@@ -526,6 +592,89 @@ class ContextualResponseParserTest {
     }
 
     // endregion
+
+    @Test
+    fun numericCandidatesRecoverUniqueItemsAndLeaveConflictsUnresolved() {
+        val request = ContextualRequestBuilder.Request(
+            idMap = linkedMapOf(
+                "1" to AnchoredTargetKey(1, 0),
+                "2" to AnchoredTargetKey(2, 2),
+                "3" to AnchoredTargetKey(2, 10),
+            ),
+            orderedIds = listOf("1", "2", "3"),
+            locations = linkedMapOf(
+                "1" to TargetLocation("001.jpg", 0),
+                "2" to TargetLocation("002.jpg", 1),
+                "3" to TargetLocation("002.jpg", 0),
+            ),
+            promptLines = listOf("1|one", "2|two", "3|three"),
+            protocol = ContextualRequestProtocol.BATCH_V1,
+        )
+
+        val recovered = ContextualResponseParser.parseBatch(
+            """
+            Here are the translations:
+            ```text
+              - 01: one
+            * 1→ one
+            • 1; one
+            1 - one
+            1 one
+            2 > two
+            2：two
+            3 | three
+            3	three
+            ```
+            """.trimIndent(),
+            request,
+        )
+        recovered.accepted.map { it.id to it.text } shouldContainExactly listOf(
+            "1" to "one",
+            "2" to "two",
+            "3" to "three",
+        )
+
+        val conflict = ContextualResponseParser.parseBatch(
+            """1|first
+            1|different
+            2|kept
+            4|unknown
+            """.trimIndent(),
+            request,
+        )
+        conflict.accepted.map { it.id to it.text } shouldContainExactly listOf("2" to "kept")
+        conflict.rejected.any { it.id == "4" } shouldBe true
+
+        val ambiguous = ContextualResponseParser.parseBatch(
+            """maybe the first line is item one
+            blank|
+            |no id
+            p1_b0|durable ID is not a batch request ID
+            2|two
+            """.trimIndent(),
+            request,
+        )
+        // Malformed prose/rows are diagnostic, but do not erase an independently unique item.
+        assertFalse(ambiguous.isStructurallyValid)
+        ambiguous.accepted.map { it.id to it.text } shouldContainExactly listOf("2" to "two")
+        ambiguous.validationErrors.count { it.startsWith("Malformed line") } shouldBe 4
+
+        val ordinalWithoutExplicitId = ContextualResponseParser.parseBatch(
+            "1. translated text\n2|explicit item",
+            request,
+        )
+        ordinalWithoutExplicitId.accepted.map { it.id to it.text } shouldContainExactly
+            listOf("2" to "explicit item")
+        ordinalWithoutExplicitId.validationErrors.any { it.startsWith("Malformed line") } shouldBe true
+
+        val explicitlyNumberedWrapper = ContextualResponseParser.parseBatch("1. 2|wrapped item", request)
+        explicitlyNumberedWrapper.accepted.map { it.id to it.text } shouldContainExactly
+            listOf("2" to "wrapped item")
+
+        val explicitlyParenthesizedWrapper = ContextualResponseParser.parseBatch("1) 2|wrapped item", request)
+        explicitlyParenthesizedWrapper.accepted.map { it.id to it.text } shouldContainExactly
+            listOf("2" to "wrapped item")
+    }
 
     private fun singlePageRequest(
         vararg blocks: String,

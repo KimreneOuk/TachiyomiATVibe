@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.translator
 
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationRunTrace
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
@@ -420,7 +421,10 @@ class ProviderRequestGovernor(
         }
         var result: ProviderHttpResult<T>? = null
         val requestRuns = traceRuns(metadata)
-        val translationSpans = if (metadata.operation.contains("translation", ignoreCase = true)) {
+        val translationSpans = if (
+            metadata.operation.contains("translation", ignoreCase = true) ||
+            metadata.operation.contains("contextual", ignoreCase = true)
+        ) {
             requestRuns.map { run ->
                 run.beginStage(
                     stage = TranslationTraceStage.TRANSLATE,
@@ -436,6 +440,8 @@ class ProviderRequestGovernor(
             run.schedule?.enterLane(TranslationTraceLane.PROVIDER)
         }
         var traceOutcome = TranslationTraceOutcome.FAILURE
+        val requestStartedAt = clock.nowEpochMs()
+        val requestId = TranslationPipelineDiagnostics.idGenerator.nextHttpRequestId()
         return try {
             result = block()
             result!!.retryAfterMillis?.let { retryAfter ->
@@ -447,6 +453,11 @@ class ProviderRequestGovernor(
             traceOutcome = TranslationTraceOutcome.CANCELLED
             throw e
         } catch (e: ProviderFailureException) {
+            traceOutcome = if (e.failure.retryability == ProviderFailureRetryability.PAUSE) {
+                TranslationTraceOutcome.PAUSE
+            } else {
+                TranslationTraceOutcome.FAILURE
+            }
             recordFailure(metadata, e.failure)
             throw e
         } catch (e: Exception) {
@@ -461,6 +472,19 @@ class ProviderRequestGovernor(
             try {
                 release(permit, result?.usage, metadata)
             } finally {
+                TranslationPipelineDiagnostics.recordHttpRequest(
+                    identity = requestRuns.firstOrNull()?.identity,
+                    requestId = requestId,
+                    envelopeRaw = metadata.envelopeId,
+                    operation = metadata.operation,
+                    attempt = metadata.attempt,
+                    durationMs = (clock.nowEpochMs() - requestStartedAt).coerceAtLeast(0L),
+                    outcome = traceOutcome,
+                    estimatedInputTokens = metadata.estimatedInputTokens,
+                    reservedOutputTokens = metadata.reservedOutputTokens,
+                    inputTokens = result?.usage?.inputTokens,
+                    outputTokens = result?.usage?.outputTokens,
+                )
                 providerLaneTokens.forEach { it.close() }
                 translationSpans.forEach { it.end(traceOutcome) }
             }

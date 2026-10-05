@@ -571,6 +571,7 @@ internal class BatchChapterTranslator(
                     textTranslatorFn = { textTranslator },
                     recognitionEngineFn = { recognitionEngine },
                     fromLang = fromLang,
+                    toLang = toLang,
                     orderedStreams = orderedStreams,
                     resolvedNaturalPageIndexes = resolvedNaturalPageIndexes,
                     requestedOutputTokens = requestedOutputTokens,

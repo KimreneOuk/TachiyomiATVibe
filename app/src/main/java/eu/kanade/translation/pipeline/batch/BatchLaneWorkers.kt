@@ -33,6 +33,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
@@ -103,6 +104,7 @@ internal class BatchLaneWorkers(
     private val textTranslatorFn: () -> TextTranslator,
     private val recognitionEngineFn: () -> PageRecognitionEngine,
     private val fromLang: TextRecognizerLanguage,
+    private val toLang: TextTranslatorLanguage,
     private val orderedStreams: List<Pair<String, () -> InputStream>>,
     private val resolvedNaturalPageIndexes: Map<String, Int>,
     private val requestedOutputTokens: Int,
@@ -915,6 +917,8 @@ internal class BatchLaneWorkers(
                     requestedOutputTokens = requestedOutputTokens,
                     profile = chunkProfile,
                     naturalPageIndexes = resolvedNaturalPageIndexes,
+                    sourceLanguageCode = fromLang.code,
+                    targetLanguageCode = toLang.code,
                 )
             } else {
                 null
@@ -1155,7 +1159,11 @@ internal class BatchLaneWorkers(
                         throw t
                     }
                     runCatching { store.resolveAttempt(pageKey) }
-                    TranslationBlockValidation.applyTo(p)
+                    TranslationBlockValidation.applyTo(
+                        p,
+                        sourceLanguageCode = fromLang.code,
+                        targetLanguageCode = toLang.code,
+                    )
                     val s = p.translationStatus
                     when (s) {
                         StageStatus.READY -> Unit

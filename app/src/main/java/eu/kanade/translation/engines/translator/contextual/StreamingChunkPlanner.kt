@@ -1,4 +1,5 @@
 package eu.kanade.translation.engines.translator.contextual
+import eu.kanade.translation.engines.translator.TranslationOutputSemantics
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner.Constraints
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner.constraintsFor
@@ -21,6 +22,8 @@ class StreamingChunkPlanner(
     requestedOutputTokens: Int,
     profile: TranslationContextChunkPlanner.Profile = TranslationContextChunkPlanner.Profile.DEFAULT,
     private val naturalPageIndexes: Map<String, Int> = emptyMap(),
+    private val sourceLanguageCode: String? = null,
+    private val targetLanguageCode: String? = null,
 ) {
     /** One chunk flushed by the greedy buffer, plus page keys fully consumed by it.
      *  `chunk` is null ONLY for a "chunkless completion" — a page whose
@@ -83,8 +86,15 @@ class StreamingChunkPlanner(
             if (rejectReason != null) return@forEachIndexed
             if (block.text.isBlank()) return@forEachIndexed
             nonBlankSourceBlocks += 1
-            // Resume: a block with a real translation (non-blank, not source-equal) is done; don't re-send it.
-            if (block.translation.isNotBlank() && block.translation.trim() != block.text.trim()) {
+            // Resume decisions share the same language-aware classifier as
+            // response acceptance and page completeness.
+            if (TranslationOutputSemantics.isResolved(
+                    source = block.text,
+                    output = block.translation,
+                    sourceLanguageCode = sourceLanguageCode,
+                    targetLanguageCode = targetLanguageCode,
+                )
+            ) {
                 return@forEachIndexed
             }
             val ref = BlockRef(pageKey, blockIndex, block)

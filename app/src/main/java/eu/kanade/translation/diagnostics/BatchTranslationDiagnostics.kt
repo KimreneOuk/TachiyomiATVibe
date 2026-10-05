@@ -147,7 +147,16 @@ object BatchTranslationDiagnostics {
             }.token,
             envelope = traceEnvelopeToken(pageKeys),
             attempt = attempt,
+            expectedItemCount = expectedItemCount,
+            receivedItemCount = receivedItemCount,
+            detailReason = reason?.toTraceToken()?.token,
         )
+    }
+
+    /** Emits only bounded, pre-classified envelope counters; values contain no response text. */
+    fun envelopeMetrics(vararg fields: Pair<String, String>) {
+        val identity = resolveIdentity() ?: return
+        TranslationPipelineDiagnostics.recordBatchMetrics(identity, fields.toMap())
     }
 
     /** Stable opaque id for an envelope; page keys never appear in diagnostics. */

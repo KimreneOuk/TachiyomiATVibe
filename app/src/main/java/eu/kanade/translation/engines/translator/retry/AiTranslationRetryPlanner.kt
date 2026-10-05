@@ -1,4 +1,5 @@
 package eu.kanade.translation.engines.translator.retry
+import eu.kanade.translation.engines.translator.TranslationOutputSemantics
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
@@ -13,22 +14,41 @@ import eu.kanade.translation.model.TranslationBlock
 object AiTranslationRetryPlanner {
 
     /**
-     * Blocks on a single page that still need translation: non-blank source whose translation is
-     * blank or source-equal. Pure predicate so the single-page retry loop can decide which blocks
-     * to re-request without re-running the (multi-page token-budget-oriented) chunk planner.
+     * Blocks on a single page that still need translation under the shared
+     * language-aware output classifier. Pure predicate so the single-page retry
+     * loop can decide which blocks to re-request without re-running the
+     * multi-page token-budget-oriented chunk planner.
      */
-    fun untranslatedBlocks(page: PageTranslation): List<TranslationBlock> =
+    fun untranslatedBlocks(
+        page: PageTranslation,
+        sourceLanguageCode: String? = null,
+        targetLanguageCode: String? = null,
+    ): List<TranslationBlock> =
         page.blocks.filter { block ->
             block.text.isNotBlank() &&
-                (block.translation.isBlank() || block.translation.trim() == block.text.trim())
+                !TranslationOutputSemantics.isResolved(
+                    source = block.text,
+                    output = block.translation,
+                    sourceLanguageCode = sourceLanguageCode,
+                    targetLanguageCode = targetLanguageCode,
+                )
         }
 
-    fun untranslatedPages(chunk: TranslationContextChunk): LinkedHashMap<String, PageTranslation> {
+    fun untranslatedPages(
+        chunk: TranslationContextChunk,
+        sourceLanguageCode: String? = null,
+        targetLanguageCode: String? = null,
+    ): LinkedHashMap<String, PageTranslation> {
         val pages = linkedMapOf<String, PageTranslation>()
         chunk.pages.forEach { (pageKey, page) ->
             val missing = page.blocks.filter { block ->
                 block.text.isNotBlank() &&
-                    (block.translation.isBlank() || block.translation.trim() == block.text.trim())
+                    !TranslationOutputSemantics.isResolved(
+                        source = block.text,
+                        output = block.translation,
+                        sourceLanguageCode = sourceLanguageCode,
+                        targetLanguageCode = targetLanguageCode,
+                    )
             }
             if (missing.isNotEmpty()) {
                 pages[pageKey] = PageTranslation(blocks = missing.toMutableList())

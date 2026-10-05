@@ -2,6 +2,8 @@ package eu.kanade.translation.persistence.journal
 
 import android.system.Os
 import android.system.OsConstants
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationRunIdentity
 import eu.kanade.translation.diagnostics.TranslationRunTrace
 import eu.kanade.translation.diagnostics.TranslationStageSpan
 import eu.kanade.translation.diagnostics.TranslationTrace
@@ -185,6 +187,77 @@ internal interface ChapterJournalSink : Closeable {
     fun sync()
 }
 
+/** Counts actual sink outcomes without adding flushes, syncs, or storage calls. */
+private class ChapterJournalIoCounters {
+    val successfulWriteCalls = AtomicLong()
+    val successfulWriteBytes = AtomicLong()
+    val failedWriteAttempts = AtomicLong()
+    val failedAttemptBytes = AtomicLong()
+    val flushCount = AtomicLong()
+    val syncCount = AtomicLong()
+    val flushDurationNanos = AtomicLong()
+    val flushFailures = AtomicLong()
+
+    fun snapshot(): LongArray = longArrayOf(
+        successfulWriteCalls.get(),
+        successfulWriteBytes.get(),
+        failedWriteAttempts.get(),
+        failedAttemptBytes.get(),
+        flushCount.get(),
+        syncCount.get(),
+        flushDurationNanos.get(),
+        flushFailures.get(),
+    )
+}
+
+private class CountingChapterJournalSink(
+    private val delegate: ChapterJournalSink,
+    private val counters: ChapterJournalIoCounters,
+) : ChapterJournalSink {
+    override val size: Long get() = delegate.size
+
+    override fun write(bytes: ByteArray, offset: Int, length: Int): Int {
+        val written = try {
+            delegate.write(bytes, offset, length)
+        } catch (failure: Throwable) {
+            counters.failedWriteAttempts.incrementAndGet()
+            counters.failedAttemptBytes.addAndGet(length.coerceAtLeast(0).toLong())
+            throw failure
+        }
+        if (written > 0) {
+            counters.successfulWriteCalls.incrementAndGet()
+            counters.successfulWriteBytes.addAndGet(written.toLong())
+        } else {
+            counters.failedWriteAttempts.incrementAndGet()
+            counters.failedAttemptBytes.addAndGet(length.coerceAtLeast(0).toLong())
+        }
+        return written
+    }
+
+    override fun flush() {
+        val startedAt = System.nanoTime()
+        try {
+            delegate.flush()
+        } catch (failure: Throwable) {
+            counters.flushFailures.incrementAndGet()
+            throw failure
+        } finally {
+            counters.flushCount.incrementAndGet()
+            counters.flushDurationNanos.addAndGet((System.nanoTime() - startedAt).coerceAtLeast(0L))
+        }
+    }
+
+    override fun sync() {
+        try {
+            delegate.sync()
+        } finally {
+            counters.syncCount.incrementAndGet()
+        }
+    }
+
+    override fun close() = delegate.close()
+}
+
 /** App-private, one-file-per-segment storage. No SAF/UniFile object crosses this boundary. */
 internal class FileChapterJournalStorage(
     private val directory: File,
@@ -364,6 +437,8 @@ internal class ChapterJournalWriter(
     private val segmentByteLimit: Long = ChapterJournalFormat.SEGMENT_BYTE_LIMIT,
     private val durabilityIntervalMs: Long = DEFAULT_FREE_DURABILITY_INTERVAL_MS,
 ) {
+    private val ioCounters = ChapterJournalIoCounters()
+
     init {
         require(regularCreditLimit >= 1) { "regularCreditLimit must be at least 1" }
         require(foregroundCreditLimit >= 1) { "foregroundCreditLimit must be at least 1" }
@@ -941,6 +1016,34 @@ internal class ChapterJournalWriter(
         var activeCredit: ChapterJournalCredit? = null
         var activeClose: CompletableDeferred<Unit>? = null
         var activeCaptureBarrier: CompletableDeferred<Long>? = null
+        var storageIdentity: TranslationRunIdentity? = null
+        var storageRun: TranslationRunTrace? = null
+        var reportedIo = ioCounters.snapshot()
+
+        fun reportIoDelta() {
+            val identity = storageIdentity ?: return
+            val current = ioCounters.snapshot()
+            val delta = LongArray(current.size) { index -> (current[index] - reportedIo[index]).coerceAtLeast(0L) }
+            reportedIo = current
+            if (delta.all { it == 0L }) return
+            runCatching {
+                TranslationPipelineDiagnostics.recordStorageIo(
+                    identity = identity,
+                    storage = "journal",
+                    physicalWriteCalls = delta[0],
+                    physicalWriteBytes = delta[1],
+                    failedWriteAttempts = delta[2],
+                    failedAttemptBytes = delta[3],
+                    flushCount = delta[4],
+                    syncCount = delta[5],
+                    flushDurationMs = delta[6] / 1_000_000L,
+                    flushFailed = delta[7] > 0L,
+                )
+                if (storageRun?.isClosed == true) {
+                    TranslationPipelineDiagnostics.flushStorageIo(identity)
+                }
+            }
+        }
 
         suspend fun syncFreePrefix() {
             if (!hadUnsyncedFreeWork) return
@@ -1102,168 +1205,178 @@ internal class ChapterJournalWriter(
             var done = false
             while (!done) {
                 val command = selectNextCommand(freeSyncTimer)
-                when (command) {
-                    Command.FreeSyncDue -> {
-                        // A store flush already owns the next durability point. Keep its
-                        // frames in the batch instead of letting a previously armed free-work
-                        // timer split the flush into extra forces.
-                        if (!captureBatchAwaitingBarrier.get()) syncFreePrefix()
-                        freeSyncTimer = null
+                if (command is Command.Append) {
+                    command.traceRuns.firstOrNull()?.let { run ->
+                        storageRun = run
+                        storageIdentity = run.identity
                     }
+                }
+                try {
+                    when (command) {
+                        Command.FreeSyncDue -> {
+                            // A store flush already owns the next durability point. Keep its
+                            // frames in the batch instead of letting a previously armed free-work
+                            // timer split the flush into extra forces.
+                            if (!captureBatchAwaitingBarrier.get()) syncFreePrefix()
+                            freeSyncTimer = null
+                        }
 
-                    is Command.Append -> {
-                        if (command.deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(true)
-                        activeCredit = command.credit
-                        if (terminalCaptureHalted) {
-                            command.credit.releaseAfterTerminal()
-                            activeCredit = null
-                            continue
-                        }
-                        val nextExpected = if (terminalLagSeen) {
-                            command.commitSeq > lastCommitSeq
-                        } else {
-                            command.commitSeq == nextCommitSeq
-                        }
-                        if (!nextExpected) {
-                            throw IOException(
-                                "legacy commit sequence gap: expected=$nextCommitSeq actual=${command.commitSeq}",
-                            )
-                        }
-                        if (
-                            !appendInventory(
-                                command.inventory,
-                                command.commitSeq,
-                                command.traceRuns,
-                                command.deferSyncUntilBarrier,
-                            )
-                        ) {
-                            command.credit.releaseAfterTerminal()
-                            activeCredit = null
-                            continue
-                        }
-                        val statePayload = command.encode()
-                        if (statePayload.size > ChapterJournalFormat.MAX_PAYLOAD_BYTES) {
-                            appendTerminalPayload(
-                                pageKey = command.pageKey,
-                                observedBytes = statePayload.size,
-                                failedCommitSeq = command.commitSeq,
-                                traceRuns = command.traceRuns,
-                            )
-                            command.credit.releaseAfterTerminal()
-                            activeCredit = null
-                            continue
-                        }
-                        val stateFrameSeq = appendFrame(
-                            command.kind,
-                            commitSeq = command.commitSeq,
-                            payload = statePayload,
-                        )
-                        lastCommitSeq = command.commitSeq
-                        nextCommitSeq = command.commitSeq + 1
-                        if (command.syncImmediately) {
-                            sink?.flush()
-                            sink?.sync()
-                            highWater.set(stateFrameSeq)
-                            clearFreeSync()
-                        } else if (command.deferSyncUntilBarrier) {
-                            markDeferredSync(stateFrameSeq)
-                        } else {
-                            scheduleFreeSync(stateFrameSeq)
-                        }
-                        command.credit.releaseAfterTerminal()
-                        activeCredit = null
-                    }
-
-                    Command.InventoryWake -> {
-                        val inventory = takePendingInventory()
-                        if (!terminalCaptureHalted) {
-                            inventory?.let { pending ->
-                                if (pending.deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(true)
-                                appendInventory(
-                                    pending.inventory,
-                                    lastCommitSeq + 1L,
-                                    deferSyncUntilBarrier = pending.deferSyncUntilBarrier,
+                        is Command.Append -> {
+                            if (command.deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(true)
+                            activeCredit = command.credit
+                            if (terminalCaptureHalted) {
+                                command.credit.releaseAfterTerminal()
+                                activeCredit = null
+                                continue
+                            }
+                            val nextExpected = if (terminalLagSeen) {
+                                command.commitSeq > lastCommitSeq
+                            } else {
+                                command.commitSeq == nextCommitSeq
+                            }
+                            if (!nextExpected) {
+                                throw IOException(
+                                    "legacy commit sequence gap: expected=$nextCommitSeq actual=${command.commitSeq}",
                                 )
                             }
-                        } else {
-                            droppedControlRecords.incrementAndGet()
+                            if (
+                                !appendInventory(
+                                    command.inventory,
+                                    command.commitSeq,
+                                    command.traceRuns,
+                                    command.deferSyncUntilBarrier,
+                                )
+                            ) {
+                                command.credit.releaseAfterTerminal()
+                                activeCredit = null
+                                continue
+                            }
+                            val statePayload = command.encode()
+                            if (statePayload.size > ChapterJournalFormat.MAX_PAYLOAD_BYTES) {
+                                appendTerminalPayload(
+                                    pageKey = command.pageKey,
+                                    observedBytes = statePayload.size,
+                                    failedCommitSeq = command.commitSeq,
+                                    traceRuns = command.traceRuns,
+                                )
+                                command.credit.releaseAfterTerminal()
+                                activeCredit = null
+                                continue
+                            }
+                            val stateFrameSeq = appendFrame(
+                                command.kind,
+                                commitSeq = command.commitSeq,
+                                payload = statePayload,
+                            )
+                            lastCommitSeq = command.commitSeq
+                            nextCommitSeq = command.commitSeq + 1
+                            if (command.syncImmediately) {
+                                sink?.flush()
+                                sink?.sync()
+                                highWater.set(stateFrameSeq)
+                                clearFreeSync()
+                            } else if (command.deferSyncUntilBarrier) {
+                                markDeferredSync(stateFrameSeq)
+                            } else {
+                                scheduleFreeSync(stateFrameSeq)
+                            }
+                            command.credit.releaseAfterTerminal()
+                            activeCredit = null
                         }
-                    }
 
-                    is Command.CaptureBarrier -> {
-                        activeCaptureBarrier = command.done
-                        syncFreePrefix()
-                        if (sink != null && highWater.get() < nextFrameSeq - 1L) {
+                        Command.InventoryWake -> {
+                            val inventory = takePendingInventory()
+                            if (!terminalCaptureHalted) {
+                                inventory?.let { pending ->
+                                    if (pending.deferSyncUntilBarrier) captureBatchAwaitingBarrier.set(true)
+                                    appendInventory(
+                                        pending.inventory,
+                                        lastCommitSeq + 1L,
+                                        deferSyncUntilBarrier = pending.deferSyncUntilBarrier,
+                                    )
+                                }
+                            } else {
+                                droppedControlRecords.incrementAndGet()
+                            }
+                        }
+
+                        is Command.CaptureBarrier -> {
+                            activeCaptureBarrier = command.done
+                            syncFreePrefix()
+                            if (sink != null && highWater.get() < nextFrameSeq - 1L) {
+                                sink?.flush()
+                                sink?.sync()
+                                highWater.set(nextFrameSeq - 1L)
+                                hadUnsyncedFreeWork = false
+                            }
+                            clearFreeSync()
+                            captureBatchAwaitingBarrier.set(false)
+                            command.done.complete(highWater.get())
+                            activeCaptureBarrier = null
+                        }
+
+                        is Command.TerminalLag -> {
+                            if (terminalCaptureHalted) {
+                                droppedControlRecords.incrementAndGet()
+                                lostTerminalRecords.incrementAndGet()
+                                continue
+                            }
+                            terminalEndingInProgress = true
+                            if (!terminalLagSeen && command.starvedAtCommitSeq != nextCommitSeq) {
+                                throw IOException(
+                                    "terminal lag sequence mismatch: expected=$nextCommitSeq actual=${command.starvedAtCommitSeq}",
+                                )
+                            }
+                            if (!appendInventory(command.inventory, command.starvedAtCommitSeq)) {
+                                // The inventory path wrote its own terminal-payload ending.
+                                terminalEndingInProgress = false
+                                continue
+                            }
+                            val frameSeq = appendFrame(
+                                ChapterJournalFormat.RecordKind.TERMINAL_LAG,
+                                commitSeq = null,
+                                payload = command.encode(),
+                            )
                             sink?.flush()
                             sink?.sync()
-                            highWater.set(nextFrameSeq - 1L)
-                            hadUnsyncedFreeWork = false
-                        }
-                        clearFreeSync()
-                        captureBatchAwaitingBarrier.set(false)
-                        command.done.complete(highWater.get())
-                        activeCaptureBarrier = null
-                    }
-
-                    is Command.TerminalLag -> {
-                        if (terminalCaptureHalted) {
-                            droppedControlRecords.incrementAndGet()
-                            lostTerminalRecords.incrementAndGet()
-                            continue
-                        }
-                        terminalEndingInProgress = true
-                        if (!terminalLagSeen && command.starvedAtCommitSeq != nextCommitSeq) {
-                            throw IOException(
-                                "terminal lag sequence mismatch: expected=$nextCommitSeq actual=${command.starvedAtCommitSeq}",
-                            )
-                        }
-                        if (!appendInventory(command.inventory, command.starvedAtCommitSeq)) {
-                            // The inventory path wrote its own terminal-payload ending.
                             terminalEndingInProgress = false
-                            continue
+                            highWater.set(frameSeq)
+                            terminalLagSeen = true
+                            clearFreeSync()
                         }
-                        val frameSeq = appendFrame(
-                            ChapterJournalFormat.RecordKind.TERMINAL_LAG,
-                            commitSeq = null,
-                            payload = command.encode(),
-                        )
-                        sink?.flush()
-                        sink?.sync()
-                        terminalEndingInProgress = false
-                        highWater.set(frameSeq)
-                        terminalLagSeen = true
-                        clearFreeSync()
-                    }
 
-                    is Command.Defunct -> {
-                        if (terminalCaptureHalted) {
-                            droppedControlRecords.incrementAndGet()
-                            lostTerminalRecords.incrementAndGet()
-                            continue
+                        is Command.Defunct -> {
+                            if (terminalCaptureHalted) {
+                                droppedControlRecords.incrementAndGet()
+                                lostTerminalRecords.incrementAndGet()
+                                continue
+                            }
+                            terminalEndingInProgress = true
+                            val frameSeq = appendFrame(
+                                ChapterJournalFormat.RecordKind.DEFUNCT,
+                                commitSeq = null,
+                                payload = command.encode(lastCommitSeq),
+                            )
+                            sink?.flush()
+                            sink?.sync()
+                            terminalEndingInProgress = false
+                            highWater.set(frameSeq)
+                            clearFreeSync()
                         }
-                        terminalEndingInProgress = true
-                        val frameSeq = appendFrame(
-                            ChapterJournalFormat.RecordKind.DEFUNCT,
-                            commitSeq = null,
-                            payload = command.encode(lastCommitSeq),
-                        )
-                        sink?.flush()
-                        sink?.sync()
-                        terminalEndingInProgress = false
-                        highWater.set(frameSeq)
-                        clearFreeSync()
-                    }
 
-                    is Command.Close -> {
-                        activeClose = command.done
-                        syncFreePrefix()
-                        freeSyncTimer?.cancel()
-                        sink?.close()
-                        sink = null
-                        command.done.complete(Unit)
-                        activeClose = null
-                        done = true
+                        is Command.Close -> {
+                            activeClose = command.done
+                            syncFreePrefix()
+                            freeSyncTimer?.cancel()
+                            sink?.close()
+                            sink = null
+                            command.done.complete(Unit)
+                            activeClose = null
+                            done = true
+                        }
                     }
+                } finally {
+                    reportIoDelta()
                 }
             }
         } catch (failure: Throwable) {
@@ -1303,6 +1416,7 @@ internal class ChapterJournalWriter(
         } finally {
             freeSyncTimer?.cancel()
             runCatching { sink?.close() }
+            reportIoDelta()
             if (!ready.isCompleted) ready.complete(false)
             commands.close()
             writerDone.complete(Unit)
@@ -1388,7 +1502,7 @@ internal class ChapterJournalWriter(
                 activeBytes = ChapterJournalFormat.SEGMENT_HEADER_BYTES.toLong()
             }
         } else {
-            storage.openSegment(activeIndex, create = false).also { sink ->
+            openTrackedSegment(activeIndex, create = false).also { sink ->
                 sink.flush()
                 sink.sync()
             }
@@ -1405,7 +1519,7 @@ internal class ChapterJournalWriter(
     }
 
     private fun createSegment(index: Long): ChapterJournalSink {
-        val sink = storage.openSegment(index, create = true)
+        val sink = openTrackedSegment(index, create = true)
         try {
             writeFully(sink, ChapterJournalFormat.segmentHeader(index, storeGeneration, epochOrdinal, sessionId))
             sink.flush()
@@ -1419,7 +1533,7 @@ internal class ChapterJournalWriter(
     }
 
     private fun syncExistingSegment(index: Long) {
-        storage.openSegment(index, create = false).use { sink ->
+        openTrackedSegment(index, create = false).use { sink ->
             sink.flush()
             sink.sync()
         }
@@ -1434,6 +1548,9 @@ internal class ChapterJournalWriter(
         }
         sink.flush()
     }
+
+    private fun openTrackedSegment(index: Long, create: Boolean): ChapterJournalSink =
+        CountingChapterJournalSink(storage.openSegment(index, create), ioCounters)
 
     private data class Initialized(
         val segmentIndex: Long,

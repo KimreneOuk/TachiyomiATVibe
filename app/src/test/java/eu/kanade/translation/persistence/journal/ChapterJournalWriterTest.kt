@@ -1,5 +1,11 @@
 package eu.kanade.translation.persistence.journal
 
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceClock
+import eu.kanade.translation.diagnostics.TranslationTraceMode
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceSink
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.toPublishedPage
@@ -9,6 +15,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -62,6 +69,101 @@ class ChapterJournalWriterTest {
         } finally {
             writer.drainAndClose()
         }
+    }
+
+    @Test
+    fun `storage telemetry counts successful short writes and flush duration`() = runTest {
+        val storage = MemoryStorage(maxWriteBytes = 3)
+        val traceLines = mutableListOf<String>()
+        val oldSink = TranslationPipelineDiagnostics.sink
+        val oldGate = TranslationPipelineDiagnostics.detailedTracingEnabled
+        TranslationPipelineDiagnostics.sink = TranslationTraceSink { _, line -> traceLines += line }
+        TranslationPipelineDiagnostics.detailedTracingEnabled = true
+        val clock = TestTraceClock()
+        val schedule = TranslationPipelineDiagnostics.startSchedule(
+            mode = TranslationTraceMode.BATCH,
+            clock = clock,
+        )
+        val run = TranslationPipelineDiagnostics.startRun(
+            schedule = schedule,
+            pageRaw = "journal-page-secret",
+            pageIndex = 0,
+            clock = clock,
+        )
+        var journalWriter: ChapterJournalWriter? = null
+        var firstBarrierSeq = 0L
+        var terminalFailures = 0L
+        try {
+            withContext(TranslationTrace.elementFor(run)) {
+                journalWriter = writer(
+                    storage = storage,
+                    dispatcher = StandardTestDispatcher(testScheduler),
+                )
+                val firstCredit = journalWriter!!.tryAcquireShadowCredit(foreground = false)!!
+                journalWriter!!.captureLegacyPersisted(
+                    commitSeq = journalWriter!!.nextCommitSeq(),
+                    credit = firstCredit,
+                    pageKey = "journal-page-secret",
+                    generation = 1L,
+                    fencingToken = 1L,
+                    page = page("journal-page-secret"),
+                )
+                runCurrent()
+                firstBarrierSeq = journalWriter!!.flushToCaptureBarrier()
+
+                storage.failOnWriteCall = storage.writeAttempts.size + 1
+                val secondCredit = journalWriter!!.tryAcquireShadowCredit(foreground = false)!!
+                journalWriter!!.captureLegacyPersisted(
+                    commitSeq = journalWriter!!.nextCommitSeq(),
+                    credit = secondCredit,
+                    pageKey = "second-journal-page-secret",
+                    generation = 1L,
+                    fencingToken = 1L,
+                    page = page("second-journal-page-secret"),
+                )
+                runCurrent()
+                terminalFailures = journalWriter!!.writerFailureCount
+                journalWriter!!.drainAndClose()
+                journalWriter = null
+            }
+        } finally {
+            journalWriter?.drainAndClose()
+            run.end(TranslationTraceOutcome.SUCCESS)
+            schedule.end(TranslationTraceOutcome.SUCCESS)
+            TranslationPipelineDiagnostics.sink = oldSink
+            TranslationPipelineDiagnostics.detailedTracingEnabled = oldGate
+        }
+
+        val successfulWrites = storage.writeAttempts.filter { it.returnedBytes > 0 }
+        val failedWrites = storage.writeAttempts.filter { it.returnedBytes <= 0 }
+        successfulWrites.any { it.returnedBytes < it.requestedBytes } shouldBe true
+        failedWrites.size shouldBe 1
+        terminalFailures shouldBe 1L
+        firstBarrierSeq shouldBe 2L
+        scan(storage).frames.mapNotNull { it.commitSeq } shouldContainExactly listOf(1L)
+        storage.flushCount shouldBe 5
+        storage.syncCount shouldBe 2
+
+        val event = traceLines.singleOrNull {
+            it.contains("event=storage_io ") && it.contains("storage=journal")
+        }
+        val duration = event?.split(" ")
+            ?.firstOrNull { it.startsWith("flushDurationMs=") }
+            ?.removePrefix("flushDurationMs=")
+            ?.toLongOrNull()
+        val checks = listOf(
+            event?.contains("physicalWriteCalls=${successfulWrites.size}") == true,
+            event?.contains("physicalWriteBytes=${successfulWrites.sumOf { it.returnedBytes }}") == true,
+            event?.contains("failedWriteAttempts=${failedWrites.size}") == true,
+            event?.contains("flushCount=${storage.flushCount}") == true,
+            event?.contains("syncCount=${storage.syncCount}") == true,
+            event?.contains("flushOutcome=success") == true,
+            duration != null && duration >= 0L,
+            traceLines.none {
+                it.contains("journal-page-secret") || it.contains("second-journal-page-secret")
+            },
+        )
+        checks shouldBe List(checks.size) { true }
     }
 
     @Test
@@ -1064,13 +1166,23 @@ class ChapterJournalWriterTest {
     private fun page(pageKey: String = "page.jpg"): PublishedPageTranslation =
         PageTranslation(sourceFileName = pageKey, pageVersion = 1L).toPublishedPage()
 
+    private class TestTraceClock(private var nowNanos: Long = 0L) : TranslationTraceClock {
+        override fun nowNanos(): Long = nowNanos
+    }
+
     private class MemoryStorage(
         private val maxWriteBytes: Int = Int.MAX_VALUE,
         private val failOnSync: Int? = null,
     ) : ChapterJournalStorage {
+        data class WriteAttempt(val requestedBytes: Int, val returnedBytes: Int)
+
         private val files = TreeMap<Long, ByteArray>()
         var syncCount = 0
             private set
+        var flushCount = 0
+            private set
+        var failOnWriteCall: Int? = null
+        val writeAttempts = mutableListOf<WriteAttempt>()
         var closedSinkCount = 0
             private set
         val events = mutableListOf<String>()
@@ -1107,16 +1219,23 @@ class ChapterJournalWriterTest {
 
             override fun write(bytes: ByteArray, offset: Int, length: Int): Int {
                 events += "write:$index"
+                if (writeAttempts.size + 1 == failOnWriteCall) {
+                    writeAttempts += WriteAttempt(length, 0)
+                    return 0
+                }
                 val count = minOf(length, maxWriteBytes)
                 val before = files.getValue(index)
                 val after = before.copyOf(position + count)
                 bytes.copyInto(after, destinationOffset = position, startIndex = offset, endIndex = offset + count)
                 files[index] = after
                 position += count
+                writeAttempts += WriteAttempt(length, count)
                 return count
             }
 
-            override fun flush() = Unit
+            override fun flush() {
+                flushCount++
+            }
 
             override fun sync() {
                 syncCount++

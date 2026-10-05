@@ -14,14 +14,15 @@ object ContextualRequestBuilder {
         val pageOrder: List<String> = emptyList(),
         val pageIndexes: Map<String, Int> = emptyMap(),
         val pagePromptLines: Map<String, List<String>> = emptyMap(),
+        val correctionLine: String? = null,
     )
 
     /**
      * Builds the strict, versioned request used by chapter-batch AI translation.
      *
-     * Page identity is supplied by [TranslationContextChunk.pageIndexes] when the caller has
-     * natural chapter order available. The fallback is only for pure/unit callers that construct
-     * a chunk without chapter metadata; the live batch path always supplies the map.
+     * Page identity is supplied by [TranslationContextChunk.pageIndexes] from the accepted PLAN.
+     * Batch requests fail closed when a page lacks a valid unique PLAN index; the chunk's map
+     * iteration order must never become a replacement namespace.
      */
     fun build(
         chunk: TranslationContextChunk,
@@ -30,26 +31,36 @@ object ContextualRequestBuilder {
     ): Request {
         val idMap = LinkedHashMap<String, AnchoredTargetKey>()
         val orderedIds = mutableListOf<String>()
-        val locations = HashMap<String, TargetLocation>()
+        val locations = LinkedHashMap<String, TargetLocation>()
         val promptLines = mutableListOf<String>()
-        val pageOrder = chunk.pages.keys.toList()
-        val pageIndexes = naturalPageIndexes(chunk)
+        val computedPageIndexes = naturalPageIndexes(chunk)
+        val pageOrder = computedPageIndexes.keys.toList()
+        val pageIndexes = LinkedHashMap<String, Int>().apply {
+            pageOrder.forEach { pageKey -> put(pageKey, computedPageIndexes.getValue(pageKey)) }
+        }
         val pagePromptLines = LinkedHashMap<String, List<String>>()
+        var nextRequestId = 1
 
-        for ((pageOrdinal, entry) in chunk.pages.entries.withIndex()) {
-            val (pageKey, page) = entry
-            val naturalPageIndex = pageIndexes[pageKey] ?: pageOrdinal
+        // Page indexes are frozen from the validated PLAN. Live map iteration may have changed
+        // after the plan was captured, so it must not define the model-visible namespace.
+        for (pageKey in pageOrder) {
+            val page = chunk.pages[pageKey] ?: continue
+            val naturalPageIndex = pageIndexes.getValue(pageKey)
             val pageLines = mutableListOf<String>()
             val stableIndexes = stableBlockIndexes(page.blocks)
+            // The batch executor reconstructs each page's blocks in the accepted PLAN order.
+            // Stable IDs identify destinations, but sorting by them here would silently replace
+            // that frozen order with geometry/persisted-ID order.
             for ((blockIndex, block) in page.blocks.withIndex()) {
                 if (block.text.isBlank()) continue
 
                 val stableBlockIndex = stableIndexes[blockIndex]
                     ?: error("Missing stable block index for $pageKey/$blockIndex")
-                val id = BatchTranslationProtocol.blockId(naturalPageIndex, stableBlockIndex)
+                val id = nextRequestId.toString()
+                nextRequestId += 1
                 val target = AnchoredTargetKey(naturalPageIndex, stableBlockIndex)
                 check(id !in idMap) {
-                    "Duplicate stable batch block id $id for page $pageKey"
+                    "Duplicate request-local batch id $id for page $pageKey"
                 }
                 idMap[id] = target
                 orderedIds += id
@@ -70,6 +81,7 @@ object ContextualRequestBuilder {
             pageOrder = pageOrder,
             pageIndexes = pageIndexes,
             pagePromptLines = pagePromptLines,
+            correctionLine = TranslationPrompts.correctionLine(chunk.correctionHint, toLang),
         )
     }
 
@@ -105,6 +117,7 @@ object ContextualRequestBuilder {
             promptLines = promptLines,
             protocol = ContextualRequestProtocol.LEGACY,
             pageOrder = chunk.pages.keys.toList(),
+            correctionLine = TranslationPrompts.correctionLine(chunk.correctionHint, toLang),
         )
     }
 
@@ -121,9 +134,10 @@ object ContextualRequestBuilder {
         request: Request,
         rollingContext: String,
     ): String {
-        val contextPrefix = TranslationPrompts.contextPrefix(rollingContext)
         val requestBody = request.promptLines.joinToString("\n")
-        return if (contextPrefix.isEmpty()) requestBody else contextPrefix + requestBody
+        val contextPrefix = TranslationPrompts.contextPrefix(rollingContext)
+        val correction = request.correctionLine?.let { "CORRECTIVE INSTRUCTION:\n$it\n\n" }.orEmpty()
+        return contextPrefix + correction + "SOURCE ITEMS:\n" + requestBody
     }
 
     fun toBatch(
@@ -147,26 +161,20 @@ object ContextualRequestBuilder {
     }
 
     private fun naturalPageIndexes(chunk: TranslationContextChunk): LinkedHashMap<String, Int> {
-        val used = mutableSetOf<Int>()
-        var nextFallback = chunk.pageIndexes.values.maxOrNull()
-            ?.let { if (it == Int.MAX_VALUE) 0 else it + 1 }
-            ?: 0
-        return LinkedHashMap<String, Int>().apply {
-            chunk.pages.keys.forEach { pageKey ->
-                val supplied = chunk.pageIndexes[pageKey]
-                val index = if (supplied != null && supplied >= 0 && used.add(supplied)) {
-                    supplied
-                } else {
-                    while (nextFallback in used) {
-                        nextFallback = if (nextFallback == Int.MAX_VALUE) 0 else nextFallback + 1
-                    }
-                    val fallback = nextFallback
-                    used += fallback
-                    nextFallback = if (nextFallback == Int.MAX_VALUE) 0 else nextFallback + 1
-                    fallback
-                }
-                put(pageKey, index)
+        val indexes = chunk.pages.keys.map { pageKey ->
+            val index = requireNotNull(chunk.pageIndexes[pageKey]) {
+                "Batch request requires a valid frozen PLAN index for page $pageKey"
             }
+            require(index >= 0) {
+                "Batch request requires a valid frozen PLAN index for page $pageKey"
+            }
+            pageKey to index
+        }
+        require(indexes.map { it.second }.distinct().size == indexes.size) {
+            "Batch request requires unique frozen PLAN page indexes"
+        }
+        return LinkedHashMap<String, Int>().apply {
+            indexes.sortedBy { it.second }.forEach { (pageKey, index) -> put(pageKey, index) }
         }
     }
 

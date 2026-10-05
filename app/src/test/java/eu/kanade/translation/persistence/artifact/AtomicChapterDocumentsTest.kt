@@ -1,7 +1,15 @@
 package eu.kanade.translation.persistence.artifact
 
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceClock
+import eu.kanade.translation.diagnostics.TranslationTraceMode
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceSink
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import org.junit.jupiter.api.Test
 import java.security.MessageDigest
@@ -171,5 +179,63 @@ class AtomicChapterDocumentsTest {
         docs.publishJson("m.json", Doc("one")) shouldBe true
         docs.publishJson("m.json", Doc("two")) shouldBe true
         docs.readValidated<Doc>("m.json") { false } shouldBe null
+    }
+
+    @Test
+    fun `artifact telemetry counts physical writes once and separates failures`() = runTest {
+        val io = FakeChapterDocumentIo()
+        val docs = documents(io)
+        val acceptedBytes = "accepted-artifact-payload".encodeToByteArray()
+        val failedBytes = "failed-artifact-payload".encodeToByteArray()
+        val traceLines = mutableListOf<String>()
+        val oldSink = TranslationPipelineDiagnostics.sink
+        val oldGate = TranslationPipelineDiagnostics.detailedTracingEnabled
+        TranslationPipelineDiagnostics.sink = TranslationTraceSink { _, line -> traceLines += line }
+        TranslationPipelineDiagnostics.detailedTracingEnabled = true
+        val clock = TestTraceClock()
+        val schedule = TranslationPipelineDiagnostics.startSchedule(
+            mode = TranslationTraceMode.BATCH,
+            clock = clock,
+        )
+        val run = TranslationPipelineDiagnostics.startRun(
+            schedule = schedule,
+            pageRaw = "artifact-page-secret",
+            pageIndex = 0,
+            clock = clock,
+        )
+        try {
+            withContext(TranslationTrace.elementFor(run)) {
+                docs.publish("artifact.json", acceptedBytes) { true } shouldBe true
+                io.writeNamesToFail += ".tmp"
+                docs.publish("artifact.json", failedBytes) { true } shouldBe false
+            }
+        } finally {
+            run.end(TranslationTraceOutcome.SUCCESS)
+            schedule.end(TranslationTraceOutcome.SUCCESS)
+            TranslationPipelineDiagnostics.sink = oldSink
+            TranslationPipelineDiagnostics.detailedTracingEnabled = oldGate
+        }
+
+        io.writeAttempts.map { it.succeeded } shouldBe listOf(true, false)
+        val successful = io.writeAttempts.filter { it.succeeded }
+        val failed = io.writeAttempts.filterNot { it.succeeded }
+        successful.sumOf { it.submittedBytes } shouldBe acceptedBytes.size
+        failed.map { it.submittedBytes } shouldBe listOf(failedBytes.size)
+
+        val event = traceLines.singleOrNull {
+            it.contains("event=storage_io ") && it.contains("storage=artifact")
+        }
+        val checks = listOf(
+            event?.contains("physicalWriteCalls=1") == true,
+            event?.contains("physicalWriteBytes=${acceptedBytes.size}") == true,
+            event?.contains("failedWriteAttempts=1") == true,
+            event?.contains("failedAttemptBytes=${failedBytes.size}") == true,
+            traceLines.none { it.contains("artifact-page-secret") || it.contains("artifact-payload") },
+        )
+        checks shouldBe List(checks.size) { true }
+    }
+
+    private class TestTraceClock(private var nowNanos: Long = 0L) : TranslationTraceClock {
+        override fun nowNanos(): Long = nowNanos
     }
 }

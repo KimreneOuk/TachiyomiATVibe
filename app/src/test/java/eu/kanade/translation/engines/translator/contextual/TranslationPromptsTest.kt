@@ -65,19 +65,18 @@ class TranslationPromptsTest {
 
     @Test
     fun `pro-drop guidance is emitted only for pro-drop source languages`() {
-        // Japanese (pro-drop) -> guidance present.
         val jaPrompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
-        jaPrompt shouldContain "pro-drop"
+        jaPrompt shouldContain "from Japanese into natural English."
+        jaPrompt shouldNotContain "pro-drop"
 
-        // German (non-pro-drop) -> guidance absent, so the model doesn't invent
-        // omitted subjects that aren't there in the source.
         val dePrompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.GERMAN,
-            TextTranslatorLanguage.ENGLISH,
+            TextTranslatorLanguage.FRENCH,
         )
+        dePrompt shouldContain "from German into natural French."
         dePrompt shouldNotContain "pro-drop"
     }
 
@@ -91,7 +90,7 @@ class TranslationPromptsTest {
         val out = TranslationPrompts.contextPrefix(
             rollingContext = "源 => source",
         )
-        out shouldContain "Previous context"
+        out shouldContain "BACKGROUND:"
         out shouldContain "源 => source"
         out.contains("Established terms") shouldBe false
         out.contains("太郎 => Taro") shouldBe false
@@ -103,23 +102,29 @@ class TranslationPromptsTest {
         val to = TextTranslatorLanguage.ENGLISH
         val prompt = TranslationPrompts.pass1SystemPrompt(from, to)
 
-        prompt shouldContain "Japanese"
-        prompt shouldContain "English"
-        prompt shouldContain "pro-drop"
-        prompt shouldContain "ID|Translated Text"
+        prompt shouldContain "from Japanese into natural English."
+        prompt shouldContain "Copy each item's ID unchanged before \"|\""
+        prompt shouldContain "Return one line per source item only"
+        prompt shouldNotContain "pro-drop"
+        prompt shouldNotContain "comic English"
     }
 
     @Test
-    fun `prompt requires pipe-delimited output`() {
-        val prompt = TranslationPrompts.pass1SystemPrompt(
-            TextRecognizerLanguage.CHINESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
-        prompt shouldContain "ID|Translated Text"
-        prompt shouldContain "Output ONLY the `ID|Translated Text` lines"
-        prompt shouldNotContain "[SPEECH]"
-        prompt shouldNotContain "[FLAG]"
-        prompt shouldNotContain "[OK]"
+    fun `prompt uses selected languages and only the simple numeric item contract`() {
+        val from = TextRecognizerLanguage.CHINESE
+        val to = TextTranslatorLanguage.ENGLISH
+        val prompt = TranslationPrompts.pass1SystemPrompt(from, to, batchProtocol = true)
+
+        prompt shouldBe """
+            The BACKGROUND section is context only; do not translate or reproduce it.
+            Translate each item in SOURCE ITEMS from ${from.label} into natural ${to.label}.
+            Preserve meaning and tone, including sound effects.
+            Copy each item's numeric ID unchanged before "|" and write its translation after it.
+            Return one line per source item only, with no additional text.
+        """.trimIndent()
+        prompt shouldNotContain "English comic"
+        prompt shouldNotContain "p0_b0"
+        prompt shouldNotContain "ID|Translated Text"
     }
 
     @Test

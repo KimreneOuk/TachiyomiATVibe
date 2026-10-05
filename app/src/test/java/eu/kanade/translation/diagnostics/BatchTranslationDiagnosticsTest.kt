@@ -188,4 +188,38 @@ class BatchTranslationDiagnosticsTest {
         field(line, "envelope") shouldBe BatchTranslationDiagnostics.traceEnvelopeToken(listOf("001.jpg", "002.jpg"))
         field(line, "sid") shouldBe schedule.sid
     }
+
+    @Test
+    fun `envelope lifecycle event preserves counts and caller reason`() {
+        setUpTraceCapture()
+        val schedule = TranslationPipelineDiagnostics.startSchedule(
+            mode = TranslationTraceMode.BATCH,
+            origin = TranslationTraceMode.BATCH,
+        )
+        BatchTranslationDiagnostics.noteActiveSchedule(schedule)
+        try {
+            BatchTranslationDiagnostics.envelopeLifecycle(
+                phase = BatchEnvelopeLifecycle.RETRY,
+                pageKeys = listOf("page-secret-a", "page-secret-b"),
+                attempt = 3,
+                expectedItemCount = 8,
+                receivedItemCount = 3,
+                reason = BatchDiagnosticReason.TRANSIENT_FAILURE,
+            )
+        } finally {
+            BatchTranslationDiagnostics.noteActiveSchedule(null)
+            schedule.end(TranslationTraceOutcome.SUCCESS)
+        }
+
+        val event = lines("schedule_state").single()
+        listOf(
+            field(event, "state") == "deferred",
+            field(event, "reason") == "envelope_retry",
+            field(event, "attempt") == "3",
+            field(event, "expected") == "8",
+            field(event, "received") == "3",
+            field(event, "detailReason") == "transient_failure",
+            event.contains("page-secret-a").not(),
+        ) shouldBe List(7) { true }
+    }
 }

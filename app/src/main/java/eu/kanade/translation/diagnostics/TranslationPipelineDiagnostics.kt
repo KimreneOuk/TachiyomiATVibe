@@ -8,6 +8,8 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.util.Locale
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /*
  * Formats bounded `translation_trace_v1` records and owns the privacy
@@ -189,6 +191,19 @@ object TranslationPipelineDiagnostics {
     private val safeTokenPattern = Regex("""[A-Za-z0-9_.-]+""")
     private val reasonVocabulary: Set<String> =
         TranslationTraceReason.entries.mapTo(java.util.HashSet()) { it.token }
+    private val storageMetrics = ConcurrentHashMap<String, StorageMetrics>()
+
+    private class StorageMetrics {
+        val physicalWriteCalls = AtomicLong()
+        val physicalWriteBytes = AtomicLong()
+        val failedWriteAttempts = AtomicLong()
+        val failedAttemptBytes = AtomicLong()
+        val flushCount = AtomicLong()
+        val syncCount = AtomicLong()
+        val flushDurationMs = AtomicLong()
+
+        @Volatile var flushFailed: Boolean = false
+    }
 
     // ------------------------------------------------------------------
     // Start/end APIs
@@ -584,6 +599,9 @@ object TranslationPipelineDiagnostics {
         providerActive: Int,
         envelope: String? = null,
         attempt: Int = 0,
+        expectedItemCount: Int? = null,
+        receivedItemCount: Int? = null,
+        detailReason: String? = null,
     ) {
         if (!detailedTracingEnabled) return
         try {
@@ -597,6 +615,9 @@ object TranslationPipelineDiagnostics {
                     providerActive = providerActive,
                     envelope = envelope,
                     attempt = attempt,
+                    expectedItemCount = expectedItemCount,
+                    receivedItemCount = receivedItemCount,
+                    detailReason = detailReason,
                 ),
                 TranslationTraceLogPriority.INFO,
             )
@@ -660,6 +681,9 @@ object TranslationPipelineDiagnostics {
         reason: String,
         envelope: String? = null,
         attempt: Int = 0,
+        expectedItemCount: Int? = null,
+        receivedItemCount: Int? = null,
+        detailReason: String? = null,
     ) {
         try {
             emitScheduleState(
@@ -671,8 +695,126 @@ object TranslationPipelineDiagnostics {
                 providerActive = 0,
                 envelope = envelope,
                 attempt = attempt,
+                expectedItemCount = expectedItemCount,
+                receivedItemCount = receivedItemCount,
+                detailReason = detailReason,
             )
         } catch (_: Throwable) {
+        }
+    }
+
+    /** Bounded counters for envelope quality; inputs are closed-vocabulary or numeric tokens. */
+    fun recordBatchMetrics(identity: TranslationRunIdentity, fields: Map<String, String>) {
+        if (!detailedTracingEnabled) return
+        val allowed = listOf(
+            "phase", "requested", "accepted", "resolvedPct", "exact", "salvaged", "unresolved",
+            "unresolvedReasons", "conflictCount", "malformedCount", "parseAmbiguity",
+            "followUpUsed", "correctionLineUsed",
+        )
+        val safeFields = allowed.mapNotNull { key ->
+            fields[key]?.let { value -> "$key=${batchMetricToken(key, value)}" }
+        }
+        try {
+            emit(
+                identityPrefix("batch_metric", identity) + safeFields.joinToString(separator = " ", prefix = " "),
+                TranslationTraceLogPriority.INFO,
+            )
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Records one admitted HTTP attempt without retaining request or response content. */
+    fun recordHttpRequest(
+        identity: TranslationRunIdentity?,
+        requestId: String,
+        envelopeRaw: String?,
+        operation: String,
+        attempt: Int,
+        durationMs: Long,
+        outcome: TranslationTraceOutcome,
+        estimatedInputTokens: Int,
+        reservedOutputTokens: Int,
+        inputTokens: Int?,
+        outputTokens: Int?,
+    ) {
+        if (!detailedTracingEnabled || identity == null) return
+        val operationToken = when {
+            operation.contains("contextual", ignoreCase = true) -> "contextual"
+            operation.contains("translation", ignoreCase = true) -> "translation"
+            operation.contains("analysis", ignoreCase = true) -> "analysis"
+            else -> "other"
+        }
+        val envelope = identityKeys.token('e', envelopeRaw)
+        val line = identityPrefix("http_request", identity) +
+            " requestId=$requestId" +
+            " envelope=$envelope" +
+            " operation=$operationToken" +
+            " attempt=${attempt.coerceAtLeast(1)}" +
+            " durationMs=${durationMs.coerceAtLeast(0)}" +
+            " outcome=${outcome.token}" +
+            " estimatedInputTokens=${estimatedInputTokens.coerceAtLeast(0)}" +
+            " reservedOutputTokens=${reservedOutputTokens.coerceAtLeast(0)}" +
+            " inputTokens=${inputTokens?.coerceAtLeast(0) ?: NONE}" +
+            " outputTokens=${outputTokens?.coerceAtLeast(0) ?: NONE}" +
+            " usageSource=${if (inputTokens != null || outputTokens != null) "provider" else "unknown"}"
+        try {
+            emit(line, if (outcome == TranslationTraceOutcome.SUCCESS) TranslationTraceLogPriority.INFO else TranslationTraceLogPriority.WARN)
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Adds physical write/flush observations to a run-bounded aggregation. */
+    fun recordStorageIo(
+        identity: TranslationRunIdentity?,
+        storage: String,
+        physicalWriteCalls: Long = 0,
+        physicalWriteBytes: Long = 0,
+        failedWriteAttempts: Long = 0,
+        failedAttemptBytes: Long = 0,
+        flushCount: Long = 0,
+        syncCount: Long = 0,
+        flushDurationMs: Long = 0,
+        flushFailed: Boolean = false,
+    ) {
+        if (!detailedTracingEnabled || identity == null || storage !in setOf("journal", "artifact")) return
+        val key = "${identity.sid}|${identity.rid}|$storage"
+        val metrics = storageMetrics.computeIfAbsent(key) { StorageMetrics() }
+        metrics.physicalWriteCalls.addAndGet(physicalWriteCalls.coerceAtLeast(0))
+        metrics.physicalWriteBytes.addAndGet(physicalWriteBytes.coerceAtLeast(0))
+        metrics.failedWriteAttempts.addAndGet(failedWriteAttempts.coerceAtLeast(0))
+        metrics.failedAttemptBytes.addAndGet(failedAttemptBytes.coerceAtLeast(0))
+        metrics.flushCount.addAndGet(flushCount.coerceAtLeast(0))
+        metrics.syncCount.addAndGet(syncCount.coerceAtLeast(0))
+        metrics.flushDurationMs.addAndGet(flushDurationMs.coerceAtLeast(0))
+        if (flushFailed) metrics.flushFailed = true
+    }
+
+    /** Flushes and removes every bounded storage aggregate for the completed run. */
+    internal fun flushStorageIo(identity: TranslationRunIdentity) {
+        val prefix = "${identity.sid}|${identity.rid}|"
+        storageMetrics.entries.toList().forEach { (key, metrics) ->
+            if (!key.startsWith(prefix) || !storageMetrics.remove(key, metrics)) return@forEach
+            val storage = key.removePrefix(prefix)
+            try {
+                emit(
+                    identityPrefix("storage_io", identity) +
+                        " storage=$storage" +
+                        " physicalWriteCalls=${metrics.physicalWriteCalls.get()}" +
+                        " physicalWriteBytes=${metrics.physicalWriteBytes.get()}" +
+                        " failedWriteAttempts=${metrics.failedWriteAttempts.get()}" +
+                        " failedAttemptBytes=${metrics.failedAttemptBytes.get()}" +
+                        " flushCount=${metrics.flushCount.get()}" +
+                        " syncCount=${metrics.syncCount.get()}" +
+                        " flushDurationMs=${metrics.flushDurationMs.get()}" +
+                        " flushOutcome=${if (metrics.flushFailed) "failure" else "success"}",
+                    if (metrics.flushFailed || metrics.failedWriteAttempts.get() > 0) {
+                        TranslationTraceLogPriority.WARN
+                    } else {
+                        TranslationTraceLogPriority.INFO
+                    },
+                )
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -914,6 +1056,9 @@ object TranslationPipelineDiagnostics {
         providerActive: Int,
         envelope: String? = null,
         attempt: Int = 0,
+        expectedItemCount: Int? = null,
+        receivedItemCount: Int? = null,
+        detailReason: String? = null,
     ): String =
         identityPrefix(EVENT_SCHEDULE_STATE, identity) +
             " state=${state.token}" +
@@ -922,7 +1067,22 @@ object TranslationPipelineDiagnostics {
             " nativeActive=$nativeActive" +
             " providerActive=$providerActive" +
             attemptSuffix(attempt) +
-            envelopeSuffix(envelope)
+            envelopeSuffix(envelope) +
+            (expectedItemCount?.let { " expected=${it.coerceAtLeast(0)}" } ?: "") +
+            (receivedItemCount?.let { " received=${it.coerceAtLeast(0)}" } ?: "") +
+            (detailReason?.let { " detailReason=${safeToken(it)}" } ?: "")
+
+    private fun batchMetricToken(key: String, value: String): String = when (key) {
+        "phase" -> value.takeIf { it in setOf("first_pass", "semantic_follow_up") } ?: INVALID_TOKEN
+        "resolvedPct" -> value.takeIf { it == "na" || Regex("""\d{1,3}\.\d""").matches(it) } ?: INVALID_TOKEN
+        "unresolvedReasons" -> value.takeIf {
+            it == "none" || Regex("""(?:missing|blank|conflict|echo|wrong_target|format)(?:,(?:missing|blank|conflict|echo|wrong_target|format))*""").matches(it)
+        } ?: INVALID_TOKEN
+        "followUpUsed", "correctionLineUsed", "requested", "accepted", "exact", "salvaged",
+        "unresolved", "conflictCount", "malformedCount", "parseAmbiguity",
+        -> value.takeIf { it.toIntOrNull()?.let { number -> number >= 0 } == true } ?: INVALID_TOKEN
+        else -> INVALID_TOKEN
+    }
 
     // ------------------------------------------------------------------
     // Token sanitization

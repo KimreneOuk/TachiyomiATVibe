@@ -2,6 +2,7 @@ package eu.kanade.translation.pipeline.batch.recovery
 
 import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceSite
+import eu.kanade.translation.engines.translator.TranslationOutputSemantics
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -513,13 +514,16 @@ internal class RecoveryWorker(
 
     fun strandedPageReason(page: PageTranslationView?): String {
         if (page == null) return "expected page is missing from the store"
+        val frozenConfig = store.readActiveRunRecord()?.frozenConfig
         val textBlocks = page.blocks.filter { it.text.isNotBlank() }
         val resolved = textBlocks.count { block ->
             block.userEditedAt != null ||
-                (
-                    block.translation.isNotBlank() &&
-                        block.translation.trim() != block.text.trim()
-                    )
+                TranslationOutputSemantics.isResolved(
+                    source = block.text,
+                    output = block.translation,
+                    sourceLanguageCode = frozenConfig?.sourceLang,
+                    targetLanguageCode = frozenConfig?.targetLang,
+                )
         }
         return when {
             textBlocks.isEmpty() ->

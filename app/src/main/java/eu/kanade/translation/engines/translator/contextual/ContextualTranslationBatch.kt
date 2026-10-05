@@ -22,6 +22,10 @@ data class ContextualTranslationBatch(
     val validationErrors: List<String> = emptyList(),
     /** Exact requested IDs were recovered from a response with malformed or omitted framing. */
     val framingRecovered: Boolean = false,
+    /** Requested IDs accepted from a permitted non-canonical wrapper or separator. */
+    val salvagedIds: Set<String> = emptySet(),
+    /** Ambiguous ordinal rows that were deliberately not positionally associated. */
+    val parseAmbiguityCount: Int = 0,
 ) {
     init {
         require(idToBlockIndex.keys.all { it.isNotBlank() }) { "Contextual target ids must not be blank" }

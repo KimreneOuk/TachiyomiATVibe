@@ -252,21 +252,28 @@ class TranslationContextChunkPlannerTest {
     }
 
     @Test
-    fun `resume - source-equal translation is treated as untranslated`() {
-        // A block whose translation equals its source (adapter echoed it back)
-        // has NOT actually been translated — it must be re-planned.
+    fun `resume skips scriptless equality but replans a meaningful Japanese echo`() {
+        // Common Latin words/names are not evidence of an echo, while an
+        // unchanged Japanese source remains requestable for ja->en.
         val pages = linkedMapOf(
             "001.jpg" to PageTranslation(
                 blocks = mutableListOf(
-                    blockWith(text = "源", translation = "源"), // source-equal
+                    blockWith(text = "OK!", translation = "OK!"),
+                    blockWith(text = "待て！", translation = "待て！"),
                 ),
             ),
         )
 
-        val result = TranslationContextChunkPlanner.plan(pages, requestedOutputTokens = 8192)
+        val result = TranslationContextChunkPlanner.plan(
+            pages = pages,
+            requestedOutputTokens = 8192,
+            sourceLanguageCode = "ja",
+            targetLanguageCode = "en",
+        )
 
         result.rejectedPages shouldBe emptyMap()
         result.chunks.single().blockCount shouldBe 1
+        result.chunks.single().pages.values.single().blocks.single().text shouldBe "待て！"
     }
 
     @Test

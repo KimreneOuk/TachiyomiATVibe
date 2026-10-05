@@ -7,9 +7,11 @@ import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
 import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.engines.translator.ProviderFailureRetryability
+import eu.kanade.translation.engines.translator.ProviderHttpResult
 import eu.kanade.translation.engines.translator.ProviderRequestGovernor
 import eu.kanade.translation.engines.translator.ProviderRequestKey
 import eu.kanade.translation.engines.translator.ProviderRequestMetadata
+import eu.kanade.translation.engines.translator.ProviderUsage
 import eu.kanade.translation.engines.translator.SharedProviderRequestGovernor
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
@@ -26,6 +28,7 @@ import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -37,7 +40,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -233,7 +235,7 @@ abstract class OpenAiCompatibleTranslator(
                 TranslationTraceProvider.REMOTE
             },
         )
-        val response = requestGovernor.executeValue(metadata) {
+        val result = requestGovernor.executeWithUsage(metadata) {
             okHttpClient.newCall(request).await().use { response ->
                 val raw = RawProviderResponse(
                     code = response.code,
@@ -249,9 +251,13 @@ abstract class OpenAiCompatibleTranslator(
                     )
                     throw OpenAiApiException(failure)
                 }
-                raw
+                ProviderHttpResult(
+                    value = raw,
+                    usage = raw.body.openAiProviderUsage(),
+                )
             }
         }
+        val response = result.value
 
         val responseString = response.body
         if (responseString.isBlank()) {
@@ -268,9 +274,15 @@ abstract class OpenAiCompatibleTranslator(
         val rawOutput = if (responseString.trimStart().startsWith("data:") || responseString.contains("\ndata:")) {
             parseSseResponse(responseString)
         } else {
-            val responseJson = JSONObject(responseString)
-            val choicesArray = responseJson.optJSONArray("choices")
-            choicesArray?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
+            Json.parseToJsonElement(responseString).jsonObject["choices"]
+                ?.jsonArray
+                ?.firstOrNull()
+                ?.jsonObject
+                ?.get("message")
+                ?.jsonObject
+                ?.get("content")
+                ?.jsonPrimitive
+                ?.contentOrNull
         }
 
         if (rawOutput.isNullOrBlank()) {
@@ -394,6 +406,18 @@ abstract class OpenAiCompatibleTranslator(
         val body: String,
     )
 }
+
+private fun String.openAiProviderUsage(): ProviderUsage? = runCatching {
+    val usage = Json.parseToJsonElement(this).jsonObject["usage"]?.jsonObject
+        ?: return@runCatching null
+    val inputTokens = usage["prompt_tokens"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.takeIf { it >= 0 }
+    val outputTokens = usage["completion_tokens"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.takeIf { it >= 0 }
+    if (inputTokens == null && outputTokens == null) {
+        null
+    } else {
+        ProviderUsage(inputTokens = inputTokens, outputTokens = outputTokens)
+    }
+}.getOrNull()
 
 internal class OpenAiApiException(
     failure: ProviderFailure,

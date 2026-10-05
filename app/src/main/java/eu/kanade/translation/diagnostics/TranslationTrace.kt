@@ -305,10 +305,13 @@ class TranslationTraceIdGenerator(
     val processPrefix: String = processPrefix
     private val scheduleCounter = AtomicLong()
     private val runCounter = AtomicLong()
+    private val httpRequestCounter = AtomicLong()
 
     fun nextScheduleId(): String = "${processPrefix}s${scheduleCounter.incrementAndGet()}"
 
     fun nextRunId(): String = "${processPrefix}r${runCounter.incrementAndGet()}"
+
+    fun nextHttpRequestId(): String = "${processPrefix}h${httpRequestCounter.incrementAndGet()}"
 
     companion object {
         fun newProcessPrefix(random: SecureRandom = SecureRandom()): String {
@@ -1028,6 +1031,7 @@ class TranslationRunTrace internal constructor(
         val resolvedError = TranslationPipelineDiagnostics.resolveError(error, errorType, errorCode)
         schedule?.noteRunFinished(identity.page, summary.totalMs)
         schedule?.noteRunTerminal(outcome)
+        TranslationPipelineDiagnostics.flushStorageIo(identity)
         TranslationPipelineDiagnostics.emitRunEnd(
             identity = identity,
             plan = planRef.get(),

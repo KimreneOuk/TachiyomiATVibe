@@ -24,16 +24,18 @@ import eu.kanade.translation.model.recordAttemptFailure
 object TranslationBlockValidation {
 
     /**
-     * @param allowSourceEqual when false (the default), a non-blank translation
-     *   that is identical to the source text also counts as untranslated. This
-     *   guards against adapters that echo the source back verbatim and against
-     *   any future regression to source-text fallback. Pass true only when the
-     *   caller can prove same-language echo is legitimate (never on the
-     *   translate path).
+     * @param allowSourceEqual preserves the legacy explicit override for a
+     *   caller that already knows equal source/output is legitimate.
+     * @param sourceLanguageCode configured OCR source-language code; when
+     *   supplied, source equality is unresolved only with positive script
+     *   evidence for an actual cross-language echo.
+     * @param targetLanguageCode configured translation target-language code.
      */
     fun evaluate(
         pageTranslation: PageTranslation,
         allowSourceEqual: Boolean = false,
+        sourceLanguageCode: String? = null,
+        targetLanguageCode: String? = null,
     ): TranslationValidationResult {
         val sourceBlocks = pageTranslation.blocks.filter { it.text.isNotBlank() }
         if (sourceBlocks.isEmpty()) {
@@ -42,7 +44,7 @@ object TranslationBlockValidation {
             return TranslationValidationResult.AllTranslated
         }
         val untranslated = sourceBlocks.filter { block ->
-            isUntranslated(block, allowSourceEqual)
+            isUntranslated(block, allowSourceEqual, sourceLanguageCode, targetLanguageCode)
         }
         return if (untranslated.isEmpty()) {
             TranslationValidationResult.AllTranslated
@@ -54,11 +56,26 @@ object TranslationBlockValidation {
         }
     }
 
-    /** True when this block still needs a translation (blank or source-equal). */
-    private fun isUntranslated(block: TranslationBlock, allowSourceEqual: Boolean): Boolean {
+    /** True when this block still needs translation, including blank, clear echo, or wrong target script. */
+    private fun isUntranslated(
+        block: TranslationBlock,
+        allowSourceEqual: Boolean,
+        sourceLanguageCode: String?,
+        targetLanguageCode: String?,
+    ): Boolean {
         if (block.translation.isBlank()) return true
-        if (!allowSourceEqual && block.translation.trim() == block.text.trim()) return true
-        return false
+        if (allowSourceEqual &&
+            TranslationOutputSemantics.normalizedForComparison(block.translation) ==
+            TranslationOutputSemantics.normalizedForComparison(block.text)
+        ) {
+            return false
+        }
+        return !TranslationOutputSemantics.isResolved(
+            source = block.text,
+            output = block.translation,
+            sourceLanguageCode = sourceLanguageCode,
+            targetLanguageCode = targetLanguageCode,
+        )
     }
 
     /**
@@ -75,8 +92,17 @@ object TranslationBlockValidation {
     fun applyTo(
         pageTranslation: PageTranslation,
         allowSourceEqual: Boolean = false,
+        sourceLanguageCode: String? = null,
+        targetLanguageCode: String? = null,
     ): String {
-        return when (val result = evaluate(pageTranslation, allowSourceEqual)) {
+        return when (
+            val result = evaluate(
+                pageTranslation,
+                allowSourceEqual,
+                sourceLanguageCode,
+                targetLanguageCode,
+            )
+        ) {
             TranslationValidationResult.AllTranslated -> {
                 pageTranslation.translationStatus = StageStatus.READY
                 pageTranslation.errorMessage = null

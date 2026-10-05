@@ -1,6 +1,8 @@
 package eu.kanade.translation.persistence.artifact
 
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationTrace
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
@@ -355,7 +357,14 @@ class AtomicChapterDocuments(
     ): Boolean = synchronized(lockFor(name)) {
         val tempName = tempNameFor(name)
         val backupName = backupNameFor(name)
-        if (!io.write(tempName, bytes, syncToDisk = syncToDisk)) {
+        val writeSucceeded = try {
+            io.write(tempName, bytes, syncToDisk = syncToDisk)
+        } catch (failure: Throwable) {
+            recordPhysicalWrite(success = false, bytes = bytes.size)
+            throw failure
+        }
+        recordPhysicalWrite(success = writeSucceeded, bytes = bytes.size)
+        if (!writeSucceeded) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT chapter document publish failed: stage=tmp-write name=$name"
             }
@@ -386,6 +395,22 @@ class AtomicChapterDocuments(
             return false
         }
         true
+    }
+
+    private fun recordPhysicalWrite(success: Boolean, bytes: Int) {
+        runCatching {
+            TranslationTrace.currentRuns().forEach { run ->
+                TranslationPipelineDiagnostics.recordStorageIo(
+                    identity = run.identity,
+                    storage = "artifact",
+                    physicalWriteCalls = if (success) 1L else 0L,
+                    physicalWriteBytes = if (success) bytes.toLong() else 0L,
+                    failedWriteAttempts = if (success) 0L else 1L,
+                    failedAttemptBytes = if (success) 0L else bytes.toLong(),
+                )
+                if (run.isClosed) TranslationPipelineDiagnostics.flushStorageIo(run.identity)
+            }
+        }
     }
 
     inline fun <reified T> publishJson(

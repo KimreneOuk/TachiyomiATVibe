@@ -5,6 +5,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.engines.translator.TranslationOutputSemantics
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.engines.translator.analysis.AnalysisRequestBuilder
@@ -711,8 +712,12 @@ internal class ChapterProfileBatchCoordinator(
                 // prior partial candidate) are not requestable — mirrors the
                 // retry controller's requestability rule so page completeness
                 // stays achievable.
-                if (block.translation.isNotBlank() &&
-                    block.translation.trim() != block.text.trim()
+                if (TranslationOutputSemantics.isResolved(
+                        source = block.text,
+                        output = block.translation,
+                        sourceLanguageCode = frozenConfig.sourceLang,
+                        targetLanguageCode = frozenConfig.targetLang,
+                    )
                 ) {
                     return@forEachIndexed
                 }
@@ -821,10 +826,12 @@ internal class ChapterProfileBatchCoordinator(
         val textBlocks = page.blocks.filter { it.text.isNotBlank() }
         val completeBlocks = textBlocks.count { block ->
             block.userEditedAt != null ||
-                (
-                    block.translation.isNotBlank() &&
-                        block.translation.trim() != block.text.trim()
-                    )
+                TranslationOutputSemantics.isResolved(
+                    source = block.text,
+                    output = block.translation,
+                    sourceLanguageCode = frozenConfig.sourceLang,
+                    targetLanguageCode = frozenConfig.targetLang,
+                )
         }
         if (textBlocks.isNotEmpty() && completeBlocks < textBlocks.size) {
             // Defensive: a requestable text block would have been dispatched;

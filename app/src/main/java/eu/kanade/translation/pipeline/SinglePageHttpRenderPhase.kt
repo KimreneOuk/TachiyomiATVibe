@@ -220,12 +220,13 @@ internal class SinglePageHttpRenderPhase(
         pageTranslation.translationOrigin = origin.toArtifactOrigin().name
         val store = ctx.store
         val fromLang = ctx.fromLang
+        val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
         val syntheticTranslation = ctx.syntheticTranslation
         val streams = ctx.streams
         val decoded = ctx.decoded
         val batchFingerprints = batchExpectedFingerprints(
             fromLang,
-            TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage()),
+            toLang,
         )
         var commitPrecondition = requireNotNull(ctx.commitPrecondition) {
             "single-page commit precondition missing for $pageKey"
@@ -518,11 +519,19 @@ internal class SinglePageHttpRenderPhase(
                     var singlePageRetry = 0
                     withRequestRetryBudget(retryBudget) {
                         runTranslate(pageTranslation)
-                        TranslationBlockValidation.applyTo(pageTranslation)
+                        TranslationBlockValidation.applyTo(
+                            pageTranslation,
+                            sourceLanguageCode = fromLang.code,
+                            targetLanguageCode = toLang.code,
+                        )
                         while (pageTranslation.translationStatus == StageStatus.PARTIAL &&
                             singlePageRetry < SINGLE_PAGE_PARTIAL_MAX_RETRIES
                         ) {
-                            val missing = AiTranslationRetryPlanner.untranslatedBlocks(pageTranslation)
+                            val missing = AiTranslationRetryPlanner.untranslatedBlocks(
+                                pageTranslation,
+                                sourceLanguageCode = fromLang.code,
+                                targetLanguageCode = toLang.code,
+                            )
                             if (missing.isEmpty()) break
                             singlePageRetry++
                             TranslationTrace.currentRun()?.recordRetry()
@@ -536,7 +545,11 @@ internal class SinglePageHttpRenderPhase(
                             }
                             val retryPage = PageTranslation(blocks = missing.toMutableList())
                             runTranslate(retryPage)
-                            TranslationBlockValidation.applyTo(pageTranslation)
+                            TranslationBlockValidation.applyTo(
+                                pageTranslation,
+                                sourceLanguageCode = fromLang.code,
+                                targetLanguageCode = toLang.code,
+                            )
                         }
                     }
                     if (translationOutcome is TranslationCompletionOutcome.Completed &&

@@ -82,8 +82,8 @@ class ProfileEnvelopeDispatchTest {
             .digest(tag.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
 
-    private fun block(text: String) = TranslationBlock(
-        blockId = "b1",
+    private fun block(text: String, blockId: String = "b1") = TranslationBlock(
+        blockId = blockId,
         text = text,
         translation = "",
         width = 10f,
@@ -95,9 +95,11 @@ class ProfileEnvelopeDispatchTest {
         angle = 0f,
     )
 
-    private fun ocrPage(pageKey: String, text: String) = PageTranslation(
+    private fun ocrPage(pageKey: String, text: String) = ocrPage(pageKey, listOf(block(text)))
+
+    private fun ocrPage(pageKey: String, blocks: List<TranslationBlock>) = PageTranslation(
         sourceFileName = pageKey,
-        blocks = mutableListOf(block(text)),
+        blocks = blocks.toMutableList(),
         imgWidth = 100f,
         imgHeight = 160f,
         decodeSampleSize = 1,
@@ -161,6 +163,9 @@ class ProfileEnvelopeDispatchTest {
     /** M1-idiom OCR lane: lease, merge under the token, hand the identity back. */
     private inner class FakePreflightOcrWorker(
         private val store: ChapterTranslationStore,
+        private val blocksFor: (String) -> List<TranslationBlock> = { pageKey ->
+            listOf(block("source-$pageKey"))
+        },
     ) : NativeLaneWorker {
         val ocrPages = mutableListOf<String>()
 
@@ -175,7 +180,7 @@ class ProfileEnvelopeDispatchTest {
                     generation = before.generation,
                     expectedPageVersion = before.pageVersion,
                     expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
-                    ocrResult = ocrPage(pageKey, "source-$pageKey"),
+                    ocrResult = ocrPage(pageKey, blocksFor(pageKey)),
                     expectedLeaseToken = lease.token,
                 ),
                 description = "t924 fake preflight ocr",
@@ -265,18 +270,27 @@ class ProfileEnvelopeDispatchTest {
     private fun responseFor(
         chunk: TranslationContextChunk,
         omit: Set<String> = emptySet(),
-        text: (String) -> String = { id -> "translated-$id" },
+        text: (String) -> String = { stableId -> "translated-$stableId" },
     ): ContextualTranslationBatch {
         val request = ContextualRequestBuilder.build(
             chunk,
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
-        val results = request.orderedIds.filterNot(omit::contains).map { id ->
+        val results = request.orderedIds.filterNot { id ->
+            val location = request.locations.getValue(id)
+            val target = request.idMap.getValue(id)
+            val stableId = "p${target.pageIndex}_b${target.blockIndex}"
+            val sourceBlockId = chunk.pages.getValue(location.pageKey).blocks[location.blockIndex].blockId
+            id in omit || stableId in omit || sourceBlockId?.let { it in omit } == true
+        }.map { id ->
+            val location = request.locations.getValue(id)
+            val target = request.idMap.getValue(id)
+            val stableId = "p${target.pageIndex}_b${target.blockIndex}"
             ContextualTranslationResult(
                 id = id,
                 targetKey = request.idMap[id],
-                text = text(id),
+                text = text(stableId),
                 status = ContextualTranslationResult.Status.TRANSLATED,
             )
         }
@@ -289,6 +303,16 @@ class ProfileEnvelopeDispatchTest {
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         ).orderedIds
+
+    private fun requestedStableBlockIds(chunks: List<TranslationContextChunk>): Set<String> =
+        chunks.flatMap { chunk ->
+            val request = ContextualRequestBuilder.build(
+                chunk,
+                TextRecognizerLanguage.JAPANESE,
+                TextTranslatorLanguage.ENGLISH,
+            )
+            request.idMap.values.map { target -> "p${target.pageIndex}_b${target.blockIndex}" }
+        }.toSet()
 
     private fun runCounters(store: ChapterTranslationStore): Pair<ChapterRunState, Map<String, Int>> {
         val artifact = artifactStore()
@@ -422,7 +446,7 @@ class ProfileEnvelopeDispatchTest {
         // ONE envelope for the 3 single-block pages; ONE call in flight.
         translator.requests.size shouldBe 1
         translator.maxObservedInFlight shouldBe 1
-        requestIds(translator.requests.single()) shouldContainExactly listOf("p0_b1", "p1_b1", "p2_b1")
+        requestIds(translator.requests.single()) shouldContainExactly listOf("1", "2", "3")
 
         // Every page committed READY with its translation ( ladder +
         // provenance fields passed — otherwise the merge would reject).
@@ -721,7 +745,7 @@ class ProfileEnvelopeDispatchTest {
         // previously committed pages were never re-sent.
         resumed.status shouldBe BatchPass1Status.COMPLETED
         resumedWorker.ocrPages shouldBe emptyList()
-        val sentIds = secondTranslator.requests.flatMap(::requestIds).toSet()
+        val sentIds = requestedStableBlockIds(secondTranslator.requests)
         sentIds shouldBe setOf("p2_b1")
         pageKeys.forEach { key ->
             resumedStore.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
@@ -908,7 +932,10 @@ class ProfileEnvelopeDispatchTest {
         resumedAnalyzer.executedOrdinals shouldBe emptyList()
         resumed.status shouldBe BatchPass1Status.COMPLETED
         resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
-        val sentIds = secondTranslator.requests.flatMap(::requestIds).toSet()
+        val sentIds = requestedStableBlockIds(secondTranslator.requests)
+        secondTranslator.requests.forEach { chunk ->
+            requestIds(chunk) shouldContainExactly (1..chunk.blockCount).map { it.toString() }
+        }
         (0..7).forEach { index -> sentIds.contains("p${index}_b1") shouldBe false }
         (8..16).forEach { index -> sentIds.contains("p${index}_b1") shouldBe true }
         runCounters(resumedStore).second["pagesTranslated"] shouldBe 9
@@ -916,6 +943,99 @@ class ProfileEnvelopeDispatchTest {
         pageKeys.forEach { key ->
             resumedStore.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
         }
+    }
+
+    @Test
+    fun `process death drops provisional partial output but rebuilds IDs around committed durable pages`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val blocksFor: (String) -> List<TranslationBlock> = { pageKey ->
+            when (pageKey) {
+                "p1" -> listOf(block("source-p1", "b1"))
+                else -> listOf(block("source-p2-b1", "b1"), block("source-p2-b2", "b2"))
+            }
+        }
+        val worker = FakePreflightOcrWorker(store, blocksFor)
+        val firstTranslator = FakeTranslator { call, chunk ->
+            val request = ContextualRequestBuilder.build(
+                chunk,
+                TextRecognizerLanguage.JAPANESE,
+                TextTranslatorLanguage.ENGLISH,
+            )
+            val accepted = if (call == 1) {
+                request.orderedIds.filter { id ->
+                    val location = request.locations.getValue(id)
+                    val sourceText = chunk.pages.getValue(location.pageKey).blocks[location.blockIndex].text
+                    sourceText != "source-p2-b2"
+                }
+            } else {
+                emptyList()
+            }
+            ContextualRequestBuilder.toBatch(
+                request,
+                accepted.reversed().map { id ->
+                    val location = request.locations.getValue(id)
+                    val sourceText = chunk.pages.getValue(location.pageKey).blocks[location.blockIndex].text
+                    ContextualTranslationResult(
+                        id = id,
+                        targetKey = request.idMap[id],
+                        text = "accepted:$sourceText",
+                        status = ContextualTranslationResult.Status.TRANSLATED,
+                    )
+                },
+            )
+        }
+
+        val firstOutcome = coordinator(
+            store,
+            worker,
+            pages,
+            FakeAnalyzer(),
+            firstTranslator,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        firstOutcome.status shouldBe BatchPass1Status.PAUSED
+        requestIds(firstTranslator.requests.first()) shouldContainExactly listOf("1", "2", "3")
+        firstTranslator.requests.drop(1).forEach { chunk ->
+            requestIds(chunk) shouldContainExactly listOf("1")
+            chunk.pages.values.flatMap { it.blocks }.map { it.text } shouldBe listOf("source-p2-b2")
+        }
+        store.snapshot("p1").page.shouldNotBeNull().apply {
+            translationStatus shouldBe StageStatus.READY
+            blocks.single().translation shouldBe "accepted:source-p1"
+            blocks.single().blockId shouldBe "b1"
+        }
+        store.snapshot("p2").page.shouldNotBeNull().blocks.map { it.translation } shouldBe listOf("", "")
+        val p2Failure = store.durableFailure("p2").shouldNotBeNull()
+        p2Failure.missingBlockIds shouldBe setOf("p2_b2")
+        p2Failure.missingBlockCharLengths shouldBe mapOf("p2_b2" to "source-p2-b2".length)
+
+        // Reopen the same durable artifact. The first accepted p2 block was
+        // only frozen in the old controller's memory, so neither p2 block is
+        // pretranslated. Committed p1 stays excluded and p2 receives a fresh
+        // request-local 1..2 namespace from its verified plan/store state.
+        val reopened = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        reopened.snapshot("p2").page.shouldNotBeNull().blocks.map { it.translation } shouldBe listOf("", "")
+        reopened.durableFailure("p2").shouldNotBeNull().missingBlockIds shouldBe setOf("p2_b2")
+        val secondTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
+        val resumed = coordinator(
+            reopened,
+            FakePreflightOcrWorker(reopened, blocksFor),
+            pages,
+            FakeAnalyzer(),
+            secondTranslator,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        resumed.status shouldBe BatchPass1Status.COMPLETED
+        secondTranslator.requests.size shouldBe 1
+        requestIds(secondTranslator.requests.single()) shouldContainExactly listOf("1", "2")
+        secondTranslator.requests.single().pages.keys shouldBe setOf("p2")
+        secondTranslator.requests.single().pages.values.flatMap { it.blocks }.map { it.text } shouldContainExactly
+            listOf("source-p2-b1", "source-p2-b2")
+        reopened.snapshot("p1").page.shouldNotBeNull().blocks.single().blockId shouldBe "b1"
+        reopened.snapshot("p2").page.shouldNotBeNull().blocks.map { it.blockId } shouldBe listOf("b1", "b2")
     }
 
     @Test

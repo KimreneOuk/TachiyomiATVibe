@@ -10,6 +10,21 @@ import eu.kanade.translation.model.TranslationBlock
  */
 object TranslationPrompts {
 
+    /** Pure rendering of approved, machine-classified output evidence. */
+    fun correctionLine(hint: TranslationCorrectionHint?, to: TextTranslatorLanguage): String? {
+        hint ?: return null
+        val echo = hint.sourceEcho
+        val wrongTarget = hint.wrongTargetLanguage
+        return when {
+            echo && wrongTarget ->
+                "Translate source-language text into ${to.label}; do not copy it unchanged. " +
+                    "Use ${to.label} for the translations."
+            echo -> "Translate source-language text into ${to.label}; do not copy it unchanged."
+            wrongTarget -> "Use ${to.label} for the translations."
+            else -> null
+        }
+    }
+
     fun idMappedSourceLine(id: String, block: TranslationBlock): String {
         val flattened = block.text
             .replace("\r\n", " ")
@@ -30,10 +45,10 @@ object TranslationPrompts {
         return ParsedLine(id, content)
     }
 
-    /** Rolling history only; empty history adds no framing or placeholder text. */
+    /** Input-only background; empty history adds no framing or placeholder text. */
     fun contextPrefix(rollingContext: String): String = rollingContext.trim()
         .takeIf(String::isNotEmpty)
-        ?.let { "Previous context / recent translated pairs (use for speaker, name & pronoun continuity):\n$it\n\n" }
+        ?.let { "BACKGROUND:\n$it\n\n" }
         .orEmpty()
 
     /** Manga (Japanese) reads right-to-left; manhwa/manhua (Korean/Chinese) and
@@ -64,31 +79,18 @@ object TranslationPrompts {
         to: TextTranslatorLanguage,
         batchProtocol: Boolean = false,
     ): String {
-        val proDropContext = if (isProDrop(from)) {
-            "Note: ${from.label} frequently omits subjects (pro-drop). Infer explicit subjects and maintain consistent character voice and pronouns.\n"
+        val idInstruction = if (batchProtocol) {
+            """Copy each item's numeric ID unchanged before "|" and write its translation after it."""
         } else {
-            ""
+            """Copy each item's ID unchanged before "|" and write its translation after it."""
         }
-        val exampleId1 = if (batchProtocol) "p0_b0" else "b0"
-        val exampleId2 = if (batchProtocol) "p0_b1" else "b1"
 
         return """
-            You are a manga localization specialist. Translate the comic dialogue text blocks from ${from.label} to ${to.label}.
-
-            $proDropContext
-            RULES:
-            - Output format: `ID|Translated Text`, exactly one line per block.
-            - Naturalize dialogue into lively spoken comic English, preserving tone and humor.
-            - Localize sound effects (e.g. *gasp*, *thud*).
-            - Output ONLY the `ID|Translated Text` lines. No preambles, markdown formatting, or explanations.
-
-            EXAMPLE:
-            Input:
-            $exampleId1|行く。
-            $exampleId2|あの日、彼と出会った。
-            Output:
-            $exampleId1|I'm going.
-            $exampleId2|That day, I met him.
+            The BACKGROUND section is context only; do not translate or reproduce it.
+            Translate each item in SOURCE ITEMS from ${from.label} into natural ${to.label}.
+            Preserve meaning and tone, including sound effects.
+            $idInstruction
+            Return one line per source item only, with no additional text.
         """.trimIndent()
     }
 }

@@ -6,9 +6,11 @@ import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
 import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.engines.translator.ProviderFailureRetryability
+import eu.kanade.translation.engines.translator.ProviderHttpResult
 import eu.kanade.translation.engines.translator.ProviderRequestGovernor
 import eu.kanade.translation.engines.translator.ProviderRequestKey
 import eu.kanade.translation.engines.translator.ProviderRequestMetadata
+import eu.kanade.translation.engines.translator.ProviderUsage
 import eu.kanade.translation.engines.translator.SharedProviderRequestGovernor
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
@@ -112,6 +114,7 @@ open class GeminiTranslator(
                 systemPrompt = systemPrompt,
                 prompt = finalPrompt,
                 maxOutputTokens = chunk.maxOutputTokens,
+                operation = "contextual",
             )
         }
         return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
@@ -145,6 +148,7 @@ open class GeminiTranslator(
         systemPrompt = systemPrompt,
         prompt = userPrompt,
         maxOutputTokens = clampAnalysisOutputToPayload(systemPrompt, userPrompt, maxOutputTokens),
+        operation = "analysis",
     )
 
     /**
@@ -200,6 +204,7 @@ open class GeminiTranslator(
         systemPrompt: String?,
         prompt: String,
         maxOutputTokens: Int,
+        operation: String = "translation",
     ): String {
         val requestConfig = GeminiRequestPayload.create(
             modelName = modelName,
@@ -210,17 +215,17 @@ open class GeminiTranslator(
             thinkingMode = thinkingMode,
         )
         return try {
-            post(requestConfig.payload, maxOutputTokens)
+            post(requestConfig.payload, maxOutputTokens, operation)
         } catch (e: GeminiApiException) {
             if (e.statusCode != 400 || !requestConfig.hasThinkingConfig) throw e
             logcat(tag = "GeminiTranslator", priority = LogPriority.WARN) {
                 "event=gemini_thinking_fallback model=${ShortHash.hash(modelName)} status=${e.statusCode}"
             }
-            post(requestConfig.payloadWithoutThinking, maxOutputTokens)
+            post(requestConfig.payloadWithoutThinking, maxOutputTokens, operation)
         }
     }
 
-    private suspend fun post(payload: String, reservedOutputTokens: Int): String {
+    private suspend fun post(payload: String, reservedOutputTokens: Int, operation: String): String {
         val contract = inputAccountingContract
         if (contract == null || !contract.isCertified) {
             throw ProviderFailureException(
@@ -255,11 +260,11 @@ open class GeminiTranslator(
             ),
             estimatedInputTokens = finalInputTokens,
             reservedOutputTokens = reservedOutputTokens,
-            operation = "generate_content",
+            operation = operation,
             envelopeId = ShortHash.hash(payload),
             priority = currentProviderRequestPriority(),
         )
-        val response = requestGovernor.executeValue(metadata) {
+        val result = requestGovernor.executeWithUsage(metadata) {
             client.newCall(request).await().use { response ->
                 val raw = RawGeminiResponse(
                     code = response.code,
@@ -284,10 +289,13 @@ open class GeminiTranslator(
                     }
                     throw GeminiApiException(raw.code, retryAfterMillis, error.code, error.statusName, failure)
                 }
-                raw
+                ProviderHttpResult(
+                    value = raw,
+                    usage = raw.body.toGeminiProviderUsage(),
+                )
             }
         }
-        return response.body.extractGeminiText()
+        return result.value.body.extractGeminiText()
     }
 
     private fun logProviderFailure(stage: String, error: Exception) {
@@ -444,5 +452,17 @@ internal fun String.extractGeminiText(): String {
     if (text.isBlank()) throw GeminiEmptyResponseException("Gemini returned no usable text")
     return text
 }
+
+private fun String.toGeminiProviderUsage(): ProviderUsage? = runCatching {
+    val usage = Json.parseToJsonElement(this).jsonObject["usageMetadata"]?.jsonObject
+        ?: return@runCatching null
+    val inputTokens = usage["promptTokenCount"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.takeIf { it >= 0 }
+    val outputTokens = usage["candidatesTokenCount"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.takeIf { it >= 0 }
+    if (inputTokens == null && outputTokens == null) {
+        null
+    } else {
+        ProviderUsage(inputTokens = inputTokens, outputTokens = outputTokens)
+    }
+}.getOrNull()
 
 class GeminiEmptyResponseException(message: String) : Exception(message)

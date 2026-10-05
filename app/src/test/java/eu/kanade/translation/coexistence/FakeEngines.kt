@@ -101,13 +101,14 @@ internal class FakeRecognitionEngine(
     val analyzeCalls = AtomicInteger(0)
     val inpaintCalls = AtomicInteger(0)
     val closeCalls = AtomicInteger(0)
+    var singlePageText: String = "hello-single"
 
     private val cleaned = FakeCoexistence.stubBitmap()
 
     override suspend fun analyze(bitmap: Bitmap): PageTranslation {
         analyzeCalls.incrementAndGet()
         barrier.arrive(CoexistenceBarrier.BarrierPoint.NATIVE_RELEASE, CoexistenceBarrier.WILDCARD_PAGE)
-        return PageTranslation().apply { blocks += FakeCoexistence.textBlock("hello-single") }
+        return PageTranslation().apply { blocks += FakeCoexistence.textBlock(singlePageText) }
     }
 
     override suspend fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {

@@ -8,16 +8,20 @@ import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.ProviderRequestClock
 import eu.kanade.translation.engines.translator.ProviderRequestPausedException
 import eu.kanade.translation.engines.translator.SystemProviderRequestClock
+import eu.kanade.translation.engines.translator.TranslationOutputSemantics
+import eu.kanade.translation.engines.translator.contextual.AnchoredTargetKey
 import eu.kanade.translation.engines.translator.contextual.BatchTranslationProtocol
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualResponseParser
 import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationResult
+import eu.kanade.translation.engines.translator.contextual.STRUCTURAL_REFUSAL_DIAGNOSTIC
 import eu.kanade.translation.engines.translator.contextual.StableBlockIds
 import eu.kanade.translation.engines.translator.contextual.TargetLocation
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.engines.translator.contextual.TranslationCorrectionHint
 import eu.kanade.translation.engines.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.engines.translator.providers.OcrArtifactSanitizer
 import eu.kanade.translation.model.PageTranslation
@@ -27,15 +31,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import logcat.LogPriority
 import logcat.logcat
+import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
+private val conflictingDuplicateIdDiagnostic = Regex("""^Conflicting duplicate id '([^']+)'$""")
+
 /**
- * Semantic retry limits for one contextual envelope.
+ * Request budget settings for one contextual envelope.
  *
- * [maxTotalAttempts] is used only when the caller does not provide an
- * explicit [RequestRetryBudget]. The budget itself is the hard ceiling for
- * all transport attempts across the initial request, whole-envelope reissue,
- * targeted requests, and provider fallbacks.
+ * The semantic retry limit properties remain for source compatibility but do
+ * not enable additional model requests. An envelope may make one initial
+ * request and at most one unresolved-only semantic follow-up; transport retries
+ * remain governed by [RequestRetryBudget].
  */
 data class AiTranslationRetryPolicy(
     val maxWholeEnvelopeRetries: Int = 1,
@@ -122,9 +129,14 @@ private data class FrozenAiEnvelope(
     val blocksById: LinkedHashMap<String, FrozenAiBlock>,
     val pageIndexes: LinkedHashMap<String, Int>,
     val requestableIds: List<String>,
+    val sourceLanguageCode: String,
+    val targetLanguageCode: String,
     val identity: String,
 ) {
-    fun chunkFor(stableIds: Collection<String>): TranslationContextChunk {
+    fun chunkFor(
+        stableIds: Collection<String>,
+        correctionHint: TranslationCorrectionHint? = null,
+    ): TranslationContextChunk {
         val requested = stableIds.toSet()
         val grouped = linkedMapOf<String, PageTranslation>()
         var count = 0
@@ -146,6 +158,7 @@ private data class FrozenAiEnvelope(
             // requests. Context and glossary are intentionally byte-for-byte
             // identical across the retry tree.
             pageIndexes = pageIndexes.filterKeys { it in grouped },
+            correctionHint = correctionHint,
         )
     }
 }
@@ -154,6 +167,7 @@ private data class OutgoingRequest(
     val chunk: TranslationContextChunk,
     val request: ContextualRequestBuilder.Request,
     val requestIdToStableId: Map<String, String>,
+    val targetKeyToStableId: Map<AnchoredTargetKey, String>,
     val locationToStableId: Map<TargetLocation, String>,
     val stableIds: Set<String>,
 )
@@ -166,8 +180,23 @@ private data class ResponseAnalysis(
     val unknownCount: Int,
     val malformedCount: Int,
     val rejectedCount: Int,
-    val protocolIssue: Boolean,
     val refusal: ProviderFailure?,
+    val itemReasons: Map<String, ResponseItemReason> = emptyMap(),
+    val salvagedIds: Set<String> = emptySet(),
+)
+
+private enum class ResponseItemReason {
+    MISSING,
+    BLANK,
+    SOURCE_ECHO,
+    WRONG_TARGET,
+    CONFLICT,
+    FORMAT,
+}
+
+private data class AcceptedCandidate(
+    val target: String,
+    val normalizedTarget: String,
 )
 
 /** Detached accepted-results accumulator. Every merge returns a new value. */
@@ -178,33 +207,19 @@ private data class AiTranslationAccumulator(
     val unknownCount: Int = 0,
     val malformedCount: Int = 0,
     val rejectedCount: Int = 0,
-    val protocolIssue: Boolean = false,
 ) {
-    fun merge(
-        response: ResponseAnalysis,
-        allowExistingFromWholeRetry: Boolean,
-    ): AiTranslationAccumulator {
+    /** Keep the first accepted value; later responses can never replace it. */
+    fun merge(response: ResponseAnalysis): AiTranslationAccumulator {
         val merged = LinkedHashMap(translations)
         var duplicates = duplicateCount + response.duplicateIds.size
         var conflicts = conflictCount + response.conflictIds.size
-        // Per-merge state: the accumulated set is tainted only when THIS
-        // response introduces a violation. An earlier attempt's violation
-        // must not veto a later fully recovered set — whole/missing repair
-        // exists precisely to recover from it. Conflicting repeats below
-        // still poison the current merge, and a same-response violation
-        // raises response.protocolIssue.
-        var issue = response.protocolIssue
         response.accepted.forEach { (stableId, translation) ->
             val existing = merged[stableId]
             if (existing == null) {
                 merged[stableId] = translation
-            } else if (!allowExistingFromWholeRetry || existing != translation) {
-                // A whole-envelope reissue is allowed to repeat an already
-                // accepted value. It is never allowed to overwrite a value or
-                // silently accept a conflicting duplicate.
+            } else {
                 duplicates++
                 if (existing != translation) conflicts++
-                issue = true
             }
         }
         return copy(
@@ -214,19 +229,18 @@ private data class AiTranslationAccumulator(
             unknownCount = unknownCount + response.unknownCount,
             malformedCount = malformedCount + response.malformedCount,
             rejectedCount = rejectedCount + response.rejectedCount,
-            protocolIssue = issue,
         )
     }
 }
 
 /**
- * Runs one contextual request and bounded semantic retries.
+ * Runs one contextual request and at most one unresolved-only semantic follow-up.
  *
  * [retryBudget] is shared by every provider transport attempt in this
  * envelope. Concrete translators inherit it through [withRequestRetryBudget],
  * and the provider request governor consumes it only after admission. A translator
- * double that does not expose a governor boundary is charged once per retry
- * attempt, keeping tests and legacy adapters bounded without charging real
+ * double that does not expose a governor boundary is charged once per logical
+ * request, keeping tests and legacy adapters bounded without charging real
  * HTTP twice.
  */
 @Suppress("UNUSED_PARAMETER")
@@ -246,8 +260,17 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
     // the caller has already applied the output-cap/profile to [chunk].
 
     val budget = retryBudget ?: RequestRetryBudget(retryPolicy.maxTotalAttempts)
-    val envelope = freezeEnvelope(chunk)
+    val envelope = freezeEnvelope(chunk, translator.fromLang.code, translator.toLang.code)
     if (envelope.requestableIds.isEmpty()) {
+        BatchTranslationDiagnostics.envelopeMetrics(
+            "phase" to "first_pass",
+            "requested" to "0",
+            "accepted" to "0",
+            "resolvedPct" to "na",
+            "exact" to "0",
+            "salvaged" to "0",
+            "unresolved" to "0",
+        )
         return completeOutcome(
             envelope = envelope,
             accumulator = AiTranslationAccumulator(),
@@ -263,6 +286,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
     var missingRequests = 0
     var requestKind = RequestKind.WHOLE
     var requestedIds = envelope.requestableIds
+    var correctionHint: TranslationCorrectionHint? = null
 
     suspend fun runEnvelope(): AiChunkOutcome {
         while (true) {
@@ -280,7 +304,12 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
             }
 
             val outgoing = try {
-                buildOutgoingRequest(envelope, requestedIds, translator)
+                buildOutgoingRequest(
+                    envelope = envelope,
+                    stableIds = requestedIds,
+                    translator = translator,
+                    correctionHint = if (requestKind == RequestKind.MISSING) correctionHint else null,
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -290,6 +319,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
                     receivedCount = 0,
                     missingCount = requestedIds.size,
                     duplicateCount = 0,
+                    conflictCount = 0,
                     unknownCount = 0,
                     malformedCount = 1,
                     rejectedCount = 0,
@@ -347,33 +377,9 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
                         missingRequests = missingRequests,
                     )
                 }
-                val shouldRetry = !budget.isExhausted &&
-                    when (requestKind) {
-                        RequestKind.WHOLE -> wholeRetries < retryPolicy.maxWholeEnvelopeRetries
-                        RequestKind.MISSING -> missingRequests < retryPolicy.maxMissingBlockRequests
-                    }
-                if (shouldRetry) {
-                    when (requestKind) {
-                        RequestKind.WHOLE -> wholeRetries++
-                        RequestKind.MISSING -> missingRequests++
-                    }
-                    BatchTranslationDiagnostics.envelopeLifecycle(
-                        phase = BatchEnvelopeLifecycle.RETRY,
-                        pageKeys = envelope.pageOrder,
-                        attempt = budget.attemptsUsed,
-                        expectedItemCount = requestedIds.size,
-                        receivedItemCount = null,
-                        reason = BatchDiagnosticReason.TRANSIENT_FAILURE,
-                    )
-                    logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
-                        "event=semantic_retry label=$safeLabel envelope=${envelope.identity} " +
-                            "kind=${requestKind.name.lowercase()} attempts=${budget.attemptsUsed} " +
-                            "wholeRetries=$wholeRetries missingRequests=$missingRequests"
-                    }
-                    // Keep the exact same stable IDs and frozen context on
-                    // a whole-envelope reissue or missing-only retry.
-                    continue
-                }
+                // Transport retry exhaustion is not permission to regenerate
+                // the same semantic envelope. The provider wrapper already
+                // spent the admitted transport budget for this invocation.
                 return pausedOutcome(
                     envelope = envelope,
                     accumulator = accumulator,
@@ -390,25 +396,34 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
                 outgoing = outgoing,
                 envelope = envelope,
             )
+            if (requestKind == RequestKind.WHOLE) {
+                emitFirstPassMetrics(
+                    requested = outgoing.stableIds.size,
+                    analysis = analysis,
+                    batch = batch,
+                )
+            }
             BatchTranslationDiagnostics.envelopeLifecycle(
                 phase = BatchEnvelopeLifecycle.PARSED,
                 pageKeys = envelope.pageOrder,
                 attempt = budget.attemptsUsed,
                 expectedItemCount = outgoing.stableIds.size,
-                receivedItemCount = analysis.accepted.size,
-                reason = if (analysis.missingIds.isEmpty() && !analysis.protocolIssue) {
+                receivedItemCount = outgoing.stableIds.size - analysis.missingIds.size,
+                reason = if (analysis.missingIds.isEmpty()) {
                     BatchDiagnosticReason.SUCCESS
                 } else {
                     BatchDiagnosticReason.STAGE_FAILURE
                 },
             )
 
+            // A refusal invalidates this entire response. Prior accepted values
+            // from an earlier logical request remain fenced, but nothing from
+            // the refusing response enters the accumulator.
             analysis.refusal?.let { failure ->
-                val merged = accumulator.merge(analysis, requestKind == RequestKind.WHOLE)
                 return terminalOutcome(
                     envelope = envelope,
-                    accumulator = merged,
-                    missingIds = remainingIds(envelope, merged),
+                    accumulator = accumulator,
+                    missingIds = remainingIds(envelope, accumulator),
                     failure = failure,
                     budget = budget,
                     wholeRetries = wholeRetries,
@@ -416,13 +431,9 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
                 )
             }
 
-            accumulator = accumulator.merge(
-                response = analysis,
-                allowExistingFromWholeRetry = requestKind == RequestKind.WHOLE,
-            )
+            accumulator = accumulator.merge(analysis)
             val missingIds = remainingIds(envelope, accumulator)
-
-            if (missingIds.isEmpty() && !accumulator.protocolIssue) {
+            if (missingIds.isEmpty()) {
                 return completeOutcome(
                     envelope = envelope,
                     accumulator = accumulator,
@@ -432,61 +443,29 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
                 )
             }
 
-            // A malformed/unknown/duplicate whole response gets one
-            // bounded whole-envelope recovery before targeted work. This
-            // keeps the first accepted value fenced while giving a model a
-            // chance to repair its envelope framing.
-            if (accumulator.protocolIssue &&
-                requestKind == RequestKind.WHOLE &&
-                wholeRetries < retryPolicy.maxWholeEnvelopeRetries &&
-                !budget.isExhausted
-            ) {
-                wholeRetries++
-                requestedIds = envelope.requestableIds
-                requestKind = RequestKind.WHOLE
-                BatchTranslationDiagnostics.envelopeLifecycle(
-                    phase = BatchEnvelopeLifecycle.RETRY,
-                    pageKeys = envelope.pageOrder,
-                    attempt = budget.attemptsUsed,
-                    expectedItemCount = requestedIds.size,
-                    receivedItemCount = analysis.accepted.size,
-                    reason = BatchDiagnosticReason.STAGE_FAILURE,
+            val unresolvedInFrozenOrder = envelope.requestableIds.filter { it in missingIds }
+            if (missingRequests == 0 && !budget.isExhausted && unresolvedInFrozenOrder.isNotEmpty()) {
+                // Consume the one semantic follow-up slot. Rebuilding the chunk
+                // from these durable IDs gives ContextualRequestBuilder a fresh
+                // 1..M namespace, while preserving frozen plan order and clean
+                // OCR source text.
+                missingRequests = 1
+                requestedIds = unresolvedInFrozenOrder
+                val unresolvedReasons = analysis.itemReasons.filterKeys { it in missingIds }.values
+                val hasEcho = ResponseItemReason.SOURCE_ECHO in unresolvedReasons
+                val hasWrongTarget = ResponseItemReason.WRONG_TARGET in unresolvedReasons
+                correctionHint = if (hasEcho || hasWrongTarget) {
+                    TranslationCorrectionHint(sourceEcho = hasEcho, wrongTargetLanguage = hasWrongTarget)
+                } else {
+                    null
+                }
+                BatchTranslationDiagnostics.envelopeMetrics(
+                    "phase" to "semantic_follow_up",
+                    "followUpUsed" to "1",
+                    "correctionLineUsed" to if (correctionHint == null) "0" else "1",
                 )
-                continue
-            }
-
-            if (missingIds.isNotEmpty() &&
-                missingRequests < retryPolicy.maxMissingBlockRequests &&
-                !budget.isExhausted
-            ) {
-                missingRequests++
-                requestedIds = missingIds.toList()
                 requestKind = RequestKind.MISSING
                 continue
-            }
-
-            if (accumulator.protocolIssue && missingIds.isEmpty()) {
-                val failure = protocolFailure(
-                    envelope = envelope,
-                    expectedCount = envelope.requestableIds.size,
-                    receivedCount = accumulator.translations.size,
-                    missingCount = 0,
-                    duplicateCount = accumulator.duplicateCount,
-                    unknownCount = accumulator.unknownCount,
-                    malformedCount = accumulator.malformedCount,
-                    rejectedCount = accumulator.rejectedCount,
-                    retryability = ProviderFailureRetryability.TERMINAL,
-                    attempt = budget.attemptsUsed,
-                )
-                return terminalOutcome(
-                    envelope = envelope,
-                    accumulator = accumulator,
-                    missingIds = missingIds,
-                    failure = failure,
-                    budget = budget,
-                    wholeRetries = wholeRetries,
-                    missingRequests = missingRequests,
-                )
             }
 
             val failure = protocolFailure(
@@ -495,6 +474,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
                 receivedCount = accumulator.translations.size,
                 missingCount = missingIds.size,
                 duplicateCount = accumulator.duplicateCount,
+                conflictCount = accumulator.conflictCount,
                 unknownCount = accumulator.unknownCount,
                 malformedCount = accumulator.malformedCount,
                 rejectedCount = accumulator.rejectedCount,
@@ -556,7 +536,11 @@ private suspend fun requestStructured(
     }
 }
 
-private fun freezeEnvelope(chunk: TranslationContextChunk): FrozenAiEnvelope {
+private fun freezeEnvelope(
+    chunk: TranslationContextChunk,
+    sourceLanguageCode: String,
+    targetLanguageCode: String,
+): FrozenAiEnvelope {
     val pageIndexes = normalizedPageIndexes(chunk)
     val pages = linkedMapOf<String, PageTranslation>()
     val blocksById = linkedMapOf<String, FrozenAiBlock>()
@@ -587,8 +571,12 @@ private fun freezeEnvelope(chunk: TranslationContextChunk): FrozenAiEnvelope {
             if (blocksById.put(stableId, frozen) != null) {
                 error("Duplicate stable AI block id $stableId")
             }
-            val hasUsableExisting = block.translation.isNotBlank() &&
-                block.translation.trim() != block.text.trim()
+            val hasUsableExisting = TranslationOutputSemantics.isResolved(
+                source = block.text,
+                output = block.translation,
+                sourceLanguageCode = sourceLanguageCode,
+                targetLanguageCode = targetLanguageCode,
+            )
             if (block.userEditedAt == null && !hasUsableExisting) {
                 requestable += stableId
             }
@@ -613,12 +601,15 @@ private fun freezeEnvelope(chunk: TranslationContextChunk): FrozenAiEnvelope {
         sourceChunk = chunk.copy(
             pages = LinkedHashMap(pages),
             pageIndexes = LinkedHashMap(pageIndexes),
+            correctionHint = null,
         ),
         pages = pages,
         pageOrder = pages.keys.toList(),
         blocksById = blocksById,
         pageIndexes = pageIndexes,
         requestableIds = requestable,
+        sourceLanguageCode = sourceLanguageCode,
+        targetLanguageCode = targetLanguageCode,
         identity = ShortHash.hash(identityInput).ifEmpty { "none" },
     )
 }
@@ -627,8 +618,9 @@ private fun buildOutgoingRequest(
     envelope: FrozenAiEnvelope,
     stableIds: Collection<String>,
     translator: ContextualTextTranslator,
+    correctionHint: TranslationCorrectionHint? = null,
 ): OutgoingRequest {
-    val chunk = envelope.chunkFor(stableIds)
+    val chunk = envelope.chunkFor(stableIds, correctionHint)
     val request = ContextualRequestBuilder.buildFor(chunk, translator.fromLang, translator.toLang)
     val requestIdToStableId = linkedMapOf<String, String>()
     val locationToStableId = linkedMapOf<TargetLocation, String>()
@@ -642,10 +634,16 @@ private fun buildOutgoingRequest(
         requestIdToStableId[ContextualResponseParser.normalizeBatchId(requestId)] = stableId
         locationToStableId[location] = stableId
     }
+    val targetKeyToStableId = linkedMapOf<AnchoredTargetKey, String>()
+    request.idMap.forEach { (requestId, targetKey) ->
+        val stableId = requestIdToStableId[requestId] ?: return@forEach
+        targetKeyToStableId[targetKey] = stableId
+    }
     return OutgoingRequest(
         chunk = chunk,
         request = request,
         requestIdToStableId = requestIdToStableId,
+        targetKeyToStableId = targetKeyToStableId,
         locationToStableId = locationToStableId,
         stableIds = stableIds.toSet(),
     )
@@ -656,77 +654,113 @@ private fun analyzeResponse(
     outgoing: OutgoingRequest,
     envelope: FrozenAiEnvelope,
 ): ResponseAnalysis {
-    val accepted = linkedMapOf<String, String>()
-    val returned = linkedSetOf<String>()
-    val duplicates = linkedSetOf<String>()
-    val conflicts = linkedSetOf<String>()
-    var unknownCount = 0
-    var rejectedCount = 0
-    var refusal: ProviderFailure? = null
+    val malformedCount = batch.validationErrors.count { error ->
+        !error.startsWith("Missing translation for '")
+    } + if (batch.strictValidation && batch.protocolVersion != BatchTranslationProtocol.VERSION) 1 else 0
 
-    batch.results.forEach { result ->
-        val stableId = resolveStableId(result, outgoing)
-        if (stableId == null || stableId !in outgoing.stableIds || result.targetKey == null) {
-            unknownCount++
-            return@forEach
+    val refusalPresent = batch.validationErrors.any { it == STRUCTURAL_REFUSAL_DIAGNOSTIC } ||
+        batch.results.any { result ->
+            TranslationResponseFaithfulness.isStructuralRefusal(
+                OcrArtifactSanitizer.sanitize(result.text),
+            )
         }
-        if (!returned.add(stableId)) {
-            duplicates += stableId
-            val sanitized = OcrArtifactSanitizer.sanitize(result.text)
-            accepted[stableId]?.let { first ->
-                if (first != sanitized) conflicts += stableId
-            }
-            return@forEach
-        }
-
-        val frozen = envelope.blocksById[stableId]
-        if (frozen == null || frozen.userEditedAt != null) {
-            // User edits are a hard write fence. A response for a fenced block
-            // is ignored rather than allowed to turn into a replacement.
-            rejectedCount++
-            return@forEach
-        }
-        val sanitized = OcrArtifactSanitizer.sanitize(result.text)
-        if (result.status != ContextualTranslationResult.Status.TRANSLATED || sanitized.isBlank()) {
-            rejectedCount++
-            return@forEach
-        }
-        if (sanitized.trim() == frozen.sourceText.trim()) {
-            // Echoed source is not a translation; leave it in the missing set
-            // so a targeted request can repair it.
-            rejectedCount++
-            return@forEach
-        }
-        if (TranslationResponseFaithfulness.isStructuralRefusal(sanitized)) {
+    if (refusalPresent) {
+        return ResponseAnalysis(
+            accepted = linkedMapOf(),
+            missingIds = outgoing.stableIds,
+            duplicateIds = emptySet(),
+            conflictIds = emptySet(),
+            unknownCount = 0,
+            malformedCount = malformedCount,
+            rejectedCount = batch.results.size,
             refusal = ProviderFailure(
                 kind = ProviderFailureKind.REFUSAL,
                 retryability = ProviderFailureRetryability.TERMINAL,
                 safeSummary = "Provider refused one or more contextual translations",
                 requestId = envelope.identity,
-            )
-            return@forEach
-        }
-        accepted[stableId] = sanitized
+            ),
+            itemReasons = outgoing.stableIds.associateWith { ResponseItemReason.MISSING },
+        )
     }
 
-    val missingValidationErrors = batch.validationErrors.count { error ->
-        error.startsWith("Missing translation for '")
+    val candidatesByStableId = linkedMapOf<String, MutableList<AcceptedCandidate>>()
+    val observedByStableId = linkedMapOf<String, Int>()
+    val itemReasons = outgoing.stableIds.associateWithTo(linkedMapOf()) { ResponseItemReason.MISSING }
+    val salvagedStableIds = batch.salvagedIds.mapNotNullTo(linkedSetOf()) { requestId ->
+        outgoing.requestIdToStableId[ContextualResponseParser.normalizeBatchId(requestId)]
     }
-    val malformedCount = (batch.validationErrors.size - missingValidationErrors).coerceAtLeast(0)
-    val protocolVersionIssue = batch.strictValidation &&
-        batch.protocolVersion != BatchTranslationProtocol.VERSION
-    val protocolIssue = protocolVersionIssue ||
-        duplicates.isNotEmpty() ||
-        conflicts.isNotEmpty() ||
-        unknownCount > 0 ||
-        malformedCount > 0 ||
-        batch.results.any { result ->
-            result.status == ContextualTranslationResult.Status.REJECTED &&
-                result.id.isNotBlank() &&
-                resolveStableId(result, outgoing) != null &&
-                result.text.isNotBlank() &&
-                result.id !in batch.duplicateIds
+    var unknownCount = 0
+    var rejectedCount = 0
+
+    batch.results.forEach { result ->
+        val stableId = resolveStableId(result, outgoing)
+        if (stableId == null || stableId !in outgoing.stableIds) {
+            unknownCount++
+            return@forEach
         }
+        observedByStableId[stableId] = (observedByStableId[stableId] ?: 0) + 1
+
+        val frozen = envelope.blocksById[stableId]
+        if (frozen == null || frozen.userEditedAt != null) {
+            // User edits are a hard write fence.
+            rejectedCount++
+            return@forEach
+        }
+        val sanitized = OcrArtifactSanitizer.sanitize(result.text)
+        val semanticReason = TranslationOutputSemantics.unresolvedReason(
+            source = frozen.sourceText,
+            output = sanitized,
+            sourceLanguageCode = envelope.sourceLanguageCode,
+            targetLanguageCode = envelope.targetLanguageCode,
+        )
+        if (semanticReason != null) {
+            itemReasons[stableId] = when (semanticReason) {
+                TranslationOutputSemantics.UnresolvedReason.BLANK -> ResponseItemReason.BLANK
+                TranslationOutputSemantics.UnresolvedReason.SOURCE_ECHO -> ResponseItemReason.SOURCE_ECHO
+                TranslationOutputSemantics.UnresolvedReason.WRONG_TARGET_LANGUAGE -> ResponseItemReason.WRONG_TARGET
+            }
+            rejectedCount++
+            return@forEach
+        }
+        if (result.status != ContextualTranslationResult.Status.TRANSLATED || sanitized.isBlank()) {
+            itemReasons[stableId] = if (sanitized.isBlank()) ResponseItemReason.BLANK else ResponseItemReason.FORMAT
+            rejectedCount++
+            return@forEach
+        }
+
+        candidatesByStableId.getOrPut(stableId) { mutableListOf() } += AcceptedCandidate(
+            target = sanitized,
+            normalizedTarget = normalizeCandidateTarget(sanitized),
+        )
+    }
+
+    val accepted = linkedMapOf<String, String>()
+    val conflicts = linkedSetOf<String>()
+    candidatesByStableId.forEach { (stableId, candidates) ->
+        val uniqueTargets = candidates.distinctBy(AcceptedCandidate::normalizedTarget)
+        when (uniqueTargets.size) {
+            1 -> {
+                accepted[stableId] = uniqueTargets.single().target
+                itemReasons.remove(stableId)
+            }
+            in 2..Int.MAX_VALUE -> {
+                conflicts += stableId
+                itemReasons[stableId] = ResponseItemReason.CONFLICT
+            }
+        }
+    }
+    batch.validationErrors.forEach { error ->
+        val parserConflictId = conflictingDuplicateIdDiagnostic.matchEntire(error)?.groupValues?.get(1)
+            ?: return@forEach
+        val stableId = outgoing.requestIdToStableId[
+            ContextualResponseParser.normalizeBatchId(parserConflictId),
+        ] ?: return@forEach
+        if (stableId in outgoing.stableIds) {
+            conflicts += stableId
+            itemReasons[stableId] = ResponseItemReason.CONFLICT
+        }
+    }
+    val duplicates = observedByStableId.filterValues { it > 1 }.keys
     val missing = outgoing.stableIds - accepted.keys
     return ResponseAnalysis(
         accepted = accepted,
@@ -736,31 +770,80 @@ private fun analyzeResponse(
         unknownCount = unknownCount,
         malformedCount = malformedCount,
         rejectedCount = rejectedCount,
-        protocolIssue = protocolIssue,
-        refusal = refusal,
+        refusal = null,
+        itemReasons = itemReasons.filterKeys { it in missing },
+        salvagedIds = salvagedStableIds.intersect(accepted.keys),
     )
 }
+
+private fun emitFirstPassMetrics(
+    requested: Int,
+    analysis: ResponseAnalysis,
+    batch: ContextualTranslationBatch,
+) {
+    val accepted = analysis.accepted.size
+    val salvaged = analysis.salvagedIds.size
+    val resolvedPct = if (requested == 0) {
+        "na"
+    } else {
+        "%.1f".format(Locale.ROOT, accepted * 100.0 / requested)
+    }
+    val reasonOrder = listOf(
+        ResponseItemReason.BLANK,
+        ResponseItemReason.CONFLICT,
+        ResponseItemReason.SOURCE_ECHO,
+        ResponseItemReason.MISSING,
+        ResponseItemReason.WRONG_TARGET,
+        ResponseItemReason.FORMAT,
+    )
+    val reasons = reasonOrder.filter { reason -> analysis.itemReasons.values.any { it == reason } }
+        .joinToString(",") { it.token }
+    BatchTranslationDiagnostics.envelopeMetrics(
+        "phase" to "first_pass",
+        "requested" to requested.toString(),
+        "accepted" to accepted.toString(),
+        "resolvedPct" to resolvedPct,
+        "exact" to (accepted - salvaged).coerceAtLeast(0).toString(),
+        "salvaged" to salvaged.toString(),
+        "unresolved" to analysis.missingIds.size.toString(),
+        "unresolvedReasons" to reasons.ifEmpty { "none" },
+        "conflictCount" to analysis.conflictIds.size.toString(),
+        "malformedCount" to analysis.malformedCount.toString(),
+        "parseAmbiguity" to batch.parseAmbiguityCount.toString(),
+    )
+}
+
+private val ResponseItemReason.token: String
+    get() = when (this) {
+        ResponseItemReason.MISSING -> "missing"
+        ResponseItemReason.BLANK -> "blank"
+        ResponseItemReason.SOURCE_ECHO -> "echo"
+        ResponseItemReason.WRONG_TARGET -> "wrong_target"
+        ResponseItemReason.CONFLICT -> "conflict"
+        ResponseItemReason.FORMAT -> "format"
+    }
+
+private fun normalizeCandidateTarget(target: String): String = java.text.Normalizer.normalize(
+    target.replace("\r\n", "\n").replace('\r', '\n').trim(),
+    java.text.Normalizer.Form.NFC,
+)
 
 private fun resolveStableId(
     result: ContextualTranslationResult,
     outgoing: OutgoingRequest,
 ): String? {
     val normalized = ContextualResponseParser.normalizeBatchId(result.id)
-    return outgoing.requestIdToStableId[normalized]
+    val idStableId = outgoing.requestIdToStableId[normalized]
         ?: outgoing.requestIdToStableId[result.id]
-        ?: result.targetKey?.let { target ->
-            outgoing.requestIdToStableId[BatchTranslationProtocol.blockId(target.pageIndex, target.blockIndex)]
-        }
         ?: outgoing.locationToStableId.entries.firstOrNull { (location, _) ->
-            result.id == location.toString()
+            outgoing.request.protocol == eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol.LEGACY &&
+                result.id == location.toString()
         }?.value
+        ?: return null
+    val targetKey = result.targetKey ?: return idStableId
+    val keyStableId = outgoing.targetKeyToStableId[targetKey] ?: return null
+    return idStableId.takeIf { it == keyStableId }
 }
-
-private fun resolveStableId(
-    rawId: String,
-    outgoing: OutgoingRequest,
-): String? = outgoing.requestIdToStableId[ContextualResponseParser.normalizeBatchId(rawId)]
-    ?: outgoing.requestIdToStableId[rawId]
 
 private fun remainingIds(
     envelope: FrozenAiEnvelope,
@@ -846,10 +929,12 @@ private fun completedNaturalPrefix(
     val completeIds = envelope.blocksById.values
         .filter { block ->
             block.userEditedAt != null ||
-                (
-                    block.originalTranslation.isNotBlank() &&
-                        block.originalTranslation.trim() != block.sourceText.trim()
-                    ) ||
+                TranslationOutputSemantics.isResolved(
+                    source = block.sourceText,
+                    output = block.originalTranslation,
+                    sourceLanguageCode = envelope.sourceLanguageCode,
+                    targetLanguageCode = envelope.targetLanguageCode,
+                ) ||
                 block.stableId in translations
         }
         .mapTo(hashSetOf()) { it.stableId }
@@ -873,6 +958,7 @@ private fun protocolFailure(
     receivedCount: Int,
     missingCount: Int,
     duplicateCount: Int,
+    conflictCount: Int,
     unknownCount: Int,
     malformedCount: Int,
     rejectedCount: Int,
@@ -883,7 +969,7 @@ private fun protocolFailure(
     retryability = retryability,
     safeSummary = "Contextual response protocol failure (expected=$expectedCount " +
         "received=$receivedCount missing=$missingCount duplicate=$duplicateCount " +
-        "unknown=$unknownCount malformed=$malformedCount rejected=$rejectedCount)",
+        "conflict=$conflictCount unknown=$unknownCount malformed=$malformedCount rejected=$rejectedCount)",
     requestId = envelope.identity,
     attempt = attempt,
 )

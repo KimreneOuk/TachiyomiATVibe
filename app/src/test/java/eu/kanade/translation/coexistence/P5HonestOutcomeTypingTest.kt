@@ -4,6 +4,7 @@ import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
 import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.engines.translator.ProviderFailureRetryability
+import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
@@ -18,7 +19,9 @@ import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTra
 import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.toPrecondition
 import io.kotest.assertions.withClue
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.coEvery
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -133,6 +136,46 @@ class P5HonestOutcomeTypingTest {
                     "renderStatus=READY truth; the typed outcome must match it via the " +
                     "buildTerminalPreparedPage store-terminality discipline.",
             )
+        }
+    }
+
+    @Test
+    fun `scriptless source equality is complete and does not enter the single-page retry loop`() = runBlocking<Unit> {
+        val h = TranslationCoexistenceHarness.create(
+            pageKeys = listOf("p0"),
+            preRegisterInStore = false,
+        )
+        harnessRef.set(h)
+        h.installGraphicsShims()
+        h.fakeRecognition.singlePageText = "OK!"
+        h.registerReaderStream(h.CHAPTER_ID, "p0")
+
+        val requested = mutableListOf<String>()
+        val echoTranslator = object : TextTranslator {
+            override val fromLang = TextRecognizerLanguage.JAPANESE
+            override val toLang = TextTranslatorLanguage.ENGLISH
+
+            override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+                pages.values.flatMap { it.blocks }.forEach { block ->
+                    requested += block.text
+                    block.translation = block.text
+                }
+            }
+
+            override fun close() {}
+        }
+        TranslationCoexistenceHarness.setField(h.engineLane, "textTranslator", echoTranslator)
+
+        h.tapManual("p0")
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+            h.capturedManualJob("p0").join()
+        }
+
+        readManualOutcome(h, "${h.CHAPTER_ID}:p0").shouldBeInstanceOf<SinglePageOutcome.Completed>()
+        requested shouldBe listOf("OK!")
+        h.store.snapshot("p0").page.shouldNotBeNull().apply {
+            translationStatus shouldBe StageStatus.READY
+            blocks.single().translation shouldBe "OK!"
         }
     }
 
