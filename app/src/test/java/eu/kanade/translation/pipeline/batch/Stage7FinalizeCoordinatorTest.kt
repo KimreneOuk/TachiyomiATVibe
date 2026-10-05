@@ -241,7 +241,13 @@ class Stage7FinalizeCoordinatorTest {
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
-        val results = request.orderedIds.filterNot(omit::contains).map { id ->
+        val results = request.orderedIds.filterNot { id ->
+            val location = request.locations.getValue(id)
+            val target = request.idMap.getValue(id)
+            val stableId = "p${target.pageIndex}_b${target.blockIndex}"
+            val sourceBlockId = chunk.pages.getValue(location.pageKey).blocks[location.blockIndex].blockId
+            id in omit || stableId in omit || sourceBlockId?.let { it in omit } == true
+        }.map { id ->
             ContextualTranslationResult(
                 id = id,
                 targetKey = request.idMap[id],

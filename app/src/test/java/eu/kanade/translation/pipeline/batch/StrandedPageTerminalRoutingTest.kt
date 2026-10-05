@@ -131,11 +131,14 @@ class StrandedPageTerminalRoutingTest {
             ChapterArtifactLayout("Chapter 1"),
         )
 
-    private fun lazyStore(): ChapterTranslationStore = ChapterTranslationStore.lazy(
-        artifactParentResolver = { root().createFile("Chapter 1.json")!! },
-        artifactParent = root(),
-        artifactFileName = "Chapter 1.json",
-    )
+    private fun lazyStore(chapterName: String = "Chapter 1"): ChapterTranslationStore {
+        val artifactFileName = "$chapterName.json"
+        return ChapterTranslationStore.lazy(
+            artifactParentResolver = { root().createFile(artifactFileName)!! },
+            artifactParent = root(),
+            artifactFileName = artifactFileName,
+        )
+    }
 
     /**
      * Preflight OCR lane; `blocksFor` decides each page's OCR content so a
@@ -387,9 +390,9 @@ class StrandedPageTerminalRoutingTest {
     }
 
     @Test
-    fun `scriptless checkpoint equality is not dispatched but meaningful Japanese echo pauses the coordinator`() = runTest {
+    fun `scriptless checkpoint equality stays unrequested and only sustained Japanese echo pauses the coordinator`() = runTest {
         val store = lazyStore()
-        val pageKeys = listOf("p1")
+        val pageKeys = (1..17).map { "p$it" } // Three envelopes reach the existing zero-commit pause breaker.
         store.preRegisterPages(pageKeys)
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
         val worker = FakePreflightOcrWorker(store, blocksFor = {
@@ -405,7 +408,6 @@ class StrandedPageTerminalRoutingTest {
         val outcome = coordinator(store, worker, pages, translator, newScheduler(store, pageKeys))
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        outcome.status shouldBe BatchPass1Status.PAUSED
         val durableRun = runRecord(store)
         durableRun.frozenConfig.sourceLang shouldBe "ja"
         durableRun.frozenConfig.targetLang shouldBe "en"
@@ -415,10 +417,45 @@ class StrandedPageTerminalRoutingTest {
         requestedSourceTexts.isNotEmpty() shouldBe true
         requestedSourceTexts.contains("OK!") shouldBe false
         requestedSourceTexts.all { it == "待て！" } shouldBe true
+        (requestedSourceTexts.count { it == "待て！" } >= pageKeys.size) shouldBe true
         // This is the TRANSLATE pause path. EnvelopeDispatcher does not call
         // FINALIZE after this outcome, so the dedicated finalizer witness
         // below owns the stranded-reason assertion.
-        store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldNotBe StageStatus.READY
+        pageKeys.all { store.snapshot(it).page.shouldNotBeNull().translationStatus != StageStatus.READY } shouldBe true
+        outcome.status shouldBe BatchPass1Status.PAUSED
+        // One zero-commit envelope drains normally; the retryable durable failure
+        // keeps the meaningful Japanese echo eligible for a later request.
+        val singleStore = lazyStore(chapterName = "Chapter 2")
+        val singlePageKeys = listOf("p1")
+        val singlePages: List<PageKey> = listOf("p1" to 0)
+        singleStore.preRegisterPages(singlePageKeys)
+        val singleWorker = FakePreflightOcrWorker(singleStore) {
+            listOf(
+                block("b1", "OK!").apply { translation = "OK!" },
+                block("b2", "待て！").apply { translation = "待て！" },
+            )
+        }
+        val singleTranslator = FakeTranslator { _, chunk ->
+            responseFor(chunk) { sourceBlock -> sourceBlock.text }
+        }
+        val singleOutcome = coordinator(
+            singleStore,
+            singleWorker,
+            singlePages,
+            singleTranslator,
+            newScheduler(singleStore, singlePageKeys),
+        ).runPass1(singlePages, TranslatorComputeClass.REMOTE_IO)
+
+        singleOutcome.status shouldBe BatchPass1Status.COMPLETED
+        singleOutcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+        singleTranslator.requests.size shouldBe 2
+        val singleRequestedSourceTexts = singleTranslator.requests.flatMap { chunk ->
+            chunk.pages.values.flatMap { page -> page.blocks.map { it.text } }
+        }
+        singleRequestedSourceTexts.isNotEmpty() shouldBe true
+        singleRequestedSourceTexts.all { it == "待て！" } shouldBe true
+        singleStore.snapshot("p1").page.shouldNotBeNull().translationStatus shouldNotBe StageStatus.READY
+        singleStore.durableFailure("p1").shouldNotBeNull().status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
     }
 
     @Test

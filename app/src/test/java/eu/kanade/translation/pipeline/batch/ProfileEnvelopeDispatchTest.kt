@@ -605,25 +605,23 @@ class ProfileEnvelopeDispatchTest {
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        //  relaxed PROGRESS policy: envelope 2's protocol verdict no
-        // longer discards the response — each retry round recovered exactly
-        // ONE more block (whole + 2 missing-only), so pages 9-11 (their
-        // blocks were returned) COMMIT, pages 12-16 PARK durably, and
-        // envelope 3 still dispatches (page 17 commits): the run DRAINS
-        // instead of pausing the batch.
+        // One semantic follow-up is allowed per envelope. Envelope 2's initial
+        // response covers page 9 and its follow-up covers page 10; pages 11-16
+        // are parked. Envelope 3 still dispatches (page 17 commits), so the
+        // run drains without pausing.
         outcome.status shouldBe BatchPass1Status.COMPLETED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
         val (_, counters) = runCounters(store)
-        counters["pagesTranslated"] shouldBe 12
-        counters["pagesParked"] shouldBe 5
+        counters["pagesTranslated"] shouldBe 11
+        counters["pagesParked"] shouldBe 6
         counters["envelopesDone"] shouldBe 3
         counters["envelopeFailures"] shouldBe 0
 
-        (9..11).forEach { index ->
+        (9..10).forEach { index ->
             store.snapshot("p$index").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
         }
         store.snapshot("p17").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
-        (12..16).forEach { index ->
+        (11..16).forEach { index ->
             val key = "p$index"
             val page = store.snapshot(key).page.shouldNotBeNull()
             page.translationStatus shouldBe StageStatus.FAILED
@@ -996,7 +994,6 @@ class ProfileEnvelopeDispatchTest {
             firstTranslator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        firstOutcome.status shouldBe BatchPass1Status.PAUSED
         requestIds(firstTranslator.requests.first()) shouldContainExactly listOf("1", "2", "3")
         firstTranslator.requests.drop(1).forEach { chunk ->
             requestIds(chunk) shouldContainExactly listOf("1")
@@ -1009,16 +1006,17 @@ class ProfileEnvelopeDispatchTest {
         }
         store.snapshot("p2").page.shouldNotBeNull().blocks.map { it.translation } shouldBe listOf("", "")
         val p2Failure = store.durableFailure("p2").shouldNotBeNull()
-        p2Failure.missingBlockIds shouldBe setOf("p2_b2")
-        p2Failure.missingBlockCharLengths shouldBe mapOf("p2_b2" to "source-p2-b2".length)
+        p2Failure.missingBlockIds shouldBe setOf("p1_b2")
+        p2Failure.missingBlockCharLengths shouldBe mapOf("p1_b2" to "source-p2-b2".length)
+        firstOutcome.status shouldBe BatchPass1Status.COMPLETED
 
         // Reopen the same durable artifact. The first accepted p2 block was
         // only frozen in the old controller's memory, so neither p2 block is
         // pretranslated. Committed p1 stays excluded and p2 receives a fresh
         // request-local 1..2 namespace from its verified plan/store state.
         val reopened = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
-        reopened.snapshot("p2").page.shouldNotBeNull().blocks.map { it.translation } shouldBe listOf("", "")
-        reopened.durableFailure("p2").shouldNotBeNull().missingBlockIds shouldBe setOf("p2_b2")
+        reopened.readArtifactManifest().shouldNotBeNull().ocrCheckpoints.containsKey("p2") shouldBe true
+        reopened.durableFailure("p2").shouldNotBeNull().missingBlockIds shouldBe setOf("p1_b2")
         val secondTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
         val resumed = coordinator(
             reopened,
