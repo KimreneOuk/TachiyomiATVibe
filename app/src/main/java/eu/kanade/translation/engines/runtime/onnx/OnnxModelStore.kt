@@ -50,6 +50,13 @@ data class PaddleOcrV6DetPaths(
 
 class OnnxModelStore(private val context: Context) {
 
+    /**
+     * Installed model files are hash-checked on their first cached deployment
+     * access by this store. Retain that result for unchanged file metadata so
+     * repeated warm accesses do not hash the full file again.
+     */
+    private val verifiedModelCacheEntries = mutableSetOf<VerifiedModelCacheEntry>()
+
     private val modelsDir: File by lazy {
         File(context.noBackupFilesDir, "tachiyomiat-models").also { dir ->
             if (!dir.exists()) {
@@ -199,19 +206,15 @@ class OnnxModelStore(private val context: Context) {
         val dest = File(dir, name)
         val stampFile = File(dir, "$name.version")
         // Fast path: cached file exists and its recorded stamp matches the
-        // version marker + asset path prefix. This avoids hashing the bundled
-        // asset on every app start; the per-file ONNX integrity check below is
-        // the corruption guard (truncation / wrong magic catches the common
-        // cases cheaply). Full content-hash validation runs only at deploy
-        // time (computeExpectedStamp below) so its cost is paid once per
-        // actual re-copy, not per start.
+        // version marker + asset path prefix. Do not hash the bundled asset
+        // here. Cached bytes are compared with the digest in their recorded
+        // stamp once per unchanged cache entry.
         val expectedPrefix = "$MODEL_ASSET_VERSION:$assetPath:"
         if (dest.exists() && dest.length() > 0) {
             val cachedStamp = ModelDeployment.readStamp(stampFile)
-            val prefixMatches = cachedStamp != null && cachedStamp.startsWith(expectedPrefix)
-            if (prefixMatches) {
-                if (name.endsWith(".onnx")) {
-                    if (looksLikeValidOnnx(dest)) return dest
+            val matchingStamp = cachedStamp?.takeIf { it.startsWith(expectedPrefix) }
+            if (matchingStamp != null) {
+                if (name.endsWith(".onnx") && !looksLikeValidOnnx(dest)) {
                     // Cached copy is structurally invalid (truncated/corrupt).
                     // A bad .onnx previously passed the old 0x08 check and
                     // produced garbage all-gray inpaint or an opaque
@@ -223,7 +226,25 @@ class OnnxModelStore(private val context: Context) {
                         logcat(LogPriority.WARN) { "Could not delete corrupt cached $name; attempting overwrite" }
                     }
                 } else {
-                    return dest
+                    val verificationKey = VerifiedModelCacheEntry(
+                        path = dest.absolutePath,
+                        stamp = matchingStamp,
+                        length = dest.length(),
+                        lastModified = dest.lastModified(),
+                    )
+                    if (verificationKey in verifiedModelCacheEntries ||
+                        ModelDeployment.cachedFileMatchesStamp(dest, matchingStamp)
+                    ) {
+                        verifiedModelCacheEntries += verificationKey
+                        return dest
+                    }
+                    logcat(LogPriority.WARN) {
+                        "Cached $name failed content-hash integrity check (size=${dest.length()}); re-copying from assets"
+                    }
+                    verifiedModelCacheEntries.removeAll { it.path == dest.absolutePath }
+                    if (!dest.delete()) {
+                        logcat(LogPriority.WARN) { "Could not delete corrupt cached $name; attempting overwrite" }
+                    }
                 }
             } else {
                 logcat(LogPriority.INFO) {
@@ -248,12 +269,9 @@ class OnnxModelStore(private val context: Context) {
                 outputStream.write(buffer, 0, bytesRead)
             }
             outputStream.flush()
-            // Compute the stamp from the bundled asset now that we know it needs
-            // deploying, and write it so the next call's fast path can validate.
-            // The stamp embeds the full SHA-256 so a future build-time-hash
-            // Gradle task can compare expected vs cached without re-hashing at
-            // runtime; today the hash is written-but-not-compared on the fast
-            // path (the ONNX header check is the corruption guard instead).
+            // Compute the bundled asset's stamp now that it needs deploying.
+            // Its hash lets the cached-file fast path validate installed bytes
+            // without re-reading the bundled asset.
             val expectedStamp = computeExpectedStamp(assetPath)
             if (!ModelDeployment.writeStamp(stampFile, expectedStamp)) {
                 logcat(LogPriority.WARN) {
@@ -324,6 +342,13 @@ class OnnxModelStore(private val context: Context) {
         if (header[1].toInt() and 0x80 != 0) return false
         return true
     }
+
+    private data class VerifiedModelCacheEntry(
+        val path: String,
+        val stamp: String,
+        val length: Long,
+        val lastModified: Long,
+    )
 
     private companion object {
         // Bundled-model generation label. Bump when shipping a new model
