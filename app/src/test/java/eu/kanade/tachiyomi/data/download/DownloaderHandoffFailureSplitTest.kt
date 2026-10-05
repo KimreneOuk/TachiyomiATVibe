@@ -74,7 +74,11 @@ class DownloaderHandoffFailureSplitTest {
         return downloader
     }
 
-    private fun mockManager(): TranslationManager = mockk(relaxed = true)
+    private fun mockManager(): TranslationManager = mockk(relaxed = true) {
+        coEvery {
+            rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
+        } returns TranslationManager.DownloadRekeyOutcome.Noop
+    }
 
     private fun setField(target: Any, fieldName: String, value: Any) {
         var cls: Class<*>? = target.javaClass
@@ -164,6 +168,26 @@ class DownloaderHandoffFailureSplitTest {
             manager.rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
             manager.startTranslationAfterDownloadIfRequested(any(), any())
         }
+        verify(exactly = 0) { manager.markTranslationHandoffFailed(any(), any()) }
+    }
+
+    @Test
+    fun `no prior translation records still reaches translation admission`() = runBlocking<Unit> {
+        val manager = mockManager()
+        coEvery {
+            manager.rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
+        } returns TranslationManager.DownloadRekeyOutcome.NoTranslationRecords
+        val downloader = downloader(manager)
+        val download = newDownload()
+
+        downloader.handOffAfterFinalization(
+            download = download,
+            pageList = listOf(Page(0, "u0", "iu0")),
+            onDiskKeys = listOf("000.jpg"),
+        )
+
+        download.status shouldBe Download.State.DOWNLOADED
+        coVerify(exactly = 1) { manager.startTranslationAfterDownloadIfRequested(manga, chapter) }
         verify(exactly = 0) { manager.markTranslationHandoffFailed(any(), any()) }
     }
 

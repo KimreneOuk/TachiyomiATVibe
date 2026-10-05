@@ -119,6 +119,7 @@ internal object ChapterJournalReplayReducer {
         var applied = 0
         var ignoredStale = 0
         var validFrames = 0
+        var deferredBulkRekey = false
 
         for (epoch in orderedEpochs) {
             val scan = scanEpoch(epoch)
@@ -214,22 +215,81 @@ internal object ChapterJournalReplayReducer {
                             semanticCorruption = true
                             break
                         }
-                        for (record in bulk.mutations) {
-                            if (applyRecord(
+                        if (frame.kind == ChapterJournalFormat.RecordKind.BULK_REKEY) {
+                            if (!bulk.isRekeyMappingSemanticallyValid()) {
+                                semanticCorruption = true
+                                break
+                            }
+                            val recordsByKey = bulk.mutations.associateBy(ChapterJournalRecord::pageKey)
+                            val destinationRecords = bulk.mapping.values.mapNotNull { destination ->
+                                destination?.let(recordsByKey::get)
+                            }
+                            if (destinationRecords.size != bulk.mapping.size) {
+                                semanticCorruption = true
+                                break
+                            }
+                            if (destinationRecords.any { record ->
+                                    record.state == null ||
+                                        (
+                                            record.artifactContentHash != null &&
+                                                !artifactStateMatches(record, artifactResolver)
+                                            )
+                                }
+                            ) {
+                                // The durable event precedes its manifest publication. Leave every
+                                // page/winner untouched and replay no later frame until the current
+                                // manifest can authenticate all destination snapshots.
+                                deferredBulkRekey = true
+                                break
+                            }
+
+                            val stagedPages = LinkedHashMap(pages)
+                            val stagedWinners = HashMap(winners)
+                            val stagedInvalidPages = LinkedHashSet(invalidPages)
+                            val stagedPageOutcomes = LinkedHashMap(pageOutcomes)
+                            val stagedFailures = LinkedHashMap(durableFailures)
+                            val allMutationsAccepted = bulk.mutations.all { record ->
+                                applyRecord(
                                     epoch = epoch,
                                     commitSeq = checkNotNull(frame.commitSeq),
                                     record = record,
-                                    pages = pages,
-                                    winners = winners,
-                                    invalidPages = invalidPages,
-                                    pageOutcomes = pageOutcomes,
-                                    durableFailures = durableFailures,
+                                    pages = stagedPages,
+                                    winners = stagedWinners,
+                                    invalidPages = stagedInvalidPages,
+                                    pageOutcomes = stagedPageOutcomes,
+                                    durableFailures = stagedFailures,
                                     artifactResolver = artifactResolver,
                                 )
-                            ) {
-                                applied++
+                            }
+                            if (!allMutationsAccepted) {
+                                ignoredStale += bulk.mutations.size
                             } else {
-                                ignoredStale++
+                                pages.replaceWith(stagedPages)
+                                winners.replaceWith(stagedWinners)
+                                invalidPages.clear()
+                                invalidPages.addAll(stagedInvalidPages)
+                                pageOutcomes.replaceWith(stagedPageOutcomes)
+                                durableFailures.replaceWith(stagedFailures)
+                                applied += bulk.mutations.size
+                            }
+                        } else {
+                            for (record in bulk.mutations) {
+                                if (applyRecord(
+                                        epoch = epoch,
+                                        commitSeq = checkNotNull(frame.commitSeq),
+                                        record = record,
+                                        pages = pages,
+                                        winners = winners,
+                                        invalidPages = invalidPages,
+                                        pageOutcomes = pageOutcomes,
+                                        durableFailures = durableFailures,
+                                        artifactResolver = artifactResolver,
+                                    )
+                                ) {
+                                    applied++
+                                } else {
+                                    ignoredStale++
+                                }
                             }
                         }
                     }
@@ -250,7 +310,9 @@ internal object ChapterJournalReplayReducer {
                         }
                     }
                 }
+                if (deferredBulkRekey) break
             }
+            if (deferredBulkRekey) break
             if (semanticCorruption) corruptEpochs += epoch.order
         }
 
@@ -489,25 +551,7 @@ internal object ChapterJournalReplayReducer {
         }
         val state = record.state
         if (state != null) {
-            val hash = record.artifactContentHash
-            val cleanedImageIdentityMatches = record.cleanedImageName == state.cleanedImageName &&
-                record.cleanedImageContentHash == state.cleanedImageContentHash &&
-                when (state.cleanedImageName) {
-                    null -> state.cleanedImageContentHash == null
-                    else -> state.cleanedImageContentHash?.let(SHA256_HEX::matches) == true
-                }
-            // Bind the payload replay will apply to the identity claimed by
-            // the record before consulting any artifact lookup. This remains
-            // mandatory even for injected resolvers: a valid pointer cannot
-            // authenticate a different embedded state.
-            val embeddedStateMatches = cleanedImageIdentityMatches &&
-                hash != null &&
-                runCatching { StageFingerprints.pageSnapshot(state) == hash }.getOrDefault(false)
-            val artifactMatches = hash != null &&
-                embeddedStateMatches &&
-                artifactResolver != null &&
-                runCatching { artifactResolver.matches(record.pageKey, hash, state) }.getOrDefault(false)
-            if (!artifactMatches) {
+            if (!artifactStateMatches(record, artifactResolver)) {
                 pages.remove(record.pageKey)
                 winners[record.pageKey] = winner
                 invalidPages += record.pageKey
@@ -525,6 +569,43 @@ internal object ChapterJournalReplayReducer {
             pageOutcomes[record.pageKey] = ChapterJournalPageOutcome.TOMBSTONED
         }
         return true
+    }
+
+    /** True only when the exact replay payload matches its current manifest pointer and bytes. */
+    private fun artifactStateMatches(
+        record: ChapterJournalRecord,
+        artifactResolver: ChapterJournalArtifactIdentityResolver?,
+    ): Boolean {
+        val state = record.state ?: return false
+        val hash = record.artifactContentHash ?: return false
+        val cleanedImageIdentityMatches = record.cleanedImageName == state.cleanedImageName &&
+            record.cleanedImageContentHash == state.cleanedImageContentHash &&
+            when (state.cleanedImageName) {
+                null -> state.cleanedImageContentHash == null
+                else -> state.cleanedImageContentHash?.let(SHA256_HEX::matches) == true
+            }
+        // Bind the replay payload itself before consulting any manifest pointer.
+        val embeddedStateMatches = cleanedImageIdentityMatches &&
+            runCatching { StageFingerprints.pageSnapshot(state) == hash }.getOrDefault(false)
+        return embeddedStateMatches && artifactResolver != null &&
+            runCatching { artifactResolver.matches(record.pageKey, hash, state) }.getOrDefault(false)
+    }
+
+    private fun ChapterJournalBulkRecord.isRekeyMappingSemanticallyValid(): Boolean {
+        if (mapping.isEmpty()) return mutations.isEmpty()
+        if (mapping.keys.any(String::isBlank) || mapping.values.any { it.isNullOrBlank() }) return false
+        if (mapping.values.distinct().size != mapping.size) return false
+        val recordsByKey = mutations.associateBy(ChapterJournalRecord::pageKey)
+        return mapping.all { (source, destination) ->
+            val sourceTombstone = recordsByKey[source]
+            val destinationRecord = destination?.let(recordsByKey::get)
+            sourceTombstone != null && sourceTombstone.state == null && destinationRecord?.state != null
+        }
+    }
+
+    private fun <K, V> MutableMap<K, V>.replaceWith(source: Map<K, V>) {
+        clear()
+        putAll(source)
     }
 
     private fun versionedPayload(

@@ -825,20 +825,93 @@ class Downloader private constructor(
                     )
                 }
                 val onlineKeys = pageList.map { page -> onlinePageTranslationKey(page.imageUrl, page.url) }
-                translationManager.rekeyTranslationForCompletedDownload(
-                    chapter = download.chapter,
-                    manga = download.manga,
-                    source = download.source,
-                    onlineKeyByPageIndex = onlineKeys,
-                    onDiskKeyByPageIndex = onDiskKeys,
-                )
-                traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
-                    BatchDownloadDiagnostics.handoff(
-                        download.chapter.id,
-                        generation,
-                        stage,
-                        BatchDownloadResult.SUCCESS,
+                when (
+                    val outcome = translationManager.rekeyTranslationForCompletedDownload(
+                        chapter = download.chapter,
+                        manga = download.manga,
+                        source = download.source,
+                        onlineKeyByPageIndex = onlineKeys,
+                        onDiskKeyByPageIndex = onDiskKeys,
                     )
+                ) {
+                    is TranslationManager.DownloadRekeyOutcome.Performed -> {
+                        if (outcome.skippedCollisions > 0) {
+                            // Partial truth: moved pages landed but collision-skipped
+                            // destinations keep stale online-key records. Never SUCCESS.
+                            val reason =
+                                "Rekey partial: ${outcome.moved} moved, " +
+                                    "${outcome.skippedCollisions} destination collisions skipped"
+                            traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
+                                BatchDownloadDiagnostics.handoff(
+                                    download.chapter.id,
+                                    generation,
+                                    stage,
+                                    BatchDownloadResult.FAILED,
+                                    RuntimeException(reason),
+                                )
+                            }
+                            translationManager.markTranslationHandoffFailed(download.chapter.id, reason)
+                            return
+                        }
+                        traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
+                            BatchDownloadDiagnostics.handoff(
+                                download.chapter.id,
+                                generation,
+                                stage,
+                                BatchDownloadResult.SUCCESS,
+                            )
+                        }
+                    }
+                    TranslationManager.DownloadRekeyOutcome.Noop -> {
+                        // Honest no-op (nothing to migrate / already re-keyed).
+                        traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
+                            BatchDownloadDiagnostics.handoff(
+                                download.chapter.id,
+                                generation,
+                                stage,
+                                BatchDownloadResult.SUCCESS,
+                            )
+                        }
+                    }
+                    TranslationManager.DownloadRekeyOutcome.NoTranslationRecords -> {
+                        // The chapter has no reusable translation artifacts;
+                        // this is an explicit clean admission case, not reuse.
+                        traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
+                            BatchDownloadDiagnostics.handoff(
+                                download.chapter.id,
+                                generation,
+                                stage,
+                                BatchDownloadResult.FALSE,
+                            )
+                        }
+                    }
+                    is TranslationManager.DownloadRekeyOutcome.Deferred,
+                    is TranslationManager.DownloadRekeyOutcome.Rejected,
+                    -> {
+                        val reason = when (outcome) {
+                            is TranslationManager.DownloadRekeyOutcome.Deferred ->
+                                "Rekey deferred: ${outcome.reason}"
+                            is TranslationManager.DownloadRekeyOutcome.Rejected ->
+                                "Rekey rejected: ${outcome.reason}"
+                            else -> "Rekey not completed"
+                        }
+                        traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
+                            BatchDownloadDiagnostics.handoff(
+                                download.chapter.id,
+                                generation,
+                                stage,
+                                BatchDownloadResult.FAILED,
+                                RuntimeException(
+                                    reason,
+                                    (outcome as? TranslationManager.DownloadRekeyOutcome.Rejected)?.cause,
+                                ),
+                            )
+                        }
+                        translationManager.markTranslationHandoffFailed(download.chapter.id, reason)
+                        // No admission on a deferred/rejected migration: a request
+                        // must never sit silently PREPARING.
+                        return
+                    }
                 }
             }
             stage = BatchDownloadStage.ADMISSION

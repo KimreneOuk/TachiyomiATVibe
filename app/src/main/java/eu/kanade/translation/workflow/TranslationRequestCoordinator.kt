@@ -35,6 +35,8 @@ internal class TranslationRequestCoordinator(
     private val translatorProvider: () -> ChapterTranslator,
     private val getQueuedTranslationOrNull: (Long) -> Translation?,
     private val translateChapter: (Manga, Chapter, Long?, Boolean) -> Unit,
+    private val hasPendingDownloadRekeyFn: (Long) -> Boolean = { false },
+    private val reconcilePendingDownloadRekeyFn: suspend (Long) -> Boolean = { true },
 ) {
 
     private val pendingRequestStore get() = pendingRequestStoreProvider()
@@ -94,6 +96,73 @@ internal class TranslationRequestCoordinator(
         currentRequest(chapterId)?.let { request ->
             !request.isTerminal && request.generation == generation
         } == true
+
+    /** Captures only the currently attached, live request for this download. */
+    fun downloadAttachGeneration(chapterId: Long): Long? = synchronized(pendingRequestMutationLock) {
+        val current = currentRequest(chapterId) ?: return@synchronized null
+        current.generation.takeIf {
+            !current.isTerminal && downloadAttachGenerations[chapterId] == current.generation
+        }
+    }
+
+    /**
+     * Retries only the request that failed because its completed-download
+     * re-key was deferred/rejected. The original generation and download
+     * attachment must still match; cancel/replacement/pause or existing queue
+     * ownership leaves the request visible for explicit user action.
+     */
+    fun retryRekeyFailedAdmissionIfCurrent(
+        manga: Manga,
+        chapter: Chapter,
+        expectedGeneration: Long,
+        autoStart: Boolean,
+    ): Boolean {
+        val chapterId = chapter.id ?: return false
+        val retryGeneration = synchronized(pendingRequestMutationLock) {
+            val current = currentRequest(chapterId) ?: return false
+            if (
+                current.generation != expectedGeneration ||
+                current.phase != TranslationRequestPhase.ADMISSION_FAILED ||
+                current.failureKind != TranslationRequestFailureKind.QUEUE_ADMISSION_FAILED ||
+                !current.isDownloadRekeyFailure() ||
+                downloadAttachGenerations[chapterId] != expectedGeneration ||
+                translator.isPaused ||
+                queueState.value.any { it.chapter.id == chapterId }
+            ) {
+                return false
+            }
+            setPendingTranslationRequest(
+                chapterId = chapterId,
+                phase = TranslationRequestPhase.PREPARING,
+                reason = "Retrying translation after completed-download reconciliation",
+            )
+            currentRequest(chapterId)?.generation?.also { downloadAttachGenerations[chapterId] = it }
+        } ?: return false
+        translateChapter(manga, chapter, retryGeneration, autoStart)
+        if (queueState.value.any { it.chapter.id == chapterId }) return true
+
+        // translateChapter can decline before queue admission (for example a
+        // reader session won a race after the full leave). Keep the request
+        // visible and retryable instead of leaving a false PREPARING state.
+        synchronized(pendingRequestMutationLock) {
+            val current = currentRequest(chapterId)
+            if (current?.generation == retryGeneration && current.phase == TranslationRequestPhase.PREPARING) {
+                setPendingTranslationRequest(
+                    chapterId = chapterId,
+                    phase = TranslationRequestPhase.ADMISSION_FAILED,
+                    reason = "Download re-key reconciliation completed but batch admission was deferred",
+                    failureKind = TranslationRequestFailureKind.QUEUE_ADMISSION_FAILED,
+                )
+            }
+        }
+        return false
+    }
+
+    private fun TranslationRequestState.isDownloadRekeyFailure(): Boolean =
+        reason?.startsWith("Rekey deferred:") == true ||
+            reason?.startsWith("Rekey rejected:") == true ||
+            reason?.startsWith("Rekey partial:") == true ||
+            reason?.startsWith("Download re-key reconciliation ") == true
 
     /** Lock-internal fence check used by the fenced mutation helpers. */
     private fun isRequestCurrent(chapterId: Long, generation: Long): Boolean =
@@ -479,6 +548,23 @@ internal class TranslationRequestCoordinator(
         autoStart: Boolean = true,
     ) {
         val chapterId = chapter.id ?: return
+        // A retained download re-key mapping MUST be reconciled (or honestly
+        // absent) before the request may advance to PREPARING/batch admission.
+        // The reconcile runs OUTSIDE the request mutation lock (store-level
+        // synchronization only) so no nested lock can deadlock; the fenced
+        // block below re-validates the request afterwards, so a cancel/pause
+        // racing the reconcile still wins.
+        if (hasPendingDownloadRekeyFn(chapterId) && !reconcilePendingDownloadRekeyFn(chapterId)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT download re-key reconciliation not clean for chapter $chapterId; " +
+                    "admission refused without a PREPARING request"
+            }
+            markTranslationHandoffFailed(
+                chapterId,
+                "Download re-key reconciliation deferred or rejected; retry translation after the reader fully closes",
+            )
+            return
+        }
         // Atomic fence (post-review fix): the generation check and the
         // PREPARING write happen under the SAME mutation lock, so a cancel
         // landing between check and write is serialized (either the cancel

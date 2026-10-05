@@ -862,7 +862,8 @@ class ChapterTranslationStoreJournalCaptureTest {
             beforeRekey.expectedPageKeys shouldBe setOf(oldKey)
             beforeRekey.pageOutcomes.keys shouldBe emptySet()
 
-            store.rekeyPages(listOf(oldKey), listOf(newKey)) shouldContainExactly listOf(oldKey to newKey)
+            store.rekeyPages(listOf(oldKey), listOf(newKey)) shouldBe
+                ChapterTranslationStore.PageRekeyOutcome.Moved(listOf(oldKey to newKey), skippedCollisions = 0)
             runCurrent()
             writer.drainAndClose()
 
@@ -1494,7 +1495,8 @@ class ChapterTranslationStoreJournalCaptureTest {
 
             val oldKeys = pages.keys.toList()
             val newKeys = oldKeys.map { "disk-$it" }
-            store.rekeyPages(oldKeys, newKeys) shouldContainExactly oldKeys.zip(newKeys)
+            store.rekeyPages(oldKeys, newKeys) shouldBe
+                ChapterTranslationStore.PageRekeyOutcome.Moved(oldKeys.zip(newKeys), skippedCollisions = 0)
             runCurrent()
 
             val frames = ChapterJournalFormat.scanSegment(
@@ -1660,10 +1662,13 @@ class ChapterTranslationStoreJournalCaptureTest {
             store.rekeyPages(
                 onlineKeys = listOf(oldValidKey, oldPointerlessKey, oldSourceOnlyKey),
                 onDiskKeys = listOf(newValidKey, newPointerlessKey, newSourceOnlyKey),
-            ) shouldContainExactly listOf(
-                oldValidKey to newValidKey,
-                oldPointerlessKey to newPointerlessKey,
-                oldSourceOnlyKey to newSourceOnlyKey,
+            ) shouldBe ChapterTranslationStore.PageRekeyOutcome.Moved(
+                listOf(
+                    oldValidKey to newValidKey,
+                    oldPointerlessKey to newPointerlessKey,
+                    oldSourceOnlyKey to newSourceOnlyKey,
+                ),
+                skippedCollisions = 0,
             )
             // Draining the journal writer deliberately does not flush the legacy store scheduler.
             runCurrent()
@@ -1773,34 +1778,129 @@ class ChapterTranslationStoreJournalCaptureTest {
             replayed.missingPageKeys shouldBe emptySet()
             replayed.ignoredStaleRecordCount shouldBe 0
             (oldValidKey in replayed.pages || oldPointerlessKey in replayed.pages || oldSourceOnlyKey in replayed.pages) shouldBe false
+
+            // A rekey frame without its old-key tombstone must not install the
+            // authenticated destination alongside the earlier old-key winner,
+            // and replay must stop before a later tombstone can hide that defect.
+            val bothKeyManifest = currentManifest.copy(
+                pages = currentManifest.pages + (oldValidKey to checkNotNull(manifest.pages[oldValidKey])),
+            )
+            val destinationOnlyBulk = bulk.copy(
+                mapping = mapOf(oldValidKey to newValidKey),
+                mutations = listOf(bulk.mutations.single { it.pageKey == newValidKey }),
+            )
+            val malformedSessionId = UUID.nameUUIDFromBytes("missing source tombstone".encodeToByteArray())
+            val malformedEpochBytes = ByteArrayOutputStream().apply {
+                write(ChapterJournalFormat.segmentHeader(0L, 1L, 22L, malformedSessionId))
+                write(
+                    ChapterJournalFormat.encodeFrame(
+                        frameSeq = 1L,
+                        commitSeq = null,
+                        kind = ChapterJournalFormat.RecordKind.INVENTORY,
+                        payload = journalJson.encodeToString(
+                            ChapterJournalInventoryRecord(
+                                chapterIdentityHash = "malformed-rekey-test",
+                                expectedPageKeys = listOf(oldValidKey),
+                                expectedPageCount = 1,
+                                sourceFingerprint = "malformed-rekey-inventory",
+                            ),
+                        ).encodeToByteArray(),
+                    ),
+                )
+                write(
+                    ChapterJournalFormat.encodeFrame(
+                        frameSeq = 2L,
+                        commitSeq = 1L,
+                        kind = ChapterJournalFormat.RecordKind.BULK_REKEY,
+                        payload = journalJson.encodeToString(destinationOnlyBulk).encodeToByteArray(),
+                    ),
+                )
+                write(
+                    ChapterJournalFormat.encodeFrame(
+                        frameSeq = 3L,
+                        commitSeq = 2L,
+                        kind = ChapterJournalFormat.RecordKind.FREE_STATE,
+                        payload = journalJson.encodeToString(
+                            bulk.mutations.single { it.pageKey == oldValidKey },
+                        ).encodeToByteArray(),
+                    ),
+                )
+            }.toByteArray()
+            val malformedEpochOrder = ChapterJournalFormat.EpochOrderKey(1L, 22L, malformedSessionId)
+            val replayedMalformedMapping = ChapterJournalReplayReducer.replay(
+                epochs = listOf(
+                    priorEpoch,
+                    ChapterJournalReplayEpoch(
+                        order = malformedEpochOrder,
+                        segments = listOf(ChapterJournalReplaySegment(0L, malformedEpochBytes)),
+                    ),
+                ),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(artifactEngine, bothKeyManifest),
+            )
+            replayedMalformedMapping.pages.keys shouldBe setOf(oldValidKey)
+            replayedMalformedMapping.pages.getValue(oldValidKey).blocks.single().translation shouldBe "committed text"
+            replayedMalformedMapping.pages.containsKey(newValidKey) shouldBe false
+            replayedMalformedMapping.corruptEpochs.contains(malformedEpochOrder) shouldBe true
         } finally {
             store.closeAndFlush()
         }
     }
 
     @Test
-    fun `rekey manifest publication failure leaves legacy keys and writer prefix untouched`() = runTest {
+    fun `journal capture and manifest publication failures preserve the old rekey state`() = runTest {
+        val captureFailure = IOException("injected journal sink open failure")
+        val failedStorage = MemoryStorage().apply { openFailure = captureFailure }
+        val failedFixture = committedRekeyFixture(
+            testScheduler,
+            "Rekey capture failure",
+            journalStorage = failedStorage,
+        )
+        try {
+            val rejected = failedFixture.store.rekeyPages(
+                listOf(failedFixture.oldKey),
+                listOf(failedFixture.newKey),
+            ).shouldBeInstanceOf<ChapterTranslationStore.PageRekeyOutcome.Rejected>()
+            describeCauseChain(rejected.cause).contains(checkNotNull(captureFailure.message)) shouldBe true
+            failedFixture.store.pages.keys shouldBe setOf(failedFixture.oldKey)
+            checkNotNull(failedFixture.engine.readManifest()).pages.keys shouldBe setOf(failedFixture.oldKey)
+            failedStorage.segmentIndexes() shouldBe emptyList()
+        } finally {
+            failedFixture.store.closeAndFlush()
+        }
+
         val fixture = committedRekeyFixture(testScheduler, "Rekey publish failure")
         val oldSnapshotBytes = checkNotNull(fixture.io.files[fixture.oldSnapshotName]).copyOf()
         fixture.io.writeNamesToFail += fixture.layout.manifestFileName
         try {
-            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey)) shouldBe emptyList()
+            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey))
+                .shouldBeInstanceOf<ChapterTranslationStore.PageRekeyOutcome.Rejected>()
             fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
             checkNotNull(fixture.engine.readManifest()).pages.keys shouldBe setOf(fixture.oldKey)
             checkNotNull(fixture.io.files[fixture.oldSnapshotName]).contentEquals(oldSnapshotBytes) shouldBe true
-            runCurrent()
-            fixture.storage.segmentIndexes() shouldBe emptyList()
+            val frames = ChapterJournalFormat.scanSegment(
+                bytes = fixture.storage.readSegment(0L),
+                expectedSegmentIndex = 0L,
+                expectedGeneration = 0L,
+                expectedEpochOrdinal = 22L,
+                expectedSessionId = fixture.sessionId,
+                firstExpectedFrameSeq = 1L,
+                firstExpectedCommitSeq = 1L,
+            ).frames
+            frames.any { it.kind == ChapterJournalFormat.RecordKind.BULK_REKEY } shouldBe true
         } finally {
             fixture.store.closeAndFlush()
         }
     }
 
     @Test
-    fun `crash after rekey manifest publication but before store swap and journal frame is retryable`() = runTest {
+    fun `captured rekey waits for manifest publication and retries from file backed replay`() = runTest {
+        val journalDirectory = File(chapterDir, "rekey-retry-journal-epoch")
+        val journalDurableRoot = File(chapterDir, "rekey-retry-journal-root")
         val fixture = committedRekeyFixture(
             scheduler = testScheduler,
-            chapterName = "Rekey crash before bulk handoff",
+            chapterName = "Rekey publication retry",
             includeCleanedImage = false,
+            journalStorage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot),
         )
         var storeClosed = false
         try {
@@ -1809,73 +1909,186 @@ class ChapterTranslationStoreJournalCaptureTest {
                     blocks = blocks.map { it.copy(translation = "durable before rekey") }.toMutableList()
                 }
             }
+            fixture.store.flush()
+            fixture.writer.flushToCaptureBarrier()
+            val capturedState = fixture.store.pages.getValue(fixture.oldKey)
+            val previousManifest = checkNotNull(fixture.engine.readManifest())
+            val durableRecord = previousManifest.pages.getValue(fixture.oldKey)
+            val durableSnapshotName = checkNotNull(
+                durableRecord.candidate?.pageSnapshotFileName ?: durableRecord.committed?.pageSnapshotFileName,
+            )
+            val durableSnapshot = checkNotNull(fixture.engine.readPageSnapshot(durableSnapshotName)).toPublishedPage()
+            durableSnapshot shouldBe capturedState
+            durableSnapshot.blocks.single().translation shouldBe "durable before rekey"
+            val priorResolver = ChapterJournalReplayReducer.artifactResolver(fixture.engine, previousManifest)
+            priorResolver.matches(
+                fixture.oldKey,
+                StageFingerprints.pageSnapshot(capturedState),
+                capturedState,
+            ) shouldBe true
+            val oldEpoch = replayEpoch(
+                storage = fixture.storage,
+                generation = 0L,
+                ordinal = 22L,
+                sessionId = fixture.sessionId,
+            )
+            val priorReplay = ChapterJournalReplayReducer.replay(
+                epochs = listOf(oldEpoch),
+                artifactResolver = priorResolver,
+            )
+            priorReplay.pages[fixture.oldKey] shouldBe capturedState
+            priorReplay.invalidPageKeys shouldBe emptySet()
+            priorReplay.missingPageKeys shouldBe emptySet()
+
+            fixture.io.writeNamesToFail += fixture.layout.manifestFileName
+            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey))
+                .shouldBeInstanceOf<ChapterTranslationStore.PageRekeyOutcome.Rejected>()
+            fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
+            fixture.engine.readManifest() shouldBe previousManifest
+
+            val laterCredit = checkNotNull(fixture.writer.tryAcquireShadowCredit(foreground = false))
+            fixture.store.withJournalCapturePermit {
+                fixture.writer.captureLegacyDeletion(
+                    commitSeq = fixture.writer.nextCommitSeq(),
+                    credit = laterCredit,
+                    pageKey = fixture.newKey,
+                    generation = 0L,
+                    fencingToken = 0L,
+                    pageVersion = 1L,
+                    inventory = ChapterJournalInventorySnapshot.EMPTY,
+                )
+            }
+            fixture.writer.flushToCaptureBarrier()
+
+            val reopenedBeforeRetryEngine = ChapterArtifactEngine(
+                AtomicChapterDocuments(fixture.io),
+                fixture.layout,
+            )
+            val reopenedBeforeRetryManifest = checkNotNull(reopenedBeforeRetryEngine.readManifest())
+            reopenedBeforeRetryManifest shouldBe previousManifest
+            val oldManifestReplay = ChapterJournalReplayReducer.replay(
+                epochs = listOf(
+                    replayEpoch(
+                        storage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot),
+                        generation = 0L,
+                        ordinal = 22L,
+                        sessionId = fixture.sessionId,
+                    ),
+                ),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(
+                    reopenedBeforeRetryEngine,
+                    reopenedBeforeRetryManifest,
+                ),
+            )
+            oldManifestReplay.pages[fixture.oldKey] shouldBe capturedState
+            oldManifestReplay.pages.getValue(fixture.oldKey).blocks.single().translation shouldBe "durable before rekey"
+            oldManifestReplay.pageOutcomes[fixture.oldKey] shouldBe ChapterJournalPageOutcome.RECORDED
+            oldManifestReplay.pageOutcomes.containsKey(fixture.newKey) shouldBe false
+
+            val framesBeforeRetry = ChapterJournalFormat.scanSegment(
+                bytes = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot).readSegment(0L),
+                expectedSegmentIndex = 0L,
+                expectedGeneration = 0L,
+                expectedEpochOrdinal = 22L,
+                expectedSessionId = fixture.sessionId,
+                firstExpectedFrameSeq = 1L,
+                firstExpectedCommitSeq = 1L,
+            ).frames
+            framesBeforeRetry.any { it.kind == ChapterJournalFormat.RecordKind.BULK_REKEY } shouldBe true
+
+            fixture.io.writeNamesToFail.remove(fixture.layout.manifestFileName)
+            var recoveredBetweenPublicationAndSwap = false
+            fixture.store.afterRekeyManifestPublicationBeforeLiveSwapForTests = {
+                // The durable manifest and BULK_REKEY are visible while the live map is
+                // deliberately still on the old key: this is the second crash window.
+                fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
+                val boundaryEngine = ChapterArtifactEngine(
+                    AtomicChapterDocuments(fixture.io),
+                    fixture.layout,
+                )
+                val boundaryManifest = checkNotNull(boundaryEngine.readManifest())
+                boundaryManifest.pages.keys shouldBe setOf(fixture.newKey)
+                val boundaryReplay = ChapterJournalReplayReducer.replay(
+                    epochs = listOf(
+                        replayEpoch(
+                            storage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot),
+                            generation = 0L,
+                            ordinal = 22L,
+                            sessionId = fixture.sessionId,
+                        ),
+                    ),
+                    artifactResolver = ChapterJournalReplayReducer.artifactResolver(
+                        boundaryEngine,
+                        boundaryManifest,
+                    ),
+                )
+                boundaryReplay.pages.keys shouldBe setOf(fixture.newKey)
+                boundaryReplay.pages.getValue(fixture.newKey).blocks.single().translation shouldBe
+                    "durable before rekey"
+                boundaryReplay.invalidPageKeys shouldBe emptySet()
+                boundaryReplay.missingPageKeys shouldBe emptySet()
+                recoveredBetweenPublicationAndSwap = true
+            }
+            try {
+                fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey)) shouldBe
+                    ChapterTranslationStore.PageRekeyOutcome.Moved(
+                        listOf(fixture.oldKey to fixture.newKey),
+                        skippedCollisions = 0,
+                    )
+            } finally {
+                fixture.store.afterRekeyManifestPublicationBeforeLiveSwapForTests = null
+            }
+            recoveredBetweenPublicationAndSwap shouldBe true
+            fixture.store.pages.keys shouldBe setOf(fixture.newKey)
+            fixture.store.pages.getValue(fixture.newKey).blocks.single().translation shouldBe "durable before rekey"
             runCurrent()
             fixture.store.closeAndFlush()
             storeClosed = true
 
-            val capturedState = fixture.store.pages.getValue(fixture.oldKey)
-            val previousManifest = checkNotNull(fixture.engine.readManifest())
-            val oldEpoch = replayEpoch(
-                storage = fixture.storage,
-                generation = 0L,
-                ordinal = 0L,
-                sessionId = UUID(0L, 0L),
+            val reopenedEngine = ChapterArtifactEngine(
+                AtomicChapterDocuments(fixture.io),
+                fixture.layout,
             )
-            val priorReplay = ChapterJournalReplayReducer.replay(
-                epochs = listOf(oldEpoch),
-                artifactResolver = ChapterJournalReplayReducer.artifactResolver(fixture.engine, previousManifest),
-            )
-            priorReplay.pages[fixture.oldKey] shouldBe capturedState
-
-            val moves = mapOf(fixture.oldKey to fixture.newKey)
-            val prepared = checkNotNull(
-                fixture.engine.preparePageSnapshotRekey(
-                    manifest = previousManifest,
-                    moves = moves,
-                    livePages = fixture.store.pages,
-                    operationId = "crash-after-manifest-publication",
-                ),
-            )
-            val movedSourceSha = previousManifest.sourceShaByPageKey.mapKeys { (pageKey, _) ->
-                moves[pageKey] ?: pageKey
-            }
-            val outcome = fixture.engine.publishSidecarPointers(
-                manifest = previousManifest,
-                sidecars = emptyList(),
-                updatePointers = { current ->
-                    check(current == previousManifest)
-                    current.copy(
-                        pages = prepared.pages,
-                        sourceShaByPageKey = movedSourceSha,
-                        updatedAtEpochMs = System.currentTimeMillis(),
-                    )
-                },
-            )
-            val publishedManifest = (outcome as? ChapterArtifactEngine.TransactionOutcome.Committed)
-                ?.manifest ?: error("rekey manifest publication failed")
-
-            fixture.engine.readManifest() shouldBe publishedManifest
-            fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
-            val oldFrames = ChapterJournalFormat.scanSegment(
-                bytes = fixture.storage.readSegment(0L),
+            val publishedManifest = checkNotNull(reopenedEngine.readManifest())
+            publishedManifest.pages.keys shouldBe setOf(fixture.newKey)
+            val reopenedStorage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot)
+            val framesAfterRetry = ChapterJournalFormat.scanSegment(
+                bytes = reopenedStorage.readSegment(0L),
                 expectedSegmentIndex = 0L,
                 expectedGeneration = 0L,
-                expectedEpochOrdinal = 0L,
-                expectedSessionId = UUID(0L, 0L),
+                expectedEpochOrdinal = 22L,
+                expectedSessionId = fixture.sessionId,
                 firstExpectedFrameSeq = 1L,
                 firstExpectedCommitSeq = 1L,
             ).frames
-            oldFrames.any { it.kind == ChapterJournalFormat.RecordKind.BULK_REKEY } shouldBe false
-
-            val replayAfterCrash = ChapterJournalReplayReducer.replay(
-                epochs = listOf(oldEpoch),
-                artifactResolver = ChapterJournalReplayReducer.artifactResolver(fixture.engine, publishedManifest),
+            framesAfterRetry.count { it.kind == ChapterJournalFormat.RecordKind.BULK_REKEY } shouldBe 2
+            val oldFrames = ChapterJournalFormat.scanSegment(
+                bytes = reopenedStorage.readSegment(0L),
+                expectedSegmentIndex = 0L,
+                expectedGeneration = 0L,
+                expectedEpochOrdinal = 22L,
+                expectedSessionId = fixture.sessionId,
+                firstExpectedFrameSeq = 1L,
+                firstExpectedCommitSeq = 1L,
+            ).frames
+            val replayAfterRetry = ChapterJournalReplayReducer.replay(
+                epochs = listOf(
+                    replayEpoch(
+                        storage = reopenedStorage,
+                        generation = 0L,
+                        ordinal = 22L,
+                        sessionId = fixture.sessionId,
+                    ),
+                ),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(reopenedEngine, publishedManifest),
             )
-            replayAfterCrash.pages shouldBe emptyMap()
-            replayAfterCrash.invalidPageKeys shouldBe setOf(fixture.oldKey)
-            replayAfterCrash.missingPageKeys shouldBe emptySet()
-            replayAfterCrash.expectedPageKeys shouldBe setOf(fixture.oldKey)
-            replayAfterCrash.hasCompleteInventory shouldBe false
+            replayAfterRetry.pages.keys shouldBe setOf(fixture.newKey)
+            replayAfterRetry.pages.getValue(fixture.newKey).sourceFileName shouldBe fixture.newKey
+            replayAfterRetry.pages.getValue(fixture.newKey).blocks.single().translation shouldBe "durable before rekey"
+            replayAfterRetry.pageOutcomes[fixture.newKey] shouldBe ChapterJournalPageOutcome.RECORDED
+            replayAfterRetry.invalidPageKeys shouldBe emptySet()
+            replayAfterRetry.missingPageKeys shouldBe emptySet()
+            oldFrames.any { it.kind == ChapterJournalFormat.RecordKind.BULK_REKEY } shouldBe true
         } finally {
             if (!storeClosed) fixture.store.closeAndFlush()
         }
@@ -1894,7 +2107,8 @@ class ChapterTranslationStoreJournalCaptureTest {
             }
         }
         try {
-            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey)) shouldBe emptyList()
+            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey))
+                .shouldBeInstanceOf<ChapterTranslationStore.PageRekeyOutcome.Rejected>()
             injected shouldBe true
             fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
             val durable = checkNotNull(fixture.engine.readManifest())
@@ -1917,7 +2131,10 @@ class ChapterTranslationStoreJournalCaptureTest {
         )
         try {
             fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey)) shouldBe
-                listOf(fixture.oldKey to fixture.newKey)
+                ChapterTranslationStore.PageRekeyOutcome.Moved(
+                    listOf(fixture.oldKey to fixture.newKey),
+                    skippedCollisions = 0,
+                )
             val pageRecord = checkNotNull(fixture.engine.readManifest()?.pages?.get(fixture.newKey))
             val candidate = checkNotNull(pageRecord.candidate)
             val committed = checkNotNull(pageRecord.committed)
@@ -1946,6 +2163,88 @@ class ChapterTranslationStoreJournalCaptureTest {
             fixture.store.isCleanedImageReferencedByAnotherPage(fixture.newKey, "shared-cleaned.jpg") shouldBe false
         } finally {
             fixture.store.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `rekey adopts empty registered destination and journal replay keeps moved content`() = runTest {
+        val journalDirectory = File(chapterDir, "adopted-placeholder-replay-epoch")
+        val journalDurableRoot = File(chapterDir, "adopted-placeholder-replay-root")
+        val fixture = committedRekeyFixture(
+            scheduler = testScheduler,
+            chapterName = "Rekey adopted placeholder replay",
+            includeCandidateAndPrevious = true,
+            includeCleanedImage = false,
+            journalStorage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot),
+        )
+        var storeClosed = false
+        try {
+            fixture.store.preRegisterPages(listOf(fixture.newKey)) shouldBe
+                ChapterTranslationStore.PagePreRegistration.Accepted
+            fixture.store.state.value.keys shouldBe setOf(fixture.oldKey, fixture.newKey)
+            fixture.store.state.value.getValue(fixture.newKey).blocks shouldBe emptyList()
+
+            fixture.store.rekeyPages(listOf(fixture.oldKey), listOf(fixture.newKey)) shouldBe
+                ChapterTranslationStore.PageRekeyOutcome.Moved(
+                    listOf(fixture.oldKey to fixture.newKey),
+                    skippedCollisions = 0,
+                )
+            fixture.store.state.value.keys shouldBe setOf(fixture.newKey)
+            fixture.store.state.value.getValue(fixture.newKey).blocks.single().translation shouldBe "committed"
+            fixture.store.display.value.getValue(fixture.newKey).blocks.single().translation shouldBe "committed"
+            runCurrent()
+            fixture.store.closeAndFlush()
+            storeClosed = true
+
+            val reopenedEngine = ChapterArtifactEngine(
+                AtomicChapterDocuments(fixture.io),
+                fixture.layout,
+            )
+            val manifest = checkNotNull(reopenedEngine.readManifest())
+            manifest.pages.keys shouldBe setOf(fixture.newKey)
+            manifest.sourceShaByPageKey shouldBe mapOf(fixture.newKey to "c".repeat(64))
+            manifest.durableFailures.keys shouldBe emptySet()
+            val record = checkNotNull(manifest.pages[fixture.newKey])
+            val candidate = checkNotNull(record.candidate)
+            val committed = checkNotNull(record.committed)
+            val previous = checkNotNull(record.previousCommitted)
+            candidate.generationId shouldBe "candidate-generation"
+            committed.generationId shouldBe "generation-one"
+            previous.generationId shouldBe "generation-zero"
+            val candidateSnapshot = checkNotNull(reopenedEngine.readPageSnapshot(candidate.pageSnapshotFileName))
+            val committedSnapshot = checkNotNull(reopenedEngine.readPageSnapshot(committed.pageSnapshotFileName))
+            val previousSnapshot = checkNotNull(reopenedEngine.readPageSnapshot(previous.pageSnapshotFileName))
+            candidateSnapshot.sourceFileName shouldBe fixture.newKey
+            committedSnapshot.sourceFileName shouldBe fixture.newKey
+            previousSnapshot.sourceFileName shouldBe fixture.newKey
+            candidateSnapshot.blocks.single().translation shouldBe "committed"
+            committedSnapshot.blocks.single().translation shouldBe "committed"
+            previousSnapshot.blocks.single().translation shouldBe "previous"
+            StageFingerprints.pageSnapshot(candidateSnapshot) shouldBe candidate.pageSnapshotFingerprint
+            StageFingerprints.pageSnapshot(committedSnapshot) shouldBe committed.translationFingerprint
+            StageFingerprints.pageSnapshot(previousSnapshot) shouldBe previous.translationFingerprint
+
+            val reopenedJournalStorage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot)
+            val replay = ChapterJournalReplayReducer.replay(
+                epochs = listOf(
+                    replayEpoch(
+                        reopenedJournalStorage,
+                        generation = 0L,
+                        ordinal = 22L,
+                        sessionId = fixture.sessionId,
+                    ),
+                ),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(reopenedEngine, manifest),
+            )
+            replay.corruptEpochs shouldBe emptySet()
+            replay.pages.keys shouldBe setOf(fixture.newKey)
+            replay.pages.getValue(fixture.newKey).blocks.single().translation shouldBe "committed"
+            replay.pages.getValue(fixture.newKey).sourceFileName shouldBe fixture.newKey
+            replay.pageOutcomes[fixture.oldKey] shouldBe ChapterJournalPageOutcome.TOMBSTONED
+            replay.pageOutcomes[fixture.newKey] shouldBe ChapterJournalPageOutcome.RECORDED
+            replay.durableFailures.keys shouldBe emptySet()
+        } finally {
+            if (!storeClosed) fixture.store.closeAndFlush()
         }
     }
 
@@ -2071,6 +2370,7 @@ class ChapterTranslationStoreJournalCaptureTest {
 
     private class MemoryStorage : ChapterJournalStorage {
         private val segments = TreeMap<Long, ByteArray>()
+        var openFailure: Throwable? = null
 
         override fun segmentIndexes(): List<Long> = segments.keys.toList()
 
@@ -2085,6 +2385,10 @@ class ChapterTranslationStoreJournalCaptureTest {
         }
 
         override fun openSegment(index: Long, create: Boolean): ChapterJournalSink {
+            openFailure?.let { failure ->
+                openFailure = null
+                throw failure
+            }
             if (!create && index !in segments) throw IOException("missing segment $index")
             if (create) segments.putIfAbsent(index, byteArrayOf())
             return object : ChapterJournalSink {
@@ -2113,7 +2417,9 @@ class ChapterTranslationStoreJournalCaptureTest {
         val engine: ChapterArtifactEngine,
         val manifest: ChapterArtifactManifest,
         val store: ChapterTranslationStore,
-        val storage: MemoryStorage,
+        val storage: ChapterJournalStorage,
+        val writer: ChapterJournalWriter,
+        val sessionId: UUID,
         val oldKey: String,
         val newKey: String,
         val oldSnapshotName: String,
@@ -2124,6 +2430,7 @@ class ChapterTranslationStoreJournalCaptureTest {
         chapterName: String,
         includeCandidateAndPrevious: Boolean = false,
         includeCleanedImage: Boolean = true,
+        journalStorage: ChapterJournalStorage = MemoryStorage(),
     ): RekeyFixture {
         val io = FakeChapterDocumentIo()
         val documents = AtomicChapterDocuments(io)
@@ -2227,25 +2534,40 @@ class ChapterTranslationStoreJournalCaptureTest {
             initialArtifactManifest = manifest,
         )
         store.enableLazyPersistence()
-        val storage = MemoryStorage()
+        val sessionId = UUID.nameUUIDFromBytes("rekey-fixture:$chapterName".encodeToByteArray())
         val journalJson = Json {
             encodeDefaults = true
             explicitNulls = true
         }
         val writer = ChapterJournalWriter(
-            storage = storage,
+            storage = journalStorage,
             dispatcher = StandardTestDispatcher(scheduler),
             encodeRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
             encodeBulkRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
+            storeGeneration = 0L,
+            epochOrdinal = 22L,
+            sessionId = sessionId,
         )
         store.attachJournalWriterForTests(writer)
-        return RekeyFixture(io, layout, engine, manifest, store, storage, oldKey, newKey, oldSnapshotName)
+        return RekeyFixture(
+            io,
+            layout,
+            engine,
+            manifest,
+            store,
+            journalStorage,
+            writer,
+            sessionId,
+            oldKey,
+            newKey,
+            oldSnapshotName,
+        )
     }
 
     private fun replayEpoch(
-        storage: MemoryStorage,
+        storage: ChapterJournalStorage,
         generation: Long,
         ordinal: Long,
         sessionId: UUID,

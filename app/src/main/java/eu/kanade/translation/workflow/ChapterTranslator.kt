@@ -528,6 +528,14 @@ class ChapterTranslator(
     }
 
     /**
+     * Whether a batch run for [chapterId] is ACTUALLY executing (run identity,
+     * not queue membership). The supervisor can run up to two chapter jobs, so
+     * presence of any in-flight chapter never implies exclusive ownership.
+     */
+    internal fun isChapterTranslationInFlight(chapterId: Long?): Boolean =
+        chapterId != null && inFlightChapterIds.contains(chapterId)
+
+    /**
      * Cancels the batch translator job AND waits for it to unwind, bounded by
      * [BATCH_JOIN_TIMEOUT_MS]. Used only by the delete path: a chapter's on-disk
      * translation file + images must not be deleted while the batch coroutine

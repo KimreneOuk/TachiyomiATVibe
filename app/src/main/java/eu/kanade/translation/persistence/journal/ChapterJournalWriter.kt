@@ -422,6 +422,7 @@ internal class ChapterJournalWriter(
 
     val ackedHighWaterSeq: Long get() = highWater.get()
     val shadowLaggedCount: Long get() = laggedRecords.get()
+    internal val terminalCaptureFailure: Throwable? get() = terminalFailure
     val droppedControlRecordCount: Long get() = droppedControlRecords.get()
 
     /** Terminal endings that could not be queued or written, separate from credit-starvation counts. */

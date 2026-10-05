@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -57,6 +58,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 class TranslationManager private constructor(
     private val context: Context,
@@ -145,6 +147,18 @@ class TranslationManager private constructor(
     /** Serializes reader lifecycle teardown so pause/finish cannot race store eviction. */
     private val readerTeardownMutex = Mutex()
 
+    /**
+     * Reader, batch, and download-rekey store binding share a chapter admission
+     * gate. A re-key holds it through its guarded file transaction so a new
+     * reader cannot bind a live online store between the ownership check and
+     * the mutation.
+     */
+    private val chapterStoreAdmissionLocks = ConcurrentHashMap<Long, Mutex>()
+    private val chaptersUnderDownloadRekey = ConcurrentHashMap.newKeySet<Long>()
+
+    private suspend fun <T> withChapterStoreAdmissionLock(chapterId: Long, block: suspend () -> T): T =
+        chapterStoreAdmissionLocks.computeIfAbsent(chapterId) { Mutex() }.withLock { block() }
+
     private val pendingRequestStore = testConstruction?.pendingRequestStore ?: TranslationPendingRequestStore(context)
     private val pendingTranslationRequestsState = testConstruction?.pendingRequests ?: MutableStateFlow(loadPendingTranslationRequests())
 
@@ -192,6 +206,10 @@ class TranslationManager private constructor(
             translateChapter = { manga, chapter, expectedRequestGeneration, autoStart ->
                 translateChapter(manga, chapter, expectedRequestGeneration, autoStart = autoStart)
             },
+            hasPendingDownloadRekeyFn = { chapterId -> hasPendingDownloadRekey(chapterId) },
+            reconcilePendingDownloadRekeyFn = { chapterId ->
+                reconcilePendingDownloadRekeyForAdmission(chapterId)
+            },
         )
     }
 
@@ -208,9 +226,13 @@ class TranslationManager private constructor(
         },
         immediateStoreResolver = { chapterId -> activeStores.get(chapterId) },
         readerSessionRejectionReason = { chapterId ->
-            when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
-                is SessionAdmission.Rejected -> admission.reason.name
-                else -> null
+            if (chapterId in chaptersUnderDownloadRekey) {
+                "completed download re-key in progress"
+            } else {
+                when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
+                    is SessionAdmission.Rejected -> admission.reason.name
+                    else -> null
+                }
             }
         },
     )
@@ -712,6 +734,7 @@ class TranslationManager private constructor(
             unregisterActiveTranslationStoreFn = { chapterId -> unregisterActiveTranslationStore(chapterId) },
             disposeBatchTrackerFn = { chapterId -> disposeBatchTracker(chapterId) },
             clearAllPendingTranslationRequestsFn = { clearAllPendingTranslationRequests() },
+            retryPendingDownloadRekeysAfterReaderLeaveFn = { retryPendingDownloadRekeysAfterReaderLeave() },
         )
     }
 
@@ -1248,6 +1271,38 @@ class TranslationManager private constructor(
         source: Source,
         prefoundDocument: TranslationDocument? = null,
         preflightManifestProbe: ArtifactManifestProbe? = null,
+    ): ChapterTranslationStore? = if (chapterId != null) {
+        withChapterStoreAdmissionLock(chapterId) {
+            openExistingChapterTranslationStoreLocked(
+                chapterId,
+                chapterName,
+                scanlator,
+                mangaTitle,
+                source,
+                prefoundDocument,
+                preflightManifestProbe,
+            )
+        }
+    } else {
+        openExistingChapterTranslationStoreLocked(
+            chapterId,
+            chapterName,
+            scanlator,
+            mangaTitle,
+            source,
+            prefoundDocument,
+            preflightManifestProbe,
+        )
+    }
+
+    private suspend fun openExistingChapterTranslationStoreLocked(
+        chapterId: Long?,
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+        prefoundDocument: TranslationDocument? = null,
+        preflightManifestProbe: ArtifactManifestProbe? = null,
     ): ChapterTranslationStore? {
         // Callers that already resolved the document and probed the manifest
         // (getChapterTranslationForReader) hand them through — re-running the
@@ -1306,6 +1361,93 @@ class TranslationManager private constructor(
         return ChapterTranslationStore.probeArtifactManifest(parent, fileName).exists
     }
 
+    /**
+     * Typed result of the completed-download re-key handoff. [Performed] with
+     * [Performed.skippedCollisions] > 0 is partial truth — never a full success.
+     * [Deferred] means the mapping was retained for a later joined-release retry.
+     */
+    sealed class DownloadRekeyOutcome {
+        data class Performed(val moved: Int, val skippedCollisions: Int) : DownloadRekeyOutcome()
+
+        data object Noop : DownloadRekeyOutcome()
+
+        /** No prior translation artifact records exist; continue to first batch admission. */
+        data object NoTranslationRecords : DownloadRekeyOutcome()
+
+        data class Deferred(val reason: String) : DownloadRekeyOutcome()
+
+        data class Rejected(val reason: String, val cause: Throwable? = null) : DownloadRekeyOutcome()
+    }
+
+    /**
+     * Immutable completed-download mapping retained per chapter while a live
+     * reader or in-flight batch defers the re-key. Latest validated mapping
+     * wins; it is consumed only by a successful/no-op reconcile after an
+     * actual joined reader leave (or clean pre-admission reconcile). In-memory
+     * only: process death loses the pending mapping — the stale online-key
+     * records remain typed diagnostics, not durable corruption.
+     */
+    private data class PendingDownloadRekey(
+        val chapter: Chapter,
+        val manga: Manga,
+        val source: Source,
+        val onlineKeyByPageIndex: List<String>,
+        val onDiskKeyByPageIndex: List<String>,
+        val revision: Long,
+        val requestGeneration: Long?,
+    )
+
+    private val pendingDownloadRekeys = ConcurrentHashMap<Long, PendingDownloadRekey>()
+    private val pendingDownloadRekeyRevision = AtomicLong()
+
+    /** Re-key reconciliation attempted and mapped to the handoff outcome space. */
+    @VisibleForTesting
+    internal fun hasPendingDownloadRekey(chapterId: Long): Boolean =
+        pendingDownloadRekeys.containsKey(chapterId)
+
+    /**
+     * Attempts the retained-mapping reconcile for one chapter. Returns true
+     * only when the chapter is clean for batch admission: no retained mapping,
+     * or the reconcile completed with a full success or an honest no-op.
+     * Deferred/Rejected retains the mapping so a later joined release retries.
+     */
+    @VisibleForTesting
+    internal suspend fun reconcilePendingDownloadRekeyForAdmission(chapterId: Long): Boolean {
+        val pending = pendingDownloadRekeys[chapterId] ?: return true
+        val outcome = attemptDownloadRekey(pending)
+        if (!outcome.isFullyReconciled()) return false
+        return consumeReconciledMapping(chapterId, pending)
+    }
+
+    /**
+     * Retries every retained download re-key after a FULL joined reader leave
+     * (teardown mutex released, page/native jobs joined, stores evicted).
+     * Rechecks live ownership before each attempt; a racing new reader bind or
+     * an in-flight batch re-defers the mapping (retained + observable).
+     */
+    private suspend fun retryPendingDownloadRekeysAfterReaderLeave() {
+        pendingDownloadRekeys.keys.toList().forEach { chapterId ->
+            val pending = pendingDownloadRekeys[chapterId] ?: return@forEach
+            val outcome = attemptDownloadRekey(pending)
+            if (outcome.isFullyReconciled() && consumeReconciledMapping(chapterId, pending)) {
+                pending.requestGeneration?.let { expectedGeneration ->
+                    val autoStart = chapterId !in restoreAdmittedChapterIds
+                    val admitted = requestCoordinator.retryRekeyFailedAdmissionIfCurrent(
+                        manga = pending.manga,
+                        chapter = pending.chapter,
+                        expectedGeneration = expectedGeneration,
+                        autoStart = autoStart,
+                    )
+                    if (admitted && !autoStart) restoreAdmittedChapterIds.remove(chapterId)
+                }
+            } else {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT download re-key retry retained for chapter $chapterId: ${outcome::class.simpleName}"
+                }
+            }
+        }
+    }
+
     /** Re-keys source URL pages to the names written by a completed download. */
     suspend fun rekeyTranslationForCompletedDownload(
         chapter: Chapter,
@@ -1313,51 +1455,254 @@ class TranslationManager private constructor(
         source: Source,
         onlineKeyByPageIndex: List<String>,
         onDiskKeyByPageIndex: List<String>,
-    ) {
-        val chapterId = chapter.id ?: return
-        if (onlineKeyByPageIndex.size != onDiskKeyByPageIndex.size) return
-
-        val activeStore = activeStores.get(chapterId)
-        val store = activeStore ?: run {
-            val parent = provider.findMangaDir(manga.title, source) ?: return
-            val fileName = provider.getTranslationFileName(chapter.name, chapter.scanlator)
-            if (!ChapterTranslationStore.probeArtifactManifest(parent, fileName).exists) return
-            activeStores.getOrCreate(chapterId, "${parent.filePath ?: parent.uri}:$fileName") {
-                ChapterTranslationStore.openArtifactSuspend(
-                    parent,
-                    fileName,
-                    provider.privateJournalRoot,
-                    provider.privateJournalIdentity(source, manga.title, fileName),
-                )
-            } ?: return
+    ): DownloadRekeyOutcome {
+        val chapterId = chapter.id ?: return DownloadRekeyOutcome.Rejected("chapter id missing")
+        if (onlineKeyByPageIndex.size != onDiskKeyByPageIndex.size || onlineKeyByPageIndex.isEmpty()) {
+            return DownloadRekeyOutcome.Rejected("mapping size mismatch")
         }
-        val pages = store.state.value
-        if (pages.size != onlineKeyByPageIndex.size) return
-        if (pages.keys.none { it in onlineKeyByPageIndex }) return
-        if (pages.keys.all { it in onDiskKeyByPageIndex }) return
-
-        // Match deleteTranslation's cancellation ordering while retaining the
-        // active store instance so an open reader observes the new snapshot.
-        // Joining here cannot deadlock with a running batch. This method is called from
-        // the downloader's IO coroutine, making the bounded blocking bridge safe.
-        kotlinx.coroutines.runBlocking { translator.cancelTranslatorJobAndJoin() }
-        scheduler.cancelAutoTranslations(chapterId)
-        scheduler.cancelPageTranslations(chapterId)
-        store.beginGeneration("completed download re-key")
-        val moves = store.rekeyPages(onlineKeyByPageIndex, onDiskKeyByPageIndex)
-        if (moves.isEmpty()) return
-
-        store.flush()
-        val companionDir = provider.findCompanionImageDir(
-            manga.title,
-            source,
-            chapter.name,
-            chapter.scanlator,
+        val pending = PendingDownloadRekey(
+            chapter = chapter,
+            manga = manga,
+            source = source,
+            onlineKeyByPageIndex = onlineKeyByPageIndex.toList(),
+            onDiskKeyByPageIndex = onDiskKeyByPageIndex.toList(),
+            revision = pendingDownloadRekeyRevision.incrementAndGet(),
+            requestGeneration = requestCoordinator.downloadAttachGeneration(chapterId),
         )
-        moves.forEach { (oldKey, newKey) ->
-            val oldImage = provider.companionImageNameForPage(oldKey)
-            val newImage = provider.companionImageNameForPage(newKey)
-            companionDir?.findFile(oldImage)?.renameTo(newImage)
+        stashPendingDownloadRekey(chapterId, pending)
+        val outcome = attemptDownloadRekey(pending)
+        if (!outcome.isFullyReconciled()) return outcome
+        if (consumeReconciledMapping(chapterId, pending)) return outcome
+        return if (pendingDownloadRekeys[chapterId]?.revision?.let { it > pending.revision } == true) {
+            DownloadRekeyOutcome.Deferred("a newer completed-download mapping needs reconciliation")
+        } else {
+            // A concurrent attempt already consumed this revision.
+            outcome
+        }
+    }
+
+    private fun stashPendingDownloadRekey(chapterId: Long, pending: PendingDownloadRekey) {
+        pendingDownloadRekeys.compute(chapterId) { _, current ->
+            if (current == null || pending.revision > current.revision) pending else current
+        }
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT download re-key mapping retained for chapter $chapterId revision=${pending.revision}"
+        }
+    }
+
+    private fun consumeReconciledMapping(chapterId: Long, pending: PendingDownloadRekey): Boolean {
+        if (pendingDownloadRekeys.remove(chapterId, pending)) return true
+        return pendingDownloadRekeys[chapterId] == null
+    }
+
+    private fun DownloadRekeyOutcome.isFullyReconciled(): Boolean =
+        this is DownloadRekeyOutcome.Noop ||
+            this is DownloadRekeyOutcome.NoTranslationRecords ||
+            (this is DownloadRekeyOutcome.Performed && skippedCollisions == 0)
+
+    /**
+     * The guarded migration itself. The chapter admission lock covers manager
+     * reader/batch binding; the registry's per-file opening lock covers chapter,
+     * file, and probe opens. Existing owners are checked before this temporary
+     * instance opens, and every reconcile entry takes these same guards.
+     */
+    private suspend fun attemptDownloadRekey(pending: PendingDownloadRekey): DownloadRekeyOutcome {
+        val chapterId = pending.chapter.id ?: return DownloadRekeyOutcome.Rejected("chapter id missing")
+        val directoryLookup = try {
+            provider.findMangaDirForCompletedDownload(pending.manga.title, pending.source)
+        } catch (error: Throwable) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            return DownloadRekeyOutcome.Rejected("manga artifact directory lookup failed: ${error.message}", error)
+        }
+        val parent = when (directoryLookup) {
+            is TranslationFileProvider.MangaDirectoryLookup.Found -> directoryLookup.directory
+            TranslationFileProvider.MangaDirectoryLookup.NoPriorTranslationRecords -> {
+                return withChapterStoreAdmissionLock(chapterId) {
+                    if (
+                        activeStores.get(chapterId) != null ||
+                        translator.isChapterTranslationInFlight(chapterId) ||
+                        isChapterBatchActive(chapterId, includePaused = true)
+                    ) {
+                        DownloadRekeyOutcome.Deferred(
+                            "active chapter ownership exists while manga artifacts are unavailable",
+                        )
+                    } else {
+                        DownloadRekeyOutcome.NoTranslationRecords
+                    }
+                }
+            }
+            TranslationFileProvider.MangaDirectoryLookup.Unavailable ->
+                return DownloadRekeyOutcome.Rejected("manga artifact storage directory is unavailable")
+        }
+        val fileName = provider.getTranslationFileName(pending.chapter.name, pending.chapter.scanlator)
+        val registryKey = "${parent.filePath ?: parent.uri}:$fileName"
+        return try {
+            withChapterStoreAdmissionLock(chapterId) {
+                activeStores.withFileOpeningLock(registryKey) {
+                    // Capture pre-existing chapter, file, or probe ownership
+                    // before resolving our own store. Existing readers defer.
+                    if (activeStores.get(chapterId) != null || activeStores.hasStoreForFile(registryKey)) {
+                        return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
+                            "translation store registered for chapter or artifact",
+                        )
+                    }
+                    if (translator.isChapterTranslationInFlight(chapterId)) {
+                        return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
+                            "batch translation in flight for chapter",
+                        )
+                    }
+                    val manifestProbe = try {
+                        ChapterTranslationStore.probeArtifactManifest(parent, fileName)
+                    } catch (error: Throwable) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
+                            "translation manifest probe failed: ${error.message}",
+                            error,
+                        )
+                    }
+                    val store = try {
+                        ChapterTranslationStore.openArtifactSuspend(
+                            parent,
+                            fileName,
+                            provider.privateJournalRoot,
+                            provider.privateJournalIdentity(pending.source, pending.manga.title, fileName),
+                        )
+                    } catch (error: Throwable) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
+                            "translation artifact open failed: ${error.message}",
+                            error,
+                        )
+                    }
+                    var primaryFailure: Throwable? = null
+                    try {
+                        // Recheck before mutation: a batch may claim this chapter
+                        // while its resolver waits on the shared open lock.
+                        if (activeStores.get(chapterId) != null || activeStores.hasStoreForFile(registryKey)) {
+                            return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
+                                "translation store registered during handoff admission",
+                            )
+                        }
+                        if (translator.isChapterTranslationInFlight(chapterId)) {
+                            return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
+                                "batch translation became in flight during handoff admission",
+                            )
+                        }
+                        val artifactManifest = store.readArtifactManifest()
+                        if (manifestProbe.exists && artifactManifest == null) {
+                            return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
+                                "translation manifest disappeared or could not be recovered after a positive probe",
+                            )
+                        }
+                        val pages = store.state.value
+                        if (pages.isEmpty()) {
+                            val manifestHasPriorEvidence = artifactManifest?.let { manifest ->
+                                manifest.pages.isNotEmpty() ||
+                                    manifest.sourceShaByPageKey.isNotEmpty() ||
+                                    manifest.durableFailures.isNotEmpty() ||
+                                    manifest.expectedPageCount != null ||
+                                    manifest.expectedPageCountTrusted ||
+                                    manifest.partialBatchInfo != null ||
+                                    manifest.activeCandidateGenerationIds.isNotEmpty() ||
+                                    manifest.activeRun != null ||
+                                    manifest.ocrCheckpoints.isNotEmpty() ||
+                                    manifest.analysisChunks.isNotEmpty() ||
+                                    manifest.profile != null ||
+                                    manifest.envelopePlan != null ||
+                                    manifest.layoutPlans.isNotEmpty() ||
+                                    manifest.colorPreparations.isNotEmpty() ||
+                                    manifest.context != null ||
+                                    manifest.cutoverAtEpochMs != null
+                            } == true
+                            if (manifestHasPriorEvidence) {
+                                return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
+                                    "translation manifest contains prior evidence but no live page records were recovered",
+                                )
+                            }
+                            return@withFileOpeningLock if (!manifestProbe.exists) {
+                                DownloadRekeyOutcome.NoTranslationRecords
+                            } else {
+                                DownloadRekeyOutcome.Noop
+                            }
+                        }
+                        if (pages.keys.all { it in pending.onDiskKeyByPageIndex }) {
+                            return@withFileOpeningLock DownloadRekeyOutcome.Noop
+                        }
+                        if (pages.keys.none { it in pending.onlineKeyByPageIndex }) {
+                            return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
+                                "no stored online page keys match the completed-download mapping",
+                            )
+                        }
+
+                        val reserved = synchronized(pendingRequestMutationLock) {
+                            if (
+                                translator.isChapterTranslationInFlight(chapterId) ||
+                                isChapterBatchActive(chapterId, includePaused = true)
+                            ) {
+                                false
+                            } else {
+                                chaptersUnderDownloadRekey.add(chapterId)
+                            }
+                        }
+                        if (!reserved) {
+                            return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
+                                "chapter batch became active before handoff reservation",
+                            )
+                        }
+                        try {
+                            // Chapter-scoped scheduler cancellation only; the
+                            // reservation rejects fresh page dispatch until the
+                            // new store identity is published. Unrelated batch
+                            // work is never cancelled.
+                            scheduler.cancelAutoTranslations(chapterId)
+                            scheduler.cancelPageTranslations(chapterId)
+                            store.beginGeneration("completed download re-key")
+                            when (
+                                val outcome = store.rekeyPages(
+                                    pending.onlineKeyByPageIndex,
+                                    pending.onDiskKeyByPageIndex,
+                                )
+                            ) {
+                                is ChapterTranslationStore.PageRekeyOutcome.Moved -> {
+                                    if (outcome.moves.isNotEmpty()) {
+                                        store.flush()
+                                        val companionDir = provider.findCompanionImageDir(
+                                            pending.manga.title,
+                                            pending.source,
+                                            pending.chapter.name,
+                                            pending.chapter.scanlator,
+                                        )
+                                        outcome.moves.forEach { (oldKey, newKey) ->
+                                            val oldImage = provider.companionImageNameForPage(oldKey)
+                                            val newImage = provider.companionImageNameForPage(newKey)
+                                            companionDir?.findFile(oldImage)?.renameTo(newImage)
+                                        }
+                                    }
+                                    DownloadRekeyOutcome.Performed(outcome.moves.size, outcome.skippedCollisions)
+                                }
+                                ChapterTranslationStore.PageRekeyOutcome.Noop -> DownloadRekeyOutcome.Noop
+                                is ChapterTranslationStore.PageRekeyOutcome.Rejected ->
+                                    DownloadRekeyOutcome.Rejected(outcome.reason, outcome.cause)
+                            }
+                        } finally {
+                            chaptersUnderDownloadRekey.remove(chapterId)
+                        }
+                    } catch (error: Throwable) {
+                        primaryFailure = error
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        DownloadRekeyOutcome.Rejected("translation re-key failed: ${error.message}", error)
+                    } finally {
+                        try {
+                            withContext(kotlinx.coroutines.NonCancellable) { store.closeAndFlush() }
+                        } catch (closeFailure: Throwable) {
+                            primaryFailure?.addSuppressed(closeFailure) ?: throw closeFailure
+                        }
+                    }
+                }
+            }
+        } catch (error: Throwable) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            DownloadRekeyOutcome.Rejected("translation re-key transaction failed: ${error.message}", error)
         }
     }
 
@@ -1388,14 +1733,16 @@ class TranslationManager private constructor(
         source: Source,
         mangaId: Long? = null,
     ): ChapterTranslationStore? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        openOrCreateActiveChapterTranslationStoreImpl(
-            chapterId,
-            chapterName,
-            scanlator,
-            mangaTitle,
-            source,
-            mangaId,
-        )
+        withChapterStoreAdmissionLock(chapterId) {
+            openOrCreateActiveChapterTranslationStoreImpl(
+                chapterId,
+                chapterName,
+                scanlator,
+                mangaTitle,
+                source,
+                mangaId,
+            )
+        }
     }
 
     /**

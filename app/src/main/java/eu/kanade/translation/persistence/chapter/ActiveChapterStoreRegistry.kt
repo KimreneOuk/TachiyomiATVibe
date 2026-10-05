@@ -65,19 +65,6 @@ internal class ActiveChapterStoreRegistry {
         fileKey: String? = null,
         create: suspend () -> ChapterTranslationStore?,
     ): ChapterTranslationStore? {
-        get(chapterId)?.let { return it }
-        fileKey?.let { getByFile(it) }?.let { store ->
-            return if (register(chapterId, store)) store else get(chapterId)
-        }
-        fileKey?.let { takeProbe(it) }?.let { store ->
-            return if (register(chapterId, store)) {
-                registerFile(fileKey, store)
-                store
-            } else {
-                store.closeAndFlush()
-                get(chapterId)
-            }
-        }
         val openingLock = synchronized(this) {
             openingLocks.getOrPut(fileKey ?: "chapter:$chapterId") { Mutex() }
         }
@@ -107,7 +94,6 @@ internal class ActiveChapterStoreRegistry {
         fileKey: String,
         create: suspend () -> ChapterTranslationStore?,
     ): ChapterTranslationStore? {
-        getByFile(fileKey)?.let { return it }
         val openingLock = synchronized(this) {
             openingLocks.getOrPut(fileKey) { Mutex() }
         }
@@ -131,8 +117,6 @@ internal class ActiveChapterStoreRegistry {
         fileKey: String,
         create: suspend () -> ChapterTranslationStore?,
     ): ProbeResult? {
-        getByFile(fileKey)?.let { return ProbeResult(it, owned = false) }
-        synchronized(this) { probeStores[fileKey] }?.let { return ProbeResult(it, owned = true) }
         val openingLock = synchronized(this) {
             openingLocks.getOrPut(fileKey) { Mutex() }
         }
@@ -142,14 +126,37 @@ internal class ActiveChapterStoreRegistry {
                 return@withLock ProbeResult(it, owned = true)
             }
             val created = create() ?: return@withLock null
-            probeStores[fileKey] = created
-            probeWriterRegistrations[fileKey] = registerWriter(
-                chapterKey = fileKey,
-                origin = WriterOrigin.PROBE_STORE,
-            )
+            synchronized(this@ActiveChapterStoreRegistry) {
+                probeStores[fileKey] = created
+                probeWriterRegistrations[fileKey] = registerWriter(
+                    chapterKey = fileKey,
+                    origin = WriterOrigin.PROBE_STORE,
+                )
+            }
             ProbeResult(created, owned = true, created = true)
         }
     }
+
+    /**
+     * Runs a file-backed maintenance transaction under the same admission
+     * mutex used by chapter, file, and probe opens. Callers must inspect
+     * [hasStoreForFile] while holding this lock before opening an unregistered
+     * maintenance instance. This closes the race where an opener passes its
+     * fast-path lookup while a migration is preparing the same artifact.
+     */
+    suspend fun <T> withFileOpeningLock(fileKey: String, block: suspend () -> T): T {
+        val openingLock = synchronized(this) {
+            openingLocks.getOrPut(fileKey) { Mutex() }
+        }
+        return openingLock.withLock { block() }
+    }
+
+    /** Caller should hold [withFileOpeningLock] when using this as an admission guard. */
+    @Synchronized
+    fun hasStoreForFile(fileKey: String): Boolean =
+        fileStores.containsKey(fileKey) ||
+            probeStores.containsKey(fileKey) ||
+            stores.values.any { it.chapterKey == fileKey }
 
     /**
      * Removes a probe unless an active chapter or file reader adopted it while

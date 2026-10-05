@@ -17,6 +17,14 @@ class TranslationFileProvider(
     private val storageManager: StorageManager = Injekt.get(),
 ) {
 
+    internal sealed interface MangaDirectoryLookup {
+        data class Found(val directory: UniFile) : MangaDirectoryLookup
+
+        data object NoPriorTranslationRecords : MangaDirectoryLookup
+
+        data object Unavailable : MangaDirectoryLookup
+    }
+
     /** Journal bytes are kept on internal app storage even for SAF-backed artifacts. */
     internal val privateJournalRoot get() = context.filesDir
 
@@ -72,6 +80,26 @@ class TranslationFileProvider(
     fun findMangaDir(mangaTitle: String, source: Source): UniFile? {
         val sourceDir = findSourceDir(source)
         return sourceDir?.findFile(getMangaDirName(mangaTitle))
+    }
+
+    /**
+     * Resolves a manga artifact directory for completed-download reconciliation.
+     * A missing source/manga child inside an accessible translation root proves
+     * there are no prior artifact records; an unavailable root remains a failure.
+     */
+    internal fun findMangaDirForCompletedDownload(
+        mangaTitle: String,
+        source: Source,
+    ): MangaDirectoryLookup {
+        val root = translationDir ?: return MangaDirectoryLookup.Unavailable
+        if (!root.exists() || !root.isDirectory) return MangaDirectoryLookup.Unavailable
+        val sourceDir = root.findFile(getSourceDirName(source))
+            ?: return MangaDirectoryLookup.NoPriorTranslationRecords
+        if (!sourceDir.exists() || !sourceDir.isDirectory) return MangaDirectoryLookup.Unavailable
+        val mangaDir = sourceDir.findFile(getMangaDirName(mangaTitle))
+            ?: return MangaDirectoryLookup.NoPriorTranslationRecords
+        if (!mangaDir.exists() || !mangaDir.isDirectory) return MangaDirectoryLookup.Unavailable
+        return MangaDirectoryLookup.Found(mangaDir)
     }
 
     /**

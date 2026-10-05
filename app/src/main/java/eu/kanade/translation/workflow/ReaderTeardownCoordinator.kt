@@ -28,6 +28,7 @@ internal class ReaderTeardownCoordinator(
     private val unregisterActiveTranslationStoreFn: suspend (Long) -> Unit,
     private val disposeBatchTrackerFn: (Long) -> Unit,
     private val clearAllPendingTranslationRequestsFn: () -> Unit,
+    private val retryPendingDownloadRekeysAfterReaderLeaveFn: suspend () -> Unit = {},
 ) {
 
     // Resolve lifecycle owners on demand; teardown must operate on the current session.
@@ -53,6 +54,9 @@ internal class ReaderTeardownCoordinator(
     private fun disposeBatchTracker(chapterId: Long) = disposeBatchTrackerFn(chapterId)
 
     private fun clearAllPendingTranslationRequests() = clearAllPendingTranslationRequestsFn()
+
+    private suspend fun retryPendingDownloadRekeysAfterReaderLeave() =
+        retryPendingDownloadRekeysAfterReaderLeaveFn()
 
     private fun translatorStop(reason: String? = null, closeEngines: Boolean = false) =
         translator.stop(reason, closeEngines)
@@ -95,6 +99,11 @@ internal class ReaderTeardownCoordinator(
                 chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
                 sessionCoordinator.finishSession(TranslationSessionState.READER_SESSION)
             }
+            // Full joined release is complete: page/native jobs joined, stores
+            // evicted, teardown mutex RELEASED. Only now may a deferred
+            // download re-key retry run — never on the fire-and-forget
+            // background-stop path above.
+            retryPendingDownloadRekeysAfterReaderLeave()
         }
     }
 
