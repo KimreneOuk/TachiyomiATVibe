@@ -9,18 +9,12 @@ import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.tachiyomi.ui.reader.resolveReaderPageTranslationKey
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageFeedbackState
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
-import eu.kanade.tachiyomi.ui.reader.viewer.readerManualOutcomeFeedback
-import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderPageFeedback
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
-import eu.kanade.tachiyomi.ui.reader.viewer.toReaderPageFeedback
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
-import eu.kanade.translation.engines.translator.NativeStallState
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
@@ -38,13 +32,11 @@ import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
 import okio.Buffer
 import okio.BufferedSource
-import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -62,19 +54,6 @@ class PagerPageHolder(
 
     // TachiyomiAT
     private var showTranslations = true
-
-    private var autoFeedbackState: ReaderPageFeedbackState? = null
-    private var feedbackAttemptActive = false
-
-    // TachiyomiAT  P5: the pipeline's single bounded native stall state.
-    // Consumed by the chip join so the stalled pageKey renders stall truth
-    // even when no durable store emission accompanies the stall.
-    private var nativeStallState: NativeStallState? = null
-
-    // TachiyomiAT: muted chapter-context suffix for the unified bottom-center
-    // pill. Only the paged holder contributes it; vertical holders leave the
-    // chapter aggregate to the bottom-start chip.
-    private var readyAheadSuffix: String? = null
 
     // TachiyomiAT: master gate for the per-page translate button. Updated live
     // from the preference (collected in holderScope below) so the button
@@ -149,17 +128,7 @@ class PagerPageHolder(
         onCancelTranslateClicked = {
             viewer.activity.viewModel.cancelSinglePageTranslation(page)
         }
-        // TachiyomiAT: seed the stage pill from the page's DURABLE
-        // translation status at construction. A PagerPageHolder is freshly created
-        // whenever the ViewPager rebuilds its offscreen holder set (scroll/navigate
-        // back to a page whose holder was destroyed). ReaderPageImageView starts
-        // with the ephemeral overlay state cleared, and it would otherwise only be
-        // re-shown once loadPageAndProcessStatus()'s statusFlow reaches READY and
-        // setImage() runs — leaving a window (long, for an already-decoded page
-        // that's mid-translation) with no animation despite the page's stages still
-        // being "RUNNING". syncTranslationFeedback() reads the durable stage
-        // status and shows the compact pill immediately; it never re-decodes.
-        syncTranslationFeedback()
+        syncTranslateButtonState()
     }
 
     /**
@@ -188,8 +157,7 @@ class PagerPageHolder(
         }.launchIn(holderScope)
         // Reactively update the translate button when the master toggle flips,
         // so it shows/hides immediately rather than waiting for the next
-        // setImage() pass. While a page is mid-translation the stage pill stays
-        // visible and the cancel affordance remains available.
+        // setImage() pass, while the cancel affordance remains available during work.
         Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
             .translationEnabled().changes().onEach { enabled ->
                 translationEnabled = enabled
@@ -197,32 +165,9 @@ class PagerPageHolder(
                 // affordance regardless of the toggle; when idle it follows the
                 // master enable preference.
                 if (!isPageBeingTranslated()) {
-                    showTranslateButton(enabled)
-                    setTranslating(false)
+                    syncTranslateButtonState()
                 }
             }.launchIn(holderScope)
-        viewer.activity.viewModel.autoTranslationUiState
-            .onEach { autoState ->
-                autoFeedbackState = autoState.orderedSlots
-                    .firstOrNull { it.pageIndex == page.index }
-                    ?.state
-                    ?.toReaderPageFeedback()
-                readyAheadSuffix = if (autoState.identity != null && autoState.readyAheadCount > 0) {
-                    context.stringResource(ATMR.strings.reader_auto_suffix_ready_ahead, autoState.readyAheadCount)
-                } else {
-                    null
-                }
-                syncTranslationFeedback()
-            }
-            .launchIn(holderScope)
-        // TachiyomiAT  P5: the  stall flow re-syncs the chip so the
-        // stalled page's truth appears without waiting for a store emission.
-        viewer.activity.viewModel.nativeStallState
-            .onEach { stall ->
-                nativeStallState = stall
-                syncTranslationFeedback()
-            }
-            .launchIn(holderScope)
         viewer.activity.viewModel.observePageView(page)
             ?.onEach { refreshTranslation() }
             ?.launchIn(holderScope)
@@ -237,40 +182,10 @@ class PagerPageHolder(
      */
     private fun isPageBeingTranslated(): Boolean = page.translation?.isStageRunning == true
 
-    /**
-     * TachiyomiAT: lightweight status-only sync. Counterpart to [refreshTranslation]
-     * for the case where a page's stage transitioned but the displayed IMAGE did
-     * not change. It updates only the compact stage pill and translate/cancel
-     * button; it never re-decodes or re-sets the image.
-     */
-    fun syncTranslationFeedback() {
+    /** Syncs the kept translate/cancel button and active-work dim scrim. */
+    private fun syncTranslateButtonState() {
         val isBeingTranslated = isPageBeingTranslated()
-        if (isBeingTranslated && !feedbackAttemptActive) {
-            beginTranslationFeedbackAttempt()
-            feedbackAttemptActive = true
-        } else if (!isBeingTranslated) {
-            feedbackAttemptActive = false
-        }
-        // TachiyomiAT  P5: the scheduler's typed outcome for THIS page
-        // identity, wrapped verbatim by the pure TranslationUiTruth mapper.
-        // The join is identity-fenced by chapter+pageKey, so a late outcome
-        // from a prior page/chapter is dropped; a Completed outcome returns
-        // null and the existing rendered state stands.
-        val manualFeedback = readerManualOutcomeFeedback(
-            chapterId = page.chapter.chapter.id,
-            pageKey = resolveReaderPageTranslationKey(page),
-            attemptActive = isBeingTranslated,
-            lookup = viewer.activity.viewModel::manualSinglePageOutcome,
-            nativeStall = nativeStallState,
-            durable = page.translation,
-        )
-        val durableFeedback = manualFeedback ?: page.translation?.toReaderPageFeedback()
-        val feedback = selectReaderPageFeedback(
-            durableFeedback = durableFeedback,
-            autoFeedback = autoFeedbackState,
-            durableAttemptActive = isBeingTranslated,
-        )
-        showTranslationFeedback(feedback, readyAheadSuffix)
+        setTranslationDimmed(isBeingTranslated)
         if (isBeingTranslated) {
             setTranslating(true)
         } else {
@@ -287,11 +202,7 @@ class PagerPageHolder(
         super.onDetachedFromWindow()
         loadJob?.cancel()
         loadJob = null
-        autoFeedbackState = null
-        feedbackAttemptActive = false
-        nativeStallState = null
-        readyAheadSuffix = null
-        clearTranslationFeedback()
+        setTranslationDimmed(false)
         holderScope.cancel()
     }
 
@@ -388,16 +299,9 @@ class PagerPageHolder(
             null
         }
 
-        val isBeingTranslated = isPageBeingTranslated()
-        if (isBeingTranslated) {
-            syncTranslationFeedback()
-            // Show the cancel affordance instead of hiding the button, so the
-            // user gets feedback that translation is running and can cancel it.
-            setTranslating(true)
-        } else {
-            showTranslateButton(translationEnabled)
-            setTranslating(false)
-        }
+        // Show the cancel affordance during work and keep the scrim aligned
+        // with the durable running-stage state.
+        syncTranslateButtonState()
 
         try {
             val (source, isAnimated, background) = withIOContext {
@@ -430,9 +334,7 @@ class PagerPageHolder(
                 if (!isAnimated) {
                     pageBackground = background
                 }
-                if (isBeingTranslated) {
-                    syncTranslationFeedback()
-                }
+                syncTranslateButtonState()
                 removeErrorLayout()
             }
         } catch (e: Throwable) {
@@ -445,7 +347,6 @@ class PagerPageHolder(
 
     fun refreshTranslation() {
         val streamAvailable = page.translatedStream != null
-        val isBeingTranslated = isPageBeingTranslated()
         val newName = page.translation?.displayImageName
 
         val wantTranslated = if (page.translationToggled) {
@@ -474,20 +375,12 @@ class PagerPageHolder(
             }
         }
 
-        if (isBeingTranslated) {
-            syncTranslationFeedback()
-            showTranslateButton(translationEnabled)
-            setTranslating(true)
-        } else {
-            syncTranslationFeedback()
-            showTranslateButton(translationEnabled)
-            setTranslating(false)
-        }
+        syncTranslateButtonState()
         // Remember the image name we're now showing so the next
         // refreshTranslation() can short-circuit if nothing changed. When showing
         // the original (not a translated stream) there's no name to track.
         lastShownImageName = if (page.showTranslatedImage) newName else null
-        syncTranslationFeedback()
+        syncTranslateButtonState()
 
         prepareTranslationImage(page.showTranslatedImage)
         val overlay = selectReaderTranslationOverlayBinding(page.showTranslatedImage, page.translation)
@@ -558,8 +451,7 @@ class PagerPageHolder(
      */
     private fun setError() {
         progressIndicator?.hide()
-        feedbackAttemptActive = false
-        clearTranslationFeedback()
+        setTranslationDimmed(false)
         showErrorLayout()
     }
 

@@ -22,7 +22,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationUiState
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.translation.model.Translation
@@ -47,7 +46,6 @@ fun BottomReaderBar(
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
     translationBatchProgress: TranslationProgressSnapshot? = null,
     isBatchSession: Boolean = false,
-    autoTranslation: ReaderAutoTranslationUiState = ReaderAutoTranslationUiState.empty(),
     onClickTranslate: () -> Unit = {},
     // TachiyomiAT: while translation is running the icon is disabled so repeated
     // taps can't pile up overlapping requests behind the singleton translator
@@ -61,12 +59,6 @@ fun BottomReaderBar(
             .background(backgroundColor),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AutoTranslationStatus(
-            state = autoTranslation,
-            compact = true,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-
         translationBatchProgress?.takeIf { isBatchSession }?.let { snapshot ->
             //  U.4: the bar renders the SAME chapter status truth as the
             // progress sheet (TranslationUiTruth.readerBarLine). During a

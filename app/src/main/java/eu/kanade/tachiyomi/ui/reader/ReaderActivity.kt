@@ -567,7 +567,6 @@ class ReaderActivity : BaseActivity() {
                 translationState = translationState,
                 translationBatchProgress = translationBatchProgress,
                 isBatchSession = isBatchSession,
-                autoTranslation = state.autoTranslation,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
                 // TachiyomiAT: the translate control is ALWAYS tappable, even while
                 // translation is running. While busy it shows a spinner, but tapping it

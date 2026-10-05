@@ -107,25 +107,6 @@
     <string name="reader_translation_page">Page %1$d</string>
 
     <!-- TachiyomiAT: live reader auto-translation feedback -->
-    <string name="reader_auto_stage_queued">Queued</string>
-    <string name="reader_auto_stage_reading">Reading text</string>
-    <string name="reader_auto_stage_cleaning">Cleaning bubbles</string>
-    <string name="reader_auto_stage_translating">Translating text</string>
-    <string name="reader_auto_stage_finishing">Finishing page</string>
-    <string name="reader_auto_stage_translated">Translated</string>
-    <string name="reader_auto_stage_failed">Failed</string>
-    <string name="reader_auto_reason_memory">Low memory</string>
-    <string name="reader_auto_reason_network">Waiting for network</string>
-    <string name="reader_auto_reason_source">Waiting for source</string>
-    <string name="reader_auto_reason_compute">Waiting for device</string>
-    <string name="reader_auto_status_preparing">Auto · Preparing %1$d ahead</string>
-    <string name="reader_auto_status_current">Auto · Preparing current page</string>
-    <string name="reader_auto_status_ready">Auto · %1$d of %2$d ready ahead</string>
-    <string name="reader_auto_status_all_ready">Auto · %1$d ahead ready</string>
-    <string name="reader_auto_status_ready_empty">Auto · Ready</string>
-    <string name="reader_auto_status_paused">Auto paused · %1$s · %2$d of %3$d ready ahead</string>
-    <string name="reader_auto_status_failed">Auto · %1$d of %2$d ready ahead · %3$d failed</string>
-    <string name="reader_auto_suffix_ready_ahead">· %1$d ready ahead</string>
 
     <!-- TachiyomiAT: per-page original/translated compare handle -->
     <string name="reader_compare_handle">Compare original and translated</string>
