@@ -1027,9 +1027,9 @@ class ChapterTranslationStore internal constructor(
         // page is rejected, so its emitted mapping comes from captured outcomes,
         // not the requested input map. A successful prior deletion remains a
         // null mapping when the replacement write for that key was rejected.
-        // Rekey mappings summarize every actual key move; a moved pointerless
-        // page still has an explicit null-hash invalidation mutation, not a
-        // completed artifact state.
+        // Rekey mappings summarize only pairs represented by a source tombstone and
+        // destination state in this bulk. Pointerless destinations still carry a null-hash
+        // retryable state, so mapping membership does not imply artifact completion.
         val successfulMapping = when (bulk.kind) {
             ChapterJournalFormat.RecordKind.BULK_REPLACE -> bulk.mutations.mapValues { (_, record) ->
                 record.pageKey.takeUnless { record.state == null }
@@ -3234,7 +3234,10 @@ class ChapterTranslationStore internal constructor(
                             }
                         }
 
-                        val requiresDurableBulkCapture = plan.requiresArtifactTransaction && plan.moves.isNotEmpty() &&
+                        val pendingAfterRekey = pendingArtifactPageRegistrations
+                            .mapTo(linkedSetOf()) { pageKey -> moveByOldKey[pageKey] ?: pageKey }
+                        val requiresDurableBulkCapture = plan.requiresArtifactTransaction &&
+                            plan.moves.isNotEmpty() &&
                             (privateStorageRoot != null || journalWriter != null)
                         if (requiresDurableBulkCapture && bulkCredit == null) {
                             val cause = bulkCreditFailure ?: java.io.IOException(
@@ -3257,18 +3260,24 @@ class ChapterTranslationStore internal constructor(
                             )
                             activeBulkJournalCapture = bulk
                             try {
+                                // Capture tombstones from the prestate first. A consumed placeholder is
+                                // replaced by the incoming destination state, so it has no source tombstone.
+                                plan.moves.forEach { (oldKey, _) ->
+                                    if (oldKey !in plan.consumedPlaceholders) {
+                                        captureLegacyDeletionLocked(
+                                            pageKey = oldKey,
+                                            pageVersion = previousPages[oldKey]?.pageVersion ?: 0L,
+                                            credit = null,
+                                            artifactContentHash = plan.oldArtifactContentHashes[oldKey],
+                                        )
+                                    }
+                                }
+                                // These prepared destination mutations all come from the same prestate;
+                                // write each unique destination once after the source phase.
                                 plan.moves.forEach { (oldKey, newKey) ->
-                                    captureLegacyDeletionLocked(
-                                        pageKey = oldKey,
-                                        pageVersion = previousPages[oldKey]?.pageVersion ?: 0L,
-                                        credit = null,
-                                        artifactContentHash = plan.oldArtifactContentHashes[oldKey],
-                                    )
                                     val mutation = checkNotNull(preparedSnapshots?.journalMutations?.get(newKey))
                                     captureLegacyRekeyStateLocked(oldKey, newKey, mutation)
                                 }
-                                val pendingAfterRekey = pendingArtifactPageRegistrations
-                                    .mapTo(linkedSetOf()) { pageKey -> moveByOldKey[pageKey] ?: pageKey }
                                 val preparedInventory = preparedManifest?.let { manifest ->
                                     journalInventorySnapshot(manifest, pendingAfterRekey)
                                 }
@@ -3348,15 +3357,23 @@ class ChapterTranslationStore internal constructor(
                             }
                         }
 
+                        val movedRetiredImages = moveByOldKey.mapNotNull { (oldKey, newKey) ->
+                            retiredCleanedImages[oldKey]
+                                ?.toSet()
+                                ?.takeIf { it.isNotEmpty() }
+                                ?.let { newKey to it }
+                        }
                         pages = updatedPages
                         committedDisplay = updatedCommitted
                         recordJournalStatusRekeyLocked(plan.moves)
-                        plan.moves.forEach { (oldKey, newKey) ->
-                            if (pendingArtifactPageRegistrations.remove(oldKey)) {
-                                pendingArtifactPageRegistrations += newKey
-                            }
-                            retiredCleanedImages.remove(oldKey)?.let { retired ->
-                                retiredCleanedImages[newKey] = retired
+                        pendingArtifactPageRegistrations.clear()
+                        pendingArtifactPageRegistrations.addAll(pendingAfterRekey)
+                        moveByOldKey.keys.forEach { oldKey -> retiredCleanedImages.remove(oldKey) }
+                        movedRetiredImages.forEach { (newKey, names) ->
+                            if (newKey in updatedPages) {
+                                retiredCleanedImages
+                                    .computeIfAbsent(newKey) { ConcurrentHashMap.newKeySet<String>() }
+                                    .addAll(names)
                             }
                         }
                         retiredCleanedImages.keys.toList().forEach { pageKey ->

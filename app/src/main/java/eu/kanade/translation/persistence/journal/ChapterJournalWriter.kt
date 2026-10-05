@@ -109,8 +109,9 @@ internal data class ChapterJournalBulkRecord(
     val schemaVersion: Int = SCHEMA_VERSION,
     val operation: String,
     /**
-     * Summary of actual key movements in the bulk operation. The authoritative mutations may carry a
-     * retryable invalidation state (no artifact hash); mapping membership does not certify completion.
+     * Per-kind outcome summary: BULK_REPLACE maps captured page keys to themselves or null for null-state
+     * outcomes; BULK_REKEY maps only source-tombstone and destination-state pairs. A rekey destination
+     * without an artifact hash remains retryable, so mapping membership does not certify completion.
      */
     val mapping: Map<String, String?>,
     /** Successful page states and tombstones that make up this legacy transaction. */

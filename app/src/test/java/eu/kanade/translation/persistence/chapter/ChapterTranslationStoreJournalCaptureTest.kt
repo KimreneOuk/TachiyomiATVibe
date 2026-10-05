@@ -2167,6 +2167,222 @@ class ChapterTranslationStoreJournalCaptureTest {
     }
 
     @Test
+    fun `overlapping rekey keeps the incoming page mutation through file backed replay`() = runTest {
+        val journalDirectory = File(chapterDir, "overlapping-rekey-journal-epoch")
+        val journalDurableRoot = File(chapterDir, "overlapping-rekey-journal-root")
+        val fixture = committedRekeyFixture(
+            scheduler = testScheduler,
+            chapterName = "Rekey overlapping placeholder source",
+            oldKey = "p.jpg",
+            newKey = "001.jpg",
+            includeCandidateAndPrevious = true,
+            includeCleanedImage = false,
+            journalStorage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot),
+        )
+        var storeClosed = false
+        try {
+            fixture.store.preRegisterPages(listOf("001.jpg")) shouldBe
+                ChapterTranslationStore.PagePreRegistration.Accepted
+            // Persistent-map iteration follows the deterministic hash-trie order
+            // for these keys: translated p.jpg is visited before placeholder 001.jpg.
+            fixture.store.state.value.keys.toList() shouldBe listOf("p.jpg", "001.jpg")
+
+            val outcome = fixture.store.rekeyPages(
+                onlineKeys = listOf("p.jpg", "001.jpg"),
+                onDiskKeys = listOf("001.jpg", "002.jpg"),
+            )
+            outcome shouldBe ChapterTranslationStore.PageRekeyOutcome.Moved(
+                listOf("p.jpg" to "001.jpg", "001.jpg" to "002.jpg"),
+                skippedCollisions = 0,
+            )
+            fixture.store.state.value.getValue("001.jpg").blocks.single().translation shouldBe "committed"
+
+            runCurrent()
+            val journalJson = Json {
+                encodeDefaults = true
+                explicitNulls = true
+            }
+            val storage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot)
+            val frames = ChapterJournalFormat.scanSegment(
+                bytes = storage.readSegment(0L),
+                expectedSegmentIndex = 0L,
+                expectedGeneration = 0L,
+                expectedEpochOrdinal = 22L,
+                expectedSessionId = fixture.sessionId,
+                firstExpectedFrameSeq = 1L,
+                firstExpectedCommitSeq = 1L,
+            ).frames
+            val bulkFrame = frames.single { it.kind == ChapterJournalFormat.RecordKind.BULK_REKEY }
+            val bulk = journalJson.decodeFromString<ChapterJournalBulkRecord>(bulkFrame.payload.decodeToString())
+
+            fixture.store.closeAndFlush()
+            storeClosed = true
+            val reopenedEngine = ChapterArtifactEngine(
+                AtomicChapterDocuments(fixture.io),
+                fixture.layout,
+            )
+            val manifest = checkNotNull(reopenedEngine.readManifest())
+            val replay = ChapterJournalReplayReducer.replay(
+                epochs = listOf(
+                    replayEpoch(
+                        storage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot),
+                        generation = 0L,
+                        ordinal = 22L,
+                        sessionId = fixture.sessionId,
+                    ),
+                ),
+                artifactResolver = ChapterJournalReplayReducer.artifactResolver(reopenedEngine, manifest),
+            )
+
+            val destinationMutation = bulk.mutations.singleOrNull { it.pageKey == "001.jpg" }
+            val recoveredDestination = replay.pages["001.jpg"]
+            val sourceTombstone = bulk.mutations.singleOrNull { it.pageKey == "p.jpg" }
+            val retryableMutation = bulk.mutations.singleOrNull { it.pageKey == "002.jpg" }
+            val defects = buildList {
+                if (bulk.mapping != mapOf("p.jpg" to "001.jpg")) {
+                    add("successfulMapping should retain p.jpg -> 001.jpg, got ${bulk.mapping}")
+                }
+                if (destinationMutation?.state == null) {
+                    add("001.jpg must carry the incoming page state, got $destinationMutation")
+                }
+                if (destinationMutation?.state?.blocks?.singleOrNull()?.translation != "committed") {
+                    add("001.jpg journal state must retain translated content, got $destinationMutation")
+                }
+                if (recoveredDestination?.blocks?.singleOrNull()?.translation != "committed") {
+                    add("reopen must recover translated content at 001.jpg, got $recoveredDestination")
+                }
+                if (replay.pageOutcomes["001.jpg"] != ChapterJournalPageOutcome.RECORDED) {
+                    add("001.jpg must not be clobbered by a tombstone, got ${replay.pageOutcomes}")
+                }
+                if (sourceTombstone == null || sourceTombstone.state != null) {
+                    add("p.jpg must retain its source tombstone, got $sourceTombstone")
+                }
+                if (replay.pageOutcomes["p.jpg"] != ChapterJournalPageOutcome.TOMBSTONED) {
+                    add("p.jpg must replay as tombstoned, got ${replay.pageOutcomes}")
+                }
+                if (retryableMutation == null || retryableMutation.state == null) {
+                    add("002.jpg must carry its retryable destination mutation, got $retryableMutation")
+                }
+                if (retryableMutation?.artifactContentHash != null) {
+                    add("002.jpg must remain unauthenticated for retry, got $retryableMutation")
+                }
+                if (replay.pageOutcomes["002.jpg"] != ChapterJournalPageOutcome.INVALID) {
+                    add("002.jpg must remain retryable after replay, got ${replay.pageOutcomes}")
+                }
+            }
+            defects.joinToString("\n") shouldBe ""
+        } finally {
+            if (!storeClosed) fixture.store.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `overlapping rekey preserves pending registrations through a later artifact update`() = runTest {
+        val root = FakeUniFile(parent = null, backing = chapterDir)
+        val store = ChapterTranslationStore.openArtifact(root, "Pending overlap chapter.json")
+        val storage = MemoryStorage()
+        val journalJson = Json {
+            encodeDefaults = true
+            explicitNulls = true
+        }
+        val writer = ChapterJournalWriter(
+            storage = storage,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            encodeRecord = { record -> journalJson.encodeToString(record).encodeToByteArray() },
+            encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
+            encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
+        )
+        store.attachJournalWriterForTests(writer)
+        var storeClosed = false
+        try {
+            store.preRegisterPages(listOf("p.jpg", "001.jpg")) shouldBe
+                ChapterTranslationStore.PagePreRegistration.Accepted
+            store.state.value.keys.toList() shouldBe listOf("p.jpg", "001.jpg")
+
+            store.rekeyPages(
+                onlineKeys = listOf("p.jpg", "001.jpg"),
+                onDiskKeys = listOf("001.jpg", "002.jpg"),
+            ) shouldBe ChapterTranslationStore.PageRekeyOutcome.Moved(
+                listOf("p.jpg" to "001.jpg", "001.jpg" to "002.jpg"),
+                skippedCollisions = 0,
+            )
+            store.updatePage("002.jpg") { current ->
+                checkNotNull(current).apply {
+                    blocks = mutableListOf(
+                        TranslationBlock(
+                            text = "source",
+                            translation = "registered destination",
+                            width = 10f,
+                            height = 10f,
+                            x = 0f,
+                            y = 0f,
+                            symHeight = 1f,
+                            symWidth = 1f,
+                            angle = 0f,
+                        ),
+                    )
+                }
+            }
+            runCurrent()
+            store.state.value.getValue("002.jpg").blocks.single().translation shouldBe "registered destination"
+            checkNotNull(store.readArtifactManifest()).pages.containsKey("002.jpg") shouldBe true
+            store.closeAndFlush()
+            storeClosed = true
+
+            val frames = ChapterJournalFormat.scanSegment(
+                bytes = storage.readSegment(0L),
+                expectedSegmentIndex = 0L,
+                expectedGeneration = 0L,
+                expectedEpochOrdinal = 0L,
+                expectedSessionId = UUID(0L, 0L),
+                firstExpectedFrameSeq = 1L,
+                firstExpectedCommitSeq = 1L,
+            ).frames
+            val inventory = journalJson.decodeFromString<ChapterJournalInventoryRecord>(
+                frames.last { it.kind == ChapterJournalFormat.RecordKind.INVENTORY }.payload.decodeToString(),
+            )
+            inventory.expectedPageKeys.toSet() shouldBe setOf("001.jpg", "002.jpg")
+        } finally {
+            if (!storeClosed) store.closeAndFlush()
+        }
+    }
+
+    @Test
+    fun `overlapping rekey preserves retired image ownership from the prestate`() = runTest {
+        val journalDirectory = File(chapterDir, "overlapping-retired-owner-epoch")
+        val journalDurableRoot = File(chapterDir, "overlapping-retired-owner-root")
+        val fixture = committedRekeyFixture(
+            scheduler = testScheduler,
+            chapterName = "Rekey overlapping retired image owner",
+            oldKey = "p.jpg",
+            newKey = "001.jpg",
+            includeCleanedImage = false,
+            journalStorage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot),
+            initialRetiredCleanedImages = mapOf("p.jpg" to setOf("retired-p.jpg")),
+        )
+        try {
+            fixture.store.preRegisterPages(listOf("001.jpg")) shouldBe
+                ChapterTranslationStore.PagePreRegistration.Accepted
+            fixture.store.state.value.keys.toList() shouldBe listOf("p.jpg", "001.jpg")
+            fixture.store.referencedCleanedImageNames().contains("retired-p.jpg") shouldBe true
+
+            fixture.store.rekeyPages(
+                onlineKeys = listOf("p.jpg", "001.jpg"),
+                onDiskKeys = listOf("001.jpg", "002.jpg"),
+            ) shouldBe ChapterTranslationStore.PageRekeyOutcome.Moved(
+                listOf("p.jpg" to "001.jpg", "001.jpg" to "002.jpg"),
+                skippedCollisions = 0,
+            )
+            runCurrent()
+
+            fixture.store.drainRetiredCleanedImages("001.jpg") shouldBe listOf("retired-p.jpg")
+            fixture.store.drainRetiredCleanedImages("002.jpg") shouldBe emptyList()
+        } finally {
+            fixture.store.closeAndFlush()
+        }
+    }
+
+    @Test
     fun `rekey adopts empty registered destination and journal replay keeps moved content`() = runTest {
         val journalDirectory = File(chapterDir, "adopted-placeholder-replay-epoch")
         val journalDurableRoot = File(chapterDir, "adopted-placeholder-replay-root")
@@ -2428,16 +2644,17 @@ class ChapterTranslationStoreJournalCaptureTest {
     private fun committedRekeyFixture(
         scheduler: TestCoroutineScheduler,
         chapterName: String,
+        oldKey: String = "online-page.jpg",
+        newKey: String = "disk-page.jpg",
         includeCandidateAndPrevious: Boolean = false,
         includeCleanedImage: Boolean = true,
         journalStorage: ChapterJournalStorage = MemoryStorage(),
+        initialRetiredCleanedImages: Map<String, Set<String>> = emptyMap(),
     ): RekeyFixture {
         val io = FakeChapterDocumentIo()
         val documents = AtomicChapterDocuments(io)
         val layout = ChapterArtifactLayout(chapterName)
         val engine = ChapterArtifactEngine(documents, layout)
-        val oldKey = "online-page.jpg"
-        val newKey = "disk-page.jpg"
         val sourceSha = "c".repeat(64)
         val page = PageTranslation(
             sourceFileName = oldKey,
@@ -2532,6 +2749,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             artifactStore = engine,
             initialCommittedPages = mapOf(oldKey to page),
             initialArtifactManifest = manifest,
+            initialRetiredCleanedImages = initialRetiredCleanedImages,
         )
         store.enableLazyPersistence()
         val sessionId = UUID.nameUUIDFromBytes("rekey-fixture:$chapterName".encodeToByteArray())
