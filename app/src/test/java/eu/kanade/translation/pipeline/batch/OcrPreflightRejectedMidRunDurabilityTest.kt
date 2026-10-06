@@ -136,6 +136,7 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         nativeWorker = worker,
         frozenConfig = frozenConfig(),
         orderedSourcePairs = sourcePairs(pages),
+        freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
     )
 

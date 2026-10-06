@@ -223,6 +223,8 @@ internal class ChapterProfileBatchCoordinator(
     private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> TranslationCompletionOutcome)? = null,
     private val envelopePlannerPolicy: EnvelopePlannerPolicy? = null,
     private val pageTraceRegistry: BatchPageTraceRegistry? = null,
+    /** Lazily observes current source bytes at checkpoint admission/reuse sites. */
+    private val freshSourceShaByPageKey: (String) -> String? = { null },
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -238,33 +240,53 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * Per-page admission identity — the recorded digest wins
-     * when the dispatch-time observation is absent or a non-hex placeholder
-     * (the shell's UNKNOWN_SOURCE_FINGERPRINT on a hash failure — a value
-     * that previously poisoned reuse identity forever and forced re-OCR); a
-     * well-formed dispatch observation (a fresh sha of the current bytes)
-     * still wins over the record so a changed source is DETECTED at
-     * consumption and fails closed; a page with neither keeps its (null)
-     * constructor value for the store's own fallback.
+     * Per-page admission identity: a supplied fresh observation wins. A
+     * non-null malformed/placeholder observation is fail-closed; it cannot be
+     * hidden by an older recorded digest.
      */
     private fun admissionSourceSha(pageKey: String): String? {
+        val fresh = freshSourceShaByPageKey(pageKey)
+        if (fresh != null) return fresh.takeIf(String::isSha256Hex)
         val offered = sourceShaByPageKey[pageKey]
         if (offered != null && offered.isSha256Hex()) return offered
-        return recordedSourceShaByPageKey[pageKey] ?: offered
+        return recordedSourceShaByPageKey[pageKey]?.takeIf(String::isSha256Hex) ?: offered
+    }
+
+    /** Run identity uses the supplied observation/record without forcing source streams. */
+    private fun runIdentitySourceSha(pageKey: String): String? {
+        val offered = sourceShaByPageKey[pageKey]
+        if (offered != null && offered.isSha256Hex()) return offered
+        return recordedSourceShaByPageKey[pageKey]?.takeIf(String::isSha256Hex) ?: offered
     }
 
     /**
-     * The run's ordered (pageKey, admission sha) pairs — the
-     * SINGLE orderedSourceDigest input for every record of this run. Derived
-     * from the RECORDED digests wherever they exist, so run-start identity no
-     * longer re-reads page bytes and a dispatch hash failure can no longer
-     * break run identity continuity across a resume. Evaluated once (the same
-     * run-start read that feeds the reuse probes), then stable.
+     * The run's ordered (pageKey, source sha) pairs — the SINGLE
+     * orderedSourceDigest input for every record of this run. Uses the supplied
+     * or recorded digest without opening source streams; current source bytes
+     * are checked separately and lazily at checkpoint admission. This keeps
+     * run identity stable across resumes when dispatch hashing is unavailable.
      */
-    private val effectiveSourcePairs: List<Pair<String, String>> by lazy {
+    private val recordedIdentitySourcePairs: List<Pair<String, String>> by lazy {
         orderedSourcePairs.map { (pageKey, sha) ->
-            pageKey to (admissionSourceSha(pageKey) ?: sha)
+            pageKey to (runIdentitySourceSha(pageKey) ?: sha)
         }
+    }
+
+    /** Fresh pairs observed for a terminal resume, retained as this run's identity. */
+    @Volatile
+    private var freshSourcePairsForRun: List<Pair<String, String>>? = null
+
+    private val effectiveSourcePairs: List<Pair<String, String>>
+        get() = freshSourcePairsForRun ?: recordedIdentitySourcePairs
+
+    /** Returns ordered current hashes only when every page has a valid observation. */
+    private fun freshSourcePairsForPages(orderedPages: List<PageKey>): List<Pair<String, String>>? {
+        val observed = ArrayList<Pair<String, String>>(orderedPages.size)
+        for ((pageKey, _) in orderedPages) {
+            val sha = freshSourceShaByPageKey(pageKey)?.takeIf(String::isSha256Hex) ?: return null
+            observed += pageKey to sha
+        }
+        return observed
     }
 
     /** Builds the preflight worker that checks existing OCR work and checkpoints. */
@@ -273,7 +295,9 @@ internal class ChapterProfileBatchCoordinator(
             store = store,
             nativeWorker = nativeWorker,
             frozenConfig = frozenConfig,
-            effectiveSourcePairs = effectiveSourcePairs,
+            effectiveSourcePairs = { effectiveSourcePairs },
+            freshSourcePairsForPages = { pages -> freshSourcePairsForPages(pages) },
+            useFreshSourcePairsForRun = { pairs -> freshSourcePairsForRun = pairs },
             releaseBatchLease = releaseBatchLease,
             listener = listener,
             nowEpochMs = nowEpochMs,
@@ -390,7 +414,7 @@ internal class ChapterProfileBatchCoordinator(
         FinalizeWorkerContext(
             store = store,
             frozenConfig = frozenConfig,
-            effectiveSourcePairs = effectiveSourcePairs,
+            freshSourcePairsForPages = { pages -> freshSourcePairsForPages(pages) },
             overlapScheduler = overlapScheduler,
             renderJoin = renderJoin,
             publishRecord = { recordArtifact, runRecord ->
@@ -464,6 +488,7 @@ internal class ChapterProfileBatchCoordinator(
             runFinalizeAndComplete = { recordArtifact, id, pages, fingerprint, counters ->
                 runFinalizeAndComplete(recordArtifact, id, pages, fingerprint, counters)
             },
+            freshSourceShaByPageKey = freshSourceShaByPageKey,
         ),
     ).runPhase(
         artifact = artifact,
@@ -679,7 +704,9 @@ internal class ChapterProfileBatchCoordinator(
             val page = snapshot.page ?: return EnvelopeWorkBuild.CorpusDrift(
                 "T924 envelope plan deferred: live page state missing for ${entry.storagePageKey}",
             )
-            if (pageEnvelopeDone(entry.storagePageKey, page)) return@forEachIndexed
+            val observedSourceFingerprint = freshSourceShaByPageKey(entry.storagePageKey)
+                ?.takeIf(String::isSha256Hex)
+            if (pageEnvelopeDone(entry.storagePageKey, page, observedSourceFingerprint)) return@forEachIndexed
             // Resume hydration: a page restored from the artifact store after
             // process death is a synthesized placeholder WITHOUT blocks — the
             // durable OCR content lives in the checkpoint's page-snapshot
@@ -704,6 +731,7 @@ internal class ChapterProfileBatchCoordinator(
             }
             val dispatchBlocks = mutableListOf<PlannedBlock>()
             val plannerBlocks = mutableListOf<EnvelopePlannerBlock>()
+            val sourceIdentityCurrent = sourceIdentityMatches(effectivePage, observedSourceFingerprint)
             effectivePage.blocks.forEachIndexed { index, block ->
                 if (block.text.isBlank()) return@forEachIndexed
                 // User-edited blocks are authoritative and are never planned.
@@ -712,7 +740,8 @@ internal class ChapterProfileBatchCoordinator(
                 // prior partial candidate) are not requestable — mirrors the
                 // retry controller's requestability rule so page completeness
                 // stays achievable.
-                if (TranslationOutputSemantics.isResolved(
+                if (sourceIdentityCurrent &&
+                    TranslationOutputSemantics.isResolved(
                         source = block.text,
                         output = block.translation,
                         sourceLanguageCode = frozenConfig.sourceLang,
@@ -747,6 +776,7 @@ internal class ChapterProfileBatchCoordinator(
                 naturalPageIndex = entry.naturalPageIndex,
                 ocrContentFingerprint = entry.contentFingerprint,
                 sourceFingerprint = effectivePage.sourceFingerprint,
+                observedSourceFingerprint = observedSourceFingerprint,
                 planPageVersion = effectiveSnapshot.pageVersion,
                 planCandidateGenerationId = effectiveSnapshot.candidateGenerationId,
                 planDependencyFingerprint = effectiveSnapshot.dependencyFingerprint,
@@ -792,7 +822,12 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /** Whole-page done rule: committed, skipped, rendered, or manual-authoritative. */
-    private fun pageEnvelopeDone(pageKey: String, page: PageTranslation): Boolean {
+    private fun pageEnvelopeDone(
+        pageKey: String,
+        page: PageTranslation,
+        observedSourceFingerprint: String?,
+    ): Boolean {
+        if (!sourceIdentityMatches(page, observedSourceFingerprint)) return false
         if (page.translationStatus == StageStatus.READY ||
             page.translationStatus == StageStatus.SKIPPED ||
             page.hasRenderedResult
@@ -801,6 +836,12 @@ internal class ChapterProfileBatchCoordinator(
         }
         val committed = store.artifactManifest?.pages?.get(pageKey)?.committed ?: return false
         return committed.hasManualEdits
+    }
+
+    private fun sourceIdentityMatches(page: PageTranslationView, observedSourceFingerprint: String?): Boolean {
+        val observed = observedSourceFingerprint?.takeIf(String::isSha256Hex) ?: return false
+        val recorded = page.sourceFingerprint?.takeIf(String::isSha256Hex) ?: return false
+        return recorded == observed
     }
 
     /**
@@ -836,6 +877,13 @@ internal class ChapterProfileBatchCoordinator(
         if (textBlocks.isNotEmpty() && completeBlocks < textBlocks.size) {
             // Defensive: a requestable text block would have been dispatched;
             // the caller only routes empty dispatch sets here. Never stamp.
+            return
+        }
+        val observedSourceFingerprint = freshSourceShaByPageKey(pageKey)?.takeIf(String::isSha256Hex)
+        if (observedSourceFingerprint == null) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT t934 terminal adoption deferred: source identity unavailable pageHash=${pageHash(pageKey)}"
+            }
             return
         }
         val textless = textBlocks.isEmpty()
@@ -877,6 +925,7 @@ internal class ChapterProfileBatchCoordinator(
                 description = "t934 stranded fix: adopt unplannable page terminal",
             ) { current ->
                 (current ?: page).apply {
+                    sourceFingerprint = observedSourceFingerprint
                     if (textless) {
                         if (translationStatus == StageStatus.PENDING ||
                             translationStatus == StageStatus.RUNNING ||
@@ -1253,12 +1302,19 @@ internal class ChapterProfileBatchCoordinator(
          * acquisition, and an already-terminal page is never re-paid (
          * exactly-once).
          */
-        internal fun standardPageTerminalAtTranslate(page: PageTranslationView): Boolean =
-            page.hasRenderedResult ||
+        internal fun standardPageTerminalAtTranslate(
+            page: PageTranslationView,
+            observedSourceFingerprint: String?,
+        ): Boolean {
+            val observed = observedSourceFingerprint?.takeIf(String::isSha256Hex) ?: return false
+            val recorded = page.sourceFingerprint?.takeIf(String::isSha256Hex) ?: return false
+            if (recorded != observed) return false
+            return page.hasRenderedResult ||
                 page.isTextlessTerminal ||
                 page.translationStatus == StageStatus.READY ||
                 page.translationStatus == StageStatus.PARTIAL ||
                 page.translationStatus == StageStatus.SKIPPED
+        }
 
         /** Stopped-not-finished diagnostic carried in the paused outcome. */
         const val STOP_REASON =
@@ -1304,6 +1360,9 @@ internal class ChapterProfileBatchCoordinator(
          * ([resumeFinalizeOrComplete] → [drainFinalizeAndComplete]), which
          * re-attempts the run's single COMPLETE publication.
          */
+        const val SOURCE_FINGERPRINT_UNAVAILABLE_REASON =
+            "T924 current source fingerprint unavailable; chapter paused before COMPLETE"
+
         const val RUN_CLOSURE_REJECTED_REASON =
             "T924 run-closure COMPLETE publication rejected; run stays at FINALIZE (ST-14 resume re-attempts closure)"
 

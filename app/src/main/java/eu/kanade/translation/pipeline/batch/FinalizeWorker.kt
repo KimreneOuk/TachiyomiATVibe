@@ -16,7 +16,7 @@ import tachiyomi.core.common.util.system.logcat
 internal class FinalizeWorkerContext(
     val store: ChapterTranslationStore,
     val frozenConfig: RunConfigSnapshot,
-    val effectiveSourcePairs: List<Pair<String, String>>,
+    val freshSourcePairsForPages: (List<PageKey>) -> List<Pair<String, String>>?,
     val overlapScheduler: OverlapScheduler?,
     val renderJoin: BatchRenderJoin?,
     val publishRecord: suspend (
@@ -46,8 +46,6 @@ internal class FinalizeWorker(
         get() = context.store
     private val frozenConfig: RunConfigSnapshot
         get() = context.frozenConfig
-    private val effectiveSourcePairs: List<Pair<String, String>>
-        get() = context.effectiveSourcePairs
     private val overlapScheduler: OverlapScheduler?
         get() = context.overlapScheduler
     private val renderJoin: BatchRenderJoin?
@@ -100,6 +98,12 @@ internal class FinalizeWorker(
     private fun orderedSourceDigest(pairs: List<Pair<String, String>>): String =
         ChapterProfileBatchCoordinator.orderedSourceDigest(pairs)
 
+    private fun sourceFingerprintUnavailable(): BatchPass1Outcome = BatchPass1Outcome(
+        needsTranslation = emptyList(),
+        status = BatchPass1Status.PAUSED,
+        reason = ChapterProfileBatchCoordinator.SOURCE_FINGERPRINT_UNAVAILABLE_REASON,
+    )
+
     suspend fun runPhase(
         artifact: ChapterArtifactEngine,
         runId: String,
@@ -108,7 +112,9 @@ internal class FinalizeWorker(
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
+        val sourceDigest = context.freshSourcePairsForPages(orderedPages)
+            ?.let(::orderedSourceDigest)
+            ?: return sourceFingerprintUnavailable()
 
         //  entry: the FINALIZE phase pointer (resume re-runs finalize —
         // every step below is an idempotent re-run).
@@ -182,7 +188,9 @@ internal class FinalizeWorker(
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
+        val sourceDigest = context.freshSourcePairsForPages(orderedPages)
+            ?.let(::orderedSourceDigest)
+            ?: return sourceFingerprintUnavailable()
         val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 
         // 2. Serial post-translate inpaint drain (overlap-fallback arm).

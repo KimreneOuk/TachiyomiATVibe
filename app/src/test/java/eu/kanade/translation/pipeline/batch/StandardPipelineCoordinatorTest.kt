@@ -14,6 +14,7 @@ import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toDraft
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
@@ -82,6 +83,7 @@ class StandardPipelineCoordinatorTest {
     private fun ocrPage(
         pageKey: String,
         text: String?,
+        sourceContent: String = "source-$pageKey",
         textless: Boolean = false,
         maskedTextless: Boolean = false,
     ) = PageTranslation(
@@ -97,9 +99,9 @@ class StandardPipelineCoordinatorTest {
         decodeSampleSize = 1,
         ocrStatus = StageStatus.READY,
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
-        sourceFingerprint = hex64("source-$pageKey"),
-        detectionFingerprint = hex64("detection-$pageKey"),
-        ocrFingerprint = hex64("ocr-$pageKey"),
+        sourceFingerprint = hex64(sourceContent),
+        detectionFingerprint = hex64("detection-$sourceContent"),
+        ocrFingerprint = hex64("ocr-$sourceContent"),
         // finalizePostOcrStage parity: a blank-text page's render is SKIPPED,
         // and its inpaint is SKIPPED only WITHOUT mask boxes — a masked
         // blank-text page keeps inpaint PENDING for the inpaint drain.
@@ -152,8 +154,10 @@ class StandardPipelineCoordinatorTest {
         private val maskedTextlessPages: Set<String> = emptySet(),
         private val emptyTextPages: Set<String> = emptySet(),
         private val onFirstOcr: (() -> Unit)? = null,
+        private val sourceContentFor: (String) -> String = { pageKey -> "source-$pageKey" },
     ) : NativeLaneWorker {
         val ocrPages = mutableListOf<String>()
+        fun sourceShaFor(pageKey: String): String = hex64(sourceContentFor(pageKey))
 
         override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
             if (ocrPages.isEmpty()) onFirstOcr?.invoke()
@@ -172,6 +176,7 @@ class StandardPipelineCoordinatorTest {
                         else -> ocrPage(
                             pageKey,
                             "source-$pageKey",
+                            sourceContent = sourceContentFor(pageKey),
                             textless = pageKey in textlessPages || pageKey in maskedTextlessPages,
                             maskedTextless = pageKey in maskedTextlessPages,
                         )
@@ -249,6 +254,7 @@ class StandardPipelineCoordinatorTest {
      */
     private inner class FakeStandardTranslator(
         private val onTranslate: (suspend (String) -> Unit)? = null,
+        private val translationPrefix: String = "tr-",
     ) : TextTranslator {
         val calls = mutableListOf<String>()
 
@@ -259,7 +265,7 @@ class StandardPipelineCoordinatorTest {
             pages.forEach { (key, page) ->
                 calls += key
                 page.blocks.forEach { block ->
-                    if (block.text.isNotBlank()) block.translation = "tr-" + block.text
+                    if (block.text.isNotBlank()) block.translation = translationPrefix + block.text
                 }
                 onTranslate?.invoke(key)
             }
@@ -281,8 +287,14 @@ class StandardPipelineCoordinatorTest {
         private val onFirstInvoke: (() -> Unit)? = null,
         /** Typed PAUSE before any page work: the interrupted mid-run shape. */
         private val pauseOnPages: Set<String> = emptySet(),
+        sourceShaForPage: ((String) -> String?)? = null,
     ) {
+        private var sourceShaForPage: ((String) -> String?)? = sourceShaForPage
         val invoked = mutableListOf<String>()
+
+        fun bindSourceFingerprint(sourceSha: (String) -> String?) {
+            sourceShaForPage = sourceSha
+        }
 
         suspend fun translateOutcome(ref: OcrReadyPageRef): TranslationCompletionOutcome {
             if (invoked.isEmpty()) onFirstInvoke?.invoke()
@@ -314,6 +326,7 @@ class StandardPipelineCoordinatorTest {
                     // provider call.
                     p.translationStatus = StageStatus.SKIPPED
                     p.renderStatus = StageStatus.SKIPPED
+                    p.sourceFingerprint = sourceShaForPage?.invoke(pageKey) ?: p.sourceFingerprint
                     commit(pageKey, p)
                     return TranslationCompletionOutcome.Completed(setOf(pageKey))
                 }
@@ -321,6 +334,7 @@ class StandardPipelineCoordinatorTest {
                 TranslationBlockValidation.applyTo(p)
                 return when (p.translationStatus) {
                     StageStatus.READY -> {
+                        p.sourceFingerprint = sourceShaForPage?.invoke(pageKey) ?: p.sourceFingerprint
                         commit(pageKey, p)
                         TranslationCompletionOutcome.Completed(setOf(pageKey))
                     }
@@ -358,6 +372,7 @@ class StandardPipelineCoordinatorTest {
                     renderStatus = p.renderStatus
                     inpaintStatus = p.inpaintStatus
                     blocks = p.blocks.toMutableList()
+                    sourceFingerprint = p.sourceFingerprint ?: sourceFingerprint
                     updatedAt = System.currentTimeMillis()
                 }
             }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
@@ -370,6 +385,29 @@ class StandardPipelineCoordinatorTest {
         return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
     }
 
+    private suspend fun publishLegacyCompleteIdentity(
+        store: ChapterTranslationStore,
+        pages: List<PageKey>,
+        sourceShaByPageKey: Map<String, String>,
+    ) {
+        val artifact = store.withArtifactEngineLocked { it }.shouldNotBeNull()
+        val manifest = artifact.readManifest().shouldNotBeNull()
+        val pointer = manifest.activeRun.shouldNotBeNull()
+        val prior = (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
+        val placeholderDigest = ChapterProfileBatchCoordinator.orderedSourceDigest(
+            pages.map { (pageKey, _) -> pageKey to "source-fingerprint-unavailable" },
+        )
+        val legacyRecord = prior.copy(orderedSourceDigest = placeholderDigest)
+        val serialized = ArtifactDocumentJson.encodeToString(legacyRecord)
+        val published = artifact.publishActiveRun(
+            manifest = manifest.copy(sourceShaByPageKey = sourceShaByPageKey),
+            record = legacyRecord,
+            contentFingerprint = ChapterProfileBatchCoordinator.sha256Hex(serialized.encodeToByteArray()),
+        )
+        val committed = published.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
+        store.artifactManifest = committed.manifest
+    }
+
     private fun activeRunPointer(store: ChapterTranslationStore): SidecarPointer =
         artifactStore().readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
 
@@ -379,24 +417,37 @@ class StandardPipelineCoordinatorTest {
         pages: List<PageKey>,
         seam: StandardSeam,
         overlapScheduler: OverlapScheduler?,
-    ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
-        store = store,
-        nativeWorker = worker,
-        frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
-            sourceLang = "ja",
-            targetLang = "en",
-            ocrEngine = "FakeOcrEngine",
-            inpaintMode = "OFF",
-            providerKey = "standard:google",
-        ),
-        orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-        releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
-        textTranslator = seam.translator,
-        overlapScheduler = overlapScheduler,
-        renderJoin = null,
-        standardLane = true,
-        standardTranslateOutcome = { ref -> seam.translateOutcome(ref) },
-    )
+        sourcePairsOverride: List<Pair<String, String>>? = null,
+        freshSourceShaByPageKey: ((String) -> String?)? = null,
+    ): ChapterProfileBatchCoordinator {
+        val sourceShaByPageKey: (String) -> String? = freshSourceShaByPageKey ?: { pageKey ->
+            (worker as? FakePreflightOcrWorker)?.sourceShaFor(pageKey)
+                ?: sourcePairsOverride?.firstOrNull { it.first == pageKey }?.second
+                ?: hex64("source-$pageKey")
+        }
+        seam.bindSourceFingerprint(sourceShaByPageKey)
+        return ChapterProfileBatchCoordinator(
+            store = store,
+            nativeWorker = worker,
+            frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
+                sourceLang = "ja",
+                targetLang = "en",
+                ocrEngine = "FakeOcrEngine",
+                inpaintMode = "OFF",
+                providerKey = "standard:google",
+            ),
+            orderedSourcePairs = sourcePairsOverride ?: pages.map { (pageKey, _) ->
+                pageKey to hex64("source-$pageKey")
+            },
+            freshSourceShaByPageKey = sourceShaByPageKey,
+            releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+            textTranslator = seam.translator,
+            overlapScheduler = overlapScheduler,
+            renderJoin = null,
+            standardLane = true,
+            standardTranslateOutcome = { ref -> seam.translateOutcome(ref) },
+        )
+    }
 
     // ------------------------------------------------------------------
     // End-to-end standard run.
@@ -567,6 +618,180 @@ class StandardPipelineCoordinatorTest {
         //  flake hardening (diagnosis §4): flush and cancel the store's
         // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
+        store.closeAndFlush()
+    }
+
+    @Test
+    fun `completed resume re-OCRs and retranslates when current source bytes changed`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val firstIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val firstSeam = StandardSeam(store, firstIdentities, FakeStandardTranslator())
+        standardCoordinator(
+            store,
+            FakePreflightOcrWorker(store),
+            pages,
+            firstSeam,
+            null,
+        ).runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE).status shouldBe BatchPass1Status.COMPLETED
+        val firstRecord = durableRunRecord(store).shouldNotBeNull()
+        firstRecord.state shouldBe ChapterRunState.COMPLETE
+
+        // The bytes change while OCR text remains `source-$pageKey`, so a correct retranslation
+        // contains the same OCR text under a new translation value.
+        val changedSourceContent: (String) -> String = { pageKey -> "changed-source-$pageKey" }
+        val resumeOcr = FakePreflightOcrWorker(store, sourceContentFor = changedSourceContent)
+        val resumeTranslator = FakeStandardTranslator(translationPrefix = "retranslated-")
+        val resumeSeam = StandardSeam(
+            store,
+            ConcurrentHashMap(),
+            resumeTranslator,
+            sourceShaForPage = { pageKey -> hex64(changedSourceContent(pageKey)) },
+        )
+        val oldPairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") }
+        val changedPairs = pages.map { (pageKey, _) -> pageKey to hex64(changedSourceContent(pageKey)) }
+        val outcome = standardCoordinator(
+            store,
+            resumeOcr,
+            pages,
+            resumeSeam,
+            null,
+            sourcePairsOverride = oldPairs,
+            freshSourceShaByPageKey = { pageKey -> hex64(changedSourceContent(pageKey)) },
+        ).runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+        resumeOcr.ocrPages shouldContainExactly pageKeys
+        resumeSeam.invoked shouldContainExactly pageKeys
+        resumeTranslator.calls shouldContainExactly pageKeys
+        for (pageKey in pageKeys) {
+            val translated = store.snapshot(pageKey).page.shouldNotBeNull()
+            translated.sourceFingerprint shouldBe hex64(changedSourceContent(pageKey))
+            translated.blocks.single().translation shouldBe "retranslated-source-$pageKey"
+        }
+        durableRunRecord(store).shouldNotBeNull().orderedSourceDigest shouldBe
+            ChapterProfileBatchCoordinator.orderedSourceDigest(changedPairs)
+        durableRunRecord(store).shouldNotBeNull().runId shouldNotBe firstRecord.runId
+        store.closeAndFlush()
+    }
+
+    @Test
+    fun `unknown startup identity is replaced by observed source digest before COMPLETE`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val placeholderPairs = pages.map { (pageKey, _) -> pageKey to "source-fingerprint-unavailable" }
+        val seam = StandardSeam(store, ConcurrentHashMap(), FakeStandardTranslator())
+
+        val outcome = standardCoordinator(
+            store,
+            FakePreflightOcrWorker(store),
+            pages,
+            seam,
+            null,
+            sourcePairsOverride = placeholderPairs,
+            freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
+        ).runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        val completeRecord = durableRunRecord(store).shouldNotBeNull()
+        completeRecord.state shouldBe ChapterRunState.COMPLETE
+        completeRecord.orderedSourceDigest shouldBe ChapterProfileBatchCoordinator.orderedSourceDigest(
+            pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
+        )
+        completeRecord.orderedSourceDigest shouldNotBe ChapterProfileBatchCoordinator.orderedSourceDigest(placeholderPairs)
+        store.closeAndFlush()
+    }
+
+    @Test
+    fun `legacy complete placeholder identity with missing source map cannot hide changed bytes`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val firstSeam = StandardSeam(store, ConcurrentHashMap(), FakeStandardTranslator())
+        standardCoordinator(store, FakePreflightOcrWorker(store), pages, firstSeam, null)
+            .runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE).status shouldBe BatchPass1Status.COMPLETED
+        publishLegacyCompleteIdentity(store, pages, sourceShaByPageKey = emptyMap())
+
+        val changedSourceContent: (String) -> String = { pageKey -> "rollback-changed-$pageKey" }
+        val resumeOcr = FakePreflightOcrWorker(store, sourceContentFor = changedSourceContent)
+        val resumeTranslator = FakeStandardTranslator(translationPrefix = "retranslated-")
+        val resumeSeam = StandardSeam(
+            store,
+            ConcurrentHashMap(),
+            resumeTranslator,
+            sourceShaForPage = { pageKey -> hex64(changedSourceContent(pageKey)) },
+        )
+        val placeholderPairs = pages.map { (pageKey, _) -> pageKey to "source-fingerprint-unavailable" }
+        val outcome = standardCoordinator(
+            store,
+            resumeOcr,
+            pages,
+            resumeSeam,
+            null,
+            sourcePairsOverride = placeholderPairs,
+            freshSourceShaByPageKey = { pageKey -> hex64(changedSourceContent(pageKey)) },
+        ).runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+        resumeOcr.ocrPages shouldContainExactly pageKeys
+        resumeSeam.invoked shouldContainExactly pageKeys
+        resumeTranslator.calls shouldContainExactly pageKeys
+        val closedRecord = durableRunRecord(store).shouldNotBeNull()
+        closedRecord.orderedSourceDigest shouldBe ChapterProfileBatchCoordinator.orderedSourceDigest(
+            pages.map { (pageKey, _) -> pageKey to hex64(changedSourceContent(pageKey)) },
+        )
+        closedRecord.orderedSourceDigest shouldNotBe ChapterProfileBatchCoordinator.orderedSourceDigest(placeholderPairs)
+        store.closeAndFlush()
+    }
+
+    @Test
+    fun `legacy complete placeholder identity with malformed source map cannot hide changed bytes`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val firstSeam = StandardSeam(store, ConcurrentHashMap(), FakeStandardTranslator())
+        standardCoordinator(store, FakePreflightOcrWorker(store), pages, firstSeam, null)
+            .runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE).status shouldBe BatchPass1Status.COMPLETED
+        publishLegacyCompleteIdentity(store, pages, sourceShaByPageKey = mapOf("p1" to "malformed"))
+
+        val changedSourceContent: (String) -> String = { pageKey -> "malformed-map-changed-$pageKey" }
+        val resumeOcr = FakePreflightOcrWorker(store, sourceContentFor = changedSourceContent)
+        val resumeTranslator = FakeStandardTranslator(translationPrefix = "retranslated-")
+        val resumeSeam = StandardSeam(
+            store,
+            ConcurrentHashMap(),
+            resumeTranslator,
+            sourceShaForPage = { pageKey -> hex64(changedSourceContent(pageKey)) },
+        )
+        val placeholderPairs = pages.map { (pageKey, _) -> pageKey to "source-fingerprint-unavailable" }
+        val outcome = standardCoordinator(
+            store,
+            resumeOcr,
+            pages,
+            resumeSeam,
+            null,
+            sourcePairsOverride = placeholderPairs,
+            freshSourceShaByPageKey = { pageKey -> hex64(changedSourceContent(pageKey)) },
+        ).runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+        resumeOcr.ocrPages shouldContainExactly pageKeys
+        resumeSeam.invoked shouldContainExactly pageKeys
+        resumeTranslator.calls shouldContainExactly pageKeys
+        val closedRecord = durableRunRecord(store).shouldNotBeNull()
+        closedRecord.orderedSourceDigest shouldBe ChapterProfileBatchCoordinator.orderedSourceDigest(
+            pages.map { (pageKey, _) -> pageKey to hex64(changedSourceContent(pageKey)) },
+        )
+        closedRecord.orderedSourceDigest shouldNotBe ChapterProfileBatchCoordinator.orderedSourceDigest(placeholderPairs)
         store.closeAndFlush()
     }
 

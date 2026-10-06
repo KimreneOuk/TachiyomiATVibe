@@ -122,6 +122,7 @@ class OcrPreflightCoordinatorTest {
         nativeWorker = worker,
         frozenConfig = frozenConfig(),
         orderedSourcePairs = sourcePairsOverride ?: sourcePairs(pages),
+        freshSourceShaByPageKey = { pageKey -> worker.sourceShaFor(pageKey) },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
     )
 

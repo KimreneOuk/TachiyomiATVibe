@@ -97,6 +97,8 @@ data class TranslationStagePatch(
      * the context frontier.
      */
     val envelopePlanFingerprint: String? = null,
+    /** Fresh source bytes observed by the shared per-page lazy fingerprint map. */
+    val sourceFingerprint: String? = null,
 )
 
 /** Render-owned colors for one block. No image or bitmap is retained. */

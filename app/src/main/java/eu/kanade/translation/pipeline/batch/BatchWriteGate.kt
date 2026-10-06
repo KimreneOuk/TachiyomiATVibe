@@ -398,6 +398,7 @@ internal class BatchWriteGate(
                 translationError = null
                 blocks = prepared.blocks.map { it.detachedCopy() }.toMutableList()
                 updatedAt = System.currentTimeMillis()
+                sourceFingerprint = prepared.sourceFingerprint ?: sourceFingerprint
             }
         }
         if (result is ChapterTranslationStore.PatchResult.Accepted) {

@@ -126,12 +126,14 @@ class WriteTimeDigestsTest {
         worker: FakeDigestWorker,
         pages: List<PageKey>,
         sourcePairsOverride: List<Pair<String, String>>? = null,
+        freshSourceShaByPageKey: (String) -> String? = worker.sourceShaFor,
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
         store = store,
         nativeWorker = worker,
         frozenConfig = frozenConfig(),
         orderedSourcePairs = sourcePairsOverride ?: sourcePairs(pages),
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+        freshSourceShaByPageKey = freshSourceShaByPageKey,
     )
 
     /**
@@ -148,7 +150,10 @@ class WriteTimeDigestsTest {
         var textFor: (String) -> String = { pageKey -> "source-$pageKey" }
 
         /** Current source-bytes identity, as the real lane hashes at decode time. */
-        var sourceShaFor: (String) -> String = { pageKey -> hex64("source-$pageKey") }
+        var sourceContentFor: (String) -> String = { pageKey -> "source-$pageKey" }
+
+        /** Current source-byte identity, as the real lane hashes at decode/admission time. */
+        val sourceShaFor: (String) -> String = { pageKey -> hex64(sourceContentFor(pageKey)) }
 
         override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
             ocrPages += pageKey
@@ -271,11 +276,20 @@ class WriteTimeDigestsTest {
         // fresh observation no longer matches the durable checkpoint identity.
         val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
         val resumedWorker = FakeDigestWorker(resumedStore).apply {
-            sourceShaFor = { pageKey -> hex64("replaced-source-$pageKey") }
+            sourceContentFor = { pageKey -> "replaced-source-$pageKey" }
         }
         val replacedPairs = sourcePairs(pages, tag = "replaced-source")
+        val recordedPairs = pages.map { (pageKey, _) ->
+            pageKey to checkNotNull(recordedDigests()[pageKey])
+        }
 
-        val outcome = coordinator(resumedStore, resumedWorker, pages, replacedPairs)
+        val outcome = coordinator(
+            store = resumedStore,
+            worker = resumedWorker,
+            pages = pages,
+            sourcePairsOverride = recordedPairs,
+            freshSourceShaByPageKey = { pageKey -> resumedWorker.sourceShaFor(pageKey) },
+        )
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // Fail closed: the stale checkpoints were NOT reused — both pages

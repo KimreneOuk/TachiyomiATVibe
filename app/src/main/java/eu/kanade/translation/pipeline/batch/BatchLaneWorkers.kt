@@ -38,6 +38,7 @@ import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
+import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
@@ -106,6 +107,7 @@ internal class BatchLaneWorkers(
     private val fromLang: TextRecognizerLanguage,
     private val toLang: TextTranslatorLanguage,
     private val orderedStreams: List<Pair<String, () -> InputStream>>,
+    private val freshSourceShaByPageKey: (String) -> String?,
     private val resolvedNaturalPageIndexes: Map<String, Int>,
     private val requestedOutputTokens: Int,
     private val chunkProfile: TranslationContextChunkPlanner.Profile,
@@ -173,6 +175,12 @@ internal class BatchLaneWorkers(
     private fun plannedTranslationNeedsWork(pageKey: String): Boolean =
         resumePlanner.plannedTranslationNeedsWork(pageKey)
 
+    private fun currentSourceIdentityMatches(pageKey: String, page: PageTranslationView?): Boolean {
+        val observed = freshSourceShaByPageKey(pageKey)?.takeIf(String::isSha256Hex) ?: return false
+        val recorded = page?.sourceFingerprint?.takeIf(String::isSha256Hex) ?: return false
+        return recorded == observed
+    }
+
     /**
      * Whether the natural-order predecessor of [pageKey] has reached a terminal
      * translation outcome in the store at call time (READY, or SKIPPED for a
@@ -186,7 +194,8 @@ internal class BatchLaneWorkers(
         if (index <= 0) return true
         val predecessorKey = orderedStreams[index - 1].first
         val predecessor = store.state.value[predecessorKey] ?: return false
-        return predecessor.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED)
+        return predecessor.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED) &&
+            currentSourceIdentityMatches(predecessorKey, predecessor)
     }
 
     private fun translationFailureFence(pageKey: String): Boolean =
@@ -404,15 +413,20 @@ internal class BatchLaneWorkers(
                 // Fully durable (OCR+inpaint done): no decode/slot; render reloads disk.
                 val p = existing!!
                 translationRegistry[pageKey] = p.toDraft()
-                val translationNeedsWork = plannedTranslationNeedsWork(pageKey)
-                if (!translationNeedsWork && !translationFailureFence(pageKey)) {
+                val sourceIdentityCurrent = currentSourceIdentityMatches(pageKey, p)
+                val translationTerminal = p.translationStatus in setOf(
+                    StageStatus.READY,
+                    StageStatus.PARTIAL,
+                    StageStatus.SKIPPED,
+                )
+                val translationNeedsWork = plannedTranslationNeedsWork(pageKey) ||
+                    translationTerminal &&
+                    !sourceIdentityCurrent
+                if (!translationNeedsWork && !translationFailureFence(pageKey) && sourceIdentityCurrent) {
                     tryRender(pageKey)
                     recordReusableContextPage(pageKey, p)
                 }
-                val translationTerminal = p.translationStatus == StageStatus.READY ||
-                    p.translationStatus == StageStatus.PARTIAL ||
-                    p.translationStatus == StageStatus.SKIPPED
-                if (translationTerminal && !translationNeedsWork) return null
+                if (translationTerminal && !translationNeedsWork && sourceIdentityCurrent) return null
                 val persisted = store.snapshot(pageKey)
                 refreshBatchIdentity(pageKey, persisted)
                 return OcrReadyPageRef(
@@ -434,7 +448,11 @@ internal class BatchLaneWorkers(
             if (innerGate == BatchResumeGate.SKIP_ALL) {
                 val p = latest!!
                 translationRegistry[pageKey] = p.toDraft()
-                if (!plannedTranslationNeedsWork(pageKey) && !translationFailureFence(pageKey)) {
+                val sourceIdentityCurrent = currentSourceIdentityMatches(pageKey, p)
+                if (!plannedTranslationNeedsWork(pageKey) &&
+                    !translationFailureFence(pageKey) &&
+                    sourceIdentityCurrent
+                ) {
                     tryRender(pageKey)
                     recordReusableContextPage(pageKey, p)
                 }
@@ -964,10 +982,13 @@ internal class BatchLaneWorkers(
             val priorPageBlocksStandardTranslation = !isAi &&
                 plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
                 !naturalOrderPredecessorTerminal(pageKey)
+            val livePage = store.state.value[pageKey]
+            val currentSourceIdentity = currentSourceIdentityMatches(pageKey, livePage ?: p)
             val completedAiPageAfterPriorGap = isAi &&
                 plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
                 plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
                 p.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED) &&
+                currentSourceIdentity &&
                 (
                     expectedBatchFingerprints.translation == null ||
                         p.translationFingerprint == expectedBatchFingerprints.translation
@@ -977,19 +998,21 @@ internal class BatchLaneWorkers(
             // the batch's own unblocked pages, or a manual tap that finished
             // mid-pass ( manual output is authoritative and must never be
             // re-paid) — so this check reads the LIVE store rather than the
-            // possibly-stale registry snapshot, and is deliberately
-            // origin/fingerprint-blind: plan-time REUSE evidence still governs
-            // re-translation of pre-pass state.
-            val livePage = store.state.value[pageKey]
+            // possibly-stale registry snapshot. A committed page only
+            // unblocks this lane when its persisted source identity still
+            // matches the run's shared fresh observation.
             val completedStandardPageAfterPriorGap = !isAi &&
                 plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.WAIT_FOR_DEPENDENCY &&
                 plannedTranslation?.reason == eu.kanade.translation.pipeline.planning.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
-                livePage?.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED)
+                livePage?.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED) &&
+                currentSourceIdentity
             val retryableTranslation = plannedTranslation?.decision ==
                 eu.kanade.translation.pipeline.planning.StageDecision.FAILED_RETRYABLE
-            val shouldSkipTranslation = plannedTranslation?.decision ==
-                eu.kanade.translation.pipeline.planning.StageDecision.REUSE ||
-                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.TERMINAL_COMPLETE ||
+            val shouldSkipTranslation = (
+                plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.REUSE ||
+                    plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.TERMINAL_COMPLETE
+                ) &&
+                currentSourceIdentity ||
                 plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.FAILED ||
                 plannedTranslation?.decision == eu.kanade.translation.pipeline.planning.StageDecision.FAILED_TERMINAL ||
                 retryableTranslation &&
@@ -1049,6 +1072,7 @@ internal class BatchLaneWorkers(
                 // erase-mask work, while masked pages remain pending for the
                 // inpaint lane to settle.
                 finalizePostOcrStage(p, inpaintAlreadyRan = false)
+                freshSourceShaByPageKey(pageKey)?.takeIf(String::isSha256Hex)?.let { p.sourceFingerprint = it }
                 val textless = guardedBatchUpdate(pageKey, "batch textless translation commit", BatchStage.TRANSLATION) { p }
                 if (textless is ChapterTranslationStore.PatchResult.Rejected) {
                     abortBatchCandidate(pageKey, "textless commit rejected: ${textless.reason}")
@@ -1214,6 +1238,11 @@ internal class BatchLaneWorkers(
                                 failure = failure,
                                 reason = failure.safeSummary,
                             )
+                        }
+                    }
+                    if (s in setOf(StageStatus.READY, StageStatus.PARTIAL, StageStatus.SKIPPED)) {
+                        freshSourceShaByPageKey(pageKey)?.takeIf(String::isSha256Hex)?.let {
+                            p.sourceFingerprint = it
                         }
                     }
                     succeeded = s == StageStatus.READY

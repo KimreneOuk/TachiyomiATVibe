@@ -41,6 +41,7 @@ internal class StandardLaneWorkerContext(
         String,
         Map<String, Int>,
     ) -> BatchPass1Outcome,
+    val freshSourceShaByPageKey: (String) -> String? = { null },
 )
 
 internal class StandardLaneWorker(
@@ -58,6 +59,8 @@ internal class StandardLaneWorker(
         get() = context.overlapScheduler
     private val renderJoin: BatchRenderJoin?
         get() = context.renderJoin
+    private val freshSourceShaByPageKey: (String) -> String?
+        get() = context.freshSourceShaByPageKey
 
     private suspend fun publishRecord(
         artifact: ChapterArtifactEngine,
@@ -101,8 +104,11 @@ internal class StandardLaneWorker(
     private fun orderedSourceDigest(pairs: List<Pair<String, String>>): String =
         ChapterProfileBatchCoordinator.orderedSourceDigest(pairs)
 
-    private fun standardPageTerminalAtTranslate(page: PageTranslationView): Boolean =
-        ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(page)
+    private fun standardPageTerminalAtTranslate(pageKey: String, page: PageTranslationView): Boolean =
+        ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(
+            page,
+            freshSourceShaByPageKey(pageKey),
+        )
 
     suspend fun runPhase(
         artifact: ChapterArtifactEngine,
@@ -192,7 +198,7 @@ internal class StandardLaneWorker(
                 // the provider (READY/PARTIAL committed, textless, or the
                 // cross-schedule rendered safety).
                 val live = store.state.value[pageKey]
-                if (live != null && standardPageTerminalAtTranslate(live)) continue
+                if (live != null && standardPageTerminalAtTranslate(pageKey, live)) continue
 
                 //  bracket the per-page translate call with the SAME
                 // remote-window mechanism the AI lane rides — the overlap

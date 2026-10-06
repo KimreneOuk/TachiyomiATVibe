@@ -33,6 +33,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
@@ -393,6 +394,14 @@ internal class BatchChapterTranslator(
                     items = orderedStreams.size,
                 )
                 val sourceFingerprints: Map<String, String> = LazySourceFingerprints(orderedStreams.toMap(), computeSourceFingerprintFn)
+                val recordedSourceShaByPageKey = store.artifactManifest?.sourceShaByPageKey.orEmpty()
+                val runIdentitySourcePairs = orderedStreams.map { (pageKey, _) ->
+                    pageKey to (
+                        recordedSourceShaByPageKey[pageKey]
+                            ?.takeIf(String::isSha256Hex)
+                            ?: UNKNOWN_SOURCE_FINGERPRINT
+                        )
+                }
                 fingerprintSpan.end(
                     TranslationTraceOutcome.SUCCESS,
                     items = sourceFingerprints.size,
@@ -573,6 +582,7 @@ internal class BatchChapterTranslator(
                     fromLang = fromLang,
                     toLang = toLang,
                     orderedStreams = orderedStreams,
+                    freshSourceShaByPageKey = { pageKey -> sourceFingerprints[pageKey] },
                     resolvedNaturalPageIndexes = resolvedNaturalPageIndexes,
                     requestedOutputTokens = requestedOutputTokens,
                     chunkProfile = chunkProfile,
@@ -669,6 +679,7 @@ internal class BatchChapterTranslator(
                                     liveUnderLease != null &&
                                     ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(
                                         liveUnderLease,
+                                        sourceFingerprints[pageKey],
                                     )
                                 ) {
                                     logcat(LogPriority.INFO) {
@@ -751,9 +762,8 @@ internal class BatchChapterTranslator(
                                         ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
                                         .orEmpty(),
                                 ),
-                                orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
-                                    pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
-                                },
+                                orderedSourcePairs = runIdentitySourcePairs,
+                                freshSourceShaByPageKey = { pageKey -> sourceFingerprints[pageKey] },
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                                 // AI translation requires contextual support.
                                 textTranslator = contextualTranslator,
@@ -798,9 +808,8 @@ internal class BatchChapterTranslator(
                                         ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
                                         .orEmpty(),
                                 ),
-                                orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
-                                    pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
-                                },
+                                orderedSourcePairs = runIdentitySourcePairs,
+                                freshSourceShaByPageKey = { pageKey -> sourceFingerprints[pageKey] },
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                                 // The plain per-page standard translator rides
                                 // the WIDENED seam type; the envelope path's

@@ -1,13 +1,16 @@
 package eu.kanade.translation.pipeline.batch
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -19,7 +22,9 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.TranslationPreferences
+import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Every exceptional exit of the batch pipeline
@@ -90,6 +95,88 @@ class BatchTerminalExitTest {
             scope = this,
         )
         return registry to tracker
+    }
+
+    @Test
+    fun `recorded source digests satisfy run identity without whole chapter fingerprint reads`() = runTest {
+        val pageKeys = listOf("001.jpg", "002.jpg")
+        val recorded = pageKeys.associateWith { key ->
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest("source-$key".toByteArray())
+                .joinToString("") { byte -> "%02x".format(byte) }
+        }
+        val store = ChapterTranslationStore(
+            initialArtifactManifest = ChapterArtifactManifest(sourceShaByPageKey = recorded),
+        )
+        val preferenceStore = prefs().also { preferences ->
+            every { preferences.translationAiOutputTokens() } returns mockk {
+                every { get() } returns "8192"
+            }
+            every { preferences.translationEngineCategory() } returns mockk {
+                every { get() } returns tachiyomi.domain.translation.TranslationEngineCategory.STANDARD
+            }
+            every { preferences.translationStandardEngine() } returns mockk {
+                every { get() } returns tachiyomi.domain.translation.StandardEngine.values().first()
+            }
+        }
+        val fingerprintCalls = AtomicInteger()
+        val batch = BatchChapterTranslator(
+            provider = mockk(relaxed = true),
+            translationPreferences = preferenceStore,
+            nativeLane = object : NativeLaneRunner {
+                private var setupCall = true
+
+                override suspend fun <T> run(
+                    timeoutMs: Long,
+                    chapterId: Long?,
+                    chapterName: String,
+                    pageKey: String,
+                    onTimeout: suspend () -> Unit,
+                    block: suspend () -> T,
+                ): T? = if (setupCall) {
+                    setupCall = false
+                    block()
+                } else {
+                    null
+                }
+            },
+            engineRebuildMutex = Mutex(),
+            ensureEnginesBuiltFor = { _, _ -> },
+            recognitionEngineFn = { mockk(relaxed = true) },
+            textTranslatorFn = { mockk(relaxed = true) },
+            computeSourceFingerprintFn = {
+                fingerprintCalls.incrementAndGet()
+                recorded.getValue(pageKeys.first())
+            },
+            batchExpectedFingerprintsFn = { _, _ -> BatchExpectedFingerprints() },
+            inpaintingModeFromPref = { InpaintingMode.FAST },
+            releaseBatchPageLease = { _, _ -> },
+            persistPageWithOomRecovery = { _, _, _, _ -> error("page persistence not expected") },
+            loadPersistedCleanedBitmap = { _, _, _, _ -> error("bitmap load not expected") },
+            deleteRetiredCleanedFile = { _, _, _, _, _ -> error("retired delete not expected") },
+            markPageTimedOut = { _, _, _, _ -> error("page timeout not expected") },
+            analyzePage = { _, _, _, _, _ -> error("analysis not expected") },
+            decodePageBitmapForTranslation = { _, _ -> error("page decode not expected") },
+            preflightInpaintGate = { _, _ -> error("inpaint gate not expected") },
+            inpaintPage = { _, _, _, _, _ -> error("inpaint not expected") },
+            retryInpaintDownscaled = { _, _, _, _, _, _, _ -> error("inpaint retry not expected") },
+            persistCleanedBitmap = { _, _, _, _, _, _, _, _, _, _ -> error("cleaned persistence not expected") },
+            updatePageFromCurrentSnapshotFn = { _, _, _, _ -> error("page patch not expected") },
+            onBatchClosedFn = { null },
+        )
+
+        batch.translateBatch(
+            manga = manga,
+            chapter = chapter,
+            source = source,
+            store = store,
+            orderedStreams = pageKeys.map { key -> key to { ByteArrayInputStream("source-$key".toByteArray()) } },
+        )
+
+        // With no in-memory page state, the planner has no reuse probe to make.
+        // The durable digests are enough to form run identity; coordinator setup
+        // must not open every page source before the first page is admitted.
+        fingerprintCalls.get() shouldBe 0
     }
 
     @Test

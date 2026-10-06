@@ -331,6 +331,7 @@ class Stage7FinalizeResumeCoordinatorTest {
             envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 32, maxPages = 8),
         ),
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
+        freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
         textTranslator = translator,

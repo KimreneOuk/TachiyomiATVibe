@@ -25,7 +25,9 @@ internal class PreflightWorkerContext(
     val store: ChapterTranslationStore,
     val nativeWorker: NativeLaneWorker,
     val frozenConfig: RunConfigSnapshot,
-    val effectiveSourcePairs: List<Pair<String, String>>,
+    val effectiveSourcePairs: () -> List<Pair<String, String>>,
+    val freshSourcePairsForPages: (List<PageKey>) -> List<Pair<String, String>>?,
+    val useFreshSourcePairsForRun: (List<Pair<String, String>>) -> Unit,
     val releaseBatchLease: suspend (String) -> Unit,
     val listener: BatchScheduleListener,
     val nowEpochMs: () -> Long,
@@ -84,7 +86,7 @@ internal class PreflightWorker(
     private val frozenConfig: RunConfigSnapshot
         get() = context.frozenConfig
     private val effectiveSourcePairs: List<Pair<String, String>>
-        get() = context.effectiveSourcePairs
+        get() = context.effectiveSourcePairs()
     private val releaseBatchLease: suspend (String) -> Unit
         get() = context.releaseBatchLease
     private val listener: BatchScheduleListener
@@ -308,25 +310,36 @@ internal class PreflightWorker(
         }
 
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
         val priorRecord = (existingActiveRecord(artifact) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
-        //  settings apply next run — a resume continues the recorded run
-        // only while the frozen configuration fingerprint still matches; a
-        // mismatch starts a NEW run id under the current configuration.
-        val runId = priorRecord
-            ?.takeIf { it.frozenRunConfigFingerprint == frozenFingerprint }
-            ?.runId
-            ?: newRunId(sourceDigest, frozenFingerprint)
+        val terminalPrior = priorRecord?.takeIf {
+            it.state == ChapterRunState.FINALIZE || it.state == ChapterRunState.COMPLETE
+        }
+        // Recorded identity cannot prove that a terminal run still describes
+        // current bytes. Observe every page through the shared lazy source map
+        // before attempting a FINALIZE/COMPLETE shortcut.
+        val freshTerminalPairs = terminalPrior?.let { context.freshSourcePairsForPages(orderedPages) }
+        if (freshTerminalPairs != null) context.useFreshSourcePairsForRun(freshTerminalPairs)
+        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
+        val reusablePrior = priorRecord?.takeIf {
+            it.frozenRunConfigFingerprint == frozenFingerprint &&
+                (
+                    terminalPrior == null ||
+                        (freshTerminalPairs != null && it.orderedSourceDigest == sourceDigest)
+                    )
+        }
+        val runId = reusablePrior?.runId ?: newRunId(sourceDigest, frozenFingerprint)
 
-        // ----  resume gates: a record already past TRANSLATE never ----
-        // ---- steps the durable state BACKWARD to RUN_SNAPSHOT.         ----
-        resumeFinalizeOrComplete(
-            artifact = artifact,
-            priorRecord = priorRecord,
-            frozenFingerprint = frozenFingerprint,
-            sourceDigest = sourceDigest,
-            orderedPages = orderedPages,
-        )?.let { resumed -> return resumed }
+        // A missing or malformed current observation refuses terminal resume
+        // and starts a new run. A changed valid digest also starts a new id.
+        if (terminalPrior == null || freshTerminalPairs != null) {
+            resumeFinalizeOrComplete(
+                artifact = artifact,
+                priorRecord = priorRecord,
+                frozenFingerprint = frozenFingerprint,
+                sourceDigest = sourceDigest,
+                orderedPages = orderedPages,
+            )?.let { resumed -> return resumed }
+        }
 
         val total = orderedPages.size
         var reusedPages = 0

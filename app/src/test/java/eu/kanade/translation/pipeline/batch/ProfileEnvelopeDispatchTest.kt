@@ -138,6 +138,7 @@ class ProfileEnvelopeDispatchTest {
         translator: FakeTranslator?,
         maxPagesPerEnvelope: Int = 8,
         gate: BatchRequestSublimitGate = BatchRequestSublimitGate(),
+        freshSourceShaByPageKey: (String) -> String = { pageKey -> hex64("source-$pageKey") },
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
         store = store,
         nativeWorker = worker,
@@ -154,6 +155,7 @@ class ProfileEnvelopeDispatchTest {
             ),
         ),
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
+        freshSourceShaByPageKey = freshSourceShaByPageKey,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
         textTranslator = translator,
@@ -466,6 +468,54 @@ class ProfileEnvelopeDispatchTest {
         counters["envelopesDone"] shouldBe 1
         counters["pagesTranslated"] shouldBe 3
         counters["envelopeFailures"] shouldBe 0
+    }
+
+    @Test
+    fun `completed profile page with changed source bytes is OCRed and retranslates despite identical OCR text`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val originalSha = hex64("source-p1")
+        val changedSha = hex64("changed-source-p1")
+        val identicalOcr = { pageKey: String -> listOf(block("same-ocr-$pageKey")) }
+
+        val firstWorker = FakePreflightOcrWorker(store, identicalOcr)
+        val firstTranslator = FakeTranslator { _, chunk ->
+            responseFor(chunk) { stableId -> "original-$stableId" }
+        }
+        val firstOutcome = coordinator(
+            store,
+            firstWorker,
+            pages,
+            FakeAnalyzer(),
+            firstTranslator,
+            freshSourceShaByPageKey = { originalSha },
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+        firstOutcome.status shouldBe BatchPass1Status.COMPLETED
+        firstTranslator.requests.size shouldBe 1
+
+        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedWorker = FakePreflightOcrWorker(resumedStore, identicalOcr)
+        val changedTranslator = FakeTranslator { _, chunk ->
+            responseFor(chunk) { stableId -> "changed-$stableId" }
+        }
+        val resumedOutcome = coordinator(
+            resumedStore,
+            resumedWorker,
+            pages,
+            FakeAnalyzer(),
+            changedTranslator,
+            freshSourceShaByPageKey = { changedSha },
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        resumedOutcome.status shouldBe BatchPass1Status.COMPLETED
+        resumedWorker.ocrPages shouldBe listOf("p1")
+        changedTranslator.requests.size shouldBe 1
+        val completed = resumedStore.snapshot("p1").page.shouldNotBeNull()
+        completed.sourceFingerprint shouldBe changedSha
+        completed.translationStatus shouldBe StageStatus.READY
+        completed.blocks.single().translation shouldBe "changed-p0_b1"
     }
 
     @Test

@@ -189,6 +189,7 @@ class ChapterTranslatorQueueRestoreTest {
             nativeWorker = worker,
             frozenConfig = frozenConfig(),
             orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
+            freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         )
         val outcome = coordinator.runPass1(pages, TranslatorComputeClass.REMOTE_IO)

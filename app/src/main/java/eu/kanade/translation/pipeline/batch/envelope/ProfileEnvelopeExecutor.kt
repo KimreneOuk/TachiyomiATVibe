@@ -40,6 +40,7 @@ import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.PlannedEnvelope
+import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
@@ -377,7 +378,7 @@ internal class ProfileEnvelopeExecutor(
                 }
                 // .3 skip re-check: the page became committed /
                 // manual-authoritative between plan and dispatch.
-                if (pageAuthoritativelyDone(pageKey, live)) {
+                if (pageAuthoritativelyDone(pageKey, live, pageWork.observedSourceFingerprint)) {
                     store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.BATCH, leaseToken)
                     continue
                 }
@@ -1053,6 +1054,7 @@ internal class ProfileEnvelopeExecutor(
                 expectedDependencyFingerprint = page.snapshot.dependencyFingerprint,
                 expectedArtifactPageVersion = page.snapshot.artifactPageVersion,
                 envelopePlanFingerprint = work.planFingerprint,
+                sourceFingerprint = page.work.observedSourceFingerprint?.takeIf(String::isSha256Hex),
             )
             val mergeResult = if (pageTraceRegistry == null) {
                 store.mergeTranslation(patch, description = "t924 translation envelope commit")
@@ -1166,7 +1168,14 @@ internal class ProfileEnvelopeExecutor(
     }
 
     /** Whole-page authoritativeness re-check ( fresh reads). */
-    private fun pageAuthoritativelyDone(pageKey: String, live: PageTranslation): Boolean {
+    private fun pageAuthoritativelyDone(
+        pageKey: String,
+        live: PageTranslation,
+        observedSourceFingerprint: String?,
+    ): Boolean {
+        val observed = observedSourceFingerprint?.takeIf(String::isSha256Hex) ?: return false
+        val recorded = live.sourceFingerprint?.takeIf(String::isSha256Hex) ?: return false
+        if (recorded != observed) return false
         if (live.translationStatus == StageStatus.READY ||
             live.translationStatus == StageStatus.SKIPPED ||
             live.hasRenderedResult
@@ -1245,6 +1254,8 @@ internal class PageDispatchWork(
     val planArtifactPageVersion: Long?,
     /** Pending (dispatchable) blocks in reading order. */
     val blocks: List<PlannedBlock>,
+    /** Fresh source digest observed for this run; null never authorizes a terminal skip. */
+    val observedSourceFingerprint: String? = null,
 )
 
 /** One pending block's dispatch identity (stable wire id + plan-time OCR identity). */

@@ -52,6 +52,7 @@ import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.persistence.artifact.SourceIdentity
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.internal.ChapterAttemptLedger
 import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
 import eu.kanade.translation.persistence.internal.PageStageLeaseTable
@@ -2124,6 +2125,7 @@ class ChapterTranslationStore internal constructor(
                         translationError = candidate.translationError
                         translationFingerprint = candidate.translationFingerprint
                         translationOrigin = candidate.translationOrigin
+                        sourceFingerprint = candidate.sourceFingerprint ?: sourceFingerprint
                     }
                     val owned = ownedPage(pageKey, updated)
                     val expectedCurrent = actual.toPrecondition()
@@ -2709,6 +2711,9 @@ class ChapterTranslationStore internal constructor(
         description: String,
         journalCredit: ChapterJournalCredit?,
     ): StagePatchResult {
+        if (patch.sourceFingerprint != null && !patch.sourceFingerprint.isSha256Hex()) {
+            return rejectedStage(patch.pageKey, description, "invalid observed source fingerprint")
+        }
         val identityRejection = stageIdentityRejection(
             current,
             patch.generation,
@@ -2764,6 +2769,7 @@ class ChapterTranslationStore internal constructor(
             )
         }
         page.translationStatus = patch.translationStatus
+        page.sourceFingerprint = patch.sourceFingerprint ?: page.sourceFingerprint
         page.errorMessage = patch.errorMessage
         val updated = ownedPage(patch.pageKey, page)
         pages = pages.put(patch.pageKey, publishPage(updated))

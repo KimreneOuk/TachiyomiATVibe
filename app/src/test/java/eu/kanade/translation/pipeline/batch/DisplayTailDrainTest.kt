@@ -336,6 +336,7 @@ class DisplayTailDrainTest {
             envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 32, maxPages = maxPagesPerEnvelope),
         ),
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
+        freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = FakeAnalyzer(),
         textTranslator = translator,

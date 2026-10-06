@@ -148,6 +148,7 @@ class StrandedPageTerminalRoutingTest {
      */
     private inner class FakePreflightOcrWorker(
         private val store: ChapterTranslationStore,
+        private val preTranslatedPagesWithKnownSourceSha: Set<String> = emptySet(),
         private val blocksFor: (String) -> List<TranslationBlock> = { pageKey ->
             listOf(block("b1", "source-$pageKey"))
         },
@@ -170,6 +171,20 @@ class StrandedPageTerminalRoutingTest {
                 ),
                 description = "t934 stranded-routing fake preflight ocr",
             ).shouldBeInstanceOf<StagePatchResult.Accepted>()
+            if (pageKey in preTranslatedPagesWithKnownSourceSha) {
+                val merged = store.snapshot(pageKey)
+                store.updatePageGuarded(
+                    pageKey = pageKey,
+                    expected = ChapterTranslationStore.PatchPrecondition(
+                        generation = merged.generation,
+                        pageVersion = merged.pageVersion,
+                        leaseToken = lease.token,
+                    ),
+                    description = "fixture: interrupted translation carries observed source identity",
+                ) { page ->
+                    page!!.apply { sourceFingerprint = hex64("source-$pageKey") }
+                }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+            }
             val after = store.snapshot(pageKey)
             return OcrReadyPageRef(
                 pageKey = pageKey,
@@ -314,6 +329,7 @@ class StrandedPageTerminalRoutingTest {
             envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 32, maxPages = 8),
         ),
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
+        freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = FakeAnalyzer(),
         textTranslator = translator,
@@ -351,13 +367,17 @@ class StrandedPageTerminalRoutingTest {
         // p2 simulates the device deadlock: a prior run wrote the block-level
         // translation but the page-level commit never landed — the page is
         // translation-PENDING while its only block is no longer requestable.
-        val worker = FakePreflightOcrWorker(store, blocksFor = { pageKey ->
-            if (pageKey == "p2") {
-                listOf(block("b1", "OK!").apply { translation = "OK!" })
-            } else {
-                listOf(block("b1", "source-$pageKey"))
-            }
-        })
+        val worker = FakePreflightOcrWorker(
+            store,
+            blocksFor = { pageKey ->
+                if (pageKey == "p2") {
+                    listOf(block("b1", "OK!").apply { translation = "OK!" })
+                } else {
+                    listOf(block("b1", "source-$pageKey"))
+                }
+            },
+            preTranslatedPagesWithKnownSourceSha = setOf("p2"),
+        )
         val translator = FakeTranslator { _, chunk ->
             responseFor(chunk) { sourceBlock ->
                 if (sourceBlock.text == "OK!") "OK!" else "translated-${sourceBlock.blockId}"
@@ -498,7 +518,6 @@ class StrandedPageTerminalRoutingTest {
             inpaintMode = "OFF",
             providerKey = "fake:provider",
         )
-        val sourcePairs = listOf("p1" to hex64("source-p1"))
         val nowEpochMs = System.currentTimeMillis() + 1L
         val recovery = RecoveryWorker(
             RecoveryWorkerContext(
@@ -515,7 +534,9 @@ class StrandedPageTerminalRoutingTest {
             FinalizeWorkerContext(
                 store = store,
                 frozenConfig = frozenConfig,
-                effectiveSourcePairs = sourcePairs,
+                freshSourcePairsForPages = { pages ->
+                    pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") }
+                },
                 overlapScheduler = null,
                 renderJoin = null,
                 publishRecord = { artifact, record ->
