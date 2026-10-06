@@ -114,6 +114,7 @@ class DisplayTailDrainTest {
         pageKey: String,
         text: String,
         preInpainted: Boolean = false,
+        cleanedImageReady: Boolean = true,
     ) = PageTranslation(
         sourceFileName = pageKey,
         blocks = mutableListOf(block(text)),
@@ -131,7 +132,7 @@ class DisplayTailDrainTest {
             // The durable order-inverted shape: the cleaned artifact from an
             // earlier inpaint commit that ran BEFORE this page's translation.
             inpaintStatus = StageStatus.READY
-            cleanedImageName = "$pageKey.cleaned.jpg"
+            if (cleanedImageReady) cleanedImageName = "$pageKey.cleaned.jpg"
         }
     }
 
@@ -167,6 +168,7 @@ class DisplayTailDrainTest {
     private inner class FakePreflightOcrWorker(
         private val store: ChapterTranslationStore,
         private val preInpainted: Set<String> = emptySet(),
+        private val preInpaintedWithoutCleanedImage: Set<String> = emptySet(),
     ) : NativeLaneWorker {
         override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
             val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
@@ -178,7 +180,12 @@ class DisplayTailDrainTest {
                     generation = before.generation,
                     expectedPageVersion = before.pageVersion,
                     expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
-                    ocrResult = ocrPage(pageKey, "source-$pageKey", pageKey in preInpainted),
+                    ocrResult = ocrPage(
+                        pageKey,
+                        "source-$pageKey",
+                        preInpainted = pageKey in preInpainted,
+                        cleanedImageReady = pageKey !in preInpaintedWithoutCleanedImage,
+                    ),
                     expectedLeaseToken = lease.token,
                 ),
                 description = "t934 display tail fake preflight ocr",
@@ -455,7 +462,7 @@ class DisplayTailDrainTest {
         }
 
     @Test
-    fun `a display tail page the drain cannot finish takes the typed terminal and the run completes as a warning`() =
+    fun `a display tail whose cleaned image arrives after translation can take the typed terminal`() =
         runTest {
             val store = lazyStore()
             val pageKeys = listOf("p1", "p2")
@@ -463,18 +470,48 @@ class DisplayTailDrainTest {
             val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
             val (overlapScheduler, _) = scheduler(store, pageKeys)
             val translator = FakeTranslator { callIndex, chunk ->
-                // Once p1's translation committed (second envelope = p2), a
-                // MANUAL reader lane owns p1's Render stage: the BATCH stamp
-                // can never acquire it this run (never preempted).
+                // p1 was inpaint-terminal but had no cleaned image when its
+                // translation committed, so the guarded commit correctly
+                // left render pending. Once that commit is durable (the
+                // second envelope = p2), a MANUAL reader owns Render while
+                // the cleaned image arrives; FINALIZE must preserve the
+                // typed-tail failure when it cannot acquire the stage.
                 if (callIndex == 2) {
-                    store.tryAcquirePageStageLease("p1", PageStage.Render, PageWriteOrigin.MANUAL)
+                    val manualLease = store.tryAcquirePageStageLease(
+                        "p1",
+                        PageStage.Render,
+                        PageWriteOrigin.MANUAL,
+                    ).shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+                    val current = store.snapshot("p1")
+                    current.page!!.renderStatus shouldBe StageStatus.PENDING
+                    current.page.cleanedImageName shouldBe null
+                    store.updatePageGuarded(
+                        pageKey = "p1",
+                        expected = ChapterTranslationStore.PatchPrecondition(
+                            generation = current.generation,
+                            pageVersion = current.pageVersion,
+                            leaseToken = manualLease.token,
+                            candidateGenerationId = current.candidateGenerationId,
+                            dependencyFingerprint = current.dependencyFingerprint,
+                            artifactPageVersion = current.artifactPageVersion,
+                        ),
+                        description = "t934 test: cleaned image arrives after translation commit",
+                    ) { page ->
+                        page!!.apply {
+                            cleanedImageName = "p1.cleaned.jpg"
+                        }
+                    }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
                 }
                 responseFor(chunk)
             }
 
             val outcome = coordinator(
                 store,
-                FakePreflightOcrWorker(store, preInpainted = setOf("p1")),
+                FakePreflightOcrWorker(
+                    store,
+                    preInpainted = setOf("p1"),
+                    preInpaintedWithoutCleanedImage = setOf("p1"),
+                ),
                 pages,
                 translator,
                 overlapScheduler,
