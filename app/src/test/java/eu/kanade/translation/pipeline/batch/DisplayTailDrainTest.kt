@@ -29,6 +29,7 @@ import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
@@ -51,10 +52,13 @@ import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
+import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.ints.shouldBeLessThan
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
@@ -169,6 +173,7 @@ class DisplayTailDrainTest {
         private val store: ChapterTranslationStore,
         private val preInpainted: Set<String> = emptySet(),
         private val preInpaintedWithoutCleanedImage: Set<String> = emptySet(),
+        private val preInpaintedWithStaleRevision: Set<String> = emptySet(),
     ) : NativeLaneWorker {
         override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
             val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
@@ -185,12 +190,20 @@ class DisplayTailDrainTest {
                         "source-$pageKey",
                         preInpainted = pageKey in preInpainted,
                         cleanedImageReady = pageKey !in preInpaintedWithoutCleanedImage,
-                    ),
+                    ).apply {
+                        if (pageKey in preInpaintedWithStaleRevision) {
+                            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1
+                        }
+                    },
                     expectedLeaseToken = lease.token,
                 ),
                 description = "t934 display tail fake preflight ocr",
             ).shouldBeInstanceOf<StagePatchResult.Accepted>()
             val after = store.snapshot(pageKey)
+            if (pageKey in preInpaintedWithStaleRevision) {
+                after.page!!.inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION - 1
+                after.page.isCleanedImageReady shouldBe false
+            }
             return OcrReadyPageRef(
                 pageKey = pageKey,
                 pageIndex = pageIndex,
@@ -229,6 +242,7 @@ class DisplayTailDrainTest {
         override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
             inpainted += pageKey
             events?.add("inpaint:$pageKey")
+            val inpaintRevisionBefore = store.snapshot(pageKey).page?.inpaintRevision
             val identity = identities[pageKey]
                 ?: error("overlap scheduler must register the write identity for $pageKey")
             store.updatePageGuarded(
@@ -248,6 +262,7 @@ class DisplayTailDrainTest {
                     if (cleanedImageName == null) cleanedImageName = "$pageKey.cleaned.jpg"
                 }
             }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+            store.snapshot(pageKey).page?.inpaintRevision shouldBe inpaintRevisionBefore
         }
     }
 
@@ -380,6 +395,55 @@ class DisplayTailDrainTest {
     // ------------------------------------------------------------------
 
     @Test
+    fun `stale inpaint revision is not render-certified and remains in the display tail`() = runTest {
+        val pageKey = "stale-revision"
+        val store = lazyStore()
+        store.preRegisterPages(listOf(pageKey))
+
+        val before = store.snapshot(pageKey)
+        val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        store.updatePageGuarded(
+            pageKey = pageKey,
+            expected = ChapterTranslationStore.PatchPrecondition(
+                generation = before.generation,
+                pageVersion = before.pageVersion,
+                leaseToken = lease.token,
+            ),
+            description = "t934 stale-inpaint render-tail fixture",
+        ) { current ->
+            (current ?: PageTranslation(sourceFileName = pageKey)).apply {
+                sourceFileName = pageKey
+                blocks = mutableListOf(block("source").copy(translation = "translated"))
+                imgWidth = 100f
+                imgHeight = 160f
+                ocrStatus = StageStatus.READY
+                translationStatus = StageStatus.READY
+                inpaintStatus = StageStatus.READY
+                renderStatus = StageStatus.PENDING
+                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1
+                inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 1))
+                cleanedImageName = "$pageKey.cleaned.jpg"
+            }
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+
+        val recoveryWorker = RecoveryWorker(
+            RecoveryWorkerContext(
+                store = store,
+                nowEpochMs = { 1L },
+                drainFinalize = { _, _, _, _, _ -> error("finalize callback is unused by this witness") },
+            ),
+        )
+        val drain = recoveryWorker.drainDisplayTailBeforeComplete(listOf(pageKey))
+
+        val after = store.snapshot(pageKey).page.shouldNotBeNull()
+        after.renderStatus shouldNotBe StageStatus.READY
+        after.hasRenderedResult shouldBe false
+        drain.failed shouldContain pageKey
+    }
+
+    @Test
     fun `an order-inverted display tail is committed by finalize and COMPLETE carries every page display-ready`() =
         runTest {
             val store = lazyStore()
@@ -470,37 +534,26 @@ class DisplayTailDrainTest {
             val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
             val (overlapScheduler, _) = scheduler(store, pageKeys)
             val translator = FakeTranslator { callIndex, chunk ->
-                // p1 was inpaint-terminal but had no cleaned image when its
-                // translation committed, so the guarded commit correctly
-                // left render pending. Once that commit is durable (the
-                // second envelope = p2), a MANUAL reader owns Render while
-                // the cleaned image arrives; FINALIZE must preserve the
+                // p1 has a cleaned image reference, but its prior inpaint
+                // revision is stale. The overlap lane gets one same-run repair
+                // attempt; this fixture deliberately leaves the revision stale
+                // so the shared display predicate keeps render pending. Once
+                // that translation commit is durable (the second envelope =
+                // p2), a MANUAL reader owns Render; FINALIZE must preserve the
                 // typed-tail failure when it cannot acquire the stage.
                 if (callIndex == 2) {
-                    val manualLease = store.tryAcquirePageStageLease(
+                    store.tryAcquirePageStageLease(
                         "p1",
                         PageStage.Render,
                         PageWriteOrigin.MANUAL,
-                    ).shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+                    ).shouldBeInstanceOf<LeaseAcquisition.Granted>()
                     val current = store.snapshot("p1")
+                    current.page!!.inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION - 1
+                    current.page.isCleanedImageReady shouldBe false
+                    current.page.blocks.isEmpty() shouldBe false
                     current.page!!.renderStatus shouldBe StageStatus.PENDING
-                    current.page.cleanedImageName shouldBe null
-                    store.updatePageGuarded(
-                        pageKey = "p1",
-                        expected = ChapterTranslationStore.PatchPrecondition(
-                            generation = current.generation,
-                            pageVersion = current.pageVersion,
-                            leaseToken = manualLease.token,
-                            candidateGenerationId = current.candidateGenerationId,
-                            dependencyFingerprint = current.dependencyFingerprint,
-                            artifactPageVersion = current.artifactPageVersion,
-                        ),
-                        description = "t934 test: cleaned image arrives after translation commit",
-                    ) { page ->
-                        page!!.apply {
-                            cleanedImageName = "p1.cleaned.jpg"
-                        }
-                    }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+                    current.page.cleanedImageName shouldBe "p1.cleaned.jpg"
+                    current.page.inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION - 1
                 }
                 responseFor(chunk)
             }
@@ -510,7 +563,7 @@ class DisplayTailDrainTest {
                 FakePreflightOcrWorker(
                     store,
                     preInpainted = setOf("p1"),
-                    preInpaintedWithoutCleanedImage = setOf("p1"),
+                    preInpaintedWithStaleRevision = setOf("p1"),
                 ),
                 pages,
                 translator,

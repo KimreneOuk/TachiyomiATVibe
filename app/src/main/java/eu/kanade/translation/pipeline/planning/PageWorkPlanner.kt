@@ -2,6 +2,7 @@ package eu.kanade.translation.pipeline.planning
 
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
@@ -49,7 +50,7 @@ object PageWorkPlanner {
             // stale OCR stage still drags inpaint with it (OCR changes invalidate
             // downstream stages), so `canReuseNative` keeps gating inpaint only.
             val ocrReady = page.ocrStatus == StageStatus.READY && page.blocks.isNotEmpty()
-            val inpaintReady = page.inpaintStatus == StageStatus.READY && page.cleanedImageName != null
+            val inpaintReady = page.isCleanedImageReady
             val ocrEvidenceValid = ocrReady &&
                 forceOcrEvidenceMatches(page, expectedFingerprints, sourceFingerprint)
             val canReuseNative = ocrEvidenceValid && inpaintReady
@@ -454,11 +455,13 @@ object PageWorkPlanner {
             BatchStage.LAYOUT -> expected.layout
         }
         val payloadValid = when {
-            record != null -> record.artifactFileName != null || record.legacyPayloadReference != null
             page == null -> false
+            stage == BatchStage.INPAINT ->
+                page.isCleanedImageReady &&
+                    (record == null || record.artifactFileName != null || record.legacyPayloadReference != null)
+            record != null -> record.artifactFileName != null || record.legacyPayloadReference != null
             stage == BatchStage.DETECTION || stage == BatchStage.OCR ->
                 page.ocrStatus == StageStatus.READY || page.ocrStatus == StageStatus.TEXTLESS
-            stage == BatchStage.INPAINT -> page.inpaintStatus == StageStatus.READY && page.cleanedImageName != null
             stage == BatchStage.TRANSLATION ->
                 page.translationStatus == StageStatus.READY ||
                     page.translationStatus == StageStatus.PARTIAL ||

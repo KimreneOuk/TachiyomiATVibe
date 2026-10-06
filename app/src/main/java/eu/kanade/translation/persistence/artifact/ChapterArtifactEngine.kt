@@ -745,7 +745,7 @@ class ChapterArtifactEngine(
         detectionFingerprint = snapshot.detectionFingerprint,
         ocrFingerprint = snapshot.ocrFingerprint.orEmpty(),
         textless = snapshot.isTextlessTerminal,
-        inpaintMaskRevision = snapshot.inpaintRevision,
+        inpaintMaskRevision = checkpoint.inpaintMaskRevision,
         blocks = StageFingerprints.pageOcrContentBlocks(snapshot),
         inpaintMaskBoxes = snapshot.inpaintMaskBoxes,
     )

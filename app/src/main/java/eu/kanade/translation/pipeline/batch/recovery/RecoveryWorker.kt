@@ -11,6 +11,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCommittedDisplay
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
@@ -272,8 +273,7 @@ internal class RecoveryWorker(
                 ?: return RenderStampOutcome.Blocked("expected page is missing from the store")
             if (page.renderStatus == StageStatus.READY) return RenderStampOutcome.Committed
             val displayComplete = (page.translationStatus == StageStatus.READY || page.translationStatus == StageStatus.PARTIAL) &&
-                page.inpaintStatus == StageStatus.READY &&
-                page.cleanedImageName != null &&
+                page.isCleanedImageReady &&
                 page.renderStatus == StageStatus.PENDING &&
                 page.blocks.any { it.translation.isNotBlank() }
             if (!displayComplete) return RenderStampOutcome.Blocked(displayTailFailureReason(page))

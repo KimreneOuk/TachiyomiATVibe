@@ -203,6 +203,12 @@ internal class BatchResumePlanner(
             }
         } == true
 
+    fun plannedInpaintNeedsWork(pageKey: String): Boolean =
+        batchPagePlans[pageKey]
+            ?.stages
+            ?.firstOrNull { it.stage == BatchStage.INPAINT }
+            ?.decision == StageDecision.RUN
+
     suspend fun resumeGate(page: PageTranslationView?): BatchResumeGate {
         val planned = page?.sourceFileName?.let(batchPagePlans::get)
         if (planned != null) {

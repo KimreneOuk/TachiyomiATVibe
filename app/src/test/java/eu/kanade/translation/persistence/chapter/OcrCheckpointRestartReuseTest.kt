@@ -132,13 +132,13 @@ class OcrCheckpointRestartReuseTest {
     }
 
     @Test
-    fun `fresh ocr snapshot with default inpaintRevision commits at current revision`() = runTest {
+    fun `fresh ocr checkpoint records current mask basis without promoting cleaned output revision`() = runTest {
         val store = lazyStore()
         store.preRegisterPages(listOf("p1"))
         // Production shape: a fresh OCR result keeps the never-inpainted
         // revision default (only inpaint publication stamps
-        // CURRENT_INPAINT_REVISION); the checkpoint must canonicalize the live
-        // revision, not reject the page.
+        // CURRENT_INPAINT_REVISION); the checkpoint records its current mask
+        // basis without certifying a cleaned image that was never published.
         val lease = store.tryAcquirePageStageLease("p1", PageStage.Ocr, PageWriteOrigin.BATCH)
             .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
         val before = store.snapshot("p1")
@@ -179,16 +179,18 @@ class OcrCheckpointRestartReuseTest {
             sourceOrientation = "PORTRAIT",
         ).shouldBeInstanceOf<CheckpointOcrResult.Committed>()
 
-        // The persisted checkpoint sidecar carries the canonical revision and
-        // therefore reads back Usable.
+        // The checkpoint carries the current OCR-mask basis and reads back
+        // Usable, while neither the OCR snapshot nor the live page claims a
+        // current cleaned-output revision.
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().ocrCheckpoints.getValue("p1")
         val read = artifact.readOcrCheckpoint(pointer)
             .shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>()
         read.checkpoint.inpaintMaskRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
-        // The published OCR snapshot sidecar carries the same canonical revision.
+        // Snapshot state keeps its real cleaned-output revision.
         artifact.readPageSnapshot(read.checkpoint.ocrPageSnapshotPointer.fileName)
-            .shouldNotBeNull().inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
+            .shouldNotBeNull().inpaintRevision shouldBe 0
+        store.snapshot("p1").page.shouldNotBeNull().inpaintRevision shouldBe 0
         store.releasePageStageLease("p1", PageWriteOrigin.BATCH)
     }
 

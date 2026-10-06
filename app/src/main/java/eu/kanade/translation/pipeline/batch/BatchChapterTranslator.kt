@@ -747,6 +747,7 @@ internal class BatchChapterTranslator(
                                 batchWriteIdentities = batchWriteIdentities,
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                                 pageTraceRegistry = pageTraceRegistry,
+                                plannedInpaintNeedsWork = { pageKey -> resumePlanner.plannedInpaintNeedsWork(pageKey) },
                             )
                             ChapterProfileBatchCoordinator(
                                 store = store,
@@ -793,6 +794,7 @@ internal class BatchChapterTranslator(
                                 batchWriteIdentities = batchWriteIdentities,
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                                 pageTraceRegistry = pageTraceRegistry,
+                                plannedInpaintNeedsWork = { pageKey -> resumePlanner.plannedInpaintNeedsWork(pageKey) },
                             )
                             ChapterProfileBatchCoordinator(
                                 store = store,

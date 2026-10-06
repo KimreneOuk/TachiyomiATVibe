@@ -176,6 +176,7 @@ class OverlapSchedulerTest {
     private inner class FakeInpaintLane(
         private val store: ChapterTranslationStore,
         private val identities: ConcurrentHashMap<String, BatchWriteIdentity>,
+        private val healCurrentInpaint: Boolean = false,
     ) : NativeLaneWorker {
         val inpainted = mutableListOf<String>()
         val ocrEntries = mutableListOf<String>()
@@ -208,7 +209,13 @@ class OverlapSchedulerTest {
                     ),
                     description = "t924 overlap test inpaint",
                 ) { page ->
-                    page!!.apply { inpaintStatus = StageStatus.READY }
+                    page!!.apply {
+                        inpaintStatus = StageStatus.READY
+                        if (healCurrentInpaint) {
+                            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+                            cleanedImageName = "$pageKey.cleaned.jpg"
+                        }
+                    }
                 }
                 result.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
             } finally {
@@ -238,6 +245,7 @@ class OverlapSchedulerTest {
         pageKeys: List<String>,
         identities: ConcurrentHashMap<String, BatchWriteIdentity>,
         pageTraceRegistry: BatchPageTraceRegistry? = null,
+        plannedInpaintNeedsWork: (String) -> Boolean = { false },
     ): OverlapScheduler = OverlapScheduler(
         store = store,
         nativeWorker = worker,
@@ -245,11 +253,56 @@ class OverlapSchedulerTest {
         batchWriteIdentities = identities,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         pageTraceRegistry = pageTraceRegistry,
+        plannedInpaintNeedsWork = plannedInpaintNeedsWork,
     )
 
     // ------------------------------------------------------------------
     // Tests.
     // ------------------------------------------------------------------
+
+    @Test
+    fun `stale ready inpaint page follows the preflight plan into same run healing`() = runTest {
+        val store = lazyStore()
+        val pageKey = "p1"
+        seedTranslatedPage(store, pageKey)
+        val before = store.snapshot(pageKey)
+        val staleLease = store.tryAcquirePageStageLease(pageKey, PageStage.Inpaint, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        store.updatePageGuarded(
+            pageKey = pageKey,
+            expected = ChapterTranslationStore.PatchPrecondition(
+                generation = before.generation,
+                pageVersion = before.pageVersion,
+                leaseToken = staleLease.token,
+            ),
+            description = "t934 scheduler stale-ready fixture",
+        ) { page ->
+            page!!.apply {
+                inpaintStatus = StageStatus.READY
+                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1
+                cleanedImageName = "$pageKey.cleaned.jpg"
+            }
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(store, identities, healCurrentInpaint = true)
+        val scheduler = scheduler(
+            store = store,
+            worker = lane,
+            pageKeys = listOf(pageKey),
+            identities = identities,
+            plannedInpaintNeedsWork = { it == pageKey },
+        )
+
+        scheduler.drainSerial()
+
+        lane.inpainted shouldBe listOf(pageKey)
+        val healed = store.snapshot(pageKey).page.shouldNotBeNull()
+        healed.inpaintStatus shouldBe StageStatus.READY
+        healed.inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
+        healed.cleanedImageName shouldBe "$pageKey.cleaned.jpg"
+    }
 
     @Test
     fun `inpaint runs inside the remote window through the existing lane with zero ocr overlap`() = runTest {

@@ -8,6 +8,7 @@ import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
@@ -58,6 +59,7 @@ internal class OverlapScheduler(
     private val releaseBatchLease: suspend (String) -> Unit,
     private val pageTraceRegistry: BatchPageTraceRegistry? = null,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
+    private val plannedInpaintNeedsWork: (String) -> Boolean = { false },
 ) {
 
     /** Operational overlap and serial-fallback counters; never fingerprinted. */
@@ -365,8 +367,7 @@ internal class OverlapScheduler(
                     candidate.translationStatus == StageStatus.READY ||
                         candidate.translationStatus == StageStatus.PARTIAL
                     ) &&
-                    candidate.inpaintStatus == StageStatus.READY &&
-                    candidate.cleanedImageName != null &&
+                    candidate.isCleanedImageReady &&
                     candidate.renderStatus == StageStatus.PENDING &&
                     candidate.blocks.any { it.translation.isNotBlank() }
             if (!displayComplete) continue
@@ -402,7 +403,7 @@ internal class OverlapScheduler(
                     description = "t934 track I: stamp order-inverted display-complete page render-terminal",
                 ) { current ->
                     (current ?: candidate).apply {
-                        if (renderStatus == StageStatus.PENDING) {
+                        if (renderStatus == StageStatus.PENDING && isCleanedImageReady) {
                             renderStatus = StageStatus.READY
                             updatedAt = System.currentTimeMillis()
                         }
@@ -447,6 +448,7 @@ internal class OverlapScheduler(
      * inside the window that just deferred it.
      */
     private val deferredUntilNextWindow = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val inpaintedThisRun = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     private fun nextInpaintCandidate(): String? {
         val state = store.state.value
@@ -473,7 +475,8 @@ internal class OverlapScheduler(
             // inpaint path can settle their PENDING status to READY.
             if (page.blocks.isEmpty() && page.inpaintMaskBoxes.isEmpty()) continue
             val inpaint = page.inpaintStatus
-            if (inpaint == StageStatus.READY ||
+            if (inpaintedThisRun.contains(pageKey) ||
+                inpaint == StageStatus.READY && page.isCleanedImageReady && !plannedInpaintNeedsWork(pageKey) ||
                 inpaint == StageStatus.FAILED ||
                 inpaint == StageStatus.TEXTLESS
             ) {
@@ -638,7 +641,10 @@ internal class OverlapScheduler(
                         if (live == null ||
                             live.ocrStatus != StageStatus.READY ||
                             (live.blocks.isEmpty() && live.inpaintMaskBoxes.isEmpty()) ||
-                            live.inpaintStatus == StageStatus.READY ||
+                            inpaintedThisRun.contains(pageKey) ||
+                            live.inpaintStatus == StageStatus.READY &&
+                            live.isCleanedImageReady &&
+                            !plannedInpaintNeedsWork(pageKey) ||
                             live.isTextlessTerminal
                         ) {
                             return@withLock InpaintOutcome.NoWork
@@ -661,6 +667,7 @@ internal class OverlapScheduler(
                             val after = store.snapshot(pageKey)
                             committed = after.page?.inpaintStatus == StageStatus.READY
                             if (committed) {
+                                inpaintedThisRun += pageKey
                                 if (overlap) {
                                     counters.overlapInpaintsExecuted.incrementAndGet()
                                     firstOverlapCommitAtMs.compareAndSet(0L, nowEpochMs())

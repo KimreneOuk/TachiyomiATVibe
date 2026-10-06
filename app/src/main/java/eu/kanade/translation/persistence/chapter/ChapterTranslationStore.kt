@@ -18,6 +18,7 @@ import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
@@ -2439,9 +2440,7 @@ class ChapterTranslationStore internal constructor(
                     result.sourceFingerprint == current.sourceFingerprint &&
                     result.detectionFingerprint != null &&
                     result.detectionFingerprint == current.detectionFingerprint &&
-                    current.inpaintStatus == StageStatus.READY &&
-                    current.cleanedImageName != null &&
-                    current.inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
+                    current.isCleanedImageReady
             val editedByIdentity = current.blocks
                 .filter { it.userEditedAt != null }
                 .associateBy { it.ocrFingerprint() }
@@ -2586,17 +2585,12 @@ class ChapterTranslationStore internal constructor(
                     }
                     if (rejection != null) return@withLock rejectedCheckpoint(description, rejection)
                     val live = current?.toDraft() ?: return@withLock rejectedCheckpoint(description, "page missing")
-                    // A never-inpainted page's revision stays at its 0 default (the OCR
-                    // preflight never inpaints), but the checkpoint gate requires
-                    // CURRENT_INPAINT_REVISION. The stamp must precede the snapshot
-                    // fingerprint, the content fingerprint, and the DTO build so the
-                    // published sidecar, the checkpoint claim, and the.1
-                    // committed-side comparison canonicalize on one value
-                    // (CleanedPublication stamps the same field at inpaint publication).
-                    if (live.inpaintRevision < PageTranslation.CURRENT_INPAINT_REVISION) {
-                        live.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                        pages = pages.put(pageKey, publishPage(live))
-                    }
+                    // The checkpoint records which mask basis produced the OCR
+                    // masks. It must not promote the cleaned-output revision:
+                    // that revision is stamped only when inpaint publishes the
+                    // corresponding cleaned image, and display readiness relies
+                    // on it to reject stale cleaned bytes.
+                    val inpaintMaskRevision = PageTranslation.CURRENT_INPAINT_REVISION
                     val resolvedSourceSha256 = sourceSha256 ?: live.sourceFingerprint
                     val sourceIdentity = SourceIdentity(
                         pageKey = pageKey,
@@ -2617,13 +2611,19 @@ class ChapterTranslationStore internal constructor(
                         sourceIdentity = sourceIdentity,
                         detectionFingerprint = live.detectionFingerprint,
                         ocrFingerprint = live.ocrFingerprint.orEmpty(),
-                        ocrContentFingerprint = pageOcrContentFingerprint(pageKey, live, naturalPageIndex, sourceOrientation),
+                        ocrContentFingerprint = pageOcrContentFingerprint(
+                            pageKey,
+                            live,
+                            naturalPageIndex,
+                            sourceOrientation,
+                            inpaintMaskRevision,
+                        ),
                         ocrPageSnapshotPointer = SidecarPointer(
                             fileName = snapshotFileName,
                             schemaVersion = 1,
                             contentFingerprint = snapshotFingerprint,
                         ),
-                        inpaintMaskRevision = live.inpaintRevision,
+                        inpaintMaskRevision = inpaintMaskRevision,
                         priorCommittedDisplay = artifactPage?.committed?.let { committed ->
                             CommittedDisplayRef(
                                 generationId = committed.generationId,
@@ -2698,6 +2698,7 @@ class ChapterTranslationStore internal constructor(
         page: PageTranslationView,
         naturalPageIndex: Int?,
         sourceOrientation: String?,
+        inpaintMaskRevision: Int,
     ): String = StageFingerprints.pageOcrContentFingerprint(
         pageKey = pageKey,
         naturalPageIndex = naturalPageIndex,
@@ -2708,7 +2709,7 @@ class ChapterTranslationStore internal constructor(
         detectionFingerprint = page.detectionFingerprint,
         ocrFingerprint = page.ocrFingerprint.orEmpty(),
         textless = page.isTextlessTerminal,
-        inpaintMaskRevision = page.inpaintRevision,
+        inpaintMaskRevision = inpaintMaskRevision,
         blocks = StageFingerprints.pageOcrContentBlocks(page),
         inpaintMaskBoxes = page.inpaintMaskBoxes,
     )
@@ -2843,6 +2844,12 @@ class ChapterTranslationStore internal constructor(
                 ?.let { "cleaned image identity changed" }
             ?: current?.takeUnless { it.inpaintRevision == patch.expectedInpaintRevision }
                 ?.let { "inpaint revision changed" }
+            ?: current?.takeIf {
+                patch.renderStatus == StageStatus.READY &&
+                    !it.isCleanedImageReady &&
+                    !it.originalImageFallback
+            }
+                ?.let { "cleaned image is not current for render completion" }
         if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
 
         val page = current!!.detachedCopy()

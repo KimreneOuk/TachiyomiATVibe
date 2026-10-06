@@ -77,8 +77,7 @@ val PageTranslationView.hasRenderedResult: Boolean
 internal fun PageTranslation.stampRenderTerminalIfDisplayComplete(): Boolean {
     val displayComplete =
         (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
-            inpaintStatus == StageStatus.READY &&
-            cleanedImageName != null &&
+            isCleanedImageReady &&
             blocks.any { it.translation.isNotBlank() }
     if (renderStatus != StageStatus.PENDING || !displayComplete) return false
     renderStatus = StageStatus.READY

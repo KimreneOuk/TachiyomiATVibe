@@ -78,6 +78,29 @@ class PageWorkPlannerTest {
     }
 
     @Test
+    fun `stale ready inpaint revision reruns inpaint and keeps layout pending`() {
+        val expected = fingerprints()
+        val plan = PageWorkPlanner.planPage(
+            BatchPlannerInput(
+                pageKey = "page-1",
+                page = completePage("page-1", expected).apply {
+                    inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1
+                },
+                expectedFingerprints = expected,
+            ),
+        )
+
+        plan.decisions() shouldBe mapOf(
+            BatchStage.DETECTION to StageDecision.REUSE,
+            BatchStage.OCR to StageDecision.REUSE,
+            BatchStage.INPAINT to StageDecision.RUN,
+            BatchStage.TRANSLATION to StageDecision.REUSE,
+            BatchStage.LAYOUT to StageDecision.WAIT_FOR_DEPENDENCY,
+        )
+        plan.displayReady shouldBe false
+    }
+
+    @Test
     fun `ocr change reruns ocr while preserving valid inpaint mask`() {
         val old = fingerprints()
         val current = old.copy(ocr = "ocr-new")

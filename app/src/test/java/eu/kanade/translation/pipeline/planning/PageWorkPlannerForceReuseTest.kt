@@ -71,6 +71,7 @@ class PageWorkPlannerForceReuseTest {
         val page = ocrReadyPage(expected).apply {
             inpaintStatus = StageStatus.READY
             cleanedImageName = "page-1.cleaned.jpg"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         }
 
         val plan = PageWorkPlanner.plan(
@@ -84,6 +85,24 @@ class PageWorkPlannerForceReuseTest {
         plan.runInpaint shouldBe false
         plan.runTranslation shouldBe true
         plan.runRender shouldBe true
+    }
+
+    @Test
+    fun `force reruns stale ready inpaint while reusing valid ocr evidence`() {
+        val expected = fingerprints()
+        val page = completePage(expected).apply {
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1
+        }
+
+        val plan = PageWorkPlanner.plan(
+            page,
+            force = true,
+            expectedFingerprints = expected,
+            sourceFingerprint = SOURCE_HASH,
+        )
+
+        plan.runOcr shouldBe false
+        plan.runInpaint shouldBe true
     }
 
     // ------------------------------------------------------------------
@@ -379,6 +398,7 @@ class PageWorkPlannerForceReuseTest {
         renderStatus = StageStatus.READY,
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
         inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 1)),
+        sourceFingerprint = SOURCE_HASH,
         detectionFingerprint = expected.detection,
         ocrFingerprint = expected.ocr,
         inpaintFingerprint = expected.inpaint,

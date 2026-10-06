@@ -17,6 +17,7 @@ import eu.kanade.translation.engines.rendering.ProductionTextMeasurer
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.stableFingerprint
@@ -136,7 +137,10 @@ internal class BatchRenderJoin(
                 releaseBatchLease(pageKey)
                 return@withLock
             }
-            if (page.renderStatus == StageStatus.READY && !plannedRenderNeedsWork(pageKey)) {
+            if (page.renderStatus == StageStatus.READY &&
+                (page.isCleanedImageReady || page.originalImageFallback) &&
+                !plannedRenderNeedsWork(pageKey)
+            ) {
                 heldBitmapRegistry.recycleHeld(pageKey)
                 translationRegistry.remove(pageKey)
                 releaseBatchLease(pageKey)
@@ -153,6 +157,14 @@ internal class BatchRenderJoin(
                 return@withLock
             }
             val inpaintStatus = page.inpaintStatus
+            if (inpaintStatus == StageStatus.READY &&
+                !page.isCleanedImageReady &&
+                !page.originalImageFallback
+            ) {
+                // A READY marker from an older inpaint revision is not a
+                // renderable input. The planned inpaint lane owns repairing it.
+                return@withLock
+            }
             if (inpaintStatus != StageStatus.READY && inpaintStatus != StageStatus.PARTIAL && inpaintStatus != StageStatus.TEXTLESS) {
                 if (inpaintStatus == StageStatus.FAILED) {
                     heldBitmapRegistry.recycleHeld(pageKey)

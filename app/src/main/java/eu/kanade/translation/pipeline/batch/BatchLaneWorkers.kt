@@ -34,7 +34,7 @@ import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
-import eu.kanade.translation.model.hasCurrentInpaintResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
@@ -612,7 +612,8 @@ internal class BatchLaneWorkers(
             }
             val plannedCleanedPresent = if (
                 plannedInpaint?.decision == eu.kanade.translation.pipeline.planning.StageDecision.REUSE &&
-                latest.cleanedImageName != null
+                latest.cleanedImageName != null &&
+                latest.isCleanedImageReady
             ) {
                 withContext(Dispatchers.IO) {
                     provider.findPageCleanedImage(
@@ -642,8 +643,7 @@ internal class BatchLaneWorkers(
             }
             // SKIP_ALL-resume durable cleaned image shortcut: keep existing result.
             val hasDurableCleaned = latest.cleanedImageName != null &&
-                latest.inpaintStatus == StageStatus.READY &&
-                latest.hasCurrentInpaintResult &&
+                latest.isCleanedImageReady &&
                 resumeGate(latest) == BatchResumeGate.SKIP_ALL
             if (hasDurableCleaned) {
                 target.cleanedImageName = latest.cleanedImageName
@@ -859,7 +859,7 @@ internal class BatchLaneWorkers(
                 ) {
                     val stamp = guardedBatchUpdate(pageKey, "batch render terminal stamp", BatchStage.LAYOUT) { current ->
                         (current ?: target).apply {
-                            if (renderStatus == StageStatus.PENDING && cleanedImageName != null) {
+                            if (renderStatus == StageStatus.PENDING && isCleanedImageReady) {
                                 renderStatus = StageStatus.READY
                                 updatedAt = System.currentTimeMillis()
                             }
