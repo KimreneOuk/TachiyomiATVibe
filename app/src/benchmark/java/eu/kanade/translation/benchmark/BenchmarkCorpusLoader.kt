@@ -79,6 +79,16 @@ class BenchmarkCorpusLoader(private val context: Context) {
         }
     }
 
+    /** Opens one complete page for the detector stage and owns its bitmap lifetime. */
+    fun forEachPageBitmap(page: BenchmarkPage, block: (Bitmap) -> Unit) {
+        val bitmap = page.fixture?.let(::createFixture) ?: page.openBitmap() ?: return
+        try {
+            block(bitmap)
+        } finally {
+            bitmap.recycleIfNeeded()
+        }
+    }
+
     private fun loadFixturePages(): List<BenchmarkPage> {
         val root = JSONObject(
             context.assets.open(FIXTURE_ASSET).bufferedReader().use { it.readText() },

@@ -24,7 +24,7 @@ internal data class BufferedTraceRecord(
     val receivedAtNanos: Long,
 )
 
-/** Lock-free, bounded tail used by the debug HUD. Readers only take a weakly consistent snapshot. */
+/** Lock-free, bounded diagnostic tail. Readers only take a weakly consistent snapshot. */
 internal class TranslationTraceBuffer : TranslationTraceSink {
     private val records = ConcurrentLinkedDeque<BufferedTraceRecord>()
     private val size = AtomicInteger()
@@ -60,7 +60,7 @@ internal object TranslationTraceDebugRuntime {
     @Volatile
     private var fileSink: TranslationTraceFileSink? = null
 
-    private var activeSession: MeasurementSession? = null
+    private val sessionLifecycle = TranslationMeasurementSessionLifecycle<MeasurementSession>()
 
     @Synchronized
     fun install(context: Context) {
@@ -75,7 +75,6 @@ internal object TranslationTraceDebugRuntime {
 
     @Synchronized
     fun startSession(context: Context, intent: Intent) {
-        activeSession?.let { writeSessionEnd(context, it, "restarted") }
         val session = MeasurementSession(
             id = UUID.randomUUID().toString().replace('-', '_'),
             startedAt = utcTimestamp(),
@@ -88,15 +87,13 @@ internal object TranslationTraceDebugRuntime {
             chapterId = opaqueChapterId(intent.getStringExtra(EXTRA_CHAPTER_ID).orEmpty()),
             pageCount = intent.getIntExtra(EXTRA_PAGE_COUNT, -1).takeIf { it >= 0 }?.toString() ?: "unknown",
         )
-        activeSession = session
+        sessionLifecycle.start(session) { previous -> writeSessionEnd(context, previous, "restarted") }
         fileSink?.writeSessionMarker(session.toStartLine())
     }
 
     @Synchronized
     fun endSession(context: Context) {
-        val session = activeSession ?: return
-        writeSessionEnd(context, session, "complete")
-        activeSession = null
+        sessionLifecycle.end { session -> writeSessionEnd(context, session, "complete") }
     }
 
     private fun writeSessionEnd(context: Context, session: MeasurementSession, outcome: String) {

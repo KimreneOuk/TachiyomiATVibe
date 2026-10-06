@@ -179,11 +179,33 @@ class BenchmarkResultSerializer {
                 matrix.cells.forEach { cell ->
                     put(
                         JSONObject().apply {
+                            put("engine", cell.engine)
+                            put("workflowMode", cell.workflowMode.wireLabel)
                             put("provider", cell.provider.name)
-                            put("requestedBatchSize", cell.requestedBatchSize.value)
-                            put("widthBucket", cell.widthBucket.paddedWidth)
+                            put("requestedBatchSize", cell.requestedBatchSize?.value ?: JSONObject.NULL)
+                            put("widthBucket", cell.widthBucket?.paddedWidth ?: JSONObject.NULL)
+                            put("expectedRegisteredProvider", cell.expectedRegisteredProvider)
                             put("evidence", cell.evidence)
                             put("actualRegisteredProvider", cell.actualRegisteredProvider)
+                            put("sessionCreationMs", cell.sessionCreationMs ?: JSONObject.NULL)
+                            put(
+                                "pageSamples",
+                                JSONArray().apply {
+                                    cell.pageSamples.forEach { sample ->
+                                        put(
+                                            JSONObject().apply {
+                                                put("pageId", sample.pageId)
+                                                put("inputWidth", sample.inputWidth)
+                                                put("inputHeight", sample.inputHeight)
+                                                put("measuredBatchSize", sample.measuredBatchSize)
+                                                put("coldSession", sample.coldSession)
+                                                put("inferenceMs", sample.inferenceMs)
+                                                put("outputCount", sample.outputCount)
+                                            },
+                                        )
+                                    }
+                                },
+                            )
                             put("strictNoCpuFallback", cell.strictNoCpuFallback)
                             put("provenanceAfterInference", cell.provenanceAfterInference)
                             put("noCpuFallbackObserved", cell.noCpuFallbackObserved)
@@ -261,20 +283,25 @@ class BenchmarkResultSerializer {
             val failed = matrix.cells.count { it.evidence == "FAILED" }
             val untested = matrix.cells.count { it.evidence == "UNTESTED" }
             appendLine(
-                "- Matrix: **$confirmed CONFIRMED**, $failed FAILED, $untested UNTESTED cells; " +
-                    "strict accelerator cells require post-inference provenance and zero CPU fallback.",
+                "- Matrix: **$confirmed CONFIRMED**, $failed FAILED, $untested UNTESTED engine/provider cells; " +
+                    "all rows carry expected and registered provider; strict accelerator cells also require " +
+                    "post-inference provenance and zero CPU fallback.",
             )
             appendLine()
-            appendLine("## Provider / batch / width matrix")
+            appendLine("## Per-engine provider / batch / width matrix")
             appendLine()
-            appendLine("| Provider | Batch | Width | Evidence | Registered | Proven after inference | No CPU fallback | p95 (ms) | Peak output (bytes) | PSS delta (KiB) |")
-            appendLine("| --- | ---: | ---: | --- | --- | --- | --- | ---: | ---: | ---: |")
+            appendLine("| Engine | Mode | Provider config | Batch | Width | Evidence | Expected | Registered | Session (ms) | p50/p95 inference (ms) | Page samples | Proven after inference | No CPU fallback | PSS delta (KiB) |")
+            appendLine("| --- | --- | --- | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | --- | --- | ---: |")
             matrix.cells.forEach { cell ->
                 appendLine(
-                    "| ${cell.provider} | ${cell.requestedBatchSize.value} | ${cell.widthBucket.paddedWidth} | " +
-                        "${cell.evidence} | ${cell.actualRegisteredProvider} | ${cell.provenanceAfterInference} | " +
-                        "${cell.noCpuFallbackObserved} | ${formatNullable(cell.p95Ms)} | " +
-                        "${cell.peakOutputBytes ?: "UNTESTED"} | ${cell.pssDeltaKb ?: "UNTESTED"} |",
+                    "| ${cell.engine} | ${cell.workflowMode.wireLabel} | ${cell.provider} | " +
+                        "${cell.requestedBatchSize?.value ?: "—"} | " +
+                        "${cell.widthBucket?.paddedWidth ?: "full page"} | ${cell.evidence} | " +
+                        "${cell.expectedRegisteredProvider} | ${cell.actualRegisteredProvider} | " +
+                        "${formatNullable(cell.sessionCreationMs)} | " +
+                        "${formatNullable(cell.p50Ms)}/${formatNullable(cell.p95Ms)} | ${cell.pageSamples.size} | " +
+                        "${cell.provenanceAfterInference} | ${cell.noCpuFallbackObserved} | " +
+                        "${cell.pssDeltaKb ?: "UNTESTED"} |",
                 )
             }
         }

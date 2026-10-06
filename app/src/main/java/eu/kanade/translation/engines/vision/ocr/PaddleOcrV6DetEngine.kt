@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrSessionFactory
 import logcat.LogPriority
@@ -57,8 +58,14 @@ class PaddleOcrV6DetEngine : Closeable {
     fun initialize(
         modelFile: File,
         providerResolution: PaddleOcrProviderResolution? = null,
+        providerConfiguration: PaddleOcrProviderOverride? = null,
     ) {
-        requestedProviderLabel = providerResolution?.requestedWireLabel ?: "automatic"
+        val providerSelection = selectPaddleOcrDetProvider(providerConfiguration, providerResolution)
+        requestedProviderLabel = when (providerSelection) {
+            is PaddleOcrDetProviderSelection.Explicit -> providerSelection.configuration.expectedProviderLabel
+            is PaddleOcrDetProviderSelection.Resolved -> providerSelection.resolution.requestedWireLabel
+            PaddleOcrDetProviderSelection.Automatic -> "automatic"
+        }
         logcat(LogPriority.INFO) {
             "PaddleOCR v6 det init: model=${modelFile.absolutePath} " +
                 "(${modelFile.length()}B exists=${modelFile.exists()}) " +
@@ -70,20 +77,28 @@ class PaddleOcrV6DetEngine : Closeable {
             val configure = { opts: OrtSession.SessionOptions ->
                 opts.setOptimizationLevel(optLevel)
             }
-            return if (providerResolution == null) {
-                OnnxRuntimeProvider.createSessionWithFallback(
-                    modelPath = modelFile.absolutePath,
-                    useAccelerator = true,
-                    configure = configure,
-                    providerSink = { executionProviderLabel = it },
-                )
-            } else {
-                PaddleOcrSessionFactory.createSession(
-                    modelPath = modelFile.absolutePath,
-                    resolution = providerResolution,
-                    configure = configure,
-                    providerSink = { executionProviderLabel = it },
-                )
+            return when (val selection = providerSelection) {
+                is PaddleOcrDetProviderSelection.Explicit ->
+                    OnnxRuntimeProvider.createSessionForPaddleProvider(
+                        modelPath = modelFile.absolutePath,
+                        configuration = selection.configuration,
+                        configure = configure,
+                        providerSink = { executionProviderLabel = it },
+                    )
+                is PaddleOcrDetProviderSelection.Resolved ->
+                    PaddleOcrSessionFactory.createSession(
+                        modelPath = modelFile.absolutePath,
+                        resolution = selection.resolution,
+                        configure = configure,
+                        providerSink = { executionProviderLabel = it },
+                    )
+                PaddleOcrDetProviderSelection.Automatic ->
+                    OnnxRuntimeProvider.createSessionWithFallback(
+                        modelPath = modelFile.absolutePath,
+                        useAccelerator = true,
+                        configure = configure,
+                        providerSink = { executionProviderLabel = it },
+                    )
             }
         }
         try {

@@ -1,6 +1,7 @@
 package eu.kanade.translation.diagnostics
 
 import android.content.Context
+import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -13,9 +14,12 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /** Debug-build trace writer. I/O runs on a bounded queue so tracing never waits on storage. */
-internal class TranslationTraceFileSink(context: Context) : TranslationTraceSink {
+internal class TranslationTraceFileSink internal constructor(
+    private val directory: File,
+) : TranslationTraceSink, Closeable {
 
-    private val directory = File(context.applicationContext.filesDir, TRACE_DIRECTORY)
+    constructor(context: Context) : this(File(context.applicationContext.filesDir, TRACE_DIRECTORY))
+
     private val currentFile = File(directory, TRACE_FILE)
     private val previousFile = File(directory, "$TRACE_FILE.1")
     private val droppedLines = AtomicLong()
@@ -37,6 +41,19 @@ internal class TranslationTraceFileSink(context: Context) : TranslationTraceSink
 
     fun writeSessionMarker(line: String) {
         enqueue(line)
+    }
+
+    /** A queue barrier used by debug-source tests to read the sink deterministically. */
+    internal fun flushForTesting() {
+        writer.submit {}.get(10, TimeUnit.SECONDS)
+    }
+
+    override fun close() {
+        writer.shutdown()
+        if (!writer.awaitTermination(10, TimeUnit.SECONDS)) {
+            writer.shutdownNow()
+            writer.awaitTermination(10, TimeUnit.SECONDS)
+        }
     }
 
     private fun enqueue(line: String) {

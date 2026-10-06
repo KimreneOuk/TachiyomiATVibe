@@ -304,7 +304,7 @@ object OnnxRuntimeProvider {
         val optionsWithRegistration = createSessionOptionsWithRegistration(
             useAccelerator = configuration.target.isAccelerator,
             useXnnpack = configuration.target == PaddleOcrProviderTarget.CPU,
-            routeOverride = configuration.route,
+            routeOverride = configuration.sessionRouteOverride,
             configure = configure,
         )
         val options = optionsWithRegistration.options

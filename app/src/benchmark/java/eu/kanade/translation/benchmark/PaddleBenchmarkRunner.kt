@@ -10,8 +10,8 @@ import eu.kanade.translation.engines.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
-import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTarget
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6BatchTelemetry
+import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrRollingP95Config
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrRollingP95HysteresisDowngradePolicy
@@ -207,7 +207,7 @@ class PaddleBenchmarkRunner(private val context: Context) {
         }
         return PaddleBenchmarkResult(
             schemaVersion = when {
-                matrix != null -> 3
+                matrix != null -> 4
                 config.parityMode -> 2
                 else -> 1
             },
@@ -248,7 +248,7 @@ class PaddleBenchmarkRunner(private val context: Context) {
         stageTimer: BenchmarkStageTimer,
     ): MatrixRun {
         val representatives = collectRepresentatives(corpusLoader, pages, engine)
-        val cells = ArrayList<PaddleBenchmarkMatrixCellResult>(PaddleBenchmarkMatrix.specs.size)
+        val cells = ArrayList<PaddleBenchmarkMatrixCellResult>(PaddleBenchmarkMatrix.specs.size + 2)
         var sessionCreationMs = 0.0
         for (spec in PaddleBenchmarkMatrix.specs) {
             val representative = representatives[spec.widthBucket]
@@ -257,13 +257,16 @@ class PaddleBenchmarkRunner(private val context: Context) {
                 continue
             }
             val providerConfiguration = PaddleOcrProviderOverride(spec.provider)
+            val expectedRegisteredProvider = spec.provider.expectedRegisteredProviderLabel
             val startedPss = currentPssKb()
             val thermalStart = ThermalStatus.describe(powerManager)
             val timings = ArrayList<Double>(config.matrixIterations)
+            val pageSamples = ArrayList<PaddleBenchmarkMatrixPageSample>(config.matrixIterations)
             val actualBatchSizes = ArrayList<Int>()
             val downgradeReasons = ArrayList<String>()
             val rollingActions = ArrayList<String>()
             var actualProvider = "uninitialized"
+            var cellSessionCreationMs: Double? = null
             var lastTelemetry: PaddleOcrV6BatchTelemetry? = null
             var peakInputBytes = 0L
             var peakOutputBytes = 0L
@@ -272,17 +275,24 @@ class PaddleBenchmarkRunner(private val context: Context) {
             var errorMessage: String? = null
             var evidence = "FAILED"
             try {
-                sessionCreationMs += stageTimer.measureTimed(
-                    "matrix_session_${spec.provider.name.lowercase()}_${spec.batchSize.value}_${spec.widthBucket.paddedWidth}",
+                val sessionCreation = stageTimer.measureTimed(
+                    "matrix_session_${spec.workflowMode.wireLabel}_${spec.provider.name.lowercase()}_" +
+                        "${spec.batchSize.value}_${spec.widthBucket.paddedWidth}",
                 ) {
                     engine.initialize(
                         modelFile = prepared.recognitionModel,
                         dictionaryFile = prepared.dictionary,
-                        strictProviderMode = spec.provider != PaddleOcrProviderTarget.CPU,
+                        strictProviderMode = spec.provider.isAccelerator,
                         providerConfiguration = providerConfiguration,
                     )
-                }.durationMs
+                }
+                cellSessionCreationMs = sessionCreation.durationMs
+                sessionCreationMs += sessionCreation.durationMs
                 actualProvider = engine.executionProviderLabel
+                check(actualProvider.equals(expectedRegisteredProvider, ignoreCase = true)) {
+                    "registered provider mismatch: requested=${spec.provider} expected=$expectedRegisteredProvider " +
+                        "actual=$actualProvider"
+                }
                 val p95Policy = PaddleOcrRollingP95HysteresisDowngradePolicy(
                     initialBatchSize = spec.batchSize,
                     config = PaddleOcrRollingP95Config(
@@ -290,9 +300,10 @@ class PaddleBenchmarkRunner(private val context: Context) {
                     ),
                 )
                 repeat(config.matrixIterations) { iteration ->
-                    val crops = List(spec.batchSize.value) { representative }
+                    val crops = List(spec.batchSize.value) { representative.bitmap }
                     val measured = stageTimer.measureTimed(
-                        "matrix_inference_${spec.provider.name.lowercase()}_${spec.batchSize.value}_${spec.widthBucket.paddedWidth}",
+                        "matrix_inference_${spec.workflowMode.wireLabel}_${spec.provider.name.lowercase()}_" +
+                            "${spec.batchSize.value}_${spec.widthBucket.paddedWidth}",
                     ) {
                         runBlocking {
                             engine.recognizeBucketBatch(
@@ -303,6 +314,15 @@ class PaddleBenchmarkRunner(private val context: Context) {
                         }
                     }
                     timings += measured.durationMs
+                    pageSamples += PaddleBenchmarkMatrixPageSample(
+                        pageId = representative.pageId,
+                        inputWidth = representative.bitmap.width,
+                        inputHeight = representative.bitmap.height,
+                        measuredBatchSize = crops.size,
+                        coldSession = iteration == 0,
+                        inferenceMs = measured.durationMs,
+                        outputCount = measured.value.size,
+                    )
                     lastTelemetry = engine.lastBatchTelemetry
                     lastTelemetry?.let { telemetry ->
                         peakInputBytes = maxOf(peakInputBytes, telemetry.peakInputBytes)
@@ -312,7 +332,7 @@ class PaddleBenchmarkRunner(private val context: Context) {
                     lastTelemetry?.downgradeReasons?.let(downgradeReasons::addAll)
                     val decision = p95Policy.record(measured.durationMs)
                     rollingActions += "${decision.action}:${decision.activeBatchSize.value}:${decision.reason}"
-                    if (spec.provider != PaddleOcrProviderTarget.CPU &&
+                    if (spec.provider.isAccelerator &&
                         (lastTelemetry?.downgradeReason != null || actualProvider.isCpuLikeProvider())
                     ) {
                         error(
@@ -321,16 +341,16 @@ class PaddleBenchmarkRunner(private val context: Context) {
                         )
                     }
                 }
-                noCpuFallbackObserved = spec.provider == PaddleOcrProviderTarget.CPU ||
+                noCpuFallbackObserved = spec.provider.isCpu ||
                     (!actualProvider.isCpuLikeProvider() && downgradeReasons.isEmpty())
-                if (spec.provider != PaddleOcrProviderTarget.CPU) {
+                if (spec.provider.isAccelerator) {
                     ModelRoutingEngine.recordSuccessfulInference(
                         prepared.recognitionModel.absolutePath,
                         spec.provider.route,
                     )
                     provenanceAfterInference = true
                 }
-                evidence = if (spec.provider == PaddleOcrProviderTarget.CPU ||
+                evidence = if (spec.provider.isCpu ||
                     (provenanceAfterInference && noCpuFallbackObserved)
                 ) {
                     "CONFIRMED"
@@ -344,11 +364,16 @@ class PaddleBenchmarkRunner(private val context: Context) {
             }
             val thermalEnd = ThermalStatus.describe(powerManager)
             cells += PaddleBenchmarkMatrixCellResult(
+                engine = "recognizer",
+                workflowMode = spec.workflowMode,
                 provider = spec.provider,
                 requestedBatchSize = spec.batchSize,
                 widthBucket = spec.widthBucket,
+                expectedRegisteredProvider = expectedRegisteredProvider,
                 evidence = evidence,
                 actualRegisteredProvider = actualProvider,
+                sessionCreationMs = cellSessionCreationMs,
+                pageSamples = pageSamples,
                 strictNoCpuFallback = providerConfiguration.strictNoCpuFallback,
                 provenanceAfterInference = provenanceAfterInference,
                 noCpuFallbackObserved = noCpuFallbackObserved,
@@ -366,13 +391,20 @@ class PaddleBenchmarkRunner(private val context: Context) {
                 error = errorMessage,
             )
         }
-        representatives.values.forEach { if (!it.isRecycled) it.recycle() }
+        cells += runCpuDetectorCells(
+            prepared = prepared,
+            pages = pages,
+            corpusLoader = corpusLoader,
+            powerManager = powerManager,
+            stageTimer = stageTimer,
+        )
+        representatives.values.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
         return MatrixRun(
             result = PaddleBenchmarkMatrixResult(
                 cells = cells,
                 deviceProfileEvidence = when {
-                    cells.all { it.evidence == "CONFIRMED" } -> "CONFIRMED"
                     cells.any { it.evidence == "FAILED" } -> "FAILED"
+                    cells.isNotEmpty() && cells.all { it.evidence == "CONFIRMED" } -> "CONFIRMED"
                     else -> "UNTESTED"
                 },
             ),
@@ -384,13 +416,16 @@ class PaddleBenchmarkRunner(private val context: Context) {
         corpusLoader: BenchmarkCorpusLoader,
         pages: List<BenchmarkPage>,
         engine: PaddleOcrV6SmallEngine,
-    ): Map<PaddleOcrWidthBucket, Bitmap> {
-        val representatives = linkedMapOf<PaddleOcrWidthBucket, Bitmap>()
+    ): Map<PaddleOcrWidthBucket, RepresentativeCrop> {
+        val representatives = linkedMapOf<PaddleOcrWidthBucket, RepresentativeCrop>()
         for (page in pages) {
             corpusLoader.forEachSample(page) { sample ->
                 val bucket = PaddleOcrWidthBucket.forScaledWidth(widthBucketFor(engine, sample.bitmap))
                 if (bucket !in representatives) {
-                    representatives[bucket] = sample.bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                    representatives[bucket] = RepresentativeCrop(
+                        pageId = sample.pageId,
+                        bitmap = sample.bitmap.copy(Bitmap.Config.ARGB_8888, false),
+                    )
                 }
             }
             if (representatives.size == PaddleOcrWidthBucket.entries.size) break
@@ -398,16 +433,112 @@ class PaddleBenchmarkRunner(private val context: Context) {
         return representatives
     }
 
+    private fun runCpuDetectorCells(
+        prepared: PreparedModels,
+        pages: List<BenchmarkPage>,
+        corpusLoader: BenchmarkCorpusLoader,
+        powerManager: android.os.PowerManager,
+        stageTimer: BenchmarkStageTimer,
+    ): List<PaddleBenchmarkMatrixCellResult> =
+        PaddleOcrProviderOverride.matrixTargets.filter { it.isCpu }.flatMap { target ->
+            PaddleBenchmarkWorkflowMode.entries.map { workflowMode ->
+                val providerConfiguration = PaddleOcrProviderOverride(target)
+                val expectedRegisteredProvider = target.expectedRegisteredProviderLabel
+                val detector = PaddleOcrV6DetEngine()
+                val pageSamples = ArrayList<PaddleBenchmarkMatrixPageSample>(pages.size)
+                val timings = ArrayList<Double>(pages.size)
+                val startedPss = currentPssKb()
+                val thermalStart = ThermalStatus.describe(powerManager)
+                var actualProvider = "uninitialized"
+                var sessionCreationMs: Double? = null
+                var errorMessage: String? = null
+                var evidence = "FAILED"
+                try {
+                    sessionCreationMs = stageTimer.measureTimed(
+                        "matrix_detector_session_${workflowMode.wireLabel}_${target.name.lowercase()}",
+                    ) {
+                        detector.initialize(
+                            modelFile = prepared.detectionModel,
+                            providerConfiguration = providerConfiguration,
+                        )
+                    }.durationMs
+                    actualProvider = detector.executionProviderLabel
+                    check(actualProvider.equals(expectedRegisteredProvider, ignoreCase = true)) {
+                        "registered provider mismatch: requested=$target expected=$expectedRegisteredProvider actual=$actualProvider"
+                    }
+                    pages.forEach { page ->
+                        corpusLoader.forEachPageBitmap(page) { bitmap ->
+                            val measured = stageTimer.measureTimed(
+                                "matrix_detector_inference_${workflowMode.wireLabel}_${target.name.lowercase()}",
+                            ) {
+                                detector.detectLines(bitmap)
+                            }
+                            timings += measured.durationMs
+                            pageSamples += PaddleBenchmarkMatrixPageSample(
+                                pageId = page.id,
+                                inputWidth = bitmap.width,
+                                inputHeight = bitmap.height,
+                                measuredBatchSize = 1,
+                                coldSession = pageSamples.isEmpty(),
+                                inferenceMs = measured.durationMs,
+                                outputCount = measured.value.size,
+                            )
+                        }
+                    }
+                    evidence = if (pageSamples.isNotEmpty()) "CONFIRMED" else "UNTESTED"
+                    if (pageSamples.isEmpty()) errorMessage = "no decodable full-page corpus inputs"
+                } catch (failure: Throwable) {
+                    errorMessage = "${failure::class.java.simpleName}: ${failure.message}"
+                    evidence = "FAILED"
+                } finally {
+                    detector.close()
+                }
+                val thermalEnd = ThermalStatus.describe(powerManager)
+                PaddleBenchmarkMatrixCellResult(
+                    engine = "detector",
+                    workflowMode = workflowMode,
+                    provider = target,
+                    requestedBatchSize = null,
+                    widthBucket = null,
+                    expectedRegisteredProvider = expectedRegisteredProvider,
+                    evidence = evidence,
+                    actualRegisteredProvider = actualProvider,
+                    sessionCreationMs = sessionCreationMs,
+                    pageSamples = pageSamples,
+                    strictNoCpuFallback = providerConfiguration.strictNoCpuFallback,
+                    provenanceAfterInference = false,
+                    noCpuFallbackObserved = evidence == "CONFIRMED",
+                    downgradeReason = null,
+                    downgradeReasons = emptyList(),
+                    measuredBatchSizes = if (pageSamples.isEmpty()) emptyList() else listOf(1),
+                    peakInputBytes = null,
+                    peakOutputBytes = null,
+                    p50Ms = percentileOrNull(timings, 0.50),
+                    p95Ms = percentileOrNull(timings, 0.95),
+                    pssDeltaKb = if (timings.isEmpty()) null else currentPssKb() - startedPss,
+                    thermalStatusAtStart = thermalStart,
+                    thermalStatusAtEnd = thermalEnd,
+                    rollingP95Actions = emptyList(),
+                    error = errorMessage,
+                )
+            }
+        }
+
     private fun untestedCell(
         spec: PaddleBenchmarkMatrixCellSpec,
         reason: String,
     ): PaddleBenchmarkMatrixCellResult = PaddleBenchmarkMatrixCellResult(
+        engine = "recognizer",
+        workflowMode = spec.workflowMode,
         provider = spec.provider,
         requestedBatchSize = spec.batchSize,
         widthBucket = spec.widthBucket,
+        expectedRegisteredProvider = spec.provider.expectedRegisteredProviderLabel,
         evidence = "UNTESTED",
         actualRegisteredProvider = "unavailable",
-        strictNoCpuFallback = spec.provider != PaddleOcrProviderTarget.CPU,
+        sessionCreationMs = null,
+        pageSamples = emptyList(),
+        strictNoCpuFallback = spec.provider.isAccelerator,
         provenanceAfterInference = false,
         noCpuFallbackObserved = false,
         downgradeReason = null,
@@ -436,6 +567,11 @@ class PaddleBenchmarkRunner(private val context: Context) {
     private data class MatrixRun(
         val result: PaddleBenchmarkMatrixResult,
         val sessionCreationMs: Double,
+    )
+
+    private data class RepresentativeCrop(
+        val pageId: String,
+        val bitmap: Bitmap,
     )
 
     private fun widthBucketFor(engine: PaddleOcrV6SmallEngine, bitmap: android.graphics.Bitmap): Int {
