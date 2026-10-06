@@ -1395,6 +1395,8 @@ internal class ChapterProfileBatchCoordinator(
          */
         const val COUNTER_DISPLAY_TAIL_DRAINED = "displayTailDrained"
         const val COUNTER_DISPLAY_TAIL_FAILED = "displayTailFailed"
+        const val COUNTER_PROTOCOL_PARKED_RETRYABLE = "protocolParkedRetryable"
+        const val COUNTER_PROTOCOL_PARKED_TERMINAL = "protocolParkedTerminal"
 
         /**
          * Display-tail drain bound: the first pass retries the overlap

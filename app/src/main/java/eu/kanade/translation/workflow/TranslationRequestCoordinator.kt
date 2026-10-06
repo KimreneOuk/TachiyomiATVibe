@@ -21,6 +21,9 @@ import tachiyomi.domain.manga.model.Manga
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
+internal const val REGISTERED_READER_STORE_WAIT_REASON =
+    "Waiting for registered reader translation store to close before download re-key"
+
 /**
  * Coordinates pending translation requests from acknowledgement through download handoff.
  * Every asynchronous durable write is fenced by per-chapter version and request generation,
@@ -86,6 +89,19 @@ internal class TranslationRequestCoordinator(
         }
     }
 
+    /** Keeps this attached download request live while a reader owns its chapter store. */
+    fun markRegisteredReaderStoreWaitIfCurrent(chapterId: Long, expectedGeneration: Long): Boolean {
+        synchronized(pendingRequestMutationLock) {
+            if (!isRequestCurrent(chapterId, expectedGeneration)) return false
+            setPendingTranslationRequest(
+                chapterId = chapterId,
+                phase = TranslationRequestPhase.PREPARING,
+                reason = REGISTERED_READER_STORE_WAIT_REASON,
+            )
+            return true
+        }
+    }
+
     /**
      * True when the live request for [chapterId] is still a live (non-terminal)
      * request carrying [generation]. A request that reached an explicit
@@ -120,11 +136,16 @@ internal class TranslationRequestCoordinator(
         val chapterId = chapter.id ?: return false
         val retryGeneration = synchronized(pendingRequestMutationLock) {
             val current = currentRequest(chapterId) ?: return false
+            val retryableFailure =
+                current.phase == TranslationRequestPhase.ADMISSION_FAILED &&
+                    current.failureKind == TranslationRequestFailureKind.QUEUE_ADMISSION_FAILED &&
+                    current.isDownloadRekeyFailure()
+            val waitingForReaderStore =
+                current.phase == TranslationRequestPhase.PREPARING &&
+                    current.reason == REGISTERED_READER_STORE_WAIT_REASON
             if (
                 current.generation != expectedGeneration ||
-                current.phase != TranslationRequestPhase.ADMISSION_FAILED ||
-                current.failureKind != TranslationRequestFailureKind.QUEUE_ADMISSION_FAILED ||
-                !current.isDownloadRekeyFailure() ||
+                (!retryableFailure && !waitingForReaderStore) ||
                 downloadAttachGenerations[chapterId] != expectedGeneration ||
                 translator.isPaused ||
                 queueState.value.any { it.chapter.id == chapterId }

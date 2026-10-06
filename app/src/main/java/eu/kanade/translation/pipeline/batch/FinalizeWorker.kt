@@ -1,9 +1,11 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
@@ -260,6 +262,21 @@ internal class FinalizeWorker(
         }
         store.reconcileArtifactRetentionAsync()
 
+        val protocolParkedRetryable = allPageKeys.count { pageKey ->
+            store.durableFailure(pageKey)?.let { failure ->
+                failure.category == FailureCategory.PROTOCOL &&
+                    failure.status == ArtifactStageStatus.FAILED_RETRYABLE &&
+                    failure.missingBlockIds.isNotEmpty()
+            } == true
+        }
+        val protocolParkedTerminal = allPageKeys.count { pageKey ->
+            store.durableFailure(pageKey)?.let { failure ->
+                failure.category == FailureCategory.PROTOCOL &&
+                    failure.status == ArtifactStageStatus.FAILED_TERMINAL &&
+                    failure.missingBlockIds.isNotEmpty()
+            } == true
+        }
+
         // 6. Run closure: the single COMPLETE publication of the run. The
         //    overlap counters live on the FINALIZE record (see above — the
         //    32-key phaseCounters bound). The outcome is NOT advisory here:
@@ -287,6 +304,8 @@ internal class FinalizeWorker(
                     ChapterProfileBatchCoordinator.COUNTER_STRANDED_RECONCILED to strandedReconciled,
                     ChapterProfileBatchCoordinator.COUNTER_DISPLAY_TAIL_DRAINED to displayTail.drained,
                     ChapterProfileBatchCoordinator.COUNTER_DISPLAY_TAIL_FAILED to displayTail.failed.size,
+                    ChapterProfileBatchCoordinator.COUNTER_PROTOCOL_PARKED_RETRYABLE to protocolParkedRetryable,
+                    ChapterProfileBatchCoordinator.COUNTER_PROTOCOL_PARKED_TERMINAL to protocolParkedTerminal,
                 ),
             ocrCorpusFingerprint = corpusFingerprint,
         )
@@ -303,6 +322,8 @@ internal class FinalizeWorker(
                     "TachiyomiAT t924 run COMPLETE pages=${allPageKeys.size} stranded=$strandedReconciled " +
                         "layouts=$layoutsPublished displayTailDrained=${displayTail.drained} " +
                         "displayTailFailed=${displayTail.failed.size} " +
+                        "protocolParkedRetryable=$protocolParkedRetryable " +
+                        "protocolParkedTerminal=$protocolParkedTerminal " +
                         "overlap=${overlapScheduler?.counters?.snapshot() ?: emptyMap()}"
                 }
                 return BatchPass1Outcome(

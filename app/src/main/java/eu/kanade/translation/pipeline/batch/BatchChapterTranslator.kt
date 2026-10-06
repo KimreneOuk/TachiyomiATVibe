@@ -395,9 +395,58 @@ internal class BatchChapterTranslator(
                 )
                 val sourceFingerprints: Map<String, String> = LazySourceFingerprints(orderedStreams.toMap(), computeSourceFingerprintFn)
                 val recordedSourceShaByPageKey = store.artifactManifest?.sourceShaByPageKey.orEmpty()
+
+                // A previous process can die after download completion but before the
+                // retained re-key runs. Resolve legacy URL keys from persisted identities
+                // and current file bytes before the resume planner performs exact lookups.
+                val persistedPages = store.state.value
+                val hasLegacySourceKeys = persistedPages.keys.any { key -> key !in sourceFingerprints.keys }
+                if (hasLegacySourceKeys) {
+                    val currentSourceShaByPageKey = orderedStreams.mapNotNull { (pageKey, _) ->
+                        val sourceSha = try {
+                            sourceFingerprints[pageKey]?.takeIf(String::isSha256Hex)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            logcat(LogPriority.WARN, failure) {
+                                "TachiyomiAT page-key alias skipped because source identity could not be read: $pageKey"
+                            }
+                            null
+                        }
+                        sourceSha?.let { pageKey to it }
+                    }.toMap()
+                    if (currentSourceShaByPageKey.size == orderedStreams.size) {
+                        val aliases = DurablePageKeyAliasResolver.resolve(
+                            persistedPages = persistedPages,
+                            manifestSourceShaByPageKey = recordedSourceShaByPageKey,
+                            downloadedSourceShaByPageKey = currentSourceShaByPageKey,
+                        )
+                        if (aliases.isNotEmpty()) {
+                            when (val outcome = store.rekeyPages(aliases.keys.toList(), aliases.values.toList())) {
+                                is ChapterTranslationStore.PageRekeyOutcome.Moved -> {
+                                    logcat(LogPriority.INFO) {
+                                        "TachiyomiAT durable source-key aliases applied: moved=${outcome.moves.size} skipped=${outcome.skippedCollisions}"
+                                    }
+                                }
+                                ChapterTranslationStore.PageRekeyOutcome.Noop -> Unit
+                                is ChapterTranslationStore.PageRekeyOutcome.Rejected -> {
+                                    logcat(LogPriority.WARN, outcome.cause) {
+                                        "TachiyomiAT durable source-key aliases rejected: ${outcome.reason}"
+                                    }
+                                    throw IllegalStateException(
+                                        "Durable source-key aliases rejected before resume planning: ${outcome.reason}",
+                                        outcome.cause,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                val postRekeySourceShaByPageKey = store.artifactManifest?.sourceShaByPageKey.orEmpty()
                 val runIdentitySourcePairs = orderedStreams.map { (pageKey, _) ->
                     pageKey to (
-                        recordedSourceShaByPageKey[pageKey]
+                        postRekeySourceShaByPageKey[pageKey]
                             ?.takeIf(String::isSha256Hex)
                             ?: UNKNOWN_SOURCE_FINGERPRINT
                         )

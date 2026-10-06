@@ -27,6 +27,7 @@ import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.providers.AiTranslator
+import eu.kanade.translation.engines.translator.providers.GeminiEmptyResponseException
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -60,6 +61,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -664,6 +666,7 @@ class ProfileEnvelopeDispatchTest {
         val (_, counters) = runCounters(store)
         counters["pagesTranslated"] shouldBe 11
         counters["pagesParked"] shouldBe 6
+        counters[ChapterProfileBatchCoordinator.COUNTER_PROTOCOL_PARKED_RETRYABLE] shouldBe 6
         counters["envelopesDone"] shouldBe 3
         counters["envelopeFailures"] shouldBe 0
 
@@ -685,6 +688,120 @@ class ProfileEnvelopeDispatchTest {
             failure.missingBlockIds shouldBe setOf("p${index - 1}_b1")
             failure.missingBlockCharLengths shouldBe mapOf("p${index - 1}_b1" to "source-$key".length)
         }
+    }
+
+    @Test
+    fun `Gemini empty-response reissue cap survives restart and terminal park is surfaced`() = runTest {
+        val pageKeys = listOf("p1")
+        val pages: List<PageKey> = listOf("p1" to 0)
+        val initialStore = lazyStore()
+        initialStore.preRegisterPages(pageKeys)
+        val firstTranslator = FakeTranslator { _, _ ->
+            throw GeminiEmptyResponseException("Gemini returned no response candidate")
+        }
+
+        coordinator(
+            initialStore,
+            FakePreflightOcrWorker(initialStore),
+            pages,
+            FakeAnalyzer(),
+            firstTranslator,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        firstTranslator.requests.size shouldBe 2
+        val firstFailure = initialStore.durableFailure("p1").shouldNotBeNull()
+        firstFailure.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+        firstFailure.emptyGeminiResponseReissues shouldBe 1
+        runCounters(initialStore).second[
+            ChapterProfileBatchCoordinator.COUNTER_PROTOCOL_PARKED_RETRYABLE,
+        ] shouldBe 1
+
+        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val secondTranslator = FakeTranslator { _, _ ->
+            throw GeminiEmptyResponseException("Gemini returned no response candidate")
+        }
+        coordinator(
+            resumedStore,
+            FakePreflightOcrWorker(resumedStore),
+            pages,
+            FakeAnalyzer(),
+            secondTranslator,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        secondTranslator.requests.size shouldBe 2
+        val exhausted = resumedStore.durableFailure("p1").shouldNotBeNull()
+        exhausted.status shouldBe ArtifactStageStatus.FAILED_TERMINAL
+        exhausted.emptyGeminiResponseReissues shouldBe 2
+        exhausted.lastFailureMessage.shouldNotBeNull().contains("reissue cap exhausted") shouldBe true
+        runCounters(resumedStore).second[
+            ChapterProfileBatchCoordinator.COUNTER_PROTOCOL_PARKED_TERMINAL,
+        ] shouldBe 1
+    }
+
+    @Test
+    fun `empty-response retry count survives a non-protocol pause on the existing failure record`() = runTest {
+        val pageKeys = listOf("p1")
+        val pages: List<PageKey> = listOf("p1" to 0)
+        val store = lazyStore()
+        store.preRegisterPages(pageKeys)
+        val firstTranslator = FakeTranslator { _, _ ->
+            throw GeminiEmptyResponseException("Gemini returned no response candidate")
+        }
+
+        coordinator(
+            store,
+            FakePreflightOcrWorker(store),
+            pages,
+            FakeAnalyzer(),
+            firstTranslator,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        val firstFailure = store.durableFailure("p1").shouldNotBeNull()
+        firstFailure.emptyGeminiResponseReissues shouldBe 1
+        val before = store.snapshot("p1")
+        val lease = store.tryAcquirePageStageLease("p1", PageStage.Translation, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        try {
+            store.persistDurableStageFailure(
+                pageKey = "p1",
+                expected = ChapterTranslationStore.PatchPrecondition(
+                    generation = before.generation,
+                    pageVersion = before.pageVersion,
+                    blockFingerprints = before.blockFingerprints,
+                    leaseToken = lease.token,
+                    candidateGenerationId = before.candidateGenerationId,
+                    dependencyFingerprint = before.dependencyFingerprint,
+                    artifactPageVersion = before.artifactPageVersion,
+                ),
+                failure = firstFailure.copy(category = FailureCategory.TRANSIENT),
+                description = "test existing network-classified failure record",
+            ) { current ->
+                current ?: error("translation failure record has no page state")
+            }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        } finally {
+            store.releasePageStageLease("p1", PageWriteOrigin.BATCH)
+        }
+
+        val requestCount = AtomicInteger()
+        val resumedTranslator = FakeTranslator { _, _ ->
+            if (requestCount.getAndIncrement() == 0) {
+                throw GeminiEmptyResponseException("Gemini returned no response candidate")
+            }
+            throw IOException("provider connection paused")
+        }
+        coordinator(
+            store,
+            FakePreflightOcrWorker(store),
+            pages,
+            FakeAnalyzer(),
+            resumedTranslator,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        resumedTranslator.requests.size shouldBe 2
+        val pausedFailure = store.durableFailure("p1").shouldNotBeNull()
+        pausedFailure.category shouldBe FailureCategory.TRANSIENT
+        pausedFailure.status shouldBe firstFailure.status
+        pausedFailure.emptyGeminiResponseReissues shouldBe 2
     }
 
     @Test

@@ -26,6 +26,7 @@ import eu.kanade.translation.engines.translator.contextual.TranslationContextChu
 import eu.kanade.translation.engines.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.engines.translator.retry.AiChunkOutcome
 import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPolicy
+import eu.kanade.translation.engines.translator.retry.MAX_EMPTY_GEMINI_RESPONSE_REISSUES
 import eu.kanade.translation.engines.translator.retry.translateAiChunkWithAdaptiveRetry
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -601,6 +602,11 @@ internal class ProfileEnvelopeExecutor(
             TranslationTraceProvider.REMOTE
         }
         val traceRuns = held.mapNotNull { page -> pageTraceRegistry?.runForOrStart(page.pageKey) }
+        val emptyResponseReissuesAlreadyUsed = held.mapNotNull { page ->
+            store.durableFailure(page.pageKey)?.takeIf { failure ->
+                failure.envelopeId == envelope.envelopeId
+            }?.emptyGeminiResponseReissues
+        }.maxOrNull() ?: 0
         val metadata = ProviderRequestMetadata(
             key = ProviderRequestKey(
                 backend = work.providerBackend,
@@ -647,6 +653,7 @@ internal class ProfileEnvelopeExecutor(
                                 retryDepth = 0,
                                 retryPolicy = retryPolicy,
                                 clock = clock,
+                                emptyResponseReissuesAlreadyUsed = emptyResponseReissuesAlreadyUsed,
                             )
                         }
                         val result = if (traceRegistry == null) {
@@ -733,16 +740,23 @@ internal class ProfileEnvelopeExecutor(
                     outcome is AiChunkOutcome.Terminal &&
                         outcome.failure.kind == ProviderFailureKind.REFUSAL
                     ) ->
-                discardAndPause(
-                    held,
-                    failure = ProviderFailure(
-                        kind = ProviderFailureKind.REFUSAL,
-                        retryability = ProviderFailureRetryability.TERMINAL,
-                        safeSummary = "provider refused translation of envelope ${envelope.envelopeId}",
-                        requestId = outcome.envelopeId,
-                    ),
-                    reason = "T924 envelope ${envelope.envelopeId} refused; response discarded",
-                )
+                run {
+                    persistEmptyResponseReissueCountOnExistingFailures(
+                        pages = held,
+                        envelopeId = envelope.envelopeId,
+                        reissues = outcome.emptyResponseReissues,
+                    )
+                    discardAndPause(
+                        held,
+                        failure = ProviderFailure(
+                            kind = ProviderFailureKind.REFUSAL,
+                            retryability = ProviderFailureRetryability.TERMINAL,
+                            safeSummary = "provider refused translation of envelope ${envelope.envelopeId}",
+                            requestId = outcome.envelopeId,
+                        ),
+                        reason = "T924 envelope ${envelope.envelopeId} refused; response discarded",
+                    )
+                }
 
             // For AMBIGUOUS_PROTOCOL, progress policy allows independently
             // complete pages to commit under the unchanged COMMIT policy —
@@ -766,10 +780,15 @@ internal class ProfileEnvelopeExecutor(
             // and advance; partially covered pages commit NOTHING. A
             // TERMINAL transport outcome still pauses after its commits.
             else -> {
+                val remaining = held - fullyCovered.toSet()
+                persistEmptyResponseReissueCountOnExistingFailures(
+                    pages = remaining,
+                    envelopeId = envelope.envelopeId,
+                    reissues = outcome.emptyResponseReissues,
+                )
                 val committed =
                     commitPages(held, fullyCovered, outcome, work, frontier)
                 if (committed is EnvelopeDispatchResult.Paused) return committed
-                val remaining = held - fullyCovered.toSet()
                 when (outcome) {
                     is AiChunkOutcome.Terminal -> EnvelopeDispatchResult.Paused(
                         reason = "T924 envelope ${envelope.envelopeId} terminal: " +
@@ -788,6 +807,53 @@ internal class ProfileEnvelopeExecutor(
                         nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
                     )
                     is AiChunkOutcome.Complete -> committed
+                }
+            }
+        }
+    }
+
+    /**
+     * Carries issued identical-retry counts through an existing durable pause record without
+     * changing that record's failure classification or retry status. A recordless pause stays
+     * recordless; it does not create persistence solely for this counter.
+     */
+    private suspend fun persistEmptyResponseReissueCountOnExistingFailures(
+        pages: List<HeldPage>,
+        envelopeId: String,
+        reissues: Int,
+    ) {
+        val boundedReissues = reissues.coerceAtMost(MAX_EMPTY_GEMINI_RESPONSE_REISSUES)
+        if (boundedReissues <= 0) return
+
+        for (page in pages) {
+            val previous = store.durableFailure(page.pageKey)
+                ?.takeIf { it.envelopeId == envelopeId }
+                ?: continue
+            if (previous.emptyGeminiResponseReissues >= boundedReissues) continue
+
+            val expected = ChapterTranslationStore.PatchPrecondition(
+                generation = page.snapshot.generation,
+                pageVersion = page.snapshot.pageVersion,
+                blockFingerprints = page.snapshot.blockFingerprints,
+                leaseToken = page.leaseToken,
+                candidateGenerationId = page.snapshot.candidateGenerationId,
+                dependencyFingerprint = page.snapshot.dependencyFingerprint,
+                artifactPageVersion = page.snapshot.artifactPageVersion,
+            )
+            when (
+                val result = store.persistDurableStageFailure(
+                    pageKey = page.pageKey,
+                    expected = expected,
+                    failure = previous.copy(emptyGeminiResponseReissues = boundedReissues),
+                    description = "t924 envelope empty-response pause counter",
+                ) { current ->
+                    current ?: page.livePage.detachedCopy()
+                }
+            ) {
+                is ChapterTranslationStore.PatchResult.Accepted -> Unit
+                is ChapterTranslationStore.PatchResult.Rejected -> logcat(LogPriority.WARN) {
+                    "TachiyomiAT t924 empty-response count persistence rejected: " +
+                        "pageKey=${page.pageKey} reason=${result.reason}"
                 }
             }
         }
@@ -900,10 +966,17 @@ internal class ProfileEnvelopeExecutor(
                 recordAttemptFailure()
                 updatedAt = now
             }
+            val priorEmptyResponseReissues = store.durableFailure(page.pageKey)
+                ?.takeIf { it.envelopeId == envelopeId }
+                ?.emptyGeminiResponseReissues ?: 0
             val durable = DurableFailureMetadata(
                 pageKey = page.pageKey,
                 stage = ArtifactStage.TRANSLATION,
-                status = ArtifactStageStatus.FAILED_RETRYABLE,
+                status = if (outcome.emptyResponseCapExhausted) {
+                    ArtifactStageStatus.FAILED_TERMINAL
+                } else {
+                    ArtifactStageStatus.FAILED_RETRYABLE
+                },
                 category = FailureCategory.PROTOCOL,
                 retryCount = staged.retryCount,
                 lastFailureMessage = summary,
@@ -912,6 +985,10 @@ internal class ProfileEnvelopeExecutor(
                 envelopeId = envelopeId,
                 missingBlockIds = missing.mapTo(linkedSetOf()) { it.stableBlockId },
                 missingBlockCharLengths = missing.associate { it.stableBlockId to it.sourceText.length },
+                emptyGeminiResponseReissues = maxOf(
+                    priorEmptyResponseReissues,
+                    outcome.emptyResponseReissues.coerceAtMost(MAX_EMPTY_GEMINI_RESPONSE_REISSUES),
+                ),
             )
             val expected = ChapterTranslationStore.PatchPrecondition(
                 generation = page.snapshot.generation,

@@ -17,6 +17,7 @@ import eu.kanade.translation.engines.translator.contextual.STRUCTURAL_REFUSAL_DI
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.providers.AiTranslator
+import eu.kanade.translation.engines.translator.providers.GeminiEmptyResponseException
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
@@ -30,6 +31,73 @@ import org.junit.jupiter.api.Test
 import java.io.IOException
 
 class AiChunkAdaptiveRetryTest {
+
+    @Test
+    fun `empty Gemini response reissues identical request once before returning`() = runTest {
+        val dispatched = mutableListOf<String>()
+        val translator = ScriptedTranslator { attempt, current ->
+            val request = ContextualRequestBuilder.buildFor(
+                current,
+                TextRecognizerLanguage.JAPANESE,
+                TextTranslatorLanguage.ENGLISH,
+            )
+            dispatched += listOf(
+                current.protocol.name,
+                ContextualRequestBuilder.renderPrompt(request, current.rollingContext),
+                current.maxOutputTokens.toString(),
+                current.pageIndexes.toSortedMap().toString(),
+            ).joinToString("\n")
+            if (attempt == 1) throw GeminiEmptyResponseException("empty Gemini response")
+            response(current)
+        }
+
+        val outcome = translate(chunk(), translator)
+
+        outcome.shouldBeInstanceOf<AiChunkOutcome.Complete>()
+        translator.calls shouldBe 2
+        outcome.emptyResponseReissues shouldBe 1
+        outcome.emptyResponseCapExhausted shouldBe false
+        dispatched shouldContainExactly listOf(
+            dispatched.first(),
+            dispatched.first(),
+        )
+    }
+
+    @Test
+    fun `empty Gemini response cap terminalizes after two persisted reissues`() = runTest {
+        val translator = ScriptedTranslator { _, _ ->
+            throw GeminiEmptyResponseException("empty Gemini response")
+        }
+
+        val outcome = translate(
+            chunk(),
+            translator,
+            emptyResponseReissuesAlreadyUsed = 1,
+        ).shouldBeInstanceOf<AiChunkOutcome.Terminal>()
+
+        translator.calls shouldBe 2
+        outcome.emptyResponseReissues shouldBe MAX_EMPTY_GEMINI_RESPONSE_REISSUES
+        outcome.emptyResponseCapExhausted shouldBe true
+        outcome.failure.safeSummary shouldBe
+            "Gemini empty-response reissue cap exhausted ($MAX_EMPTY_GEMINI_RESPONSE_REISSUES/$MAX_EMPTY_GEMINI_RESPONSE_REISSUES)"
+    }
+
+    @Test
+    fun `exhausted empty Gemini response cap prevents another dispatch`() = runTest {
+        val translator = ScriptedTranslator { _, _ ->
+            throw GeminiEmptyResponseException("empty Gemini response")
+        }
+
+        val outcome = translate(
+            chunk(),
+            translator,
+            emptyResponseReissuesAlreadyUsed = MAX_EMPTY_GEMINI_RESPONSE_REISSUES,
+        ).shouldBeInstanceOf<AiChunkOutcome.Terminal>()
+
+        translator.calls shouldBe 0
+        outcome.attemptsUsed shouldBe 0
+        outcome.emptyResponseCapExhausted shouldBe true
+    }
 
     @Test
     fun `first pass returns complete detached translations`() = runTest {
@@ -530,6 +598,7 @@ class AiChunkAdaptiveRetryTest {
         translator: ScriptedTranslator,
         retryBudget: RequestRetryBudget? = null,
         retryPolicy: AiTranslationRetryPolicy = AiTranslationRetryPolicy(),
+        emptyResponseReissuesAlreadyUsed: Int = 0,
     ): AiChunkOutcome = translateAiChunkWithAdaptiveRetry(
         translator = translator,
         chunk = chunk,
@@ -538,6 +607,7 @@ class AiChunkAdaptiveRetryTest {
         label = "controller-test",
         retryBudget = retryBudget,
         retryPolicy = retryPolicy,
+        emptyResponseReissuesAlreadyUsed = emptyResponseReissuesAlreadyUsed,
     )
 
     private fun chunk(

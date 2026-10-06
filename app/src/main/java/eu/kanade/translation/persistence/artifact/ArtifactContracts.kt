@@ -186,6 +186,8 @@ data class DurableFailureMetadata(
      * one oversized block vs many tiny ones) without leaking content.
      */
     val missingBlockCharLengths: Map<String, Int> = emptyMap(),
+    /** Bounded number of identical Gemini empty-response reissues for this envelope payload. */
+    val emptyGeminiResponseReissues: Int = 0,
 )
 
 /**

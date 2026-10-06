@@ -151,6 +151,72 @@ class TranslationManagerCompletedDownloadRekeyTest {
             ).shouldBeInstanceOf<TranslationManager.DownloadRekeyOutcome.Rejected>()
             malformedBackup.reason.contains("manifest probe failed") shouldBe true
             checkNotNull(malformedBackup.cause)
+
+            File(
+                mangaDirectory,
+                AtomicChapterDocuments.backupNameFor(manifestFileName),
+            ).delete() shouldBe true
+            queue.value = emptyList()
+            manager.queueTranslationAfterDownload(manga, chapter)
+            checkNotNull(
+                manager.openOrCreateActiveChapterTranslationStoreSuspend(
+                    chapterId = 10L,
+                    chapterName = chapter.name,
+                    scanlator = chapter.scanlator,
+                    mangaTitle = manga.title,
+                    source = source,
+                    mangaId = manga.id,
+                ),
+            )
+            val registeredArtifactStore = manager.rekeyTranslationForCompletedDownload(
+                chapter = chapter,
+                manga = manga,
+                source = source,
+                onlineKeyByPageIndex = listOf("https://example/page-1.jpg"),
+                onDiskKeyByPageIndex = listOf("000.jpg"),
+            ).shouldBeInstanceOf<TranslationManager.DownloadRekeyOutcome.Deferred>()
+            registeredArtifactStore.waitingForRegisteredStoreRelease shouldBe true
+            registeredArtifactStore.requestPreserved shouldBe true
+            val artifactWait = manager.pendingTranslationRequests.value.getValue(10L)
+            artifactWait.phase shouldBe TranslationRequestPhase.PREPARING
+            artifactWait.reason shouldBe REGISTERED_READER_STORE_WAIT_REASON
+            manager.unregisterActiveTranslationStore(10L)
+
+            val noArtifactManga = mockk<Manga>(relaxed = true) {
+                every { id } returns 3L
+                every { title } returns "unmaterialized manga"
+            }
+            every { noArtifactManga.source } returns 1L
+            val noArtifactChapter = mockk<Chapter>(relaxed = true) {
+                every { id } returns 11L
+                every { mangaId } returns 3L
+                every { name } returns "chapter without artifacts"
+                every { scanlator } returns null
+            }
+            manager.queueTranslationAfterDownload(noArtifactManga, noArtifactChapter)
+            checkNotNull(
+                manager.openOrCreateActiveChapterTranslationStoreSuspend(
+                    chapterId = 11L,
+                    chapterName = noArtifactChapter.name,
+                    scanlator = noArtifactChapter.scanlator,
+                    mangaTitle = noArtifactManga.title,
+                    source = source,
+                    mangaId = noArtifactManga.id,
+                ),
+            )
+            val registeredChapterStore = manager.rekeyTranslationForCompletedDownload(
+                chapter = noArtifactChapter,
+                manga = noArtifactManga,
+                source = source,
+                onlineKeyByPageIndex = listOf("https://example/page-1.jpg"),
+                onDiskKeyByPageIndex = listOf("000.jpg"),
+            ).shouldBeInstanceOf<TranslationManager.DownloadRekeyOutcome.Deferred>()
+            registeredChapterStore.waitingForRegisteredStoreRelease shouldBe true
+            registeredChapterStore.requestPreserved shouldBe true
+            val chapterWait = manager.pendingTranslationRequests.value.getValue(11L)
+            chapterWait.phase shouldBe TranslationRequestPhase.PREPARING
+            chapterWait.reason shouldBe REGISTERED_READER_STORE_WAIT_REASON
+            manager.unregisterActiveTranslationStore(11L)
         } finally {
             scheduler.close()
         }

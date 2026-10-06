@@ -23,6 +23,7 @@ import eu.kanade.translation.engines.translator.contextual.TranslationContextChu
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.contextual.TranslationCorrectionHint
 import eu.kanade.translation.engines.translator.contextual.TranslationResponseFaithfulness
+import eu.kanade.translation.engines.translator.providers.GeminiEmptyResponseException
 import eu.kanade.translation.engines.translator.providers.OcrArtifactSanitizer
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.detachedCopy
@@ -35,6 +36,13 @@ import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
 private val conflictingDuplicateIdDiagnostic = Regex("""^Conflicting duplicate id '([^']+)'$""")
+
+/**
+ * Caps identical Gemini empty-response reissues for a stable payload. The count rides an
+ * existing durable failure record; a recordless pause does not create one just for the counter,
+ * so each recordless pause cycle can allow one additional reissue.
+ */
+internal const val MAX_EMPTY_GEMINI_RESPONSE_REISSUES = 2
 
 /**
  * Request budget settings for one contextual envelope.
@@ -73,6 +81,8 @@ sealed interface AiChunkOutcome {
     val attemptsUsed: Int
     val wholeEnvelopeRetries: Int
     val missingBlockRequests: Int
+    val emptyResponseReissues: Int
+    val emptyResponseCapExhausted: Boolean
 
     data class Complete(
         override val acceptedBlockIds: Set<String>,
@@ -82,6 +92,8 @@ sealed interface AiChunkOutcome {
         override val attemptsUsed: Int,
         override val wholeEnvelopeRetries: Int,
         override val missingBlockRequests: Int,
+        override val emptyResponseReissues: Int = 0,
+        override val emptyResponseCapExhausted: Boolean = false,
     ) : AiChunkOutcome {
         override val missingBlockIds: Set<String> = emptySet()
     }
@@ -98,6 +110,8 @@ sealed interface AiChunkOutcome {
         override val attemptsUsed: Int,
         override val wholeEnvelopeRetries: Int,
         override val missingBlockRequests: Int,
+        override val emptyResponseReissues: Int = 0,
+        override val emptyResponseCapExhausted: Boolean = false,
     ) : AiChunkOutcome
 
     data class Terminal(
@@ -110,6 +124,8 @@ sealed interface AiChunkOutcome {
         override val attemptsUsed: Int,
         override val wholeEnvelopeRetries: Int,
         override val missingBlockRequests: Int,
+        override val emptyResponseReissues: Int = 0,
+        override val emptyResponseCapExhausted: Boolean = false,
     ) : AiChunkOutcome
 }
 
@@ -254,6 +270,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
     retryBudget: RequestRetryBudget? = null,
     retryPolicy: AiTranslationRetryPolicy = AiTranslationRetryPolicy(),
     clock: ProviderRequestClock = SystemProviderRequestClock,
+    emptyResponseReissuesAlreadyUsed: Int = 0,
 ): AiChunkOutcome {
     coroutineContext.ensureActive()
     // The arguments are retained in the direct-call API for compatibility;
@@ -280,6 +297,29 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
         )
     }
 
+    if (emptyResponseReissuesAlreadyUsed >= MAX_EMPTY_GEMINI_RESPONSE_REISSUES) {
+        val accumulator = AiTranslationAccumulator()
+        val failure = ProviderFailure(
+            kind = ProviderFailureKind.PROTOCOL,
+            retryability = ProviderFailureRetryability.TERMINAL,
+            safeSummary = "Gemini empty-response reissue cap exhausted " +
+                "($emptyResponseReissuesAlreadyUsed/$MAX_EMPTY_GEMINI_RESPONSE_REISSUES)",
+            requestId = envelope.identity,
+        )
+        return terminalOutcome(
+            envelope = envelope,
+            accumulator = accumulator,
+            missingIds = remainingIds(envelope, accumulator),
+            failure = failure,
+            budget = budget,
+            wholeRetries = 0,
+            missingRequests = 0,
+        ).copy(
+            emptyResponseReissues = emptyResponseReissuesAlreadyUsed,
+            emptyResponseCapExhausted = true,
+        )
+    }
+
     val safeLabel = ShortHash.hash(label).ifEmpty { "none" }
     var accumulator = AiTranslationAccumulator()
     var wholeRetries = 0
@@ -287,6 +327,8 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
     var requestKind = RequestKind.WHOLE
     var requestedIds = envelope.requestableIds
     var correctionHint: TranslationCorrectionHint? = null
+    var emptyResponseReissues = emptyResponseReissuesAlreadyUsed
+    var emptyResponseCapExhausted = false
 
     suspend fun runEnvelope(): AiChunkOutcome {
         while (true) {
@@ -346,15 +388,51 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
                 requestKind = requestKind,
             )
             val batch = try {
-                requestStructured(
-                    translator = translator,
-                    outgoing = outgoing,
-                    budget = budget,
-                )
+                var response: ContextualTranslationBatch? = null
+                var emptyResponseReissuedForDispatch = false
+                while (response == null) {
+                    try {
+                        response = requestStructured(
+                            translator = translator,
+                            outgoing = outgoing,
+                            budget = budget,
+                        )
+                    } catch (e: GeminiEmptyResponseException) {
+                        val isProtocolEmptyResponse =
+                            classifyFailure(e, clock, envelope.identity).kind == ProviderFailureKind.PROTOCOL
+                        if (
+                            isProtocolEmptyResponse &&
+                            !emptyResponseReissuedForDispatch &&
+                            emptyResponseReissues < MAX_EMPTY_GEMINI_RESPONSE_REISSUES &&
+                            !budget.isExhausted
+                        ) {
+                            emptyResponseReissues++
+                            emptyResponseReissuedForDispatch = true
+                            logcat(tag = "TranslationRetry", priority = LogPriority.WARN) {
+                                "backend=ai_semantic translation_failure reason=empty_response_reissue " +
+                                    "attempt=${budget.attemptsUsed} reissues=$emptyResponseReissues " +
+                                    "envelope=${envelope.identity}"
+                            }
+                        } else {
+                            emptyResponseCapExhausted =
+                                emptyResponseReissues >= MAX_EMPTY_GEMINI_RESPONSE_REISSUES
+                            throw e
+                        }
+                    }
+                }
+                checkNotNull(response)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val failure = classifyFailure(e, clock, envelope.identity)
+                val classified = classifyFailure(e, clock, envelope.identity)
+                val failure = if (emptyResponseCapExhausted && e is GeminiEmptyResponseException) {
+                    classified.copy(
+                        safeSummary = "Gemini empty-response reissue cap exhausted " +
+                            "($emptyResponseReissues/$MAX_EMPTY_GEMINI_RESPONSE_REISSUES)",
+                    )
+                } else {
+                    classified
+                }
                 if (failure.retryability == ProviderFailureRetryability.TERMINAL) {
                     return terminalOutcome(
                         envelope = envelope,
@@ -493,10 +571,24 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
         }
     }
 
-    return try {
+    val outcome = try {
         withRequestRetryBudget(budget) { runEnvelope() }
     } catch (e: CancellationException) {
         throw e
+    }
+    return when (outcome) {
+        is AiChunkOutcome.Complete -> outcome.copy(
+            emptyResponseReissues = emptyResponseReissues,
+            emptyResponseCapExhausted = emptyResponseCapExhausted,
+        )
+        is AiChunkOutcome.Paused -> outcome.copy(
+            emptyResponseReissues = emptyResponseReissues,
+            emptyResponseCapExhausted = emptyResponseCapExhausted,
+        )
+        is AiChunkOutcome.Terminal -> outcome.copy(
+            emptyResponseReissues = emptyResponseReissues,
+            emptyResponseCapExhausted = emptyResponseCapExhausted,
+        )
     }
 }
 

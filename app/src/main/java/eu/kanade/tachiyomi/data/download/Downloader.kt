@@ -888,6 +888,16 @@ class Downloader private constructor(
                     is TranslationManager.DownloadRekeyOutcome.Deferred,
                     is TranslationManager.DownloadRekeyOutcome.Rejected,
                     -> {
+                        if (
+                            outcome is TranslationManager.DownloadRekeyOutcome.Deferred &&
+                            outcome.waitingForRegisteredStoreRelease
+                        ) {
+                            logcat(if (outcome.requestPreserved) LogPriority.INFO else LogPriority.WARN) {
+                                "Translation handoff waiting for registered reader store release " +
+                                    "for chapter ${download.chapter.id}; requestPreserved=${outcome.requestPreserved}"
+                            }
+                            return
+                        }
                         val reason = when (outcome) {
                             is TranslationManager.DownloadRekeyOutcome.Deferred ->
                                 "Rekey deferred: ${outcome.reason}"
@@ -908,8 +918,8 @@ class Downloader private constructor(
                             )
                         }
                         translationManager.markTranslationHandoffFailed(download.chapter.id, reason)
-                        // No admission on a deferred/rejected migration: a request
-                        // must never sit silently PREPARING.
+                        // Non-reader deferrals and rejected migrations remain
+                        // explicit failures; only registered-store ownership waits.
                         return
                     }
                 }

@@ -4,6 +4,7 @@ import android.content.Context
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.queue.InMemorySharedPreferences
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
@@ -186,6 +187,44 @@ class TranslationRequestGenerationFenceTest {
         marked shouldBe false
         manager.pendingTranslationRequests.value.containsKey(10L) shouldBe false
         store.record(10L).shouldBeNull()
+    }
+
+    @Test
+    fun `retained rekey retry admits the attached PREPARING generation after reader leave`() = runBlocking<Unit> {
+        val requestStore = TranslationPendingRequestStore(mockContext())
+        val state = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap())
+        val lock = Any()
+        val queued = MutableStateFlow(emptyList<Translation>())
+        val translator = mockk<ChapterTranslator>(relaxed = true)
+        val coordinator = TranslationRequestCoordinator(
+            pendingRequestStoreProvider = { requestStore },
+            pendingTranslationRequestsStateProvider = { state },
+            pendingRequestMutationLockProvider = { lock },
+            storeScopeProvider = { scope },
+            queueStateProvider = { queued },
+            translatorProvider = { translator },
+            getQueuedTranslationOrNull = { null },
+            translateChapter = { requestManga, requestChapter, _, _ ->
+                admitted.set(true)
+                queued.value = queued.value + Translation(source, requestManga, requestChapter)
+            },
+        )
+        coordinator.acknowledgeTranslationRequests(listOf(chapter))
+        val generation = state.value.getValue(10L).generation
+        coordinator.queueTranslationAfterDownload(manga, chapter)
+        coordinator.markRegisteredReaderStoreWaitIfCurrent(10L, generation) shouldBe true
+        state.value[10L]?.phase shouldBe TranslationRequestPhase.PREPARING
+
+        val admittedAfterReaderLeave = coordinator.retryRekeyFailedAdmissionIfCurrent(
+            manga = manga,
+            chapter = chapter,
+            expectedGeneration = generation,
+            autoStart = true,
+        )
+
+        admittedAfterReaderLeave shouldBe true
+        admitted.get() shouldBe true
+        queued.value.single().chapter.id shouldBe chapter.id
     }
 
     @Test

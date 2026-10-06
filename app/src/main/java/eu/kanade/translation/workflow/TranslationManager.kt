@@ -1374,7 +1374,11 @@ class TranslationManager private constructor(
         /** No prior translation artifact records exist; continue to first batch admission. */
         data object NoTranslationRecords : DownloadRekeyOutcome()
 
-        data class Deferred(val reason: String) : DownloadRekeyOutcome()
+        data class Deferred(
+            val reason: String,
+            val waitingForRegisteredStoreRelease: Boolean = false,
+            val requestPreserved: Boolean = false,
+        ) : DownloadRekeyOutcome()
 
         data class Rejected(val reason: String, val cause: Throwable? = null) : DownloadRekeyOutcome()
     }
@@ -1518,8 +1522,13 @@ class TranslationManager private constructor(
             is TranslationFileProvider.MangaDirectoryLookup.Found -> directoryLookup.directory
             TranslationFileProvider.MangaDirectoryLookup.NoPriorTranslationRecords -> {
                 return withChapterStoreAdmissionLock(chapterId) {
-                    if (
-                        activeStores.get(chapterId) != null ||
+                    if (activeStores.get(chapterId) != null) {
+                        deferForRegisteredReaderStore(
+                            pending,
+                            chapterId,
+                            "active chapter ownership exists while manga artifacts are unavailable",
+                        )
+                    } else if (
                         translator.isChapterTranslationInFlight(chapterId) ||
                         isChapterBatchActive(chapterId, includePaused = true)
                     ) {
@@ -1542,7 +1551,9 @@ class TranslationManager private constructor(
                     // Capture pre-existing chapter, file, or probe ownership
                     // before resolving our own store. Existing readers defer.
                     if (activeStores.get(chapterId) != null || activeStores.hasStoreForFile(registryKey)) {
-                        return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
+                        return@withFileOpeningLock deferForRegisteredReaderStore(
+                            pending,
+                            chapterId,
                             "translation store registered for chapter or artifact",
                         )
                     }
@@ -1579,7 +1590,9 @@ class TranslationManager private constructor(
                         // Recheck before mutation: a batch may claim this chapter
                         // while its resolver waits on the shared open lock.
                         if (activeStores.get(chapterId) != null || activeStores.hasStoreForFile(registryKey)) {
-                            return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
+                            return@withFileOpeningLock deferForRegisteredReaderStore(
+                                pending,
+                                chapterId,
                                 "translation store registered during handoff admission",
                             )
                         }
@@ -1704,6 +1717,22 @@ class TranslationManager private constructor(
             if (error is kotlinx.coroutines.CancellationException) throw error
             DownloadRekeyOutcome.Rejected("translation re-key transaction failed: ${error.message}", error)
         }
+    }
+
+    /** Caller holds the chapter admission lock so teardown cannot retry before PREPARING is visible. */
+    private fun deferForRegisteredReaderStore(
+        pending: PendingDownloadRekey,
+        chapterId: Long,
+        reason: String,
+    ): DownloadRekeyOutcome.Deferred {
+        val requestPreserved = pending.requestGeneration?.let { expectedGeneration ->
+            requestCoordinator.markRegisteredReaderStoreWaitIfCurrent(chapterId, expectedGeneration)
+        } ?: false
+        return DownloadRekeyOutcome.Deferred(
+            reason = reason,
+            waitingForRegisteredStoreRelease = true,
+            requestPreserved = requestPreserved,
+        )
     }
 
     suspend fun unregisterActiveTranslationStore(chapterId: Long) {

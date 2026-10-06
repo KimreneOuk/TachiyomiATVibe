@@ -125,6 +125,29 @@ class DownloaderHandoffFailureSplitTest {
     }
 
     @Test
+    fun `registered reader store keeps completed download request preparing for joined retry`() = runBlocking<Unit> {
+        val manager = mockManager()
+        coEvery { manager.pendingRequestGeneration(chapterId) } returns 7L
+        coEvery {
+            manager.rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
+        } returns TranslationManager.DownloadRekeyOutcome.Deferred(
+            reason = "translation store registered for chapter or artifact",
+            waitingForRegisteredStoreRelease = true,
+            requestPreserved = true,
+        )
+        val downloader = downloader(manager)
+
+        downloader.handOffAfterFinalization(
+            download = newDownload(),
+            pageList = listOf(Page(0, "u0", "iu0")),
+            onDiskKeys = listOf("000.jpg"),
+        )
+
+        verify(exactly = 0) { manager.markTranslationHandoffFailed(any(), any()) }
+        coVerify(exactly = 0) { manager.startTranslationAfterDownloadIfRequested(any(), any()) }
+    }
+
+    @Test
     fun `handoff failure after finalization keeps the download DOWNLOADED and records the typed failure`() = runBlocking<Unit> {
         val manager = mockManager()
         coEvery {
