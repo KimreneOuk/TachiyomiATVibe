@@ -335,8 +335,13 @@ internal class RecoveryWorker(
             page.cleanedImageName != null &&
             page.blocks.any { it.translation.isNotBlank() }
 
+    /** Performs a bounded post-commit display-tail repair without terminalizing blockers. */
+    suspend fun drainDisplayTailAfterCommit(pageKeys: List<String>) {
+        drainDisplayTail(pageKeys, persistBlockedPages = false)
+    }
+
     /**
-     *  drains the display/compose tail before the run may publish
+     * Drains the display/compose tail before the run may publish
      * COMPLETE — every page whose translate+inpaint work is DONE but whose
      * display commit (render-terminal stamp → committed promotion) has not
      * landed. The overlap scheduler's drain-side sweep
@@ -360,7 +365,13 @@ internal class RecoveryWorker(
      * state — a run killed mid-drain re-enters FINALIZE and re-runs this
      * idempotently.
      */
-    suspend fun drainDisplayTailBeforeComplete(orderedPageKeys: List<String>): DisplayTailDrain {
+    suspend fun drainDisplayTailBeforeComplete(orderedPageKeys: List<String>): DisplayTailDrain =
+        drainDisplayTail(orderedPageKeys, persistBlockedPages = true)
+
+    private suspend fun drainDisplayTail(
+        orderedPageKeys: List<String>,
+        persistBlockedPages: Boolean,
+    ): DisplayTailDrain {
         var drained = 0
         var pending = orderedPageKeys
             .map { pageKey -> pageKey to store.snapshot(pageKey).page }
@@ -377,7 +388,11 @@ internal class RecoveryWorker(
                 when (
                     val outcome = stampRenderTerminalIfDisplayComplete(
                         pageKey,
-                        "t934 finalize: drain display-complete page tail to its committed display",
+                        if (persistBlockedPages) {
+                            "t934 finalize: drain display-complete page tail to its committed display"
+                        } else {
+                            "t934 post-commit: drain newly committed display-complete page tail"
+                        },
                     )
                 ) {
                     is RenderStampOutcome.Committed -> {
@@ -399,6 +414,7 @@ internal class RecoveryWorker(
             }
         }
         val blocked = pending.filter { it !in publicationRejected }
+        if (!persistBlockedPages) return DisplayTailDrain(drained, blocked)
         if (publicationRejected.isNotEmpty()) {
             logcat(LogPriority.INFO) {
                 "TachiyomiAT t934 display tail left pending on publication rejections: " +

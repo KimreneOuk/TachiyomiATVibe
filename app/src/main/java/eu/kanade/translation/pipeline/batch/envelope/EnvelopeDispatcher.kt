@@ -63,6 +63,7 @@ internal class EnvelopeDispatcherContext(
         String,
     ) -> Unit,
     val providerChunkProfile: () -> TranslationContextChunkPlanner.Profile,
+    val drainDisplayTailAfterCommit: suspend (List<String>) -> Unit,
     val runFinalizeAndComplete: suspend (
         ChapterArtifactEngine,
         String,
@@ -366,10 +367,12 @@ internal class EnvelopeDispatcher(
                     sublimitGate = dispatchGate,
                     providerProfile = providerChunkProfile(),
                     nowEpochMs = nowEpochMs,
-                    //  track V: freed write slots wake the overlap lane at
-                    // the commit settle — deferred inpaint candidates no longer
-                    // wait a whole envelope cycle for the next window's open.
-                    onCommitSettled = { overlapScheduler?.notifyCandidatesChanged() },
+                    // Freed write slots wake the overlap lane at commit settle;
+                    // committed pages also get a bounded display-tail repair.
+                    onCommitSettled = { committedPageKeys ->
+                        overlapScheduler?.notifyCandidatesChanged()
+                        context.drainDisplayTailAfterCommit(committedPageKeys)
+                    },
                     pageTraceRegistry = pageTraceRegistry,
                 )
                 val overlapLoop: suspend (suspend () -> ProfileEnvelopeExecutor.PhaseOutcome) -> ProfileEnvelopeExecutor.PhaseOutcome =

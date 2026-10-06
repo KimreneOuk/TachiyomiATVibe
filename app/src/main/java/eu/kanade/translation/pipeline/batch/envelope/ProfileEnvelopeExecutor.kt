@@ -96,19 +96,8 @@ internal class ProfileEnvelopeExecutor(
         TranslationContextChunkPlanner.Profile.DEFAULT,
     private val clock: ProviderRequestClock = SystemProviderRequestClock,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
-    /**
-     *  track V: invoked after an envelope's commit settled with at least
-     * one accepted page ([commitPages]) — the post-commit-settle nudge
-     * (OverlapScheduler.notifyCandidatesChanged) that runs a drain pass at
-     * every envelope commit boundary, so candidates deferred on write-slot
-     * holds settled by THIS commit are re-admitted without waiting a whole
-     * envelope cycle for the next window's open. Window-CLOSE is deliberately
-     * NOT a trigger (the envelope still holds its pages' slots until the
-     * commit settles); the settle is the earliest a deferral can be invalid.
-     * Synchronous and non-blocking (a channel try-send); never affects the
-     * commit outcome.
-     */
-    private val onCommitSettled: () -> Unit = {},
+    /** Runs after accepted page commits settle, with only those page keys. */
+    private val onCommitSettled: suspend (List<String>) -> Unit = {},
     /** Advisory progress callback (per-envelope); the store stays authoritative. */
     private val onProgress: (Map<String, Int>) -> Unit = {},
     private val pageTraceRegistry: BatchPageTraceRegistry? = null,
@@ -1026,7 +1015,7 @@ internal class ProfileEnvelopeExecutor(
         work: EnvelopeDispatchWork,
         frontier: BatchContextFrontier,
     ): EnvelopeDispatchResult {
-        var committedAnyPage = false
+        val committedPageKeys = mutableListOf<String>()
         for (page in committable) {
             val live = page.livePage
             val patches = page.dispatchBlocks.map { planned ->
@@ -1066,7 +1055,7 @@ internal class ProfileEnvelopeExecutor(
             when (val result = mergeResult) {
                 is StagePatchResult.Accepted -> {
                     counters.pagesTranslated++
-                    committedAnyPage = true
+                    committedPageKeys += page.pageKey
                     // Rolling context advances ONLY through the accepted,
                     // fully committed page (never on a rejected commit).
                     val committedPage = result.snapshot.page
@@ -1093,9 +1082,9 @@ internal class ProfileEnvelopeExecutor(
                 }
             }
         }
-        //  track V: the commit settled — free write slots wake the overlap
-        // lane immediately (no waiting for the next window's open).
-        if (committedAnyPage) onCommitSettled()
+        // The commit settled — wake the overlap lane and repair any display
+        // tail among these newly committed pages without waiting for FINALIZE.
+        if (committedPageKeys.isNotEmpty()) onCommitSettled(committedPageKeys)
         return when {
             committable.size == held.size -> EnvelopeDispatchResult.Dispatched
             committable.isEmpty() -> EnvelopeDispatchResult.Skipped

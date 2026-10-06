@@ -416,6 +416,45 @@ class DisplayTailDrainTest {
         }
 
     @Test
+    fun `an order-inverted page is display-ready after its envelope settles before finalize`() =
+        runTest {
+            val store = lazyStore()
+            val pageKeys = listOf("p1", "p2")
+            store.preRegisterPages(pageKeys)
+            val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+            val (overlapScheduler, _) = scheduler(store, pageKeys)
+            var firstPageAtSecondDispatch: PageTranslation? = null
+            var firstPagePromotedAtSecondDispatch = false
+            val translator = FakeTranslator { callIndex, chunk ->
+                if (callIndex == 2) {
+                    // This observation runs for page 2, after page 1's
+                    // envelope commit has settled but before the second
+                    // envelope completes and FINALIZE can run.
+                    firstPageAtSecondDispatch = store.snapshot("p1").page
+                    firstPagePromotedAtSecondDispatch = store.committedDisplayPage("p1") != null
+                }
+                responseFor(chunk)
+            }
+
+            val outcome = coordinator(
+                store,
+                FakePreflightOcrWorker(store, preInpainted = setOf("p1")),
+                pages,
+                translator,
+                overlapScheduler,
+                maxPagesPerEnvelope = 1,
+            ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+            outcome.status shouldBe BatchPass1Status.COMPLETED
+            val observedPage = firstPageAtSecondDispatch.shouldNotBeNull()
+            observedPage.translationStatus shouldBe StageStatus.READY
+            observedPage.inpaintStatus shouldBe StageStatus.READY
+            observedPage.renderStatus shouldBe StageStatus.READY
+            observedPage.hasRenderedResult shouldBe true
+            firstPagePromotedAtSecondDispatch shouldBe true
+        }
+
+    @Test
     fun `a display tail page the drain cannot finish takes the typed terminal and the run completes as a warning`() =
         runTest {
             val store = lazyStore()

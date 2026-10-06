@@ -22,6 +22,7 @@ import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
@@ -2112,6 +2113,20 @@ class ChapterTranslationStore internal constructor(
                     val current = actual.page
                         ?: return@withLock TranslationPublicationReconciliation.Deferred("page missing")
                     if (sameTranslationOutput(current, candidate) && translationOutputIsDurableLocked(pageKey, current)) {
+                        val stamped = current.detachedCopy()
+                        if (stamped.stampRenderTerminalIfDisplayComplete()) {
+                            stamped.updatedAt = System.currentTimeMillis()
+                            val owned = ownedPage(pageKey, stamped)
+                            val expectedCurrent = actual.toPrecondition()
+                            pages = pages.put(pageKey, publishPage(owned))
+                            if (!publishLocked(current, owned, expectedCurrent, journalCredit = journalCredit)) {
+                                restorePageLocked(pageKey, current)
+                                return@withLock TranslationPublicationReconciliation.PublicationFailed(
+                                    lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
+                                )
+                            }
+                            return@withLock TranslationPublicationReconciliation.Rebased(snapshotLocked(pageKey))
+                        }
                         return@withLock TranslationPublicationReconciliation.AlreadyDurable(actual)
                     }
                     val rebasedBlocks = rebaseTranslationBlocks(current, candidate)
@@ -2126,6 +2141,7 @@ class ChapterTranslationStore internal constructor(
                         translationFingerprint = candidate.translationFingerprint
                         translationOrigin = candidate.translationOrigin
                         sourceFingerprint = candidate.sourceFingerprint ?: sourceFingerprint
+                        if (stampRenderTerminalIfDisplayComplete()) updatedAt = System.currentTimeMillis()
                     }
                     val owned = ownedPage(pageKey, updated)
                     val expectedCurrent = actual.toPrecondition()
@@ -2771,6 +2787,7 @@ class ChapterTranslationStore internal constructor(
         page.translationStatus = patch.translationStatus
         page.sourceFingerprint = patch.sourceFingerprint ?: page.sourceFingerprint
         page.errorMessage = patch.errorMessage
+        if (page.stampRenderTerminalIfDisplayComplete()) page.updatedAt = System.currentTimeMillis()
         val updated = ownedPage(patch.pageKey, page)
         pages = pages.put(patch.pageKey, publishPage(updated))
         if (!publishLocked(current, updated, patch.toPrecondition(), journalCredit = journalCredit)) {

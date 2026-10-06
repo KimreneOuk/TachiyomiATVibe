@@ -70,6 +70,21 @@ val PageTranslationView.hasCurrentInpaintMask: Boolean
 val PageTranslationView.hasRenderedResult: Boolean
     get() = isTranslationDisplayReady
 
+/**
+ * Completes the render-terminal stamp in the same guarded write that commits
+ * translation when the rest of the display evidence is already present.
+ */
+internal fun PageTranslation.stampRenderTerminalIfDisplayComplete(): Boolean {
+    val displayComplete =
+        (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
+            inpaintStatus == StageStatus.READY &&
+            cleanedImageName != null &&
+            blocks.any { it.translation.isNotBlank() }
+    if (renderStatus != StageStatus.PENDING || !displayComplete) return false
+    renderStatus = StageStatus.READY
+    return true
+}
+
 val PageTranslationView.isStageRunning: Boolean
     get() = ocrStatus == StageStatus.RUNNING ||
         translationStatus == StageStatus.RUNNING ||

@@ -379,6 +379,9 @@ internal class ChapterProfileBatchCoordinator(
             providerChunkProfile = {
                 providerChunkProfile()
             },
+            drainDisplayTailAfterCommit = { pageKeys ->
+                drainDisplayTailAfterCommit(pageKeys)
+            },
             runFinalizeAndComplete = { recordArtifact, id, pages, fingerprint, counters ->
                 runFinalizeAndComplete(recordArtifact, id, pages, fingerprint, counters)
             },
@@ -1061,6 +1064,10 @@ internal class ChapterProfileBatchCoordinator(
     private suspend fun drainDisplayTailBeforeComplete(
         orderedPageKeys: List<String>,
     ): RecoveryWorker.DisplayTailDrain = recoveryWorker().drainDisplayTailBeforeComplete(orderedPageKeys)
+
+    private suspend fun drainDisplayTailAfterCommit(pageKeys: List<String>) {
+        recoveryWorker().drainDisplayTailAfterCommit(pageKeys)
+    }
 
     private fun strandedPageReason(page: PageTranslationView?): String =
         recoveryWorker().strandedPageReason(page)

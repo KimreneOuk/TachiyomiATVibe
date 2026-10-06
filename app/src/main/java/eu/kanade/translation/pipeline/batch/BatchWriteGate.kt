@@ -10,6 +10,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
@@ -399,6 +400,7 @@ internal class BatchWriteGate(
                 blocks = prepared.blocks.map { it.detachedCopy() }.toMutableList()
                 updatedAt = System.currentTimeMillis()
                 sourceFingerprint = prepared.sourceFingerprint ?: sourceFingerprint
+                if (stampRenderTerminalIfDisplayComplete()) updatedAt = System.currentTimeMillis()
             }
         }
         if (result is ChapterTranslationStore.PatchResult.Accepted) {
