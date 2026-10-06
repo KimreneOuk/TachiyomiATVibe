@@ -177,6 +177,7 @@ class OverlapSchedulerTest {
         private val store: ChapterTranslationStore,
         private val identities: ConcurrentHashMap<String, BatchWriteIdentity>,
         private val healCurrentInpaint: Boolean = false,
+        private val onInpaintStart: () -> Unit = {},
     ) : NativeLaneWorker {
         val inpainted = mutableListOf<String>()
         val ocrEntries = mutableListOf<String>()
@@ -192,6 +193,7 @@ class OverlapSchedulerTest {
         }
 
         override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
+            onInpaintStart()
             inpainted += pageKey
             concurrent.enter()
             try {
@@ -302,6 +304,60 @@ class OverlapSchedulerTest {
         healed.inpaintStatus shouldBe StageStatus.READY
         healed.inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
         healed.cleanedImageName shouldBe "$pageKey.cleaned.jpg"
+    }
+
+    @Test
+    fun `stale ready page cannot run or consume the inpaint marker without a RUN plan`() = runTest {
+        val store = lazyStore()
+        val pageKey = "p1"
+        seedTranslatedPage(store, pageKey)
+        val before = store.snapshot(pageKey)
+        val staleLease = store.tryAcquirePageStageLease(pageKey, PageStage.Inpaint, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        store.updatePageGuarded(
+            pageKey = pageKey,
+            expected = ChapterTranslationStore.PatchPrecondition(
+                generation = before.generation,
+                pageVersion = before.pageVersion,
+                leaseToken = staleLease.token,
+            ),
+            description = "stale ready without a planned inpaint",
+        ) { page ->
+            page!!.apply {
+                inpaintStatus = StageStatus.READY
+                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1
+                cleanedImageName = "$pageKey.cleaned.jpg"
+            }
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+
+        var plannerRequiresInpaint = false
+        val plannedStateAtLaneEntry = mutableListOf<Boolean>()
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val lane = FakeInpaintLane(
+            store = store,
+            identities = identities,
+            healCurrentInpaint = true,
+            onInpaintStart = { plannedStateAtLaneEntry += plannerRequiresInpaint },
+        )
+        val scheduler = scheduler(
+            store = store,
+            worker = lane,
+            pageKeys = listOf(pageKey),
+            identities = identities,
+            plannedInpaintNeedsWork = { plannerRequiresInpaint },
+        )
+
+        // A planner WAIT/terminal decision must keep stale READY out of the lane
+        // and must not consume this run's one-inpaint admission marker.
+        scheduler.drainSerial()
+        plannerRequiresInpaint = true
+        scheduler.drainSerial()
+
+        plannedStateAtLaneEntry shouldBe listOf(true)
+        lane.inpainted shouldBe listOf(pageKey)
+        val healed = store.snapshot(pageKey).page.shouldNotBeNull()
+        healed.inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
     }
 
     @Test

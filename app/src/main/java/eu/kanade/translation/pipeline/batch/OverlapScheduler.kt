@@ -476,7 +476,8 @@ internal class OverlapScheduler(
             if (page.blocks.isEmpty() && page.inpaintMaskBoxes.isEmpty()) continue
             val inpaint = page.inpaintStatus
             if (inpaintedThisRun.contains(pageKey) ||
-                inpaint == StageStatus.READY && page.isCleanedImageReady && !plannedInpaintNeedsWork(pageKey) ||
+                inpaint == StageStatus.READY &&
+                !plannedInpaintNeedsWork(pageKey) ||
                 inpaint == StageStatus.FAILED ||
                 inpaint == StageStatus.TEXTLESS
             ) {
@@ -643,7 +644,6 @@ internal class OverlapScheduler(
                             (live.blocks.isEmpty() && live.inpaintMaskBoxes.isEmpty()) ||
                             inpaintedThisRun.contains(pageKey) ||
                             live.inpaintStatus == StageStatus.READY &&
-                            live.isCleanedImageReady &&
                             !plannedInpaintNeedsWork(pageKey) ||
                             live.isTextlessTerminal
                         ) {
