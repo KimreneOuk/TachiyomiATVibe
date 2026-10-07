@@ -2178,6 +2178,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             includeCandidateAndPrevious = true,
             includeCleanedImage = false,
             journalStorage = jvmFileBackedJournalStorage(journalDirectory, journalDurableRoot),
+            privateStorageRoot = journalDurableRoot,
         )
         var storeClosed = false
         try {
@@ -2649,6 +2650,7 @@ class ChapterTranslationStoreJournalCaptureTest {
         includeCandidateAndPrevious: Boolean = false,
         includeCleanedImage: Boolean = true,
         journalStorage: ChapterJournalStorage = MemoryStorage(),
+        privateStorageRoot: File? = null,
         initialRetiredCleanedImages: Map<String, Set<String>> = emptyMap(),
     ): RekeyFixture {
         val io = FakeChapterDocumentIo()
@@ -2750,6 +2752,10 @@ class ChapterTranslationStoreJournalCaptureTest {
             initialCommittedPages = mapOf(oldKey to page),
             initialArtifactManifest = manifest,
             initialRetiredCleanedImages = initialRetiredCleanedImages,
+            privateStorageRoot = privateStorageRoot,
+            privateStorageIdentity = privateStorageRoot?.let {
+                StageFingerprints.sha256Hex("rekey-fixture:$chapterName".encodeToByteArray())
+            },
         )
         store.enableLazyPersistence()
         val sessionId = UUID.nameUUIDFromBytes("rekey-fixture:$chapterName".encodeToByteArray())
