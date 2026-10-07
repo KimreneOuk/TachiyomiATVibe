@@ -154,7 +154,7 @@ object WebtoonSlidingDetector {
         detectFn: (Bitmap) -> List<Detection>,
     ): List<Detection> {
         if (!isTallImage(bitmap.width, bitmap.height)) {
-            return detectFn(bitmap)
+            return detectSingleWindow(bitmap, detectFn)
         }
 
         val windows = calculateWindows(bitmap.width, bitmap.height)
@@ -181,6 +181,14 @@ object WebtoonSlidingDetector {
         }
 
         return mergeDetections(allDetections)
+    }
+
+    /** Keeps the single-window detector's output order and grouping intact. */
+    internal fun <Input> detectSingleWindow(
+        input: Input,
+        detect: (Input) -> List<Detection>,
+    ): List<Detection> {
+        return detect(input)
     }
 
     /**

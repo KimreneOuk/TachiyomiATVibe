@@ -358,7 +358,7 @@ internal class PaddleB1FakeSession(
         val outputShape = longArrayOf(batchSize.toLong(), TIME_STEPS.toLong(), CLASS_COUNT.toLong())
         return PaddleB1FakeOutput(
             shapeValue = outputShape,
-            logits = FloatBuffer.wrap(logits),
+            source = FloatBuffer.wrap(logits),
             cancelOnShape = cancelAfterExecutionMarker != null && cancelAfterExecutionMarker in markers,
         )
     }
@@ -371,7 +371,7 @@ internal class PaddleB1FakeSession(
 
 internal class PaddleB1FakeOutput(
     private val shapeValue: LongArray,
-    val logits: FloatBuffer,
+    private val source: FloatBuffer,
     private val cancelOnShape: Boolean,
 ) : PaddleOcrV6BatchOutput {
 
@@ -381,12 +381,11 @@ internal class PaddleB1FakeOutput(
             return shapeValue.copyOf()
         }
 
-    override fun copyTo(destination: FloatBuffer) {
-        val source = logits.duplicate()
-        source.clear()
-        destination.clear()
-        destination.put(source)
-        destination.flip()
+    override fun logits(): FloatBuffer {
+        return source.duplicate().apply {
+            position(0)
+            limit(source.limit())
+        }
     }
 
     override fun close() = Unit
@@ -459,7 +458,7 @@ internal fun recognizePaddleWithConfPath(
     val output = session.run(input, inputShape)
     val outputShape = output.shape
     val fakeOutput = output as PaddleB1FakeOutput
-    val row = fakeOutput.logits.duplicate()
+    val row = fakeOutput.logits()
     row.position(0)
     row.limit((outputShape[1] * outputShape[2]).toInt())
     val (indices, maxProbs) = PaddleCtcDecoder.argmaxWithProbs(

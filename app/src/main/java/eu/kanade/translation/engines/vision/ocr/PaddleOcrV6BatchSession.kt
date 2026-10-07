@@ -16,8 +16,12 @@ internal interface PaddleOcrV6BatchSession {
 internal interface PaddleOcrV6BatchOutput : Closeable {
     val shape: LongArray
 
-    /** Copies [B,T,C] logits into [destination], which remains owned by the pool. */
-    fun copyTo(destination: FloatBuffer)
+    /**
+     * Returns a view of `B x T x C` logits valid until [close]. The ORT adapter
+     * exposes its extractor buffer directly so CTC decode does not make a
+     * second full-batch copy.
+     */
+    fun logits(): FloatBuffer
 }
 
 /** ORT adapter; the engine remains the owner of the underlying [OrtSession]. */
@@ -62,18 +66,13 @@ private class PaddleOcrV6OrtBatchOutput(
 
     override val shape: LongArray = outputTensor.info.shape.copyOf()
 
-    override fun copyTo(destination: FloatBuffer) {
+    override fun logits(): FloatBuffer {
         val expected = shape.fold(1L) { acc, dimension -> acc * dimension }
         require(expected <= Int.MAX_VALUE) { "Paddle OCR output is too large: $expected floats" }
-        require(destination.capacity().toLong() >= expected) {
-            "output destination capacity=${destination.capacity()} expected=$expected"
+        return outputTensor.floatBuffer.duplicate().apply {
+            position(0)
+            limit(expected.toInt())
         }
-        val source = outputTensor.floatBuffer.duplicate()
-        source.position(0)
-        source.limit(expected.toInt())
-        destination.clear()
-        destination.put(source)
-        destination.flip()
     }
 
     override fun close() {

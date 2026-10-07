@@ -59,6 +59,13 @@ data class PaddleOcrProviderResolution(
  */
 object PaddleOcrSessionFactory {
 
+    /**
+     * A strict QNN probe failure is device/runtime deterministic for this
+     * process. Keep its labelled CPU fallback so engine rebuilds do not retry
+     * the same failed native session probe.
+     */
+    private val probeFailureCache = mutableMapOf<PaddleOcrExecutionProvider, PaddleOcrProviderResolution>()
+
     fun resolve(
         requested: PaddleOcrExecutionProvider,
     ): PaddleOcrProviderResolution {
@@ -69,6 +76,29 @@ object PaddleOcrSessionFactory {
             return PaddleOcrProviderResolution.cpu()
         }
 
+        return synchronized(probeFailureCache) {
+            probeFailureCache[requested]?.also { cached ->
+                logcat(LogPriority.WARN) {
+                    "[paddle_provider] requested=${requested.wireLabel} resolved=cpu " +
+                        "status=cached_probe_failure reason=${cached.fallbackReason}"
+                }
+            } ?: resolveUncached(requested).also { resolution ->
+                if (resolution.fallbackReason != null) {
+                    probeFailureCache[requested] = resolution
+                }
+            }
+        }
+    }
+
+    internal fun resetForTesting() {
+        synchronized(probeFailureCache) {
+            probeFailureCache.clear()
+        }
+    }
+
+    private fun resolveUncached(
+        requested: PaddleOcrExecutionProvider,
+    ): PaddleOcrProviderResolution {
         val route = HardwareDiscoveryEngine.resolvePaddleOcrRoute(requested)
         if (route == null) {
             val reason = "${requested.wireLabel}_probe_failed"

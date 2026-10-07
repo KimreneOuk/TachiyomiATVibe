@@ -14,8 +14,8 @@ internal object PaddleOcrV6BatchCtcDecoder {
         val batchSize = shape[0].toIntChecked("batch")
         val timeSteps = shape[1].toIntChecked("time steps")
         val classCount = shape[2].toIntChecked("classes")
-        val rowElements = timeSteps.toLong() * classCount
-        val required = batchSize.toLong() * rowElements
+        val rowElements = Math.multiplyExact(timeSteps.toLong(), classCount.toLong())
+        val required = Math.multiplyExact(batchSize.toLong(), rowElements)
         require(required <= logits.limit().toLong()) {
             "Paddle OCR output logits=${logits.limit()} expected=$required"
         }

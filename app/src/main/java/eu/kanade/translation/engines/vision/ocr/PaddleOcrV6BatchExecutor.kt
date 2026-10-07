@@ -152,7 +152,6 @@ internal class PaddleOcrV6BatchExecutor(
     ): AttemptResult {
         var inputLease: PaddleOcrV6BatchBufferPool.Lease? = null
         var output: PaddleOcrV6BatchOutput? = null
-        var outputLease: PaddleOcrV6BatchBufferPool.Lease? = null
         var inputBytes = 0L
         var outputBytes = 0L
         var runs = 0
@@ -220,9 +219,8 @@ internal class PaddleOcrV6BatchExecutor(
                 require(dimension > 0) { "Paddle OCR output dimension=$dimension is invalid" }
                 Math.multiplyExact(acc, dimension)
             }
-            outputBytes = elements * Float.SIZE_BYTES
-            outputLease = try {
-                bufferPool.acquireOutput(elements)
+            try {
+                bufferPool.validateOutputElements(elements)
             } catch (error: PaddleOcrV6BatchBufferPool.BufferAllocationException) {
                 allocationFailures++
                 throw PaddleOcrV6BatchFailure(
@@ -231,14 +229,14 @@ internal class PaddleOcrV6BatchExecutor(
                     sessionRunCount = runs,
                     actualBatchSize = actualBatch,
                     inputBytes = inputBytes,
-                    outputBytes = outputBytes,
+                    outputBytes = elements * Float.SIZE_BYTES,
                     allocationFailures = allocationFailures,
                 )
             }
+            outputBytes = elements * Float.SIZE_BYTES
             try {
-                output.copyTo(outputLease.buffer)
                 val decoded = PaddleOcrV6BatchCtcDecoder.decode(
-                    logits = outputLease.buffer,
+                    logits = output.logits(),
                     shape = shape,
                     dictionary = dictionary,
                 )
@@ -278,7 +276,6 @@ internal class PaddleOcrV6BatchExecutor(
                 allocationFailures = allocationFailures,
             )
         } finally {
-            outputLease?.close()
             output?.close()
             inputLease?.close()
         }

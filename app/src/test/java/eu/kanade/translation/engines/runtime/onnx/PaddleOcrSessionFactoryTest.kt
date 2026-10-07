@@ -14,6 +14,7 @@ class PaddleOcrSessionFactoryTest {
     @AfterEach
     fun resetHardwareDiscovery() {
         HardwareDiscoveryEngine.resetForTesting()
+        PaddleOcrSessionFactory.resetForTesting()
     }
 
     @Test
@@ -83,14 +84,25 @@ class PaddleOcrSessionFactoryTest {
 
     @Test
     fun `failed HTP probe resolves explicitly to CPU with reason`() {
-        HardwareDiscoveryEngine.resetForTesting(customQnnProbe = { false })
+        var htpProbes = 0
+        HardwareDiscoveryEngine.resetForTesting(
+            customQnnProbe = {
+                htpProbes++
+                false
+            },
+        )
 
-        val resolution = PaddleOcrSessionFactory.resolve(
+        val first = PaddleOcrSessionFactory.resolve(
+            PaddleOcrExecutionProvider.QUALCOMM_QNN_HTP,
+        )
+        val second = PaddleOcrSessionFactory.resolve(
             PaddleOcrExecutionProvider.QUALCOMM_QNN_HTP,
         )
 
-        resolution.requestedWireLabel shouldBe "qnn_htp"
-        resolution.resolvedRouteLabel shouldBe "cpu"
-        resolution.fallbackReason shouldBe "qnn_htp_probe_failed"
+        first shouldBe second
+        first.resolvedRouteLabel shouldBe "cpu"
+        first.requestedWireLabel shouldBe "qnn_htp"
+        first.fallbackReason shouldBe "qnn_htp_probe_failed"
+        htpProbes shouldBe 1
     }
 }

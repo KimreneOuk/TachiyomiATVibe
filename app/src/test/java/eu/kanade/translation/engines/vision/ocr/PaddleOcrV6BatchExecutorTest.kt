@@ -75,8 +75,8 @@ class PaddleOcrV6BatchExecutorTest {
     }
 
     @Test
-    fun `failed final run releases input and output leases`() {
-        val session = FakeSession(failCopy = true)
+    fun `failed decode releases input lease and closes extractor output`() {
+        val session = FakeSession(failLogits = true)
         val pool = newPool()
         val executor = PaddleOcrV6BatchExecutor(
             session = session,
@@ -95,8 +95,9 @@ class PaddleOcrV6BatchExecutorTest {
 
         val snapshot = pool.snapshot()
         snapshot.activeInputBuffers shouldBe 0
-        snapshot.activeOutputBuffers shouldBe 0
         snapshot.retainedInputBuffers shouldBe 1
+        snapshot.inputAllocations shouldBe 1
+        session.outputCloseCalls shouldBe 1
         session.calls.size shouldBe 1
     }
 
@@ -212,7 +213,7 @@ class PaddleOcrV6BatchExecutorTest {
     }
 
     @Test
-    fun `output bytes use actual B T C shape and pooled leases are released`() {
+    fun `output bytes use actual B T C shape and the input lease is released`() {
         val session = FakeSession(timeSteps = 80, classCount = 7)
         val pool = PaddleOcrV6BatchBufferPool(
             maxBatchSize = 8,
@@ -242,11 +243,38 @@ class PaddleOcrV6BatchExecutorTest {
 
         val snapshot = pool.snapshot()
         snapshot.inputAllocations shouldBe 1
-        snapshot.outputAllocations shouldBe 1
         snapshot.activeInputBuffers shouldBe 0
-        snapshot.activeOutputBuffers shouldBe 0
+        snapshot.retainedInputBuffers shouldBe 1
         snapshot.maxOutputBytes shouldBe 8L * 200L * 7L * 4L
         session.lastTelemetryOutputBytes shouldBe 4L * 80L * 7L * 4L
+        session.outputCloseCalls shouldBe 2
+    }
+
+    @Test
+    fun `decode reads extractor logits without a pooled output copy`() {
+        val session = FakeSession()
+        var allocationCalls = 0
+        val pool = newPool(
+            allocator = PaddleOcrV6BatchBufferPool.FloatBufferAllocator { capacity ->
+                allocationCalls++
+                FloatBuffer.allocate(capacity)
+            },
+        )
+        val execution = PaddleOcrV6BatchExecutor(
+            session = session,
+            bufferPool = pool,
+            dictionary = DICTIONARY,
+        ).execute(
+            crops = listOf(0),
+            widthBucket = 640,
+            maxBatch = 1,
+            writeSample = ::writeMarker,
+        )
+
+        execution.results shouldContainExactly listOf("a" to 1f)
+        allocationCalls shouldBe 1
+        session.outputCloseCalls shouldBe 1
+        session.calls.size shouldBe 1
     }
 
     private fun executor(session: FakeSession): PaddleOcrV6BatchExecutor =
@@ -256,13 +284,14 @@ class PaddleOcrV6BatchExecutorTest {
             dictionary = DICTIONARY,
         )
 
-    private fun newPool(): PaddleOcrV6BatchBufferPool = PaddleOcrV6BatchBufferPool(
+    private fun newPool(
+        allocator: PaddleOcrV6BatchBufferPool.FloatBufferAllocator =
+            PaddleOcrV6BatchBufferPool.FloatBufferAllocator { capacity -> FloatBuffer.allocate(capacity) },
+    ): PaddleOcrV6BatchBufferPool = PaddleOcrV6BatchBufferPool(
         maxBatchSize = 8,
         maxWidth = 1600,
         dictionarySize = DICTIONARY.size,
-        allocator = PaddleOcrV6BatchBufferPool.FloatBufferAllocator { capacity ->
-            FloatBuffer.allocate(capacity)
-        },
+        allocator = allocator,
     )
 
     private fun writeMarker(
@@ -280,11 +309,12 @@ class PaddleOcrV6BatchExecutorTest {
         private val onRun: (batchSize: Int) -> Unit = {},
         private val timeSteps: Int = 2,
         private val classCount: Int = DICTIONARY.size + 2,
-        private val failCopy: Boolean = false,
+        private val failLogits: Boolean = false,
         private val cancelOnRun: Boolean = false,
     ) : PaddleOcrV6BatchSession {
         val calls = ArrayList<Call>()
         var lastTelemetryOutputBytes = 0L
+        var outputCloseCalls = 0
 
         override fun run(input: FloatBuffer, shape: LongArray): PaddleOcrV6BatchOutput {
             val batchSize = shape[0].toInt()
@@ -304,7 +334,12 @@ class PaddleOcrV6BatchExecutorTest {
             }
             val outputShape = longArrayOf(batchSize.toLong(), timeSteps.toLong(), classCount.toLong())
             lastTelemetryOutputBytes = logits.size.toLong() * Float.SIZE_BYTES
-            return FakeOutput(outputShape, FloatBuffer.wrap(logits), failCopy)
+            return FakeOutput(
+                shape = outputShape,
+                source = FloatBuffer.wrap(logits),
+                failLogits = failLogits,
+                onClose = { outputCloseCalls++ },
+            )
         }
     }
 
@@ -313,18 +348,15 @@ class PaddleOcrV6BatchExecutorTest {
     private class FakeOutput(
         override val shape: LongArray,
         private val source: FloatBuffer,
-        private val failCopy: Boolean,
+        private val failLogits: Boolean,
+        private val onClose: () -> Unit,
     ) : PaddleOcrV6BatchOutput {
-        override fun copyTo(destination: FloatBuffer) {
-            if (failCopy) throw IllegalStateException("fake output copy failure")
-            val copy = source.duplicate()
-            copy.clear()
-            destination.clear()
-            destination.put(copy)
-            destination.flip()
+        override fun logits(): FloatBuffer {
+            if (failLogits) throw IllegalStateException("fake output logits failure")
+            return source.duplicate().apply { position(0) }
         }
 
-        override fun close() = Unit
+        override fun close() = onClose()
     }
 
     private companion object {

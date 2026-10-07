@@ -151,4 +151,28 @@ class WebtoonSlidingDetectorTest {
         unified.bbox[3] shouldBe 1420
         unified.score shouldBe 0.89f
     }
+
+    @Test
+    fun `single-window detector output keeps original order without merge`() {
+        val nonTallDetections = listOf(
+            Detection(intArrayOf(100, 100, 200, 150), 0, 0.8f, "bubble"),
+            Detection(intArrayOf(100, 160, 200, 210), 0, 0.9f, "bubble"),
+        )
+        var detectorInvocations = 0
+        val nonTall = WebtoonSlidingDetector.detectSingleWindow("single") { input ->
+            detectorInvocations++
+            input shouldBe "single"
+            nonTallDetections
+        }
+
+        detectorInvocations shouldBe 1
+        nonTall.map(::snapshot) shouldBe nonTallDetections.map(::snapshot)
+    }
+
+    private fun snapshot(detection: Detection): List<Any> = listOf(
+        detection.bbox.toList(),
+        detection.label,
+        detection.score,
+        detection.className,
+    )
 }
