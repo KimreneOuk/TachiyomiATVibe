@@ -96,8 +96,9 @@ internal class SinglePageHttpRenderPhase(
     /** Acquire the existing device-active gate only after provider work has settled. */
     private suspend fun withRenderPermit(
         origin: PageWriteOrigin,
-        block: suspend () -> Unit,
+        block: suspend (permitWaitMs: Double) -> Unit,
     ): Boolean {
+        val waitStart = System.nanoTime()
         val waitSpan = TranslationTrace.beginStage(
             stage = TranslationTraceStage.RENDER_PERMIT_WAIT,
             lane = TranslationTraceLane.SCHEDULER,
@@ -119,11 +120,12 @@ internal class SinglePageHttpRenderPhase(
             )
             throw t
         }
+        val permitWaitMs = (System.nanoTime() - waitStart) / 1_000_000.0
         waitSpan.end(if (permit == null) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.SUCCESS)
         if (permit == null) return false
 
         try {
-            block()
+            block(permitWaitMs)
         } finally {
             permit.release()
         }
@@ -269,6 +271,8 @@ internal class SinglePageHttpRenderPhase(
         )
         var governorSpanSettled = false
         var translationOutcome: TranslationCompletionOutcome = TranslationCompletionOutcome.Completed()
+        var lastPermitWaitMs = 0.0
+        var lastColorEstimateMs = 0.0
         // A lazy cleaned-image worker may still be encoding this bitmap while
         // the live page reaches its terminal commit. Keep the ownership
         // reference until the existing final store.flush() barrier has joined
@@ -686,7 +690,8 @@ internal class SinglePageHttpRenderPhase(
                                 false
                             }
                             if (renderStageAdmitted) {
-                                val rendered = withRenderPermit(origin) {
+                                val rendered = withRenderPermit(origin) { permitWaitMs ->
+                                    lastPermitWaitMs = permitWaitMs
                                     // Layout (color estimation) is a sub-interval of the
                                     // active render attempt; gate waiting is reported in
                                     // its own scheduler-lane span above.
@@ -709,7 +714,9 @@ internal class SinglePageHttpRenderPhase(
                                                 val renderLaneToken =
                                                     TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.RENDER)
                                                 try {
+                                                    val colorEstimateStart = System.nanoTime()
                                                     RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
+                                                    lastColorEstimateMs = (System.nanoTime() - colorEstimateStart) / 1_000_000.0
                                                 } finally {
                                                     renderLaneToken?.close()
                                                 }
@@ -808,7 +815,8 @@ internal class SinglePageHttpRenderPhase(
                                     false
                                 }
                                 if (renderStageAdmitted) {
-                                    val rendered = withRenderPermit(origin) {
+                                    val rendered = withRenderPermit(origin) { permitWaitMs ->
+                                        lastPermitWaitMs = permitWaitMs
                                         val retryLayoutSpan = TranslationTrace.beginStage(
                                             TranslationTraceStage.LAYOUT,
                                             lane = TranslationTraceLane.RENDER,
@@ -825,7 +833,9 @@ internal class SinglePageHttpRenderPhase(
                                                 val renderLaneToken =
                                                     TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.RENDER)
                                                 try {
+                                                    val colorEstimateStart = System.nanoTime()
                                                     RenderColorEstimator.recomputeFor(retriedCleaned, pageTranslation.blocks)
+                                                    lastColorEstimateMs = (System.nanoTime() - colorEstimateStart) / 1_000_000.0
                                                 } finally {
                                                     renderLaneToken?.close()
                                                 }
@@ -929,12 +939,21 @@ internal class SinglePageHttpRenderPhase(
                 TranslationTraceStage.STORE_COMMIT,
                 lane = TranslationTraceLane.STORAGE,
             )
+            val commitStart = System.nanoTime()
             val commit = try {
                 val result = store.patchPage(
                     pageKey = pageKey,
                     expected = commitPrecondition,
                     description = "commit single-page translation and render",
                 ) { pageTranslation }
+                val commitMs = (System.nanoTime() - commitStart) / 1_000_000.0
+                NativeVisionTelemetry.logRenderTailBreakdown(
+                    pageKey = pageKey,
+                    permitWaitMs = lastPermitWaitMs,
+                    colorEstimateMs = lastColorEstimateMs,
+                    commitMs = commitMs,
+                    totalTailMs = lastPermitWaitMs + lastColorEstimateMs + commitMs,
+                )
                 commitSpan.end(
                     if (result is ChapterTranslationStore.PatchResult.Rejected) {
                         TranslationTraceOutcome.FAILURE

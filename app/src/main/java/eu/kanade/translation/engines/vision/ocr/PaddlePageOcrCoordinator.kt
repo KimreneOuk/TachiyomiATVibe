@@ -14,6 +14,7 @@ import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrParentRegi
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrWidthBucket
 import eu.kanade.translation.model.Detection
 import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.pipeline.NativeVisionTelemetry
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.CancellationException
@@ -284,7 +285,19 @@ internal class PaddlePageOcrCoordinator(
 
             val traces = initialDispatcher.batchTraces + (fallbackDispatcher?.batchTraces ?: emptyList())
             lastBatchTrace = traces
-            lastResolvedLeafCount = initialDispatcher.resolvedLeafCount + (fallbackDispatcher?.resolvedLeafCount ?: 0)
+            val leafCount = initialDispatcher.resolvedLeafCount + (fallbackDispatcher?.resolvedLeafCount ?: 0)
+            lastResolvedLeafCount = leafCount
+
+            val totalInferMs = traces.sumOf { it.batchLatencyMs }
+            val avgInferMs = if (leafCount > 0) totalInferMs / leafCount else 0.0
+            NativeVisionTelemetry.logCropSummary(
+                pageKey = pageGeneration.pageId,
+                leafCount = leafCount,
+                batchSize = validatedBatchSize.value,
+                avgInferMs = avgInferMs,
+                provider = engine.executionProviderLabel,
+            )
+
             return states.map { PaddlePageRegionResult(it.text, it.rotatedForOcr) }
         } catch (failure: Throwable) {
             initialDispatcher.cancel()

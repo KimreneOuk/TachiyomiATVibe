@@ -94,6 +94,34 @@ class RoiPageRecognitionEngine(
     private var pageInpainter: PageInpaintingEngine? = null
 
     @Volatile
+    var lastDetectMs: Double = 0.0
+        internal set
+
+    @Volatile
+    var lastSegmentMs: Double = 0.0
+        internal set
+
+    @Volatile
+    var lastOcrMs: Double = 0.0
+        internal set
+
+    @Volatile
+    var lastInpaintMs: Double = 0.0
+        internal set
+
+    @Volatile
+    var lastLeafCount: Int = 0
+        internal set
+
+    @Volatile
+    var lastBoxCount: Int = 0
+        internal set
+
+    @Volatile
+    var lastProvider: String = "cpu"
+        internal set
+
+    @Volatile
     private var initialized = false
     private var initFailed = false
     private val initMutex = Mutex()
@@ -387,9 +415,9 @@ class RoiPageRecognitionEngine(
         // close() cannot free a native session out from under an in-flight
         // OrtSession.run(). Each native pass (detect + every recognize()) must
         // be inside this critical section.
-        var detectMs = 0L
-        var segmentMs = 0L
-        var ocrMs = 0L
+        var detectMs = 0.0
+        var segmentMs = 0.0
+        var ocrMs = 0.0
         // Correlated engine stages. The run arrives through the
         // installed TranslationTrace element; outside a traced coroutine every
         // span is a fail-open NO_OP. openRecognitionSpan tracks whichever
@@ -425,7 +453,7 @@ class RoiPageRecognitionEngine(
                     registeredProvider = TranslationPipelineDiagnostics.providerFromLabel(localDetector.executionProviderLabel),
                 )
                 openRecognitionSpan = null
-                detectMs = (System.nanoTime() - detectStart) / 1_000_000
+                detectMs = (System.nanoTime() - detectStart) / 1_000_000.0
 
                 val segmentStart = System.nanoTime()
                 val segmenter = bubbleSegmenter
@@ -454,7 +482,7 @@ class RoiPageRecognitionEngine(
                 } else {
                     emptyList()
                 }
-                segmentMs = (System.nanoTime() - segmentStart) / 1_000_000
+                segmentMs = (System.nanoTime() - segmentStart) / 1_000_000.0
                 val bubbles = detections.filter { it.label == 0 }
                 val textDetections = detections.filter { it.label == 1 || it.label == 2 }
                 val lockedPageTranslation = PageTranslation(
@@ -729,7 +757,7 @@ class RoiPageRecognitionEngine(
                         )
                     }
                 }
-                ocrMs = (System.nanoTime() - ocrStart) / 1_000_000
+                ocrMs = (System.nanoTime() - ocrStart) / 1_000_000.0
                 ocrSpan.end(
                     TranslationTraceOutcome.SUCCESS,
                     items = lockedRecognizedBlocks.size,
@@ -807,6 +835,12 @@ class RoiPageRecognitionEngine(
             "RoiPageRecognitionEngine analyzed ${pageTranslation.blocks.size} blocks " +
                 "emptyOcr=${pageTranslation.blocks.count { it.text.isBlank() }} in ${elapsedMs}ms"
         }
+        lastDetectMs = detectMs
+        lastSegmentMs = segmentMs
+        lastOcrMs = ocrMs
+        lastLeafCount = localPaddlePageCoordinator?.lastResolvedLeafCount ?: pageTranslation.detectionCount
+        lastBoxCount = pageTranslation.detectionCount
+        lastProvider = localOcrEngine.executionProviderLabel
         return pageTranslation
     }
 
@@ -857,7 +891,8 @@ class RoiPageRecognitionEngine(
                 }
             }
         }
-        val inpaintMs = (System.nanoTime() - inpaintStart) / 1_000_000
+        val inpaintMs = (System.nanoTime() - inpaintStart) / 1_000_000.0
+        lastInpaintMs = inpaintMs
         inpaintSpan.end(
             if (result == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS,
             provenProvider = TranslationPipelineDiagnostics.providerFromLabel(inpainting?.lastAcceptedRoute),

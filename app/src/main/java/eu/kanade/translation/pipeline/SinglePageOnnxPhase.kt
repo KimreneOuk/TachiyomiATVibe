@@ -14,6 +14,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
+import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
@@ -1228,6 +1229,29 @@ internal class SinglePageOnnxPhase(
         // calls) can't observe a cancel, so one issued mid-call only lands at the next suspend
         // point. Drop out here so we don't render/translate/persist a page the caller no longer wants.
         coroutineContext.ensureActive()
+
+        val roi = recognitionEngine as? RoiPageRecognitionEngine
+        val detMs = roi?.lastDetectMs ?: 0.0
+        val segMs = roi?.lastSegmentMs ?: 0.0
+        val ocrMs = roi?.lastOcrMs ?: 0.0
+        val inpaintMs = roi?.lastInpaintMs ?: 0.0
+        val leafCount = roi?.lastLeafCount ?: pageTranslation.blocks.size
+        val boxCount = roi?.lastBoxCount ?: pageTranslation.blocks.size
+        val provider = roi?.lastProvider ?: "cpu"
+        val totalNativeMs = detMs + segMs + ocrMs + inpaintMs
+
+        NativeVisionTelemetry.logBudgetSummary(
+            pageKey = fileName,
+            targetMs = 2000,
+            detMs = detMs,
+            segMs = segMs,
+            ocrMs = ocrMs,
+            inpaintMs = inpaintMs,
+            leafCount = leafCount,
+            boxCount = boxCount,
+            provider = provider,
+            totalNativeMs = totalNativeMs,
+        )
 
         return pageTranslation
     }

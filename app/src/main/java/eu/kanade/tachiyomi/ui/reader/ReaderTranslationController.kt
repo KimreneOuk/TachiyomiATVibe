@@ -47,6 +47,7 @@ import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
+import eu.kanade.translation.pipeline.NativeVisionTelemetry
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.AutoChapterIdentity
@@ -252,17 +253,23 @@ internal class ReaderTranslationController(
         chapter: ReaderChapter,
         source: HttpSource,
     ) {
+        val pageKey = resolvePageKey(page)
         val batchActive = chapter.chapter.id?.let { translationManager.isChapterBatchActive(it, includePaused = false) } == true
         if (!batchActive && !isInTranslationWarmWindow(page)) {
             page.translatedStream = null
             page.showTranslatedImage = false
+            NativeVisionTelemetry.logDisplayAttach(
+                pageKey = pageKey,
+                streamAttached = false,
+                showTranslatedImage = false,
+                displayImageName = page.translation?.displayImageName != null,
+            )
             return
         }
         val store = currentTranslationStore
         if (store != null) {
             val translation = page.translation
             if (translation != null && translation.blocks.isEmpty()) {
-                val pageKey = resolvePageKey(page)
                 val hydrated = withContext(Dispatchers.IO) { store.getOrLoadPageSnapshot(pageKey) }
                 if (hydrated != null) {
                     page.translation = hydrated
@@ -277,7 +284,7 @@ internal class ReaderTranslationController(
                 chapter.chapter.name,
                 chapter.chapter.scanlator,
                 translation.displayImageName!!,
-                pageKey = resolvePageKey(page),
+                pageKey = pageKey,
                 mangaId = manga.id,
                 chapterId = chapter.chapter.id,
             )
@@ -288,6 +295,12 @@ internal class ReaderTranslationController(
                 page.showTranslatedImage = false
             }
         }
+        NativeVisionTelemetry.logDisplayAttach(
+            pageKey = pageKey,
+            streamAttached = page.translatedStream != null,
+            showTranslatedImage = page.showTranslatedImage,
+            displayImageName = translation?.displayImageName != null,
+        )
     }
 
     /**
@@ -748,6 +761,7 @@ internal class ReaderTranslationController(
     }
 
     internal fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
+        val tapTimeNs = System.nanoTime()
         when (
             val admission = translationManager.sessionCoordinator.requestReaderSession(
                 ReaderSessionIntent(chapterId = page.chapter.chapter.id),
@@ -755,7 +769,7 @@ internal class ReaderTranslationController(
         ) {
             is SessionAdmission.Admitted,
             is SessionAdmission.Switched,
-            -> translateSinglePageAfterAdmission(page, force)
+            -> translateSinglePageAfterAdmission(page, force, tapTimeNs)
 
             is SessionAdmission.Rejected -> when (admission.reason) {
                 SessionRejection.BATCH_ACTIVE -> mutableState.update {
@@ -769,7 +783,7 @@ internal class ReaderTranslationController(
                 SessionRejection.READER_ACTIVE -> {
                     // The existing reader session owns this request; the
                     // scheduler's idempotent admission will continue it.
-                    translateSinglePageAfterAdmission(page, force)
+                    translateSinglePageAfterAdmission(page, force, tapTimeNs)
                 }
             }
         }
@@ -801,7 +815,11 @@ internal class ReaderTranslationController(
         }
     }
 
-    private fun translateSinglePageAfterAdmission(page: ReaderPage, force: Boolean? = null) {
+    private fun translateSinglePageAfterAdmission(
+        page: ReaderPage,
+        force: Boolean? = null,
+        tapTimeNs: Long = System.nanoTime(),
+    ) {
         val chapter = page.chapter.chapter
         val pageKey = resolvePageKey(page)
         val manga = manga ?: run {
@@ -878,6 +896,8 @@ internal class ReaderTranslationController(
             // FAILED (so prepareForcedRetry resets the bookkeeping and the page
             // can be reprocessed), false otherwise (resume optimization). See the
             // resolution above + PageTranslation.prepareForcedRetry.
+            val delayMs = (System.nanoTime() - tapTimeNs) / 1_000_000.0
+            NativeVisionTelemetry.logTapToDispatch(pageKey, delayMs)
             translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
         } ?: page.imageUrl?.let { imageUrl ->
             // TachiyomiAT: for online pages not yet cached (originalStream is
@@ -903,6 +923,8 @@ internal class ReaderTranslationController(
                     pageKey,
                     streamFn,
                 )
+                val delayMs = (System.nanoTime() - tapTimeNs) / 1_000_000.0
+                NativeVisionTelemetry.logTapToDispatch(pageKey, delayMs)
                 translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
             }
         } ?: run {
@@ -913,6 +935,8 @@ internal class ReaderTranslationController(
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT manual translate page request using downloaded chapter fallback: pageKey=$pageKey"
                 }
+                val delayMs = (System.nanoTime() - tapTimeNs) / 1_000_000.0
+                NativeVisionTelemetry.logTapToDispatch(pageKey, delayMs)
                 translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
             }
         }
@@ -1578,6 +1602,12 @@ internal class ReaderTranslationController(
                     if (tier2Finished || wantsToShowOverlay) {
                         page.showTranslatedImage = true
                         eventChannel.trySend(ReaderViewModel.Event.RefreshTranslationPages(setOf(page)))
+                        NativeVisionTelemetry.logDisplayAttach(
+                            pageKey = pageKey,
+                            streamAttached = page.translatedStream != null,
+                            showTranslatedImage = page.showTranslatedImage,
+                            displayImageName = page.translation?.displayImageName != null,
+                        )
                     }
                 }
             }
