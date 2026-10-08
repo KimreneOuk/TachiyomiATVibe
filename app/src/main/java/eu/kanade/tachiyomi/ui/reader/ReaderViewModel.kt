@@ -50,6 +50,8 @@ import eu.kanade.translation.engines.rendering.PersistedLayoutReaderBridge
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.isTranslationDisplayReady
+import eu.kanade.translation.scheduling.AutoSmoothnessTelemetry
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.Translation
@@ -1072,6 +1074,19 @@ class ReaderViewModel @JvmOverloads constructor(
         val pages = selectedChapter.pages ?: return
         val pageIndex = page.index
 
+        val effectiveKey = page.sourceFileName ?: page.url ?: "page_${pageIndex}"
+        val isReady = page.translation?.isTranslationDisplayReady == true
+        val arrivalEpochMs = System.currentTimeMillis()
+        pageArrivalTimes[pageIndex] = arrivalEpochMs
+
+        AutoSmoothnessTelemetry.logUserArrival(
+            pageIndex = pageIndex,
+            pageKey = effectiveKey,
+            isReady = isReady,
+            arrivalEpochMs = arrivalEpochMs,
+            autoEnabled = translationPreferences.autoTranslate().get(),
+        )
+
         // Keep the in-memory visible page pointer synchronous. Persistence runs
         // below, but auto-toggle reads chapterPageIndex immediately; if this is
         // only updated by the background progress job, a quick scroll + auto-on
@@ -1124,6 +1139,7 @@ class ReaderViewModel @JvmOverloads constructor(
         eventChannel.trySend(Event.PageChanged)
     }
 
+    internal val pageArrivalTimes = java.util.concurrent.ConcurrentHashMap<Int, Long>()
     internal var autoTranslationScrollJob: kotlinx.coroutines.Job? = null
     private fun handleAutoTranslation(currentPage: ReaderPage) =
         translationController.handleAutoTranslation(currentPage)

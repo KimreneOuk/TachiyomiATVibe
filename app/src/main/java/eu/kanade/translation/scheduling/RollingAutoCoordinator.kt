@@ -1,5 +1,6 @@
 package eu.kanade.translation.scheduling
 
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationRunTrace
 import eu.kanade.translation.diagnostics.TranslationScheduleState
@@ -786,6 +787,15 @@ class RollingAutoCoordinator(
         // pipeline. Sort once and reuse for the deferral + admission scans.
         val memoryOk = memoryGate()
         val orderedDesired = desired.sorted()
+        val predecessors = (0 until spec.visiblePageIndex).filter { idx -> !isPageTerminal(spec, idx, resolver) }
+        AutoSmoothnessTelemetry.logWindowReconcile(
+            visible = spec.visiblePageIndex,
+            ahead = spec.configuredAheadTarget,
+            desired = orderedDesired.joinToString(","),
+            unservicedPredecessors = predecessors.joinToString(","),
+            memoryOk = memoryOk,
+            gen = spec.generation,
+        )
         if (!memoryOk) {
             for (idx in orderedDesired) {
                 if (idx == spec.visiblePageIndex) continue
@@ -832,6 +842,12 @@ class RollingAutoCoordinator(
 
             // Admit into the native lane (serialized inline by this loop).
             if (!markNativeAdmitted(idx, spec.generation)) return false
+            AutoSmoothnessTelemetry.logAutoAdmit(
+                idx = idx,
+                pageKey = item.pageKey,
+                foreground = isForeground,
+                gen = spec.generation,
+            )
             // The page run starts at native admission. The trace
             // element wraps the prepare so deep ONNX/OCR code correlates its
             // stages with this run across suspension points. scheduleTrace is
@@ -1014,6 +1030,18 @@ class RollingAutoCoordinator(
             idx !in completed &&
             !pausedTranslations.containsKey(idx) &&
             slotStates[idx] !is AutoSlotState.Failed
+
+    private fun isPageTerminal(
+        spec: WindowSpec,
+        idx: Int,
+        resolver: (Int) -> PageWorkItem?,
+    ): Boolean {
+        if (idx in completed) return true
+        if (slotStates[idx]?.isReady == true) return true
+        val item = resolver(idx)
+        val storeState = item?.let { spec.session.store.state.value[it.pageKey] }
+        return storeState != null && storeState.isTranslationDisplayReady
+    }
 
     private fun computeDesiredSet(
         spec: WindowSpec,
@@ -1379,5 +1407,94 @@ class RollingAutoCoordinator(
          * ultimate backstop for genuinely broken pages.
          */
         const val MAX_REPREPARE_ATTEMPTS = 3
+    }
+}
+
+/**
+ * Structured telemetry events for auto translation scheduling and reader smoothness.
+ */
+object AutoSmoothnessTelemetry {
+    fun logUserArrival(
+        pageIndex: Int,
+        pageKey: String,
+        isReady: Boolean,
+        arrivalEpochMs: Long,
+        autoEnabled: Boolean,
+    ) {
+        TelemetryTrace.log(
+            "auto",
+            "user_arrival",
+            "pageIndex" to pageIndex,
+            "pageKey" to pageKey,
+            "isReady" to isReady,
+            "arrivalEpochMs" to arrivalEpochMs,
+            "autoEnabled" to autoEnabled,
+        )
+    }
+
+    fun logDebounceLifecycle(
+        action: String,
+        targetPage: Int,
+        queuedDurationMs: Double,
+    ) {
+        TelemetryTrace.log(
+            "auto",
+            "debounce_lifecycle",
+            "action" to action,
+            "targetPage" to targetPage,
+            "queuedDurationMs" to queuedDurationMs,
+        )
+    }
+
+    fun logArrivalWaitRecorded(
+        pageIndex: Int,
+        pageKey: String,
+        waitMs: Double,
+        hadToWait: Boolean,
+    ) {
+        TelemetryTrace.log(
+            "auto",
+            "arrival_wait_recorded",
+            "pageIndex" to pageIndex,
+            "pageKey" to pageKey,
+            "waitMs" to waitMs,
+            "hadToWait" to hadToWait,
+        )
+    }
+
+    fun logWindowReconcile(
+        visible: Int,
+        ahead: Int,
+        desired: String,
+        unservicedPredecessors: String,
+        memoryOk: Boolean,
+        gen: Long,
+    ) {
+        TelemetryTrace.log(
+            "auto",
+            "window_reconcile",
+            "visible" to visible,
+            "ahead" to ahead,
+            "desired" to desired,
+            "unservicedPredecessors" to unservicedPredecessors,
+            "memoryOk" to memoryOk,
+            "gen" to gen,
+        )
+    }
+
+    fun logAutoAdmit(
+        idx: Int,
+        pageKey: String,
+        foreground: Boolean,
+        gen: Long,
+    ) {
+        TelemetryTrace.log(
+            "auto",
+            "auto_admit",
+            "idx" to idx,
+            "pageKey" to pageKey,
+            "foreground" to foreground,
+            "gen" to gen,
+        )
     }
 }

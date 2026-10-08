@@ -36,6 +36,7 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isCleanedImageReady
+import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toDraft
@@ -51,6 +52,7 @@ import eu.kanade.translation.pipeline.NativeVisionTelemetry
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.AutoChapterIdentity
+import eu.kanade.translation.scheduling.AutoSmoothnessTelemetry
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.workflow.ReaderSessionIntent
 import eu.kanade.translation.workflow.SessionAdmission
@@ -135,6 +137,20 @@ internal class ReaderTranslationController(
         set(value) {
             owner.autoTranslationScrollJob = value
         }
+    private val pageArrivalTimes get() = owner.pageArrivalTimes
+    private var pendingDebouncePage: Int? = null
+    private var pendingDebounceStartNs: Long = 0L
+
+    internal fun recordArrivalWait(pageIndex: Int, pageKey: String) {
+        val arrivalEpoch = pageArrivalTimes.remove(pageIndex) ?: return
+        val waitMs = (System.currentTimeMillis() - arrivalEpoch).coerceAtLeast(0L).toDouble()
+        AutoSmoothnessTelemetry.logArrivalWaitRecorded(
+            pageIndex = pageIndex,
+            pageKey = pageKey,
+            waitMs = waitMs,
+            hadToWait = waitMs > 50.0,
+        )
+    }
     private val autoPageResolver get() = owner.autoPageResolver
     private val autoReadinessLock get() = owner.autoReadinessLock
     private val autoReadinessGeneration get() = owner.autoReadinessGeneration
@@ -301,6 +317,9 @@ internal class ReaderTranslationController(
             showTranslatedImage = page.showTranslatedImage,
             displayImageName = translation?.displayImageName != null,
         )
+        if (translation?.isTranslationDisplayReady == true || page.translatedStream != null || page.showTranslatedImage) {
+            recordArrivalWait(page.index, pageKey)
+        }
     }
 
     /**
@@ -353,10 +372,42 @@ internal class ReaderTranslationController(
     }
 
     internal fun handleAutoTranslation(currentPage: ReaderPage) {
-        autoTranslationScrollJob?.cancel()
+        if (autoTranslationScrollJob?.isActive == true) {
+            val prevTarget = pendingDebouncePage ?: -1
+            val elapsedMs = (System.nanoTime() - pendingDebounceStartNs) / 1_000_000.0
+            AutoSmoothnessTelemetry.logDebounceLifecycle(
+                action = "cancel",
+                targetPage = prevTarget,
+                queuedDurationMs = elapsedMs,
+            )
+            autoTranslationScrollJob?.cancel()
+        }
+        val targetPage = currentPage.index
+        val startNs = System.nanoTime()
+        pendingDebouncePage = targetPage
+        pendingDebounceStartNs = startNs
+        AutoSmoothnessTelemetry.logDebounceLifecycle(
+            action = "start",
+            targetPage = targetPage,
+            queuedDurationMs = 0.0,
+        )
         autoTranslationScrollJob = viewModelScope.launchIO {
             kotlinx.coroutines.delay(150L)
-            if (state.value.viewerChapters?.currChapter !== currentPage.chapter) return@launchIO
+            if (state.value.viewerChapters?.currChapter !== currentPage.chapter) {
+                val cancelDurationMs = (System.nanoTime() - startNs) / 1_000_000.0
+                AutoSmoothnessTelemetry.logDebounceLifecycle(
+                    action = "cancel",
+                    targetPage = targetPage,
+                    queuedDurationMs = cancelDurationMs,
+                )
+                return@launchIO
+            }
+            val fireDurationMs = (System.nanoTime() - startNs) / 1_000_000.0
+            AutoSmoothnessTelemetry.logDebounceLifecycle(
+                action = "fire",
+                targetPage = targetPage,
+                queuedDurationMs = fireDurationMs,
+            )
             handleAutoTranslationOnIo(currentPage)
         }
     }
@@ -1608,6 +1659,9 @@ internal class ReaderTranslationController(
                             showTranslatedImage = page.showTranslatedImage,
                             displayImageName = page.translation?.displayImageName != null,
                         )
+                    }
+                    if (updated.isTranslationDisplayReady) {
+                        recordArrivalWait(page.index, pageKey)
                     }
                 }
             }
