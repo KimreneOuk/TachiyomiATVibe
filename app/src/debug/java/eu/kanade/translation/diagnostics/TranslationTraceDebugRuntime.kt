@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -48,6 +49,11 @@ private class DebugTraceFanOutSink(
     override fun log(priority: Int, line: String) {
         buffer.log(priority, line)
         fileSink.log(priority, line)
+        try {
+            Log.println(priority, "TachiyomiAT.Translation", line)
+        } catch (_: Throwable) {
+            // Fail open
+        }
     }
 }
 

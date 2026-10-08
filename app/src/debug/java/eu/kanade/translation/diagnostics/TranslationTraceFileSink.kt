@@ -6,6 +6,10 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
@@ -35,6 +39,12 @@ internal class TranslationTraceFileSink internal constructor(
         ThreadPoolExecutor.AbortPolicy(),
     )
 
+    private val dateFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue() = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS", Locale.US).apply {
+            timeZone = TimeZone.getDefault()
+        }
+    }
+
     override fun log(priority: Int, line: String) {
         enqueue(line)
     }
@@ -56,15 +66,29 @@ internal class TranslationTraceFileSink internal constructor(
         }
     }
 
+    private fun prefixTimestamp(line: String): String {
+        return try {
+            if (line.startsWith("ts=")) {
+                line
+            } else {
+                val dateStr = dateFormat.get()?.format(Date()) ?: System.currentTimeMillis().toString()
+                "ts=$dateStr $line"
+            }
+        } catch (_: Throwable) {
+            line
+        }
+    }
+
     private fun enqueue(line: String) {
+        val lineToWrite = prefixTimestamp(line)
         try {
             writer.execute {
                 try {
                     val dropped = droppedLines.getAndSet(0)
                     if (dropped > 0) {
-                        appendDirect("schema=translation_trace_v1 event=trace_lines_dropped count=$dropped")
+                        appendDirect(prefixTimestamp("schema=translation_trace_v1 event=trace_lines_dropped count=$dropped"))
                     }
-                    appendDirect(line)
+                    appendDirect(lineToWrite)
                 } catch (_: Throwable) {
                     droppedLines.incrementAndGet()
                 }
