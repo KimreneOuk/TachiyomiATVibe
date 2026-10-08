@@ -2,9 +2,11 @@ package eu.kanade.translation.engines.runtime.onnx
 
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
+import java.util.Locale
 
 object OnnxRuntimeProvider {
 
@@ -138,6 +140,8 @@ object OnnxRuntimeProvider {
         closeOptions: (O) -> Unit,
         sink: (String) -> Unit,
         recordModelFailure: (Throwable) -> Unit,
+        model: String = "unknown",
+        isProbe: Boolean = false,
     ): S {
         val requested = try {
             buildRequested()
@@ -151,8 +155,26 @@ object OnnxRuntimeProvider {
                     "creating this session on default CPU"
             }
             val cpu = buildCpu()
+            val cpuWire = cpu.registered.wireLabel
+            val cpuStartNs = System.nanoTime()
+            TelemetryTrace.log(
+                "hardware",
+                "session_create_attempt",
+                "model" to model,
+                "requestedProvider" to cpuWire,
+                "isProbe" to isProbe,
+            )
             return try {
-                open(cpu.options).also { sink(cpu.registered.wireLabel) }
+                val session = open(cpu.options)
+                val cpuDurationMs = (System.nanoTime() - cpuStartNs) / 1_000_000.0
+                TelemetryTrace.log(
+                    "hardware",
+                    "session_create_success",
+                    "model" to model,
+                    "actualProvider" to cpuWire,
+                    "durationMs" to String.format(Locale.US, "%.2f", cpuDurationMs),
+                )
+                session.also { sink(cpuWire) }
             } finally {
                 closeQuietly(cpu.options, closeOptions)
             }
@@ -164,20 +186,67 @@ object OnnxRuntimeProvider {
             useXnnpack -> "XNNPACK"
             else -> "CPU"
         }
+        val requestedWire = requested.registered.wireLabel
+        val startNs = System.nanoTime()
+        TelemetryTrace.log(
+            "hardware",
+            "session_create_attempt",
+            "model" to model,
+            "requestedProvider" to requestedWire,
+            "isProbe" to isProbe,
+        )
         return try {
-            open(requested.options).also { sink(requested.registered.wireLabel) }
+            val session = open(requested.options)
+            val durationMs = (System.nanoTime() - startNs) / 1_000_000.0
+            TelemetryTrace.log(
+                "hardware",
+                "session_create_success",
+                "model" to model,
+                "actualProvider" to requestedWire,
+                "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+            )
+            session.also { sink(requestedWire) }
         } catch (error: Throwable) {
             closeQuietly(requested.options, closeOptions)
             if (canUseAccelerator) {
                 recordModelFailure(error)
+                val rawReason = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+                val sanitizedReason = rawReason.take(256).replace("\r", " ").replace("\n", " ").trim()
+                TelemetryTrace.log(
+                    "hardware",
+                    "session_create_failure",
+                    "model" to model,
+                    "requestedProvider" to requestedWire,
+                    "errorType" to error.javaClass.simpleName,
+                    "errorReason" to sanitizedReason,
+                    "fallbackProvider" to "cpu",
+                )
             }
             logcat(LogPriority.WARN, error) {
                 "Session creation with $routeName failed (model likely not fully partitionable on this EP); " +
                     "retrying this model on CPU only (device health is probe-gated; circuit breaker not tripped)"
             }
             val cpu = buildCpu()
+            val cpuWire = cpu.registered.wireLabel
+            val cpuStartNs = System.nanoTime()
+            TelemetryTrace.log(
+                "hardware",
+                "session_create_attempt",
+                "model" to model,
+                "requestedProvider" to cpuWire,
+                "isProbe" to isProbe,
+            )
             try {
-                open(cpu.options).also { sink(cpu.registered.wireLabel) }
+                val session = open(cpu.options)
+                val cpuDurationMs = (System.nanoTime() - cpuStartNs) / 1_000_000.0
+                TelemetryTrace.log(
+                    "hardware",
+                    "session_create_success",
+                    "model" to model,
+                    "actualProvider" to cpuWire,
+                    "durationMs" to String.format(Locale.US, "%.2f", cpuDurationMs),
+                )
+                session.also { sink(cpuWire) }
             } finally {
                 closeQuietly(cpu.options, closeOptions)
             }
@@ -249,8 +318,26 @@ object OnnxRuntimeProvider {
                 disableIntraOpSpinning = disableIntraOpSpinning,
                 configure = configure,
             )
+            val cpuStartNs = System.nanoTime()
+            TelemetryTrace.log(
+                "hardware",
+                "session_create_attempt",
+                "model" to modelName,
+                "requestedProvider" to "cpu",
+                "isProbe" to false,
+            )
             return try {
-                environment.createSession(modelPath, cpuOpts).also { providerSink("cpu") }
+                environment.createSession(modelPath, cpuOpts).also {
+                    val durationMs = (System.nanoTime() - cpuStartNs) / 1_000_000.0
+                    TelemetryTrace.log(
+                        "hardware",
+                        "session_create_success",
+                        "model" to modelName,
+                        "actualProvider" to "cpu",
+                        "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+                    )
+                    providerSink("cpu")
+                }
             } finally {
                 cpuOpts.close()
             }
@@ -282,6 +369,8 @@ object OnnxRuntimeProvider {
             closeOptions = { opts -> opts.close() },
             sink = providerSink,
             recordModelFailure = { error -> ModelRoutingEngine.recordFailure(modelName, route, error) },
+            model = modelName,
+            isProbe = false,
         )
     }
 
@@ -301,6 +390,7 @@ object OnnxRuntimeProvider {
         configure: (OrtSession.SessionOptions) -> Unit = {},
         providerSink: (String) -> Unit = {},
     ): OrtSession {
+        val modelName = ModelRoutingEngine.resolveModelId(modelPath)
         val optionsWithRegistration = createSessionOptionsWithRegistration(
             useAccelerator = configuration.target.isAccelerator,
             useXnnpack = configuration.target == PaddleOcrProviderTarget.CPU,
@@ -315,12 +405,44 @@ object OnnxRuntimeProvider {
                 "Strict Paddle provider cell ${configuration.target} registered CPU provider '$registeredLabel'",
             )
         }
+        val startNs = System.nanoTime()
+        TelemetryTrace.log(
+            "hardware",
+            "session_create_attempt",
+            "model" to modelName,
+            "requestedProvider" to registeredLabel,
+            "isProbe" to false,
+        )
         return try {
-            environment.createSession(modelPath, options).also {
+            val session = environment.createSession(modelPath, options).also {
+                val durationMs = (System.nanoTime() - startNs) / 1_000_000.0
+                TelemetryTrace.log(
+                    "hardware",
+                    "session_create_success",
+                    "model" to modelName,
+                    "actualProvider" to registeredLabel,
+                    "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+                )
                 // Registration is recorded here for diagnostics. The matrix
                 // runner records execution provenance only after real inference.
                 providerSink(registeredLabel)
             }
+            session
+        } catch (error: Throwable) {
+            if (configuration.target.isAccelerator) {
+                val rawReason = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+                val sanitizedReason = rawReason.take(256).replace("\r", " ").replace("\n", " ").trim()
+                TelemetryTrace.log(
+                    "hardware",
+                    "session_create_failure",
+                    "model" to modelName,
+                    "requestedProvider" to registeredLabel,
+                    "errorType" to error.javaClass.simpleName,
+                    "errorReason" to sanitizedReason,
+                    "fallbackProvider" to "none",
+                )
+            }
+            throw error
         } finally {
             options.close()
         }

@@ -2,7 +2,9 @@ package eu.kanade.translation.pipeline
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.runtime.onnx.wireLabel
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.TranslationEngineBuilder
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
@@ -23,6 +25,8 @@ import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.OcrModel
+import tachiyomi.domain.translation.PaddleOcrExecutionProvider
+import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
 import tachiyomi.domain.translation.TranslationPreferences
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -58,6 +62,8 @@ internal class EngineLane(
         val translator: TextTranslator,
         val recognitionEngine: PageRecognitionEngine,
         val translatorSignature: EngineSignature,
+        val paddleOcrProvider: PaddleOcrExecutionProvider = PaddleOcrExecutionProvider.CPU,
+        val paddleOcrBatch: PaddleOcrRecognitionBatch = PaddleOcrRecognitionBatch.B1,
     )
 
     internal companion object {
@@ -199,6 +205,14 @@ internal class EngineLane(
     internal var currentInpaintingMode: InpaintingMode
         private set
 
+    @Volatile
+    internal var currentPaddleOcrProvider: PaddleOcrExecutionProvider = PaddleOcrExecutionProvider.CPU
+        private set
+
+    @Volatile
+    internal var currentPaddleOcrBatch: PaddleOcrRecognitionBatch = PaddleOcrRecognitionBatch.B1
+        private set
+
     // Snapshot of EVERY config dimension used to build textTranslator. The rebuild gate
     // compares a fresh signature so changing engine category, provider, key, model, temp,
     // max-tokens, reading-order, or languages forces a rebuild — not just
@@ -265,6 +279,8 @@ internal class EngineLane(
             textTranslator = testState.translator
             recognitionEngine = testState.recognitionEngine
             currentTranslatorSignature = testState.translatorSignature
+            currentPaddleOcrProvider = testState.paddleOcrProvider
+            currentPaddleOcrBatch = testState.paddleOcrBatch
         } else {
             // fromPref/build THROW on invalid config (intended on the translate path). But this
             // object is constructed eagerly as a field initializer in TranslationManager, so an
@@ -279,6 +295,8 @@ internal class EngineLane(
                 currentOcrModel = ocrModel
                 currentInpaintingMode = inpaintingModeFromPref()
                 currentReadingOrder = translationPreferences.translationReadingOrder().get()
+                currentPaddleOcrProvider = translationPreferences.paddleOcrExecutionProvider().get()
+                currentPaddleOcrBatch = translationPreferences.paddleOcrRecognitionBatch().get()
                 recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
                 textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
                 currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
@@ -290,6 +308,8 @@ internal class EngineLane(
                 currentOcrModel = OcrModel.MLKIT
                 currentInpaintingMode = InpaintingMode.FAST
                 currentReadingOrder = tachiyomi.domain.translation.TranslationReadingOrder.AUTO
+                currentPaddleOcrProvider = PaddleOcrExecutionProvider.CPU
+                currentPaddleOcrBatch = PaddleOcrRecognitionBatch.B1
                 recognitionEngine = object : PageRecognitionEngine {
                     override suspend fun analyze(bitmap: android.graphics.Bitmap): PageTranslation {
                         throw IllegalStateException("Recognition engine not initialized (models not installed)")
@@ -462,18 +482,32 @@ internal class EngineLane(
         val rebuildClosedEngines = enginesClosed
         // Include inpainting mode AND reading order so FAST<->QUALITY or AUTO/RTL/LTR
         // changes take effect without a language/OCR change or restart.
-        if (rebuildClosedEngines ||
+        val shouldRebuildRecognition = rebuildClosedEngines ||
             fromLang != currentFromLang ||
             selectedOcrModel != currentOcrModel ||
             desiredInpaintingMode != currentInpaintingMode ||
             desiredReadingOrder != currentReadingOrder
-        ) {
+        if (shouldRebuildRecognition) {
             recognitionEngine.close()
             currentFromLang = fromLang
             currentOcrModel = selectedOcrModel
             currentInpaintingMode = desiredInpaintingMode
             currentReadingOrder = desiredReadingOrder
+            currentPaddleOcrProvider = translationPreferences.paddleOcrExecutionProvider().get()
+            currentPaddleOcrBatch = translationPreferences.paddleOcrRecognitionBatch().get()
             recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
+        } else {
+            val livePaddleProvider = translationPreferences.paddleOcrExecutionProvider().get()
+            val livePaddleBatch = translationPreferences.paddleOcrRecognitionBatch().get()
+            if (currentPaddleOcrProvider != livePaddleProvider || currentPaddleOcrBatch != livePaddleBatch) {
+                TelemetryTrace.log(
+                    "hardware",
+                    "stale_engine_detected",
+                    "currentProvider" to currentPaddleOcrProvider.wireLabel,
+                    "userPrefProvider" to livePaddleProvider.wireLabel,
+                    "action" to "ignored_until_restart",
+                )
+            }
         }
         // Rebuild the translator whenever the full engine configuration differs — not just
         // on language change. The AI translators capture these at construction and never re-read.

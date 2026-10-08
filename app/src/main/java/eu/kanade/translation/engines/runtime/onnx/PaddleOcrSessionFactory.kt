@@ -126,12 +126,17 @@ object PaddleOcrSessionFactory {
      * an explicit fallback after the accelerator probe/registration/session
      * attempt fails.
      */
-    fun createSession(
+    internal fun <O, S> createSessionWithHonestLabel(
         modelPath: String,
         resolution: PaddleOcrProviderResolution,
-        configure: (OrtSession.SessionOptions) -> Unit = {},
+        buildRequested: (Boolean) -> OnnxRuntimeProvider.ProviderOptionsBuild<O>,
+        buildCpu: () -> OnnxRuntimeProvider.ProviderOptionsBuild<O>,
+        open: (O) -> S,
+        closeOptions: (O) -> Unit,
         providerSink: (String) -> Unit = {},
-    ): OrtSession {
+        recordModelFailure: (Throwable) -> Unit = {},
+    ): S {
+        val modelName = ModelRoutingEngine.resolveModelId(modelPath)
         val acceleratorRoute = resolution.route.takeIf { it.isPaddleAccelerator() }
         val canUseAccelerator = acceleratorRoute != null
         if (resolution.fallbackReason != null) {
@@ -145,7 +150,47 @@ object PaddleOcrSessionFactory {
             route = resolution.route,
             canUseAccelerator = canUseAccelerator,
             useXnnpack = false,
-            buildRequested = {
+            buildRequested = { buildRequested(canUseAccelerator) },
+            buildCpu = buildCpu,
+            open = open,
+            closeOptions = closeOptions,
+            sink = { registered ->
+                logcat(LogPriority.INFO) {
+                    "[paddle_provider] model=$modelPath requested=${resolution.requestedWireLabel} " +
+                        "resolved=${resolution.resolvedRouteLabel} registered=$registered " +
+                        "fallback=${resolution.fallbackReason ?: "none"}"
+                }
+                providerSink(registered)
+            },
+            recordModelFailure = { error ->
+                recordModelFailure(error)
+                logcat(LogPriority.WARN, error) {
+                    "[paddle_provider] model=$modelPath requested=${resolution.requestedWireLabel} " +
+                        "accelerator_session_failed; explicit_cpu_retry"
+                }
+            },
+            model = modelName,
+            isProbe = false,
+        )
+    }
+
+    /**
+     * Creates one PaddleOCR detector or recognizer session using the shared
+     * resolved choice. Accelerator options remain strict; CPU is only built as
+     * an explicit fallback after the accelerator probe/registration/session
+     * attempt fails.
+     */
+    fun createSession(
+        modelPath: String,
+        resolution: PaddleOcrProviderResolution,
+        configure: (OrtSession.SessionOptions) -> Unit = {},
+        providerSink: (String) -> Unit = {},
+    ): OrtSession {
+        val acceleratorRoute = resolution.route.takeIf { it.isPaddleAccelerator() }
+        return createSessionWithHonestLabel(
+            modelPath = modelPath,
+            resolution = resolution,
+            buildRequested = { canUseAccelerator ->
                 OnnxRuntimeProvider.createSessionOptionsWithRegistration(
                     useAccelerator = canUseAccelerator,
                     useXnnpack = false,
@@ -163,24 +208,7 @@ object PaddleOcrSessionFactory {
             },
             open = { options -> OnnxRuntimeProvider.environment.createSession(modelPath, options) },
             closeOptions = { options -> options.close() },
-            sink = { registered ->
-                logcat(LogPriority.INFO) {
-                    "[paddle_provider] model=$modelPath requested=${resolution.requestedWireLabel} " +
-                        "resolved=${resolution.resolvedRouteLabel} registered=$registered " +
-                        "fallback=${resolution.fallbackReason ?: "none"}"
-                }
-                providerSink(registered)
-            },
-            // Paddle-only failures must not poison the process-wide model
-            // routing map or circuit breaker. The explicit CPU retry is enough
-            // for this temporary experiment, and the label above remains the
-            // provenance source for the caller.
-            recordModelFailure = { error ->
-                logcat(LogPriority.WARN, error) {
-                    "[paddle_provider] model=$modelPath requested=${resolution.requestedWireLabel} " +
-                        "accelerator_session_failed; explicit_cpu_retry"
-                }
-            },
+            providerSink = providerSink,
         )
     }
 
