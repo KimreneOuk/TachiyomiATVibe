@@ -15,9 +15,11 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -305,8 +307,17 @@ class PagerPageHolder(
 
         try {
             val (source, isAnimated, background) = withIOContext {
+                val startNanos = System.nanoTime()
                 val source = streamFn().use { process(item, Buffer().readFrom(it)) }
                 val isAnimated = ImageUtil.isAnimatedAndSupported(source)
+                val durationMs = (System.nanoTime() - startNanos) / 1_000_000.0
+                TelemetryTrace.log(
+                    domain = "viewer",
+                    event = "page_stream_process",
+                    "pageIndex" to page.index,
+                    "isAnimated" to isAnimated,
+                    "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+                )
                 val background = if (!isAnimated && viewer.config.automaticBackground) {
                     ImageUtil.chooseBackground(context, source.peek().inputStream())
                 } else {
@@ -339,6 +350,13 @@ class PagerPageHolder(
             }
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)
+            TelemetryTrace.log(
+                domain = "viewer",
+                event = "page_stream_process_error",
+                "pageIndex" to page.index,
+                "errorType" to e.javaClass.simpleName,
+                "errorMessage" to (e.message ?: "none"),
+            )
             withUIContext {
                 setError()
             }

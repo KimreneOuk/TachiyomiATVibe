@@ -18,9 +18,11 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -328,8 +330,17 @@ class WebtoonPageHolder(
 
         try {
             val (source, isAnimated) = withIOContext {
+                val startNanos = System.nanoTime()
                 val source = streamFn().use { process(Buffer().readFrom(it)) }
                 val isAnimated = ImageUtil.isAnimatedAndSupported(source)
+                val durationMs = (System.nanoTime() - startNanos) / 1_000_000.0
+                TelemetryTrace.log(
+                    domain = "viewer",
+                    event = "page_stream_process",
+                    "pageIndex" to boundPage.index,
+                    "isAnimated" to isAnimated,
+                    "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+                )
                 Pair(source, isAnimated)
             }
             // TachiyomiAT: rebind guard — if a newer page was bound while we
@@ -353,6 +364,13 @@ class WebtoonPageHolder(
         } catch (e: Throwable) {
             if (myGeneration != bindGeneration) return
             logcat(LogPriority.ERROR, e)
+            TelemetryTrace.log(
+                domain = "viewer",
+                event = "page_stream_process_error",
+                "pageIndex" to boundPage.index,
+                "errorType" to e.javaClass.simpleName,
+                "errorMessage" to (e.message ?: "none"),
+            )
             withUIContext {
                 if (myGeneration != bindGeneration) return@withUIContext
                 setError()

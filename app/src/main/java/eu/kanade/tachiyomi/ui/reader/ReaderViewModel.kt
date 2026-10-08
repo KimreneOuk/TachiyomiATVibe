@@ -45,6 +45,7 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.engines.rendering.PersistedLayoutReaderBridge
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.model.PageIndexResolver
@@ -116,6 +117,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.util.Date
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -859,6 +861,7 @@ class ReaderViewModel @JvmOverloads constructor(
         loader: ChapterLoader,
         chapter: ReaderChapter,
     ): ViewerChapters {
+        val startNanos = System.nanoTime()
         // TachiyomiAT: if we're switching to a different chapter, cancel all
         // translation work belonging to the chapter we're leaving. Otherwise the
         // previous chapter's single-page jobs (running on the singleton
@@ -946,6 +949,16 @@ class ReaderViewModel @JvmOverloads constructor(
                 handleAutoTranslation(landingPage)
             }
         }
+
+        val durationMs = (System.nanoTime() - startNanos) / 1_000_000.0
+        TelemetryTrace.log(
+            domain = "reader",
+            event = "chapter_load_done",
+            "chapterId" to (chapter.chapter.id ?: -1L),
+            "chapterName" to chapter.chapter.name,
+            "pageCount" to (chapter.pages?.size ?: 0),
+            "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+        )
 
         return newChapters
     }

@@ -1,11 +1,13 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
+import androidx.annotation.VisibleForTesting
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.pipeline.onlinePageTranslationKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -20,6 +22,7 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.Locale
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.min
@@ -61,14 +64,42 @@ internal class HttpPageLoader(
      * otherwise fallbacks to network.
      */
     override suspend fun getPages(): List<ReaderPage> {
+        val startNanos = System.nanoTime()
+        var cacheHit = false
         val pages = try {
-            chapterCache.getPageListFromCache(chapter.chapter.toDomainChapter()!!)
-        } catch (e: Throwable) {
-            if (e is CancellationException) {
-                throw e
+            try {
+                chapterCache.getPageListFromCache(chapter.chapter.toDomainChapter()!!).also {
+                    cacheHit = true
+                }
+            } catch (e: Throwable) {
+                if (e is CancellationException) {
+                    throw e
+                }
+                source.getPageList(chapter.chapter)
             }
-            source.getPageList(chapter.chapter)
+        } catch (e: Throwable) {
+            if (e !is CancellationException) {
+                val durationMs = (System.nanoTime() - startNanos) / 1_000_000.0
+                TelemetryTrace.log(
+                    domain = "loader",
+                    event = "get_pages_error",
+                    "chapterId" to (chapter.chapter.id ?: -1L),
+                    "errorType" to e.javaClass.simpleName,
+                    "errorMessage" to (e.message ?: "none"),
+                    "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+                )
+            }
+            throw e
         }
+        val durationMs = (System.nanoTime() - startNanos) / 1_000_000.0
+        TelemetryTrace.log(
+            domain = "loader",
+            event = "get_pages",
+            "cacheHit" to cacheHit,
+            "pageCount" to pages.size,
+            "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+            "chapterId" to (chapter.chapter.id ?: -1L),
+        )
         return pages.mapIndexed { index, page ->
             // Don't trust sources and use our own indexing
             ReaderPage(index, page.url, page.imageUrl).apply {
@@ -172,25 +203,60 @@ internal class HttpPageLoader(
      *
      * @param page the page whose source image has to be downloaded.
      */
-    private suspend fun internalLoadPage(page: ReaderPage) {
+    @VisibleForTesting
+    internal suspend fun internalLoadPage(page: ReaderPage) {
+        val fetchStartNanos = System.nanoTime()
+        var imageUrl = page.imageUrl
+        var inDiskCache = false
+        var byteCount = 0L
         try {
             if (page.imageUrl.isNullOrEmpty()) {
                 page.status = Page.State.LOAD_PAGE
                 page.imageUrl = source.getImageUrl(page)
             }
-            val imageUrl = page.imageUrl!!
+            imageUrl = page.imageUrl!!
 
-            if (!chapterCache.isImageInCache(imageUrl)) {
+            inDiskCache = chapterCache.isImageInCache(imageUrl)
+            if (!inDiskCache) {
                 page.status = Page.State.DOWNLOAD_IMAGE
                 val imageResponse = source.getImage(page)
                 chapterCache.putImageToCache(imageUrl, imageResponse)
             }
 
+            val imageFile = chapterCache.getImageFile(imageUrl)
+            byteCount = if (imageFile.exists()) imageFile.length() else 0L
+
             page.originalStream = { chapterCache.getImageFile(imageUrl).inputStream() }
             page.status = Page.State.READY
             notifyPageStreamReady()
+
+            val durationMs = (System.nanoTime() - fetchStartNanos) / 1_000_000.0
+            val speedKbS = if (durationMs > 0 && byteCount > 0 && !inDiskCache) {
+                (byteCount / 1024.0) / (durationMs / 1000.0)
+            } else {
+                0.0
+            }
+            TelemetryTrace.log(
+                domain = "loader",
+                event = "image_fetch_done",
+                "pageIndex" to page.index,
+                "url" to imageUrl,
+                "inDiskCache" to inDiskCache,
+                "bytes" to byteCount,
+                "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+                "speedKbS" to String.format(Locale.US, "%.1f", speedKbS),
+            )
         } catch (e: Throwable) {
             page.status = Page.State.ERROR
+            val durationMs = (System.nanoTime() - fetchStartNanos) / 1_000_000.0
+            TelemetryTrace.log(
+                domain = "loader",
+                event = "image_fetch_error",
+                "pageIndex" to page.index,
+                "errorType" to e.javaClass.simpleName,
+                "errorMessage" to (e.message ?: "none"),
+                "durationMs" to String.format(Locale.US, "%.2f", durationMs),
+            )
             if (e is CancellationException) {
                 throw e
             }
