@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.translation.diagnostics.BatchDiagnosticReason
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationScheduleTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
@@ -309,6 +310,21 @@ internal class BatchChapterTranslator(
                     TranslationTraceStage.ENGINE_SETUP,
                 )
                 var engineSetupTimedOut = false
+                val waitStartNs = System.nanoTime()
+                var acquired = false
+                var contentionLogged = false
+                fun logContention(didAcquire: Boolean) {
+                    if (contentionLogged) return
+                    contentionLogged = true
+                    val waitMs = (System.nanoTime() - waitStartNs) / 1_000_000.0
+                    TelemetryTrace.log(
+                        "batch",
+                        "lease_contention",
+                        "chapterId" to chapter.id,
+                        "waitMs" to String.format(Locale.US, "%.1f", waitMs),
+                        "acquired" to didAcquire,
+                    )
+                }
                 val engineSetupResult = try {
                     withNativeLane(
                         timeoutMs = ONNX_PHASE_TIMEOUT_MS,
@@ -320,13 +336,21 @@ internal class BatchChapterTranslator(
                             store.invalidateGeneration("engine setup timeout chapter=${chapter.name}")
                         },
                     ) {
+                        acquired = true
+                        logContention(true)
                         engineRebuildMutex.withLock {
                             ensureEnginesBuiltFor(fromLang, toLang)
                         }
                     }
                 } catch (t: Throwable) {
+                    if (!acquired) {
+                        logContention(false)
+                    }
                     engineSetupSpan.end(TranslationTraceOutcome.FAILURE, error = t)
                     throw t
+                }
+                if (!acquired) {
+                    logContention(false)
                 }
                 engineSetupSpan.end(
                     if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.SUCCESS,

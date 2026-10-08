@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.translator.providers
 import eu.kanade.tachiyomi.network.await
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.engines.translator.GeminiInputAccountingContract
 import eu.kanade.translation.engines.translator.InputAccountingContract
 import eu.kanade.translation.engines.translator.ProviderFailure
@@ -47,6 +48,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.domain.translation.GeminiThinkingMode
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 open class GeminiTranslator(
@@ -94,6 +96,8 @@ open class GeminiTranslator(
     override suspend fun translateContextualStructured(
         chunk: TranslationContextChunk,
     ): ContextualTranslationBatch {
+        val envelopeId = ShortHash.hash(chunk.pages.keys.joinToString("|"))
+        val serStartNs = System.nanoTime()
         val request = ContextualRequestBuilder.buildFor(chunk, fromLang, toLang)
         if (request.promptLines.isEmpty()) return ContextualRequestBuilder.toBatch(request, emptyList())
 
@@ -106,6 +110,10 @@ open class GeminiTranslator(
             request = request,
             rollingContext = chunk.rollingContext,
         )
+        val serEndNs = System.nanoTime()
+        val serializeMs = (serEndNs - serStartNs) / 1_000_000.0
+
+        val httpStartNs = System.nanoTime()
         val responseText = withTranslationRetry(
             logTag = "gemini",
             envelopePageKeys = chunk.pages.keys,
@@ -117,7 +125,11 @@ open class GeminiTranslator(
                 operation = "contextual",
             )
         }
-        return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
+        val httpEndNs = System.nanoTime()
+        val httpTransitMs = (httpEndNs - httpStartNs) / 1_000_000.0
+
+        val deserStartNs = System.nanoTime()
+        val batch = if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
             ContextualResponseParser.parseBatch(responseText, request)
         } else {
             ContextualRequestBuilder.toBatch(
@@ -125,6 +137,22 @@ open class GeminiTranslator(
                 ContextualResponseParser.parse(responseText.lineSequence().toList(), request.idMap),
             )
         }
+        val deserEndNs = System.nanoTime()
+        val deserializeMs = (deserEndNs - deserStartNs) / 1_000_000.0
+        val totalRpcMs = serializeMs + httpTransitMs + deserializeMs
+
+        TelemetryTrace.log(
+            "batch",
+            "ai_envelope_transit",
+            "envelopeId" to envelopeId,
+            "pageCount" to chunk.pages.size,
+            "serializeMs" to String.format(Locale.US, "%.1f", serializeMs),
+            "httpTransitMs" to String.format(Locale.US, "%.1f", httpTransitMs),
+            "deserializeMs" to String.format(Locale.US, "%.1f", deserializeMs),
+            "totalRpcMs" to String.format(Locale.US, "%.1f", totalRpcMs),
+        )
+
+        return batch
     }
 
     // ------------------------------------------------------------------

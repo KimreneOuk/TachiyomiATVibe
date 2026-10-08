@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -20,6 +21,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import java.util.Locale
 
 internal class PreflightWorkerContext(
     val store: ChapterTranslationStore,
@@ -398,6 +400,21 @@ internal class PreflightWorker(
             // Reader-priority yield between pages: a suspension point (never a
             // sleep) that lets interactive native demand win the lane.
             yield()
+            val pageStartNs = System.nanoTime()
+            val progressPct = ((pageIndex + 1).toDouble() / total) * 100.0
+
+            fun logPageStep(stage: String) {
+                val stageMs = (System.nanoTime() - pageStartNs) / 1_000_000.0
+                TelemetryTrace.log(
+                    "batch",
+                    "page_step",
+                    "pageIndex" to pageIndex,
+                    "pageKey" to pageKey,
+                    "stage" to stage,
+                    "progressPercent" to String.format(Locale.US, "%.1f", progressPct),
+                    "stageMs" to String.format(Locale.US, "%.1f", stageMs),
+                )
+            }
 
             when (val reusable = checkpointReuse(artifact, pageKey)) {
                 is CheckpointReuse.Reusable -> {
@@ -438,6 +455,7 @@ internal class PreflightWorker(
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT t924 preflight reused checkpoint pageHash=${ShortHash.hash(pageKey)}"
                         }
+                        logPageStep("CHECKPOINT_REUSED")
                         // M3: Batched advisory progress records: publish on first page, every 5 pages, or last page
                         val shouldPublishProgress = (pageIndex == 0) || ((pageIndex + 1) % 5 == 0) || ((pageIndex + 1) == total)
                         if (shouldPublishProgress) {
@@ -502,6 +520,8 @@ internal class PreflightWorker(
                     null
                 }
                 if (ref == null) {
+                    val stage = if (pendingFailure != null) "OCR_FAILED" else "OCR_SKIPPED"
+                    logPageStep(stage)
                     // Lease-denied or otherwise unresolved: no checkpoint was
                     // published. The final diagnostic counts every
                     // uncheckpointed page as a gap.
@@ -519,6 +539,7 @@ internal class PreflightWorker(
                             fingerprint?.let {
                                 corpusFingerprints += pageKey to it
                             }
+                            logPageStep("OCR_DONE")
                         }
                         is CheckpointOcrResult.Rejected -> {
                             //  terminal: any unresolved checkpoint failure stops
@@ -529,6 +550,7 @@ internal class PreflightWorker(
                                 "TachiyomiAT t924 preflight checkpoint rejected pageHash=${ShortHash.hash(pageKey)} " +
                                     "reason=${outcome.reason}"
                             }
+                            logPageStep("OCR_FAILED")
                             // R2: record the failure for the `finally` writer,
                             // which persists it AFTER the B0 teardown (a
                             // pre-teardown write would be stripped by
@@ -563,6 +585,7 @@ internal class PreflightWorker(
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT t924 preflight ocr failed pageHash=${ShortHash.hash(pageKey)} error=${e::class.java.simpleName}"
                 }
+                logPageStep("OCR_FAILED")
                 // R2: same durable ledger as a REJECTED checkpoint, carrying the
                 // exception identity as the typed reason.
                 pendingFailure = PreflightStageFailure(

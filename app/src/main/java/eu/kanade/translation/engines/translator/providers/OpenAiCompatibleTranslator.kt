@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.translator.providers
 import eu.kanade.tachiyomi.network.await
+import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.engines.translator.InputAccountingContract
@@ -351,6 +352,8 @@ abstract class OpenAiCompatibleTranslator(
         logTag: String,
         buildPayload: (systemPrompt: String, finalPrompt: String) -> String,
     ): ContextualTranslationBatch {
+        val envelopeId = ShortHash.hash(chunk.pages.keys.joinToString("|"))
+        val serStartNs = System.nanoTime()
         val request = ContextualRequestBuilder.buildFor(chunk, fromLang, toLang)
         if (request.promptLines.isEmpty()) {
             return ContextualRequestBuilder.toBatch(request, emptyList())
@@ -365,7 +368,10 @@ abstract class OpenAiCompatibleTranslator(
             rollingContext = chunk.rollingContext,
         )
         val payloadJson = buildPayload(systemPrompt, finalPrompt)
+        val serEndNs = System.nanoTime()
+        val serializeMs = (serEndNs - serStartNs) / 1_000_000.0
 
+        val httpStartNs = System.nanoTime()
         val rawOutput = withTranslationRetry(
             logTag = logTag,
             envelopePageKeys = chunk.pages.keys,
@@ -377,15 +383,19 @@ abstract class OpenAiCompatibleTranslator(
                 estimatedInputTokens = chunk.estimatedPromptTokens,
                 reservedOutputTokens = chunk.maxOutputTokens,
                 operation = "contextual",
-                envelopeId = ShortHash.hash(chunk.pages.keys.joinToString("|")),
+                envelopeId = envelopeId,
             )
         }
-        return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
-            ContextualResponseParser.parseBatch(rawOutput, request).also { batch ->
-                if (batch.framingRecovered) {
+        val httpEndNs = System.nanoTime()
+        val httpTransitMs = (httpEndNs - httpStartNs) / 1_000_000.0
+
+        val deserStartNs = System.nanoTime()
+        val batch = if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
+            ContextualResponseParser.parseBatch(rawOutput, request).also { b ->
+                if (b.framingRecovered) {
                     logcat(LogPriority.WARN) {
-                        "event=contextual_framing_recovered requested=${batch.requestedIds.size} " +
-                            "warnings=${batch.validationErrors.size}"
+                        "event=contextual_framing_recovered requested=${b.requestedIds.size} " +
+                            "warnings=${b.validationErrors.size}"
                     }
                 }
             }
@@ -393,6 +403,22 @@ abstract class OpenAiCompatibleTranslator(
             val parsed = ContextualResponseParser.parse(rawOutput.lineSequence().toList(), request.idMap)
             ContextualRequestBuilder.toBatch(request, parsed)
         }
+        val deserEndNs = System.nanoTime()
+        val deserializeMs = (deserEndNs - deserStartNs) / 1_000_000.0
+        val totalRpcMs = serializeMs + httpTransitMs + deserializeMs
+
+        TelemetryTrace.log(
+            "batch",
+            "ai_envelope_transit",
+            "envelopeId" to envelopeId,
+            "pageCount" to chunk.pages.size,
+            "serializeMs" to String.format(Locale.US, "%.1f", serializeMs),
+            "httpTransitMs" to String.format(Locale.US, "%.1f", httpTransitMs),
+            "deserializeMs" to String.format(Locale.US, "%.1f", deserializeMs),
+            "totalRpcMs" to String.format(Locale.US, "%.1f", totalRpcMs),
+        )
+
+        return batch
     }
 
     override fun close() {
