@@ -31,6 +31,21 @@ data class PaddleOcrP95Decision(
 )
 
 /**
+ * Normalizes batch latency against the governor target batch size so multi-leaf
+ * batches (e.g. 16 leaves in dynamic batching) do not falsely trigger downgrades.
+ */
+object PaddleOcrBatchLatencyNormalizer {
+    fun normalize(
+        batchLatencyMs: Double,
+        leafCount: Int,
+        targetBatchSize: PaddleOcrBatchSize,
+    ): Double {
+        val safeCount = leafCount.coerceAtLeast(1)
+        return (batchLatencyMs / safeCount) * targetBatchSize.value.toDouble()
+    }
+}
+
+/**
  * Sliding-window p95 governor with hysteresis. A single slow inference cannot
  * oscillate the page policy: two high windows are required to downgrade, and
  * three healthy windows below the recovery threshold are required to recover.

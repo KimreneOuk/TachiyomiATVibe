@@ -15,6 +15,7 @@ import eu.kanade.translation.engines.inpainting.PageInpaintingPlanner
 import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
+import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
@@ -28,6 +29,7 @@ import eu.kanade.translation.engines.vision.ocr.OcrTextFilter
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.engines.vision.ocr.RoiOcrEngine
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchLatencyNormalizer
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchActivationPolicy
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchSize
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrDynamicPageBatchPolicy
@@ -234,14 +236,20 @@ class RoiPageRecognitionEngine(
                     // selector is scoped to the v6 recognizer + line detector.
                     null
                 }
-                logcat(LogPriority.INFO) { "ONNX init: starting detector initialization" }
-                detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel) }
+                val visionGpuEnabled = try {
+                    Injekt.get<TranslationPreferences>().translationVisionGpuAcceleration().get()
+                } catch (_: Throwable) {
+                    false
+                }
+                val visionRoute = HardwareDiscoveryEngine.resolveVisionGpuRoute(visionGpuEnabled)
+                logcat(LogPriority.INFO) { "ONNX init: starting detector initialization (visionRoute=$visionRoute, gpuEnabled=$visionGpuEnabled)" }
+                detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel, requestedHardwareRoute = visionRoute) }
                 logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language, model=$ocrModel)" }
                 // panel detector is optional context; best-effort
                 // init mirrors paddleDet (missing asset -> null, never blocks OCR).
                 paths.panelDetectorModel?.let { panelModelFile ->
                     try {
-                        panelDetector = OnnxPanelDetector().also { it.initialize(panelModelFile) }
+                        panelDetector = OnnxPanelDetector().also { it.initialize(panelModelFile, requestedHardwareRoute = visionRoute) }
                         logcat(LogPriority.INFO) { "ONNX init: panel detector OK" }
                     } catch (e: Exception) {
                         logcat(LogPriority.WARN, e) {
@@ -251,7 +259,7 @@ class RoiPageRecognitionEngine(
                 }
                 paths.bubbleSegmenterModel?.let { bubbleModelFile ->
                     try {
-                        bubbleSegmenter = OnnxBubbleSegmenter().also { it.initialize(bubbleModelFile) }
+                        bubbleSegmenter = OnnxBubbleSegmenter().also { it.initialize(bubbleModelFile, requestedHardwareRoute = visionRoute) }
                         logcat(LogPriority.INFO) { "ONNX init: bubble segmenter OK" }
                     } catch (e: Exception) {
                         logcat(LogPriority.WARN, e) {
@@ -405,7 +413,12 @@ class RoiPageRecognitionEngine(
         val governor = paddleBatchGovernor ?: return
         completedCoordinator.lastBatchTrace.forEach { trace ->
             val previous = governor.activeBatchSize
-            val decision = governor.record(trace.batchLatencyMs)
+            val sampleMs = PaddleOcrBatchLatencyNormalizer.normalize(
+                batchLatencyMs = trace.batchLatencyMs,
+                leafCount = trace.leafIdentities.size,
+                targetBatchSize = governor.maximumBatchSize,
+            )
+            val decision = governor.record(sampleMs)
             if (decision.action != PaddleOcrP95Action.HOLD) {
                 paddleBatchGovernorReason = decision.reason
                 logcat(LogPriority.INFO) {
@@ -835,6 +848,7 @@ class RoiPageRecognitionEngine(
             "[translation_perf] " +
                 "providers(detector=${detector?.executionProviderLabel ?: "n/a"}, " +
                 "segmenter=${bubbleSegmenter?.executionProviderLabel ?: "n/a"}, " +
+                "panel=${panelDetector?.executionProviderLabel ?: "n/a"}, " +
                 "ocr=${localOcrEngine.executionProviderLabel}) " +
                 "stage=recognition total=${elapsedMs}ms detector=${detectMs}ms segmenter=${segmentMs}ms " +
                 "ocr=${ocrMs}ms (blocks=${pageTranslation.blocks.size} batched=$paddleBatched " +
