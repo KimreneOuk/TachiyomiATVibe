@@ -233,6 +233,7 @@ object SettingsTranslationScreen : SearchableSettings {
                     title = stringResource(ATMR.strings.pref_paddle_ocr_batch),
                     subtitle = stringResource(ATMR.strings.pref_paddle_ocr_batch_summary),
                     entries = mapOf(
+                        PaddleOcrRecognitionBatch.DYNAMIC to stringResource(ATMR.strings.pref_paddle_ocr_batch_dynamic),
                         PaddleOcrRecognitionBatch.B1 to stringResource(ATMR.strings.pref_paddle_ocr_batch_b1),
                         PaddleOcrRecognitionBatch.B2 to stringResource(ATMR.strings.pref_paddle_ocr_batch_b2),
                         PaddleOcrRecognitionBatch.B4 to stringResource(ATMR.strings.pref_paddle_ocr_batch_b4),
