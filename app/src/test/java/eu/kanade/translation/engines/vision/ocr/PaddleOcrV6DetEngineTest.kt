@@ -30,6 +30,47 @@ class PaddleOcrV6DetEngineTest {
     }
 
     @Test
+    fun `calculateDetDimensions scales typical manga pages 1000x1600 and 1200x1920`() {
+        val (rw1, rh1) = PaddleOcrV6DetEngine.calculateDetDimensions(1000, 1600)
+        rw1 shouldBe 608
+        rh1 shouldBe 960
+        (rw1 % 32) shouldBe 0
+        (rh1 % 32) shouldBe 0
+
+        val (rw2, rh2) = PaddleOcrV6DetEngine.calculateDetDimensions(1200, 1920)
+        rw2 shouldBe 608
+        rh2 shouldBe 960
+        (rw2 % 32) shouldBe 0
+        (rh2 % 32) shouldBe 0
+    }
+
+    @Test
+    fun `backProject maps map-space coordinates accurately back to full-page pixel coords`() {
+        val bitmapW = 1000
+        val bitmapH = 1600
+        val (rw, rh) = PaddleOcrV6DetEngine.calculateDetDimensions(bitmapW, bitmapH)
+        val scaleX = bitmapW.toFloat() / rw
+        val scaleY = bitmapH.toFloat() / rh
+
+        // A line in map space at [60, 96, 304, 480]
+        val mapBbox = intArrayOf(60, 96, 304, 480)
+        val pageBbox = DbPostProcess.backProject(mapBbox, scaleX, scaleY, bitmapW, bitmapH)
+
+        pageBbox[0] shouldBe 98
+        pageBbox[1] shouldBe 160
+        pageBbox[2] shouldBe 500
+        pageBbox[3] shouldBe 800
+
+        // Corner line at map boundaries is clamped without off-by-one errors
+        val edgeMapBbox = intArrayOf(0, 0, rw, rh)
+        val edgePageBbox = DbPostProcess.backProject(edgeMapBbox, scaleX, scaleY, bitmapW, bitmapH)
+        edgePageBbox[0] shouldBe 0
+        edgePageBbox[1] shouldBe 0
+        edgePageBbox[2] shouldBe (bitmapW - 1)
+        edgePageBbox[3] shouldBe (bitmapH - 1)
+    }
+
+    @Test
     fun `calculateDetDimensions applies 3-4 page pixel budget for long webtoon strips`() {
         // Long vertical strip: aspect ratio > 2.0 (e.g. 1000 x 5000)
         // ratio = min(1.0, sqrt(0.75 * 960 * 960 / (1000 * 5000)))
