@@ -29,9 +29,12 @@ import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.engines.vision.ocr.RoiOcrEngine
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchActivationPolicy
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchSize
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrDynamicPageBatchPolicy
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrP95Action
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrPageGeneration
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrRollingP95HysteresisDowngradePolicy
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrWidthBucket
 import eu.kanade.translation.engines.vision.segmentation.OnnxBubbleSegmenter
 import eu.kanade.translation.engines.vision.webtoon.WebtoonSlidingDetector
 import eu.kanade.translation.model.BubbleMaskRle
@@ -79,6 +82,17 @@ class RoiPageRecognitionEngine(
     private var paddlePageOcrCoordinator: PaddlePageOcrCoordinator? = null
     private var paddleBatchGovernor: PaddleOcrRollingP95HysteresisDowngradePolicy? = null
     private var paddleBatchGovernorReason = "not_paddle"
+    private var paddleDynamicBatchPolicy: PaddleOcrDynamicPageBatchPolicy? = null
+
+    /** Governor-aware dynamic chunk ceiling; null when fixed-tier batching is active. */
+    private fun paddleDynamicCeiling(bucket: PaddleOcrWidthBucket): Int? {
+        val dynamicPolicy = paddleDynamicBatchPolicy ?: return null
+        val ceiling = dynamicPolicy.ceilingFor(bucket)
+        val governorCap = paddleBatchGovernor?.activeBatchSize
+            ?.takeIf { it != PaddleOcrBatchSize.B8 }
+            ?.value
+        return if (governorCap != null) minOf(ceiling, governorCap) else ceiling
+    }
     private val paddlePageGenerationCounter = AtomicLong(0L)
 
     /**
@@ -271,6 +285,20 @@ class RoiPageRecognitionEngine(
                             providerResolution = paddleProvider,
                             providerConfiguration = providerConfiguration,
                         )
+                        paddleDynamicBatchPolicy = if (activation.dynamicPageBatch) {
+                            val totalRamBytes = try {
+                                val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                                android.app.ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }.totalMem
+                            } catch (_: Throwable) {
+                                0L // unknown RAM -> most conservative tier
+                            }
+                            PaddleOcrDynamicPageBatchPolicy(
+                                dictionarySize = it.dictionarySize,
+                                outputBudgetBytes = PaddleOcrDynamicPageBatchPolicy.defaultOutputBudgetBytesFor(totalRamBytes),
+                            )
+                        } else {
+                            null
+                        }
                         // PaddleOCR rec reads horizontal lines; vertical
                         // columns must be split first. The det model replaces the
                         // ink-gap heuristic for that split (best-effort; falls back
@@ -300,6 +328,7 @@ class RoiPageRecognitionEngine(
                         paddlePageOcrCoordinator = PaddlePageOcrCoordinator(
                             engine = it,
                             validatedBatchSize = activation.activeBatchSize,
+                            dynamicCeiling = ::paddleDynamicCeiling,
                         )
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
@@ -391,6 +420,7 @@ class RoiPageRecognitionEngine(
             paddlePageOcrCoordinator = PaddlePageOcrCoordinator(
                 engine = engine,
                 validatedBatchSize = governor.activeBatchSize,
+                dynamicCeiling = ::paddleDynamicCeiling,
             )
         }
     }
@@ -793,6 +823,7 @@ class RoiPageRecognitionEngine(
         val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
         val paddleBatchSize = localPaddlePageCoordinator?.validatedBatchSize?.value ?: 1
         val paddleBatched = localPaddlePageCoordinator != null && paddleBatchSize > 1
+        val paddleDynamic = localPaddlePageCoordinator != null && paddleDynamicBatchPolicy != null
         val paddleGovernorReason = if (localPaddlePageCoordinator != null) {
             paddleBatchGovernorReason
         } else {
@@ -807,7 +838,7 @@ class RoiPageRecognitionEngine(
                 "ocr=${localOcrEngine.executionProviderLabel}) " +
                 "stage=recognition total=${elapsedMs}ms detector=${detectMs}ms segmenter=${segmentMs}ms " +
                 "ocr=${ocrMs}ms (blocks=${pageTranslation.blocks.size} batched=$paddleBatched " +
-                "batchSize=$paddleBatchSize governorReason=$paddleGovernorReason)"
+                "batchSize=$paddleBatchSize dynamic=$paddleDynamic governorReason=$paddleGovernorReason)"
         }
         logcat(LogPriority.INFO) {
             "RoiPageRecognitionEngine analyzed ${pageTranslation.blocks.size} blocks " +
@@ -1114,6 +1145,7 @@ class RoiPageRecognitionEngine(
             roiOcrEngine = null
             paddlePageOcrCoordinator = null
             paddleBatchGovernor = null
+            paddleDynamicBatchPolicy = null
             paddleBatchGovernorReason = "not_paddle"
         }
         try {
