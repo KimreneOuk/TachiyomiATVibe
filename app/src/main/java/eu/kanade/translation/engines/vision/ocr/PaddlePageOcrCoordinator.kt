@@ -187,15 +187,18 @@ internal class PaddlePageOcrCoordinator(
         language: TextRecognizerLanguage,
         isVerticalLanguage: Boolean,
         mode: PaddlePageOcrMode,
+        groupedRegions: List<PaddleGroupedRegion>? = null,
         isClosed: () -> Boolean,
     ): List<PaddlePageRegionResult> {
+        val targetDetections = groupedRegions?.map { it.detection } ?: detections
         val policy = PaddlePageOcrPolicy(mode, validatedBatchSize)
         val initialDispatcher = dispatcher(pageGeneration, policy)
-        val states = ArrayList<RegionState>(detections.size)
+        val states = ArrayList<RegionState>(targetDetections.size)
         var fallbackDispatcher: PaddlePageOcrBatchDispatcher<Bitmap, Pair<String, Float>>? = null
         try {
-            detections.forEachIndexed { regionIndex, detection ->
+            targetDetections.forEachIndexed { regionIndex, detection ->
                 check(!isClosed()) { "ONNX recognition engine closed during OCR geometry planning" }
+                val regionLines = groupedRegions?.getOrNull(regionIndex)?.lines ?: detection.lines
                 val state = planInitialRegion(
                     bitmap = bitmap,
                     regionIndex = regionIndex,
@@ -203,6 +206,7 @@ internal class PaddlePageOcrCoordinator(
                     paddleDet = paddleDet,
                     language = language,
                     isVerticalLanguage = isVerticalLanguage,
+                    precomputedLines = regionLines,
                     isClosed = isClosed,
                 )
                 submitPlan(
@@ -319,6 +323,7 @@ internal class PaddlePageOcrCoordinator(
         paddleDet: PaddleOcrV6DetEngine?,
         language: TextRecognizerLanguage,
         isVerticalLanguage: Boolean,
+        precomputedLines: List<TextLine>? = null,
         isClosed: () -> Boolean,
     ): RegionState {
         val bbox = detection.bbox
@@ -327,40 +332,79 @@ internal class PaddlePageOcrCoordinator(
         val boxWidth = (bbox[2] - bbox[0]).toFloat()
         val boxHeight = (bbox[3] - bbox[1]).toFloat()
         val tallVertical = isVerticalLanguage && boxHeight > boxWidth * 1.5f
-        val paddleMultiLine = paddleDet != null
-        val paddleVerticalHeuristic = isVerticalLanguage && paddleDet == null && boxHeight > boxWidth * 1.5f
+        val hasPrecomputed = precomputedLines != null
+        val paddleMultiLine = paddleDet != null || hasPrecomputed
+        val paddleVerticalHeuristic = isVerticalLanguage && !paddleMultiLine && boxHeight > boxWidth * 1.5f
         val plan = try {
-            when {
-                paddleMultiLine -> VerticalLineOcr.planMultiLine(
-                    crop = padded,
-                    paddleDet = paddleDet,
-                    verticalFallback = tallVertical,
-                    language = language,
-                    isClosed = isClosed,
-                )
-
-                paddleVerticalHeuristic -> {
-                    val unpadded = VerticalLineOcr.cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
-                    try {
-                        VerticalLineOcr.planMultiLine(
-                            crop = unpadded,
-                            paddleDet = null,
-                            verticalFallback = true,
-                            language = language,
-                            isClosed = isClosed,
-                        )
-                    } finally {
-                        unpadded.recycle()
-                    }
+            if (precomputedLines != null) {
+                val offsetX = bbox[0] - pad
+                val offsetY = bbox[1] - pad
+                val localLines = precomputedLines.mapNotNull { line ->
+                    val b = line.bbox
+                    val x1 = (b[0] - offsetX).coerceIn(0, padded.width)
+                    val y1 = (b[1] - offsetY).coerceIn(0, padded.height)
+                    val x2 = (b[2] - offsetX).coerceIn(0, padded.width)
+                    val y2 = (b[3] - offsetY).coerceIn(0, padded.height)
+                    if (x2 > x1 && y2 > y1) TextLine(bbox = intArrayOf(x1, y1, x2, y2), meanScore = line.meanScore) else null
                 }
+                if (localLines.isNotEmpty()) {
+                    VerticalLineOcr.planDetColumns(
+                        crop = padded,
+                        lines = localLines,
+                        language = language,
+                        prefersHorizontalText = true,
+                        isClosed = isClosed,
+                    )
+                } else if (tallVertical) {
+                    VerticalLineOcr.planMultiLine(
+                        crop = padded,
+                        paddleDet = null,
+                        verticalFallback = true,
+                        language = language,
+                        isClosed = isClosed,
+                    )
+                } else {
+                    VerticalLineOcr.planMultiLine(
+                        crop = padded,
+                        paddleDet = null,
+                        verticalFallback = false,
+                        language = language,
+                        isClosed = isClosed,
+                    )
+                }
+            } else {
+                when {
+                    paddleMultiLine -> VerticalLineOcr.planMultiLine(
+                        crop = padded,
+                        paddleDet = paddleDet,
+                        verticalFallback = tallVertical,
+                        language = language,
+                        isClosed = isClosed,
+                    )
 
-                else -> VerticalLineOcr.planMultiLine(
-                    crop = padded,
-                    paddleDet = null,
-                    verticalFallback = false,
-                    language = language,
-                    isClosed = isClosed,
-                )
+                    paddleVerticalHeuristic -> {
+                        val unpadded = VerticalLineOcr.cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
+                        try {
+                            VerticalLineOcr.planMultiLine(
+                                crop = unpadded,
+                                paddleDet = null,
+                                verticalFallback = true,
+                                language = language,
+                                isClosed = isClosed,
+                            )
+                        } finally {
+                            unpadded.recycle()
+                        }
+                    }
+
+                    else -> VerticalLineOcr.planMultiLine(
+                        crop = padded,
+                        paddleDet = null,
+                        verticalFallback = false,
+                        language = language,
+                        isClosed = isClosed,
+                    )
+                }
             }
         } finally {
             padded.recycle()
