@@ -48,7 +48,7 @@ class PageInpaintingEngineTest {
     fun `backend failure on a textless masked page is not reported as success`() {
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns false
-        every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } throws
+        every { inpainter.inpaintRegions(any(), any(), any(), any(), any(), any()) } throws
             IllegalStateException("cleanup failed")
         val page = PageTranslation()
         page.inpaintMaskBoxes = listOf(InpaintMaskBox(10, 20, 40, 60, 2))
@@ -64,7 +64,7 @@ class PageInpaintingEngineTest {
         val cleaned = mockk<Bitmap>()
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns false
-        every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns cleaned
+        every { inpainter.inpaintRegions(any(), any(), any(), any(), any(), any()) } returns cleaned
 
         PageInpaintingEngine(InpaintingMode.FAST, inpainter).inpaint(source, page) shouldBe cleaned
 
@@ -76,6 +76,7 @@ class PageInpaintingEngineTest {
                 listOf(2),
                 InpaintingMode.FAST,
                 emptyList(),
+                page.allTextDetections,
             )
         }
     }
