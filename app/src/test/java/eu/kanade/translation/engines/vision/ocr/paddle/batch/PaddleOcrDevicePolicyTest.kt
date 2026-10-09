@@ -128,6 +128,7 @@ class PaddleOcrDevicePolicyTest {
             PaddleOcrRecognitionBatch.B1 to PaddleOcrBatchSize.B1,
             PaddleOcrRecognitionBatch.B2 to PaddleOcrBatchSize.B2,
             PaddleOcrRecognitionBatch.B4 to PaddleOcrBatchSize.B4,
+            PaddleOcrRecognitionBatch.DYNAMIC to PaddleOcrBatchSize.B8,
         )
 
         expected.forEach { (requested, active) ->
@@ -151,6 +152,10 @@ class PaddleOcrDevicePolicyTest {
                     if (active == PaddleOcrBatchSize.B1) "b1_default" else "debug_provisional_optin",
                     decision.reason,
                 )
+                assertEquals(
+                    requested == PaddleOcrRecognitionBatch.DYNAMIC,
+                    decision.dynamicPageBatch,
+                )
             } else {
                 assertEquals(PaddleOcrBatchSize.B1, decision.activeBatchSize)
                 if (requested == PaddleOcrRecognitionBatch.B1) {
@@ -160,5 +165,41 @@ class PaddleOcrDevicePolicyTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `DYNAMIC preference maps to the B8 tier with the dynamic flag in debug`() {
+        val decision = PaddleOcrBatchActivationPolicy.current(
+            requestedBatchSize = PaddleOcrBatchSize.B8,
+            requestedProvider = PaddleOcrProviderTarget.QNN_HTP,
+            dynamicPageBatch = true,
+        )
+        assertEquals(PaddleOcrBatchSize.B8, decision.activeBatchSize)
+        assertTrue(decision.dynamicPageBatch)
+        assertFalse(decision.forceCpuB1EmergencyFallback)
+    }
+
+    @Test
+    fun `DYNAMIC skips the staged build-config cap that clamps fixed tiers`() {
+        // Build config caps fixed tiers at 4; a dynamic request must not be
+        // clamped because its ceiling is memory-derived at runtime.
+        val decision = PaddleOcrBatchActivationPolicy.current(
+            requestedBatchSize = PaddleOcrBatchSize.B8,
+            requestedProvider = PaddleOcrProviderTarget.QNN_HTP,
+            dynamicPageBatch = true,
+        )
+        assertEquals(PaddleOcrBatchSize.B8, decision.activeBatchSize)
+    }
+
+    @Test
+    fun `staged flag off forces emergency CPU B1 even for dynamic`() {
+        val decision = PaddleOcrDevicePolicy.resolveActivation(
+            stagedEnabled = false,
+            requestedBatchSize = PaddleOcrBatchSize.B8,
+            requestedProvider = PaddleOcrProviderTarget.QNN_HTP,
+            profile = PaddleOcrDeviceProfile.untested(),
+        )
+        assertEquals(PaddleOcrBatchSize.B1, decision.activeBatchSize)
+        assertTrue(decision.forceCpuB1EmergencyFallback)
     }
 }

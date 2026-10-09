@@ -45,8 +45,12 @@ enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
  */
 enum class PaddleOcrExecutionProvider { CPU, QUALCOMM_QNN_GPU, QUALCOMM_QNN_HTP }
 
-/** User-requested PaddleOCR v6 recognizer microbatch size. */
-enum class PaddleOcrRecognitionBatch { B1, B2, B4 }
+/**
+ * User-requested PaddleOCR v6 recognizer microbatch size. [DYNAMIC] batches the
+ * whole page per width bucket under a memory-derived ceiling (the B8 tier with
+ * the dynamic flag after activation mapping).
+ */
+enum class PaddleOcrRecognitionBatch { B1, B2, B4, DYNAMIC }
 
 /**
  * TachiyomiAT: source reading order for a manga/comic page. Determines how the

@@ -20,6 +20,8 @@ data class PaddleOcrBatchActivation(
     val providerTarget: PaddleOcrProviderTarget?,
     val forceCpuB1EmergencyFallback: Boolean,
     val reason: String,
+    /** Whole-page dynamic chunking armed; the tier acts as the governor cap. */
+    val dynamicPageBatch: Boolean = false,
 )
 
 /**
