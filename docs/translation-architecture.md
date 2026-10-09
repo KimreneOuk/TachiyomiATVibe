@@ -2,6 +2,8 @@
 
 `eu.kanade.translation` contains the reader's page translation path and the chapter batch path. Start at `workflow`, follow shared execution through `pipeline`, then follow specialized work into `engines` and durable/live state into `persistence`.
 
+See the [translation input quality improvement plan](translation-input-quality-plan.md) for the Standard/AI audit, proposed implementation phases, and evaluation criteria.
+
 ## Main page flow
 
 ```text

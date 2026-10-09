@@ -291,24 +291,26 @@ object OnnxRuntimeProvider {
         contextCacheFile: File? = null,
         configure: (OrtSession.SessionOptions) -> Unit = {},
         providerSink: (String) -> Unit = {},
+        requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute? = null,
     ): OrtSession {
         val modelName = ModelRoutingEngine.resolveModelId(modelPath)
         // Resolve the user's selected route before consulting model-level
         // compatibility state. Reading activeRoute first leaves the first
         // normal OCR session gated against the CPU default even when the
         // persisted accelerator preference has not yet been probed.
-        val route = if (useAccelerator) {
+        val route = requestedHardwareRoute ?: if (useAccelerator) {
             HardwareDiscoveryEngine.resolveRoute()
         } else {
             HardwareDiscoveryEngine.activeRoute
         }
+        val effectiveAccelerator = useAccelerator || (requestedHardwareRoute != null && requestedHardwareRoute != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK)
         // The accelerator attempt gate also allows the bounded recreation
         // attempt for TEMPORARY_FAILURE.
-        val canUseAccelerator = useAccelerator &&
+        val canUseAccelerator = effectiveAccelerator &&
             route != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK &&
             ModelRoutingEngine.isAcceleratorAttemptAllowed(modelName, route)
 
-        if (useAccelerator && !canUseAccelerator) {
+        if (effectiveAccelerator && !canUseAccelerator) {
             logcat(LogPriority.INFO) {
                 "[model_routing] Model '$modelName' is known UNSUPPORTED on route $route; bypassing accelerator to CPU"
             }
@@ -624,21 +626,11 @@ object OnnxRuntimeProvider {
         val options = OrtSession.SessionOptions().apply {
             val cpuCores = Runtime.getRuntime().availableProcessors()
             val threads = (cpuCores / 2).coerceIn(2, 4)
-            setInterOpNumThreads(threads)
+            setInterOpNumThreads(1)
             setIntraOpNumThreads(threads)
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-            runCatching { setCPUArenaAllocator(false) }
-                .onFailure { e ->
-                    logcat(LogPriority.WARN, e) {
-                        "setCPUArenaAllocator(false) rejected; arena will stay on (higher native footprint)"
-                    }
-                }
-            runCatching { setMemoryPatternOptimization(false) }
-                .onFailure { e ->
-                    logcat(LogPriority.WARN, e) {
-                        "setMemoryPatternOptimization(false) rejected; mem-pattern will stay on"
-                    }
-                }
+            runCatching { setCPUArenaAllocator(true) }
+            runCatching { setMemoryPatternOptimization(true) }
             if (disableIntraOpSpinning) {
                 runCatching {
                     // Must be set before the execution provider is registered.
@@ -674,8 +666,8 @@ object OnnxRuntimeProvider {
                 HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU -> {
                     runCatching {
                         addQnn(mapOf("backend_type" to "gpu"))
-                        addConfigEntry("session.disable_cpu_ep_fallback", "1")
-                        logcat(LogPriority.INFO) { "Successfully added QNN GPU EP (strict)" }
+                        addConfigEntry("session.disable_cpu_ep_fallback", "0")
+                        logcat(LogPriority.INFO) { "Successfully added QNN GPU EP (hybrid fallback enabled)" }
                     }.onFailure { e ->
                         logcat(LogPriority.ERROR, e) { "Failed to add QNN GPU EP, falling back to CPU!" }
                         if (tripCircuitBreakerOnRegistrationFailure) {

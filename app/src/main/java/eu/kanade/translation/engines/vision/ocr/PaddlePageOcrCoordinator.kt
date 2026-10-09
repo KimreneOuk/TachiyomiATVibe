@@ -354,54 +354,42 @@ internal class PaddlePageOcrCoordinator(
     ): RegionState {
         val bbox = detection.bbox
         val pad = 12
-        val padded = VerticalLineOcr.cropBitmap(bitmap, bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad)
         val boxWidth = (bbox[2] - bbox[0]).toFloat()
         val boxHeight = (bbox[3] - bbox[1]).toFloat()
-        val tallVertical = isVerticalLanguage && boxHeight > boxWidth * 1.5f
-        val paddleMultiLine = paddleDet != null
-        val paddleVerticalHeuristic = isVerticalLanguage && paddleDet == null && boxHeight > boxWidth * 1.5f
-        val plan = try {
-            when {
-                paddleMultiLine -> VerticalLineOcr.planMultiLine(
-                    crop = padded,
-                    paddleDet = paddleDet,
-                    verticalFallback = tallVertical,
+        val isVerticalBubble = isVerticalLanguage && (boxWidth <= boxHeight * 1.5f)
+        val plan = if (isVerticalBubble) {
+            val unpadded = VerticalLineOcr.cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
+            try {
+                VerticalLineOcr.planMultiLine(
+                    crop = unpadded,
+                    paddleDet = null,
+                    verticalFallback = true,
                     language = language,
                     isClosed = isClosed,
                 )
-
-                paddleVerticalHeuristic -> {
-                    val unpadded = VerticalLineOcr.cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
-                    try {
-                        VerticalLineOcr.planMultiLine(
-                            crop = unpadded,
-                            paddleDet = null,
-                            verticalFallback = true,
-                            language = language,
-                            isClosed = isClosed,
-                        )
-                    } finally {
-                        unpadded.recycle()
-                    }
-                }
-
-                else -> VerticalLineOcr.planMultiLine(
+            } finally {
+                unpadded.recycle()
+            }
+        } else {
+            val padded = VerticalLineOcr.cropBitmap(bitmap, bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad)
+            try {
+                VerticalLineOcr.planMultiLine(
                     crop = padded,
                     paddleDet = null,
                     verticalFallback = false,
                     language = language,
                     isClosed = isClosed,
                 )
+            } finally {
+                padded.recycle()
             }
-        } finally {
-            padded.recycle()
         }
         return RegionState(
             regionIndex = regionIndex,
             bbox = bbox.copyOf(),
             initialPlan = plan,
-            needsUnpaddedReread = paddleMultiLine && isVerticalLanguage && boxHeight > boxWidth * 1.5f,
-            rotatedForOcr = paddleVerticalHeuristic || tallVertical,
+            needsUnpaddedReread = false,
+            rotatedForOcr = isVerticalBubble,
         )
     }
 

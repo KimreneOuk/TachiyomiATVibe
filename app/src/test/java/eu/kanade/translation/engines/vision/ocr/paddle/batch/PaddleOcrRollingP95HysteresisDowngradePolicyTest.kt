@@ -112,8 +112,7 @@ class PaddleOcrRollingP95HysteresisDowngradePolicyTest {
         assertEquals(PaddleOcrBatchSize.B8, policy.activeBatchSize)
 
         // Consecutive slow batches normalize to 1250ms > 1000ms -> downgrades
-        policy.record(normalizedSlow)
-        policy.record(normalizedSlow)
+        repeat(3) { policy.record(normalizedSlow) }
         assertEquals(PaddleOcrBatchSize.B4, policy.activeBatchSize)
     }
 }

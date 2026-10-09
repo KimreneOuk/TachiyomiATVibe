@@ -2,6 +2,7 @@ package eu.kanade.translation.engines.vision.detection
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
+import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.vision.ocr.BoxGeometry
 import eu.kanade.translation.model.Detection
@@ -34,21 +35,30 @@ class OnnxPageTextDetector {
         2 to "text_free",
     )
 
-    fun initialize(modelFile: File) {
+    fun initialize(
+        modelFile: File,
+        requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute? = null,
+    ) {
         logcat(LogPriority.INFO) {
             "Detector init: ${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()})"
+        }
+        val useAcc = if (requestedHardwareRoute != null) {
+            requestedHardwareRoute != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
+        } else {
+            true
         }
         // detector-v4: the accelerator graph-compile can fail on unsupported ops
         // (NNAPI rejects the Split op). The fallback wrapper creates a strict
         // accelerator session first and retries the model on CPU on failure.
         session = OnnxRuntimeProvider.createSessionWithFallback(
             modelFile.absolutePath,
-            useAccelerator = true,
+            useAccelerator = useAcc,
+            requestedHardwareRoute = requestedHardwareRoute,
             providerSink = { executionProviderLabel = it },
         )
         logcat(LogPriority.INFO) {
             "Detector session created from ${modelFile.name} " +
-                "inputs=${session?.inputNames} outputs=${session?.outputNames}"
+                "provider=$executionProviderLabel inputs=${session?.inputNames} outputs=${session?.outputNames}"
         }
     }
 
@@ -95,7 +105,7 @@ class OnnxPageTextDetector {
             val t3 = System.nanoTime()
 
             logcat(LogPriority.INFO) {
-                "[detection] total=${(t3 - t0) / 1_000_000.0}ms " +
+                "[detection_perf] model=detector provider=$executionProviderLabel total=${(t3 - t0) / 1_000_000.0}ms " +
                     "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
                     "inference=${(t2 - t1) / 1_000_000.0}ms " +
                     "postprocess=${(t3 - t2) / 1_000_000.0}ms " +

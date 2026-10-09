@@ -225,7 +225,7 @@ class HardwareSessionAuditTest {
     }
 
     @Test
-    fun `stale_engine_detected logs when paddle provider preference changes and rebuild is bypassed`() = runBlocking {
+    fun `engine rebuilds when paddle provider preference changes`() = runBlocking {
         val preferences = TranslationPreferences(MutableTestPreferenceStore())
         preferences.paddleOcrExecutionProvider().set(PaddleOcrExecutionProvider.CPU)
         preferences.paddleOcrRecognitionBatch().set(PaddleOcrRecognitionBatch.B1)
@@ -236,7 +236,7 @@ class HardwareSessionAuditTest {
             initialBatch = PaddleOcrRecognitionBatch.B1,
         )
 
-        // User modifies live preference to QUALCOMM_QNN_GPU without rebuilding the engine
+        // User modifies live preference to QUALCOMM_QNN_GPU
         preferences.paddleOcrExecutionProvider().set(PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU)
 
         lane.ensureEnginesBuiltFor(
@@ -244,16 +244,13 @@ class HardwareSessionAuditTest {
             toLang = TextTranslatorLanguage.ENGLISH,
         )
 
+        assertTrue(lane.currentPaddleOcrProvider == PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU)
         val staleEvent = capturedLines.find { it.contains("event=stale_engine_detected") }
-        assertNotNull(staleEvent, "stale_engine_detected must be logged when provider changed")
-        assertTrue(staleEvent!!.contains("domain=hardware"))
-        assertTrue(staleEvent.contains("currentProvider=cpu"))
-        assertTrue(staleEvent.contains("userPrefProvider=qnn_gpu"))
-        assertTrue(staleEvent.contains("action=ignored_until_restart"))
+        assertTrue(staleEvent == null, "stale_engine_detected must NOT be emitted because engine is rebuilt")
     }
 
     @Test
-    fun `stale_engine_detected logs when paddle batch size preference changes and rebuild is bypassed`() = runBlocking {
+    fun `engine rebuilds when paddle batch size preference changes`() = runBlocking {
         val preferences = TranslationPreferences(MutableTestPreferenceStore())
         preferences.paddleOcrExecutionProvider().set(PaddleOcrExecutionProvider.CPU)
         preferences.paddleOcrRecognitionBatch().set(PaddleOcrRecognitionBatch.B1)
@@ -272,12 +269,9 @@ class HardwareSessionAuditTest {
             toLang = TextTranslatorLanguage.ENGLISH,
         )
 
+        assertTrue(lane.currentPaddleOcrBatch == PaddleOcrRecognitionBatch.B4)
         val staleEvent = capturedLines.find { it.contains("event=stale_engine_detected") }
-        assertNotNull(staleEvent, "stale_engine_detected must be logged when batch size changed")
-        assertTrue(staleEvent!!.contains("domain=hardware"))
-        assertTrue(staleEvent.contains("currentProvider=cpu"))
-        assertTrue(staleEvent.contains("userPrefProvider=cpu"))
-        assertTrue(staleEvent.contains("action=ignored_until_restart"))
+        assertTrue(staleEvent == null, "stale_engine_detected must NOT be emitted because engine is rebuilt")
     }
 
     @Test

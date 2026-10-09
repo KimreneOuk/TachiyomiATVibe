@@ -125,6 +125,40 @@ object HardwareDiscoveryEngine {
         }
     }
 
+    /**
+     * Resolves the hardware route for vision models (detector, bubble segmenter, panel detector).
+     * If vision GPU acceleration is enabled:
+     * - On Qualcomm: probes QNN GPU (with hybrid CPU fallback enabled). If probe passes, returns QUALCOMM_QNN_GPU.
+     * - On non-Qualcomm (MediaTek, Exynos, Tensor): probes NNAPI. If probe passes, returns NNAPI.
+     * - Otherwise returns CPU_XNNPACK.
+     */
+    internal fun resolveVisionGpuRoute(
+        enabled: Boolean,
+        isEmulator: Boolean = DeviceCapability.isProbablyEmulator,
+        sdkInt: Int = Build.VERSION.SDK_INT,
+        supportedAbis: Array<String> = Build.SUPPORTED_ABIS ?: emptyArray(),
+        isQualcomm: Boolean = DeviceCapability.isQualcommSnapdragon,
+        probeGpu: () -> Boolean = gpuProbeRunner,
+        probeNnapi: () -> Boolean = nnapiProbeRunner,
+    ): HardwareRoute {
+        if (!enabled || isEmulator || sdkInt < 29 || supportedAbis.none { it.equals("arm64-v8a", ignoreCase = true) }) {
+            return HardwareRoute.CPU_XNNPACK
+        }
+        return if (isQualcomm) {
+            if (runExplicitProbe("qnn_gpu", probeGpu) == true) {
+                HardwareRoute.QUALCOMM_QNN_GPU
+            } else {
+                HardwareRoute.CPU_XNNPACK
+            }
+        } else {
+            if (runExplicitProbe("nnapi", probeNnapi) == true) {
+                HardwareRoute.NNAPI
+            } else {
+                HardwareRoute.CPU_XNNPACK
+            }
+        }
+    }
+
     private fun runExplicitProbe(name: String, probe: () -> Boolean): Boolean? {
         return try {
             probe()

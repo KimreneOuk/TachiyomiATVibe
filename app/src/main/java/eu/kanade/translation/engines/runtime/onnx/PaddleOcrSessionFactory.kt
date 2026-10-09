@@ -146,10 +146,12 @@ object PaddleOcrSessionFactory {
             }
         }
 
+        val useXnnpack = resolution.route == HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
+
         return OnnxRuntimeProvider.openSessionWithHonestLabel(
             route = resolution.route,
             canUseAccelerator = canUseAccelerator,
-            useXnnpack = false,
+            useXnnpack = useXnnpack,
             buildRequested = { buildRequested(canUseAccelerator) },
             buildCpu = buildCpu,
             open = open,
@@ -187,13 +189,14 @@ object PaddleOcrSessionFactory {
         providerSink: (String) -> Unit = {},
     ): OrtSession {
         val acceleratorRoute = resolution.route.takeIf { it.isPaddleAccelerator() }
+        val useXnnpack = resolution.route == HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
         return createSessionWithHonestLabel(
             modelPath = modelPath,
             resolution = resolution,
             buildRequested = { canUseAccelerator ->
                 OnnxRuntimeProvider.createSessionOptionsWithRegistration(
                     useAccelerator = canUseAccelerator,
-                    useXnnpack = false,
+                    useXnnpack = useXnnpack && !canUseAccelerator,
                     routeOverride = acceleratorRoute,
                     tripCircuitBreakerOnRegistrationFailure = false,
                     configure = configure,

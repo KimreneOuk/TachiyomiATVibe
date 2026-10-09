@@ -27,12 +27,17 @@ object PaddleCtcDecoder {
         classCount: Int,
     ): IntArray {
         val indices = IntArray(timeSteps)
+        if (timeSteps == 0 || classCount == 0) return indices
+        val rowBuffer = FloatArray(classCount)
+        val dup = logits.duplicate()
+        val basePos = dup.position()
         for (timeStep in 0 until timeSteps) {
-            val offset = timeStep * classCount
+            dup.position(basePos + timeStep * classCount)
+            dup.get(rowBuffer, 0, classCount)
             var maxIndex = 0
             var maxValue = Float.NEGATIVE_INFINITY
             for (classIndex in 0 until classCount) {
-                val value = logits.get(offset + classIndex)
+                val value = rowBuffer[classIndex]
                 if (value > maxValue) {
                     maxValue = value
                     maxIndex = classIndex
@@ -50,12 +55,17 @@ object PaddleCtcDecoder {
     ): Pair<IntArray, FloatArray> {
         val indices = IntArray(timeSteps)
         val maxProbs = FloatArray(timeSteps)
+        if (timeSteps == 0 || classCount == 0) return Pair(indices, maxProbs)
+        val rowBuffer = FloatArray(classCount)
+        val dup = logits.duplicate()
+        val basePos = dup.position()
         for (timeStep in 0 until timeSteps) {
-            val offset = timeStep * classCount
+            dup.position(basePos + timeStep * classCount)
+            dup.get(rowBuffer, 0, classCount)
             var maxIndex = 0
             var maxValue = Float.NEGATIVE_INFINITY
             for (classIndex in 0 until classCount) {
-                val value = logits.get(offset + classIndex)
+                val value = rowBuffer[classIndex]
                 if (value > maxValue) {
                     maxValue = value
                     maxIndex = classIndex

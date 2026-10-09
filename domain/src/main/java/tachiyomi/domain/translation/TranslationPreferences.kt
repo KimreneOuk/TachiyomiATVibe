@@ -157,6 +157,15 @@ class TranslationPreferences(
     )
 
     /**
+     * Temporary toggle to experiment running vision models (text detector,
+     * bubble segmenter, panel detector) on GPU with safe CPU fallback.
+     */
+    fun translationVisionGpuAcceleration() = preferenceStore.getBoolean(
+        "translation_vision_gpu_acceleration",
+        false,
+    )
+
+    /**
      * Legacy experimental QNN toggle.
      *
      * Kept only so old preference files deserialize cleanly. Current translation

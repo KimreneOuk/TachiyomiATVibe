@@ -1,6 +1,6 @@
 param(
     [string]$Package = "app.kanade.tachiyomi.vibe.debug",
-    [string]$Device = "192.168.100.223:36083",
+    [string]$Device = "192.168.100.223:46123",
     [string]$OutFile = ""
 )
 
@@ -15,6 +15,10 @@ if (-not (Get-Command $adbBin -ErrorAction SilentlyContinue)) {
     if (Test-Path $fallbackAdb) {
         $adbBin = $fallbackAdb
     }
+}
+
+if ($Device -and $Device -match ':\d+$') {
+    & $adbBin connect $Device | Out-Null
 }
 
 $deviceArgs = @()
@@ -37,6 +41,9 @@ $firstMatch = if ($rawUid -is [System.Array]) { $rawUid[0].Line } else { $rawUid
 if (-not $firstMatch) { $firstMatch = $rawUid.ToString() }
 $uid = ($firstMatch -replace '.*uid:(\d+).*', '$1').Trim()
 Write-Host "[+] UID resolved: $uid. Starting noise-free streaming to $OutFile..." -ForegroundColor Green
+
+# Ensure capture file exists with initial header so it's not empty
+"[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')] [INIT] Trace capture started for $Package (UID: $uid) on $Device" | Out-File -FilePath $OutFile -Encoding utf8
 
 $filter = "MediaProvider|DatabaseUtils|ModernMediaScanner|OplusThumbnailUtils|ColorOS|ViewRootImpl"
 

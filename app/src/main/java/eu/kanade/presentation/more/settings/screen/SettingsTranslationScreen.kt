@@ -239,6 +239,11 @@ object SettingsTranslationScreen : SearchableSettings {
                         PaddleOcrRecognitionBatch.B4 to stringResource(ATMR.strings.pref_paddle_ocr_batch_b4),
                     ).toImmutableMap(),
                 ),
+                Preference.PreferenceItem.SwitchPreference(
+                    pref = translationPreferences.translationVisionGpuAcceleration(),
+                    title = stringResource(ATMR.strings.pref_vision_gpu_acceleration),
+                    subtitle = stringResource(ATMR.strings.pref_vision_gpu_acceleration_summary),
+                ),
                 Preference.PreferenceItem.CustomPreference(
                     title = stringResource(ATMR.strings.pref_translate_to),
                 ) {

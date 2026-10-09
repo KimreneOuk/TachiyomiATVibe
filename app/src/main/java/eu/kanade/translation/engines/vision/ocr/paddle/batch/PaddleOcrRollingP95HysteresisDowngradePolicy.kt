@@ -2,8 +2,8 @@ package eu.kanade.translation.engines.vision.ocr.paddle.batch
 
 data class PaddleOcrRollingP95Config(
     val windowSize: Int = 20,
-    val downgradeP95Ms: Double = 1_000.0,
-    val recoveryP95Ms: Double = 750.0,
+    val downgradeP95Ms: Double = 2_000.0,
+    val recoveryP95Ms: Double = 1_500.0,
     val highWindowsBeforeDowngrade: Int = 2,
     val lowWindowsBeforeRecovery: Int = 3,
 ) {

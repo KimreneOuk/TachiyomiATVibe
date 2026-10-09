@@ -42,12 +42,13 @@ class OnnxBubbleSegmenter(
     }
 
     /** Factory seam for one [SegmenterSessionHandle] (session creation only). */
-    fun interface SessionFactory {
+    interface SessionFactory {
         fun create(
             modelPath: String,
             useAccelerator: Boolean,
             useXnnpack: Boolean,
             providerSink: (String) -> Unit,
+            requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute? = null,
         ): SegmenterSessionHandle
     }
 
@@ -57,12 +58,14 @@ class OnnxBubbleSegmenter(
             useAccelerator: Boolean,
             useXnnpack: Boolean,
             providerSink: (String) -> Unit,
+            requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute?,
         ): SegmenterSessionHandle = OrtSessionHandle(
             OnnxRuntimeProvider.createSessionWithFallback(
                 modelPath,
                 useAccelerator = useAccelerator,
                 useXnnpack = useXnnpack,
                 providerSink = providerSink,
+                requestedHardwareRoute = requestedHardwareRoute,
             ),
         )
     }
@@ -130,18 +133,19 @@ class OnnxBubbleSegmenter(
         maxPoolSize = 2,
     )
 
-    fun initialize(modelFile: File) {
-        // TachiyomiAT  §3.1: production segmentation is deliberately
-        // CPU-primary (default CPU EP, no XNNPACK — the packaged QNN ORT
-        // artifact has no working XNNPACK, and accelerated bubble sessions
-        // hit QNN error 1100 at first execute). The path is retained so the
-        // §3.2 one-shot recovery can rebuild an explicit default-CPU session.
+    fun initialize(
+        modelFile: File,
+        requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute? = null,
+    ) {
         modelPath = modelFile.absolutePath
+        val useAcc = requestedHardwareRoute != null &&
+            requestedHardwareRoute != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
         val created = sessionFactory.create(
             modelPath = modelFile.absolutePath,
-            useAccelerator = false,
+            useAccelerator = useAcc,
             useXnnpack = false,
             providerSink = { executionProviderLabel = it },
+            requestedHardwareRoute = requestedHardwareRoute,
         )
         session = created
         validateContract(created)
@@ -208,7 +212,12 @@ class OnnxBubbleSegmenter(
             // the session handle, so a failed partial result never survives into
             // a retry; this finally remains the single cleanup point for the
             // pooled input buffer and the temporary bitmap.
+            val t0 = System.nanoTime()
             val (predictions, prototypes) = runInferenceWithRecovery(current, buffer)
+            val inferMs = (System.nanoTime() - t0) / 1_000_000.0
+            logcat(LogPriority.INFO) {
+                "[segmentation_perf] model=bubble_segmenter provider=$executionProviderLabel inference=${inferMs}ms"
+            }
             return BubbleSegmentationDecoder.decodeRle(
                 predictions,
                 37,

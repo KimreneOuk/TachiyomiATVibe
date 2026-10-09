@@ -33,6 +33,8 @@
     <string name="pref_paddle_ocr_batch_b2">B2 (experimental)</string>
     <string name="pref_paddle_ocr_batch_b4">B4 (experimental)</string>
     <string name="pref_paddle_ocr_batch_dynamic">Auto — whole page (dynamic)</string>
+    <string name="pref_vision_gpu_acceleration">Experimental Vision GPU Acceleration</string>
+    <string name="pref_vision_gpu_acceleration_summary">Attempt running Page Detector, Bubble Segmenter, and Panel Detector on GPU with safe CPU fallback. Rebuilds engines immediately when changed. Falls back to CPU if unsupported on this device.</string>
     <string name="pref_translate_to">Translate To</string>
     <string name="pref_group_engine">Translator</string>
     <string name="pref_translator_engine">Translator Engine</string>

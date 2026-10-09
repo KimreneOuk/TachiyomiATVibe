@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -54,19 +55,28 @@ class OnnxPanelDetector {
         maxPoolSize = 2,
     )
 
-    fun initialize(modelFile: File) {
+    fun initialize(
+        modelFile: File,
+        requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute? = null,
+    ) {
         logcat(LogPriority.INFO) {
             "PanelDetector init: ${modelFile.absolutePath} " +
                 "(${modelFile.length()}B exists=${modelFile.exists()})"
         }
+        val useAcc = if (requestedHardwareRoute != null) {
+            requestedHardwareRoute != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
+        } else {
+            true
+        }
         session = OnnxRuntimeProvider.createSessionWithFallback(
             modelFile.absolutePath,
-            useAccelerator = true,
+            useAccelerator = useAcc,
+            requestedHardwareRoute = requestedHardwareRoute,
             providerSink = { executionProviderLabel = it },
         )
         logcat(LogPriority.INFO) {
             "PanelDetector session created from ${modelFile.name} " +
-                "inputs=${session?.inputNames} outputs=${session?.outputNames}"
+                "provider=$executionProviderLabel inputs=${session?.inputNames} outputs=${session?.outputNames}"
         }
     }
 
@@ -160,7 +170,7 @@ class OnnxPanelDetector {
             }
             val t3 = System.nanoTime()
             logcat(LogPriority.INFO) {
-                "[panel-detection] total=${(t3 - t0) / 1_000_000.0}ms " +
+                "[panel_perf] model=panel_detector provider=$executionProviderLabel total=${(t3 - t0) / 1_000_000.0}ms " +
                     "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
                     "inference=${(t2 - t1) / 1_000_000.0}ms " +
                     "postprocess=${(t3 - t2) / 1_000_000.0}ms " +

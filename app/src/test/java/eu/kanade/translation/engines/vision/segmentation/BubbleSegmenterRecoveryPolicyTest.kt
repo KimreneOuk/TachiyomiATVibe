@@ -64,6 +64,7 @@ class BubbleSegmenterRecoveryPolicyTest {
             useAccelerator: Boolean,
             useXnnpack: Boolean,
             providerSink: (String) -> Unit,
+            requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute?,
         ): OnnxBubbleSegmenter.SegmenterSessionHandle {
             requests.add(Request(modelPath, useAccelerator, useXnnpack))
             val session = pending.removeFirst()

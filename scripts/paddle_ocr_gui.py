@@ -1,6 +1,9 @@
-"""PP-OCRv6 Manga v0.2 Visual Diagnostic Workbench
-Standalone desktop testing interface for PP-OCRv6 Manga v0.2.
-Detects text regions, displays bounding boxes, visualizes crops, and displays extracted text.
+"""TachiyomiAT Vision & Inpainting Diagnostic Studio
+Standalone desktop testing interface for:
+- PP-OCRv6 Manga v0.2 OCR pipeline (detection, CTC recognition, reading order)
+- YOLO11 Manga Bubble Segmentation with stroke border erosion
+- Inpainting Quality Laboratory: Fast (OpenCV), Balance, Full (AOT GAN), Legacy Median Fill
+- Real-time before/after quality comparisons, difference heatmaps, oversized box tiling, and speed telemetry.
 """
 
 import os
@@ -23,11 +26,15 @@ import pyclipper
 # ---------------------------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-ASSET_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "assets", "models", "ocr", "paddle-v6-small")
 
-DET_MODEL_PATH = os.path.join(ASSET_DIR, "det", "inference.onnx")
-REC_MODEL_PATH = os.path.join(ASSET_DIR, "inference.onnx")
-DICT_PATH = os.path.join(ASSET_DIR, "PP-OCRv6_small_rec.txt")
+OCR_ASSET_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "assets", "models", "ocr", "paddle-v6-small")
+DET_MODEL_PATH = os.path.join(OCR_ASSET_DIR, "det", "inference.onnx")
+REC_MODEL_PATH = os.path.join(OCR_ASSET_DIR, "inference.onnx")
+DICT_PATH = os.path.join(OCR_ASSET_DIR, "PP-OCRv6_small_rec.txt")
+
+SEG_MODEL_PATH = os.path.join(PROJECT_ROOT, "app", "src", "main", "assets", "models", "segmentation", "manga109_bubble_int8.onnx")
+AOT_512_MODEL_PATH = os.path.join(PROJECT_ROOT, "app", "src", "main", "assets", "models", "inpainting", "aot-512.onnx")
+AOT_DYN_MODEL_PATH = os.path.join(PROJECT_ROOT, "app", "src", "main", "assets", "models", "inpainting", "aot.onnx")
 
 PORT = 8765
 
@@ -38,7 +45,6 @@ class MangaOcrEngine:
     def __init__(self, det_path, rec_path, dict_path):
         print(f"[*] Loading Detector: {det_path}")
         opts = ort.SessionOptions()
-        # Use ORT_ENABLE_BASIC to avoid SimplifiedLayerNormFusion issue with FP16
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
 
         self.det_session = ort.InferenceSession(det_path, opts, providers=["CPUExecutionProvider"])
@@ -82,7 +88,6 @@ class MangaOcrEngine:
         h, w = img_bgr.shape[:2]
         t0 = time.perf_counter()
 
-        # 1. Detection Preprocessing
         max_dim = max(h, w)
         min_dim = min(h, w)
         if min_dim > 0 and max_dim / min_dim > 2:
@@ -97,14 +102,12 @@ class MangaOcrEngine:
         det_inp = (det_inp - np.array([0.485, 0.456, 0.406], dtype=np.float32)) / np.array([0.229, 0.224, 0.225], dtype=np.float32)
         det_tensor = det_inp.transpose((2, 0, 1))[np.newaxis, ...].astype(np.float32)
 
-        # Detector Inference
         pred_map = self.det_session.run(None, {self.det_input_name: det_tensor})[0][0, 0]
         t_det = time.perf_counter()
 
-        # 2. DB Post-Processing
         mask = pred_map > thresh
         contours, _ = cv2.findContours((mask * 255).astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        
+
         boxes = []
         scores = []
         for cnt in contours:
@@ -127,12 +130,10 @@ class MangaOcrEngine:
             boxes.append(box_pts)
             scores.append(score)
 
-        # Reading order sorting: Manga top-to-bottom, right-to-left
         sorted_indices = sorted(range(len(boxes)), key=lambda i: (boxes[i][:, 1].min() // 40, -boxes[i][:, 0].mean()))
         boxes = [boxes[i] for i in sorted_indices]
         scores = [scores[i] for i in sorted_indices]
 
-        # 3. Recognition on Crops
         lines = []
         t_rec_start = time.perf_counter()
         for idx, (box, score) in enumerate(zip(boxes, scores)):
@@ -159,7 +160,6 @@ class MangaOcrEngine:
             logits = self.rec_session.run(None, {self.rec_input_name: rec_inp})[0][0]
             indices = np.argmax(logits, axis=-1)
 
-            # CTC greedy decode + confidence
             text_chars = []
             char_confs = []
             probs = np.max(logits, axis=-1)
@@ -172,7 +172,6 @@ class MangaOcrEngine:
             text = "".join(text_chars).strip()
             line_conf = float(np.mean(char_confs)) if char_confs else float(score)
 
-            # Encode small thumbnail of the crop for UI inspection
             _, thumb_buf = cv2.imencode(".png", rec_crop)
             crop_b64 = "data:image/png;base64," + base64.b64encode(thumb_buf).decode("ascii")
 
@@ -206,37 +205,302 @@ class MangaOcrEngine:
             "lines": lines
         }
 
-# Global OCR Engine
-OCR_ENGINE = None
+# ---------------------------------------------------------
+# Bubble Segmentation Engine (YOLO11-seg)
+# ---------------------------------------------------------
+class MangaSegmentationEngine:
+    def __init__(self, model_path):
+        print(f"[*] Loading Bubble Segmenter: {model_path}")
+        opts = ort.SessionOptions()
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        self.session = ort.InferenceSession(model_path, opts, providers=["CPUExecutionProvider"])
+        self.input_name = self.session.get_inputs()[0].name
+
+    def segment(self, img_bgr, conf_thresh=0.35, nms_thresh=0.5, erosion_radius=2):
+        h, w = img_bgr.shape[:2]
+        t0 = time.perf_counter()
+
+        scale = min(640.0 / w, 640.0 / h)
+        nw, nh = int(round(w * scale)), int(round(h * scale))
+        pad_x = (640 - nw) // 2
+        pad_y = (640 - nh) // 2
+
+        resized = cv2.resize(img_bgr, (nw, nh))
+        letterboxed = np.full((640, 640, 3), 114, dtype=np.uint8)
+        letterboxed[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+
+        inp = (letterboxed.astype(np.float32) / 255.0).transpose((2, 0, 1))[np.newaxis, ...]
+        out0, out1 = self.session.run(None, {self.input_name: inp})
+        preds = out0[0].T  # (8400, 37)
+        protos = out1[0]   # (32, 160, 160)
+
+        boxes = []
+        scores = []
+        coefs_list = []
+        for i in range(preds.shape[0]):
+            score = float(preds[i, 4])
+            if score >= conf_thresh:
+                cx, cy, bw, bh = preds[i, :4]
+                x1 = cx - bw / 2.0
+                y1 = cy - bh / 2.0
+                boxes.append([int(round(x1)), int(round(y1)), int(round(bw)), int(round(bh))])
+                scores.append(score)
+                coefs_list.append(preds[i, 5:37])
+
+        if len(boxes) == 0:
+            return {
+                "bubbles": [],
+                "page_raw_mask": np.zeros((h, w), dtype=np.uint8),
+                "page_eroded_mask": np.zeros((h, w), dtype=np.uint8),
+                "seg_ms": round((time.perf_counter() - t0) * 1000, 1)
+            }
+
+        indices = cv2.dnn.NMSBoxes(boxes, scores, conf_thresh, nms_thresh)
+        if len(indices) == 0:
+            return {
+                "bubbles": [],
+                "page_raw_mask": np.zeros((h, w), dtype=np.uint8),
+                "page_eroded_mask": np.zeros((h, w), dtype=np.uint8),
+                "seg_ms": round((time.perf_counter() - t0) * 1000, 1)
+            }
+
+        page_raw_mask = np.zeros((h, w), dtype=np.uint8)
+        bubbles = []
+
+        for idx_entry in indices:
+            idx = idx_entry if isinstance(idx_entry, (int, np.integer)) else idx_entry[0]
+            coefs = coefs_list[idx]
+            score = scores[idx]
+
+            mask_160 = (coefs @ protos.reshape(32, -1)).reshape(160, 160)
+            mask_sig = 1.0 / (1.0 + np.exp(-mask_160))
+            mask_640 = cv2.resize(mask_sig, (640, 640), interpolation=cv2.INTER_LINEAR)
+            mask_crop = mask_640[pad_y:pad_y + nh, pad_x:pad_x + nw]
+            mask_full = cv2.resize(mask_crop, (w, h), interpolation=cv2.INTER_LINEAR)
+            single_raw_mask = (mask_full > 0.5).astype(np.uint8) * 255
+
+            contours, _ = cv2.findContours(single_raw_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                continue
+            largest_cnt = max(contours, key=cv2.contourArea)
+            bx, by, bw, bh = cv2.boundingRect(largest_cnt)
+            if bw < 8 or bh < 8:
+                continue
+
+            page_raw_mask = cv2.bitwise_or(page_raw_mask, single_raw_mask)
+            bubbles.append({
+                "id": len(bubbles) + 1,
+                "rect": [bx, by, bx + bw, by + bh],
+                "score": round(score, 3),
+                "area": int(np.count_nonzero(single_raw_mask)),
+                "raw_mask": single_raw_mask
+            })
+
+        # Apply morphological border erosion to protect bubble ink strokes
+        if erosion_radius > 0:
+            ksize = erosion_radius * 2 + 1
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+            page_eroded_mask = cv2.erode(page_raw_mask, kernel)
+        else:
+            page_eroded_mask = page_raw_mask.copy()
+
+        t_end = time.perf_counter()
+        return {
+            "bubbles": bubbles,
+            "page_raw_mask": page_raw_mask,
+            "page_eroded_mask": page_eroded_mask,
+            "seg_ms": round((t_end - t0) * 1000, 1)
+        }
 
 # ---------------------------------------------------------
-# Web UI HTML Template
+# Inpainting Engine Suite
+# ---------------------------------------------------------
+class MangaInpaintEngine:
+    def __init__(self, aot_512_path, aot_dyn_path=None):
+        print(f"[*] Loading AOT GAN 512: {aot_512_path}")
+        opts = ort.SessionOptions()
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        self.aot_512_sess = ort.InferenceSession(aot_512_path, opts, providers=["CPUExecutionProvider"])
+        self.aot_dyn_sess = None
+        if aot_dyn_path and os.path.exists(aot_dyn_path):
+            print(f"[*] Loading Dynamic AOT GAN: {aot_dyn_path}")
+            self.aot_dyn_sess = ort.InferenceSession(aot_dyn_path, opts, providers=["CPUExecutionProvider"])
+
+    @staticmethod
+    def inpaint_opencv(img_bgr, mask_u8, method="telea", radius=3):
+        cv_method = cv2.INPAINT_TELEA if method.lower() == "telea" else cv2.INPAINT_NS
+        return cv2.inpaint(img_bgr, mask_u8, radius, cv_method)
+
+    @staticmethod
+    def inpaint_legacy_median(img_bgr, mask_u8, feather_px=4):
+        out = img_bgr.copy()
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_u8)
+        for lbl in range(1, num_labels):
+            comp = (labels == lbl).astype(np.uint8) * 255
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+            dilated = cv2.dilate(comp, kernel)
+            ring = cv2.bitwise_and(dilated, cv2.bitwise_not(mask_u8))
+            if np.count_nonzero(ring) > 0:
+                ring_pixels = img_bgr[ring > 0]
+                med_bgr = np.median(ring_pixels, axis=0).astype(np.uint8)
+            else:
+                med_bgr = np.array([255, 255, 255], dtype=np.uint8)
+            out[comp > 0] = med_bgr
+
+        if feather_px > 0:
+            dist = cv2.distanceTransform(mask_u8, cv2.DIST_L2, 3)
+            alpha = np.clip(dist / float(feather_px), 0.0, 1.0)[:, :, np.newaxis]
+            out = (out.astype(np.float32) * alpha + img_bgr.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
+        return out
+
+    def inpaint_aot_512_tile(self, img_bgr, mask_u8, tile_rect):
+        tx, ty, tw, th = tile_rect
+        crop_img = img_bgr[ty:ty + th, tx:tx + tw]
+        crop_mask = mask_u8[ty:ty + th, tx:tx + tw]
+
+        pad_h = max(0, 512 - th)
+        pad_w = max(0, 512 - tw)
+        top = pad_h // 2
+        bottom = pad_h - top
+        left = pad_w // 2
+        right = pad_w - left
+
+        padded_img = cv2.copyMakeBorder(crop_img, top, bottom, left, right, cv2.BORDER_REPLICATE)
+        padded_mask = cv2.copyMakeBorder(crop_mask, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
+
+        rgb = cv2.cvtColor(padded_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        img_t = rgb.transpose((2, 0, 1))[np.newaxis, ...]
+        mask_t = (padded_mask.astype(np.float32) / 255.0)[np.newaxis, np.newaxis, ...]
+
+        out = self.aot_512_sess.run(None, {"image": img_t, "mask": mask_t})[0][0]
+        out_rgb = np.clip(out * 255.0, 0, 255).astype(np.uint8).transpose((1, 2, 0))
+        out_bgr = cv2.cvtColor(out_rgb, cv2.COLOR_RGB2BGR)
+
+        return out_bgr[top:top + th, left:left + tw]
+
+    def inpaint_aot_region(self, img_bgr, mask_u8, rect, context_pad=32, tile_oversized=True):
+        h, w = img_bgr.shape[:2]
+        rx1, ry1, rx2, ry2 = rect
+        cx1 = max(0, rx1 - context_pad)
+        cy1 = max(0, ry1 - context_pad)
+        cx2 = min(w, rx2 + context_pad)
+        cy2 = min(h, ry2 + context_pad)
+        cw = cx2 - cx1
+        ch = cy2 - cy1
+
+        if cw <= 0 or ch <= 0:
+            return img_bgr, 0
+
+        crop_img = img_bgr[cy1:cy2, cx1:cx2].copy()
+        crop_mask = mask_u8[cy1:cy2, cx1:cx2].copy()
+
+        if np.count_nonzero(crop_mask) == 0:
+            return img_bgr, 0
+
+        tiles_run = 0
+        if not tile_oversized or (cw <= 512 and ch <= 512):
+            # Single AOT crop
+            inpainted_crop = self.inpaint_aot_512_tile(crop_img, crop_mask, (0, 0, cw, ch))
+            tiles_run += 1
+            mask_3c = (crop_mask > 0)[:, :, np.newaxis]
+            np.copyto(crop_img, inpainted_crop, where=mask_3c)
+        else:
+            # Oversized group tiling (Resolving Finding F2)
+            stride = 448
+            xs = [0] if cw <= 512 else list(range(0, cw - 512, stride)) + [cw - 512]
+            ys = [0] if ch <= 512 else list(range(0, ch - 512, stride)) + [ch - 512]
+            xs = sorted(list(set(xs)))
+            ys = sorted(list(set(ys)))
+
+            accum_img = np.zeros_like(crop_img, dtype=np.float32)
+            accum_weight = np.zeros((ch, cw, 1), dtype=np.float32)
+
+            for ty in ys:
+                for tx in xs:
+                    tw = min(512, cw - tx)
+                    th = min(512, ch - ty)
+                    tile_res = self.inpaint_aot_512_tile(crop_img, crop_mask, (tx, ty, tw, th))
+                    tiles_run += 1
+
+                    wx = np.sin(np.linspace(0.1, np.pi - 0.1, tw))
+                    wy = np.sin(np.linspace(0.1, np.pi - 0.1, th))
+                    w_tile = (wy[:, np.newaxis] * wx[np.newaxis, :])[:, :, np.newaxis]
+
+                    accum_img[ty:ty + th, tx:tx + tw] += tile_res.astype(np.float32) * w_tile
+                    accum_weight[ty:ty + th, tx:tx + tw] += w_tile
+
+            mask_nonzero = accum_weight > 1e-4
+            blended = np.zeros_like(crop_img)
+            blended[mask_nonzero[:, :, 0]] = np.clip(accum_img[mask_nonzero[:, :, 0]] / accum_weight[mask_nonzero[:, :, 0]], 0, 255).astype(np.uint8)
+
+            mask_3c = (crop_mask > 0)[:, :, np.newaxis]
+            np.copyto(crop_img, blended, where=mask_3c)
+
+        result = img_bgr.copy()
+        result[cy1:cy2, cx1:cx2] = crop_img
+        return result, tiles_run
+
+# Global Engine Instances
+OCR_ENGINE = None
+SEG_ENGINE = None
+INPAINT_ENGINE = None
+
+# ---------------------------------------------------------
+# Dynamic Pill Mask Construction
+# ---------------------------------------------------------
+def build_dynamic_pill_mask(rects, w, h, pad=6):
+    mask = np.zeros((h, w), dtype=np.uint8)
+    for r in rects:
+        x1 = max(0, r[0] - pad)
+        y1 = max(0, r[1] - pad)
+        x2 = min(w, r[2] + pad)
+        y2 = min(h, r[3] + pad)
+        rw = x2 - x1
+        rh = y2 - y1
+        if rw <= 0 or rh <= 0:
+            continue
+        radius = min(rw, rh) // 2
+        sub = np.zeros((rh, rw), dtype=np.uint8)
+        cv2.rectangle(sub, (radius, 0), (rw - radius, rh), 255, -1)
+        cv2.rectangle(sub, (0, radius), (rw, rh - radius), 255, -1)
+        cv2.circle(sub, (radius, radius), radius, 255, -1)
+        cv2.circle(sub, (rw - radius, radius), radius, 255, -1)
+        cv2.circle(sub, (radius, rh - radius), radius, 255, -1)
+        cv2.circle(sub, (rw - radius, rh - radius), radius, 255, -1)
+        mask[y1:y2, x1:x2] = cv2.bitwise_or(mask[y1:y2, x1:x2], sub)
+    return mask
+
+# ---------------------------------------------------------
+# Unified Web Studio HTML Template
 # ---------------------------------------------------------
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PP-OCRv6 Manga v0.2 Visual Diagnostic Workbench</title>
+<title>TachiyomiAT Vision Diagnostic & Inpainting Quality Studio</title>
 <style>
   :root {
-    --bg-base: #0B0E14;
-    --bg-surface: #151922;
-    --bg-card: #1D2330;
-    --border: #2D3748;
-    --text-primary: #F7FAFC;
-    --text-secondary: #A0AEC0;
+    --bg-base: #080C14;
+    --bg-surface: #0F172A;
+    --bg-card: #1E293B;
+    --border: #334155;
+    --text-primary: #F8FAFC;
+    --text-secondary: #94A3B8;
     --accent: #6366F1;
-    --accent-glow: rgba(99, 102, 241, 0.3);
+    --accent-hover: #4F46E5;
+    --accent-glow: rgba(99, 102, 241, 0.25);
     --green: #10B981;
     --amber: #F59E0B;
     --red: #EF4444;
+    --cyan: #06B6D4;
+    --purple: #A855F7;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background-color: var(--bg-base);
     color: var(--text-primary);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
     display: flex;
     flex-direction: column;
     height: 100vh;
@@ -245,588 +509,1168 @@ HTML_PAGE = """<!DOCTYPE html>
   header {
     background-color: var(--bg-surface);
     border-bottom: 1px solid var(--border);
-    padding: 12px 24px;
+    padding: 10px 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-shrink: 0;
   }
-  .title-group { display: flex; align-items: center; gap: 12px; }
-  .logo-badge {
-    background: linear-gradient(135deg, #6366F1, #8B5CF6);
-    color: #fff;
-    font-weight: 800;
-    font-size: 11px;
-    padding: 4px 8px;
-    border-radius: 6px;
-    letter-spacing: 0.5px;
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    width: 28px; height: 28px; background: linear-gradient(135deg, var(--accent), var(--cyan));
+    border-radius: 6px; display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 14px; color: #fff;
   }
-  h1 { font-size: 16px; font-weight: 700; letter-spacing: -0.2px; }
-  .stats-bar { display: flex; gap: 18px; font-size: 13px; font-family: monospace; }
-  .stat-chip {
-    background: var(--bg-card);
-    padding: 4px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    display: flex;
-    gap: 6px;
-  }
-  .stat-label { color: var(--text-secondary); }
-  .stat-val { color: var(--green); font-weight: 700; }
+  .title-group h1 { font-size: 15px; font-weight: 700; letter-spacing: 0.5px; }
+  .title-group p { font-size: 11px; color: var(--text-secondary); }
 
-  /* Toolbar */
-  .toolbar {
-    background-color: var(--bg-surface);
-    border-bottom: 1px solid var(--border);
-    padding: 8px 24px;
+  /* Navigation Tabs */
+  .nav-tabs {
     display: flex;
-    align-items: center;
-    gap: 20px;
-    flex-shrink: 0;
+    gap: 4px;
+    background: var(--bg-base);
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
   }
-  .btn-primary {
+  .nav-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .nav-tab.active {
     background: var(--accent);
     color: #fff;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    transition: 0.15s;
+    box-shadow: 0 0 12px var(--accent-glow);
   }
-  .btn-primary:hover { background: #4F46E5; }
-  .control-group {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-secondary);
+
+  .header-actions { display: flex; align-items: center; gap: 10px; }
+  .btn-upload {
+    background-color: var(--accent); color: white; border: none; padding: 7px 14px;
+    border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
   }
-  .control-group input[type="range"] {
-    width: 90px;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-  .control-group span.val {
-    font-family: monospace;
-    font-weight: 600;
-    color: var(--text-primary);
-    width: 32px;
-  }
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    font-size: 12px;
-    user-select: none;
-  }
+  .btn-upload:hover { background-color: var(--accent-hover); }
 
   /* Main Workspace */
-  .workspace {
-    flex: 1;
+  main {
     display: flex;
+    flex: 1;
     overflow: hidden;
   }
-  .viewport-pane {
-    flex: 1;
-    background: #06080C;
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: grab;
-  }
-  .viewport-pane:active { cursor: grabbing; }
-
-  .empty-state {
-    position: absolute;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    color: var(--text-secondary);
-    border: 2px dashed var(--border);
-    padding: 48px;
-    border-radius: 12px;
-    background: rgba(21, 25, 34, 0.4);
-    cursor: pointer;
-    transition: 0.2s;
-  }
-  .empty-state:hover {
-    border-color: var(--accent);
-    color: var(--text-primary);
-  }
-
-  #canvas-container {
-    position: absolute;
-    transform-origin: 0 0;
-    transition: transform 0.05s ease-out;
-  }
-  #main-image { display: block; max-width: none; pointer-events: none; }
-  #overlay-canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
+  .tab-content {
+    display: none;
     width: 100%;
     height: 100%;
-    pointer-events: auto;
+  }
+  .tab-content.active {
+    display: flex;
   }
 
-  /* Inspector Sidebar */
-  .sidebar-pane {
-    width: 440px;
+  /* 3-Column Studio Layout */
+  .panel-left {
+    width: 320px;
+    background-color: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 16px;
+    gap: 14px;
+    flex-shrink: 0;
+  }
+  .panel-center {
+    flex: 1;
+    position: relative;
+    background-color: #05070B;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel-right {
+    width: 340px;
     background-color: var(--bg-surface);
     border-left: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
+    padding: 16px;
+    gap: 14px;
+    flex-shrink: 0;
   }
-  .sidebar-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .sidebar-header h2 { font-size: 14px; font-weight: 700; }
-  .btn-subtle {
+
+  /* Section Styling */
+  .section-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    color: var(--text-primary);
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 11px;
-    cursor: pointer;
-  }
-  .btn-subtle:hover { border-color: var(--accent); }
-
-  .lines-scroll-list {
-    flex: 1;
-    overflow-y: auto;
+    border-radius: 8px;
     padding: 12px;
     display: flex;
     flex-direction: column;
     gap: 10px;
   }
-  .line-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    transition: 0.15s;
-    cursor: pointer;
-  }
-  .line-card:hover, .line-card.active {
-    border-color: var(--accent);
-    box-shadow: 0 0 12px var(--accent-glow);
-  }
-  .card-top {
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-secondary);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 11px;
   }
-  .badge-id {
-    background: #374151;
-    color: #F3F4F6;
+
+  /* Step Action Buttons */
+  .action-deck {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .btn-step {
+    padding: 10px;
+    border-radius: 6px;
     font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-  .badge-orient {
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-weight: 600;
-  }
-  .badge-orient.vert { background: rgba(245, 158, 11, 0.15); color: #FBBF24; }
-  .badge-orient.horiz { background: rgba(99, 102, 241, 0.15); color: #A5B4FC; }
-
-  .card-body {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-  }
-  .crop-preview {
-    height: 40px;
-    max-width: 120px;
-    background: #000;
-    border: 1px solid #374151;
-    border-radius: 4px;
-    object-fit: contain;
-  }
-  .card-text {
-    flex: 1;
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    color: #FFFFFF;
-    word-break: break-all;
-    line-height: 1.4;
-  }
-  .copy-btn {
-    opacity: 0.6;
+    font-size: 12px;
     cursor: pointer;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    padding: 4px;
-    transition: 0.1s;
-  }
-  .copy-btn:hover { opacity: 1; color: var(--text-primary); }
-
-  /* Zoom controls */
-  .zoom-dock {
-    position: absolute;
-    bottom: 20px;
-    left: 20px;
-    background: rgba(21, 25, 34, 0.85);
-    backdrop-filter: blur(8px);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 4px;
     display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s;
+  }
+  .btn-step-1 {
+    background: #1E293B;
+    color: var(--cyan);
+    border-color: var(--cyan);
+  }
+  .btn-step-1:hover { background: rgba(6, 182, 212, 0.15); box-shadow: 0 0 10px rgba(6, 182, 212, 0.3); }
+
+  .btn-step-2 {
+    background: linear-gradient(135deg, var(--accent), #4F46E5);
+    color: #fff;
+    border: none;
+  }
+  .btn-step-2:hover { opacity: 0.95; box-shadow: 0 0 12px var(--accent-glow); }
+  .btn-step:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Segmented Mode Control */
+  .mode-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
     gap: 4px;
   }
-  .zoom-dock button {
-    background: transparent;
-    border: none;
-    color: var(--text-primary);
-    width: 28px;
-    height: 28px;
-    border-radius: 4px;
+  .mode-btn {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 7px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 6px;
     cursor: pointer;
+    text-align: center;
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .mode-desc {
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: rgba(15, 23, 42, 0.6);
+    padding: 6px 8px;
+    border-radius: 4px;
+    border-left: 2px solid var(--accent);
+  }
+
+  /* Slider Controls */
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .control-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .control-label span:last-child {
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+  }
+
+  /* Viewport Controls Bar */
+  .viewport-toolbar {
+    height: 42px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    z-index: 10;
+  }
+  .toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-tool {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .btn-tool.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* Canvas Stage */
+  .canvas-stage {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    cursor: grab;
+  }
+  .canvas-stage:active { cursor: grabbing; }
+  .canvas-container {
+    position: absolute;
+    transform-origin: 0 0;
+  }
+  canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+
+  /* Split Curtain Slider */
+  .curtain-divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #FFFFFF;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.9);
+    cursor: ew-resize;
+    z-index: 50;
+  }
+  .curtain-handle {
+    position: absolute;
+    top: 50%;
+    left: -15px;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    background: #FFFFFF;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #000;
+    font-weight: bold;
+    font-size: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.6);
+    user-select: none;
+  }
+
+  /* Telemetry Cards */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .metric-card {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .metric-num {
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .metric-label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+  }
+
+  /* Region List */
+  .region-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .region-item {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .region-item:hover { border-color: var(--accent); }
+  .region-item.selected { border-color: var(--accent); background: rgba(99, 102, 241, 0.1); }
+  .region-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
     font-weight: 700;
   }
-  .zoom-dock button:hover { background: var(--bg-card); }
+  .badge-bubble { background: rgba(16, 185, 129, 0.2); color: var(--green); }
+  .badge-free { background: rgba(99, 102, 241, 0.2); color: var(--accent); }
+  .badge-route { background: rgba(245, 158, 11, 0.2); color: var(--amber); }
+
+  /* Layer Switchers */
+  .layer-checkboxes {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .layer-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .layer-item input { accent-color: var(--accent); }
+
+  /* Status Bar */
+  footer {
+    height: 24px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="title-group">
-    <span class="logo-badge">VIBE ARCH</span>
-    <h1>PP-OCRv6 Manga v0.2 Diagnostic Workbench</h1>
+  <div class="brand">
+    <div class="logo">AT</div>
+    <div class="title-group">
+      <h1>Manga Vision Diagnostic &amp; Inpainting Quality Studio</h1>
+      <p>PP-OCRv6 Manga v0.2 FP16 · YOLO11-seg Manga109 · AOT GAN · OpenCV SIMD</p>
+    </div>
   </div>
-  <div class="stats-bar">
-    <div class="stat-chip"><span class="stat-label">Lines:</span><span id="stat-lines" class="stat-val">0</span></div>
-    <div class="stat-chip"><span class="stat-label">Det:</span><span id="stat-det" class="stat-val">0 ms</span></div>
-    <div class="stat-chip"><span class="stat-label">Rec:</span><span id="stat-rec" class="stat-val">0 ms</span></div>
-    <div class="stat-chip"><span class="stat-label">Total:</span><span id="stat-total" class="stat-val">0 ms</span></div>
+
+  <div class="nav-tabs">
+    <button class="nav-tab active" id="tabBtnInpaint" onclick="switchTab('inpaint')">01 · Inpainting Lab</button>
+    <button class="nav-tab" id="tabBtnOcr" onclick="switchTab('ocr')">02 · OCR Diagnostic</button>
+  </div>
+
+  <div class="header-actions">
+    <input type="file" id="fileInput" accept="image/*" style="display:none;" onchange="onFileSelected(event)">
+    <button class="btn-upload" onclick="document.getElementById('fileInput').click()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Load Page Image
+    </button>
   </div>
 </header>
 
-<div class="toolbar">
-  <input type="file" id="file-input" accept="image/*" style="display:none">
-  <button class="btn-primary" onclick="document.getElementById('file-input').click()">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-    Select Image
-  </button>
+<main>
+  <!-- TAB 1: INPAINTING QUALITY LAB -->
+  <div class="tab-content active" id="tabInpaint">
+    <!-- LEFT PANEL: PIPELINE CONTROLS -->
+    <div class="panel-left">
 
-  <div class="control-group">
-    <label>Binarize Thresh:</label>
-    <input type="range" id="param-thresh" min="0.05" max="0.50" step="0.01" value="0.15" oninput="updateParamLabel('thresh')">
-    <span class="val" id="val-thresh">0.15</span>
-  </div>
+      <!-- Step Actions -->
+      <div class="section-card">
+        <div class="section-title">Workflow Actions</div>
+        <div class="action-deck">
+          <button class="btn-step btn-step-1" id="btnDetect" onclick="runDetectionStep()">
+            <span>1 · Detect &amp; Segment Page</span>
+          </button>
+          <button class="btn-step btn-step-2" id="btnInpaint" onclick="runInpaintStep()">
+            <span>2 · Inpaint Detected Regions</span>
+          </button>
+          <button class="btn-tool" style="padding:7px; font-weight:700;" onclick="runAllPipeline()">
+            ⚡ Auto: Run Full Pipeline
+          </button>
+        </div>
+      </div>
 
-  <div class="control-group">
-    <label>Box Thresh:</label>
-    <input type="range" id="param-box" min="0.10" max="0.60" step="0.01" value="0.25" oninput="updateParamLabel('box')">
-    <span class="val" id="val-box">0.25</span>
-  </div>
+      <div class="section-card">
+        <div class="section-title">Quality Routing Preset</div>
+        <div class="mode-grid">
+          <button class="mode-btn" onclick="setQualityMode('fast', this)">Fast</button>
+          <button class="mode-btn active" onclick="setQualityMode('balance', this)">Balance</button>
+          <button class="mode-btn" onclick="setQualityMode('full', this)">Full</button>
+          <button class="mode-btn" onclick="setQualityMode('legacy', this)">Legacy</button>
+          <button class="mode-btn" onclick="setQualityMode('manual', this)">Manual</button>
+        </div>
+        <div class="mode-desc" id="modeDesc">
+          Balance: OpenCV on speech bubbles, AOT GAN on free text.
+        </div>
+      </div>
 
-  <div class="control-group">
-    <label>Unclip Ratio:</label>
-    <input type="range" id="param-unclip" min="1.0" max="2.5" step="0.05" value="1.4" oninput="updateParamLabel('unclip')">
-    <span class="val" id="val-unclip">1.4</span>
-  </div>
+      <div class="section-card">
+        <div class="section-title">OpenCV Classical Engine</div>
+        <div class="control-group">
+          <div class="control-label">Method</div>
+          <div style="display:flex; gap:8px;">
+            <label style="font-size:11px; display:flex; align-items:center; gap:4px;">
+              <input type="radio" name="cvMethod" value="telea" checked onchange="updateCvMethod('telea')"> Telea (FMM)
+            </label>
+            <label style="font-size:11px; display:flex; align-items:center; gap:4px;">
+              <input type="radio" name="cvMethod" value="ns" onchange="updateCvMethod('ns')"> Navier-Stokes
+            </label>
+          </div>
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Neighborhood Radius</span><span id="lblRadius">3 px</span></div>
+          <input type="range" id="sliderRadius" min="1" max="15" value="3" oninput="document.getElementById('lblRadius').innerText = this.value + ' px'">
+        </div>
+      </div>
 
-  <button class="btn-subtle" onclick="rerunOcr()">Re-run OCR</button>
+      <div class="section-card">
+        <div class="section-title">
+          <span>Stroke Border Protection</span>
+          <span style="color:var(--green);" id="lblErosion">2 px</span>
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Mask Erosion Radius</span><span id="lblErosionVal">2 px</span></div>
+          <input type="range" id="sliderErosion" min="0" max="15" value="2" oninput="document.getElementById('lblErosion').innerText = this.value + ' px'; document.getElementById('lblErosionVal').innerText = this.value + ' px';">
+        </div>
+        <div style="font-size:10px; color:var(--text-secondary);">
+          Protects hand-drawn bubble strokes from being erased. Higher values preserve border ink; lower values clean closer to edge.
+        </div>
+      </div>
 
-  <div style="flex:1"></div>
+      <div class="section-card">
+        <div class="section-title">AOT GAN &amp; Tiling (F2 Fix)</div>
+        <div class="control-group">
+          <div class="control-label"><span>Context Crop Padding</span><span id="lblPad">32 px</span></div>
+          <input type="range" id="sliderPad" min="16" max="64" value="32" oninput="document.getElementById('lblPad').innerText = this.value + ' px'">
+        </div>
+        <label style="font-size:11px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="chkTile" checked> Tile Oversized Boxes (&gt;512px)
+        </label>
+      </div>
 
-  <label class="toggle-label">
-    <input type="checkbox" id="chk-boxes" checked onchange="renderOverlay()">
-    <span>Boxes</span>
-  </label>
-  <label class="toggle-label">
-    <input type="checkbox" id="chk-badges" checked onchange="renderOverlay()">
-    <span>Badges</span>
-  </label>
-</div>
-
-<div class="workspace">
-  <div class="viewport-pane" id="viewport">
-    <div class="empty-state" id="empty-state" onclick="document.getElementById('file-input').click()">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-      <div style="font-weight:600">Drop an image here or click to select</div>
-      <div style="font-size:12px;opacity:0.7">Supports Manga, Manhua, Webtoon strips, Raw speech bubbles</div>
+      <div class="section-card">
+        <div class="section-title">Manual Mask Brush</div>
+        <div class="control-group">
+          <div class="control-label"><span>Brush Size</span><span id="lblBrushSize">24 px</span></div>
+          <input type="range" id="sliderBrushSize" min="6" max="80" value="24" oninput="document.getElementById('lblBrushSize').innerText = this.value + ' px'">
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-tool" id="btnBrushToggle" onclick="toggleBrushMode()" style="flex:1;">Enable Brush</button>
+          <button class="btn-tool" onclick="clearBrushMask()" style="flex:1;">Clear Mask</button>
+        </div>
+      </div>
     </div>
 
-    <div id="canvas-container">
-      <img id="main-image">
-      <canvas id="overlay-canvas"></canvas>
+    <!-- CENTER PANEL: INTERACTIVE CANVAS VIEWPORT -->
+    <div class="panel-center">
+      <div class="viewport-toolbar">
+        <div class="toolbar-group">
+          <span style="font-size:11px; color:var(--text-secondary);">View:</span>
+          <button class="btn-tool active" id="btnModeClean" onclick="setViewMode('clean')">Clean View</button>
+          <button class="btn-tool" id="btnModeOriginal" onclick="setViewMode('original')">Original</button>
+          <button class="btn-tool" id="btnModeCurtain" onclick="setViewMode('curtain')">Curtain Split</button>
+          <button class="btn-tool" id="btnModeDiff" onclick="setViewMode('diff')">Diff Heatmap</button>
+          <span style="font-size:10px; color:var(--text-secondary); margin-left:8px;">[Space = Peek Orig]</span>
+        </div>
+
+        <div class="toolbar-group">
+          <button class="btn-tool" onclick="zoomCanvas(0.8)">-</button>
+          <span style="font-size:11px; font-weight:700;" id="lblZoom">100%</span>
+          <button class="btn-tool" onclick="zoomCanvas(1.25)">+</button>
+          <button class="btn-tool" onclick="resetZoom()">Fit</button>
+        </div>
+      </div>
+
+      <div class="canvas-stage" id="stageContainer" onmousedown="onStageMouseDown(event)" onmousemove="onStageMouseMove(event)" onmouseup="onStageMouseUp(event)" onwheel="onStageWheel(event)">
+        <div class="canvas-container" id="canvasContainer">
+          <canvas id="canvasBase"></canvas>
+          <canvas id="canvasClean"></canvas>
+          <canvas id="canvasOverlay"></canvas>
+          <canvas id="canvasBrush"></canvas>
+        </div>
+        <div class="curtain-divider" id="curtainDivider" style="display:none;" onmousedown="onCurtainMouseDown(event)">
+          <div class="curtain-handle">&#x2194;</div>
+        </div>
+      </div>
     </div>
 
-    <div class="zoom-dock">
-      <button onclick="zoomBy(1.2)" title="Zoom In">+</button>
-      <button onclick="zoomBy(0.8)" title="Zoom Out">-</button>
-      <button onclick="resetZoom()" title="Reset Zoom">Fit</button>
-    </div>
-  </div>
+    <!-- RIGHT PANEL: TELEMETRY & REGION INSPECTION -->
+    <div class="panel-right">
+      <div class="section-card">
+        <div class="section-title">Speed &amp; Latency Telemetry</div>
+        <div class="metric-grid">
+          <div class="metric-card">
+            <span class="metric-num" style="color:var(--accent);" id="valTotalMs">0.0</span>
+            <span class="metric-label">Total Time (ms)</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-num" style="color:var(--green);" id="valMpix">0.0</span>
+            <span class="metric-label">Throughput (MP/s)</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-num" id="valSegMs">0.0</span>
+            <span class="metric-label">Segmentation (ms)</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-num" id="valAotMs">0.0</span>
+            <span class="metric-label">AOT Neural (ms)</span>
+          </div>
+        </div>
+        <div style="font-size:10px; color:var(--text-secondary); display:flex; justify-content:space-between; margin-top:4px;">
+          <span>Det: <b id="subDetMs">0</b>ms</span>
+          <span>CV: <b id="subCvMs">0</b>ms</span>
+          <span>Tiles: <b id="subTiles">0</b></span>
+          <span>Coverage: <b id="subCov">0%</b></span>
+        </div>
+      </div>
 
-  <div class="sidebar-pane">
-    <div class="sidebar-header">
-      <h2>Extracted Text Lines (<span id="line-count">0</span>)</h2>
-      <button class="btn-subtle" onclick="copyAllText()">Copy All Text</button>
-    </div>
-    <div class="lines-scroll-list" id="lines-list">
-      <div style="color:var(--text-secondary);font-size:13px;text-align:center;margin-top:40px;">
-        No image loaded yet. Pick an image to run PP-OCRv6 manga recognition.
+      <div class="section-card">
+        <div class="section-title">Visual Layer Stack</div>
+        <div class="layer-checkboxes">
+          <label class="layer-item"><input type="checkbox" id="chkLyrOriginal" checked onchange="renderLayers()"> Original Manga Artwork</label>
+          <label class="layer-item"><input type="checkbox" id="chkLyrCleaned" checked onchange="renderLayers()"> Cleaned Inpainted Artwork</label>
+          <label class="layer-item"><input type="checkbox" id="chkLyrBoxes" checked onchange="renderLayers()"> Bounding Boxes &amp; Labels</label>
+          <label class="layer-item"><input type="checkbox" id="chkLyrSeg" onchange="renderLayers()"> Bubble Segmentation Mask</label>
+          <label class="layer-item"><input type="checkbox" id="chkLyrPill" onchange="renderLayers()"> Dynamic Pill Mask</label>
+          <label class="layer-item"><input type="checkbox" id="chkLyrRoute" onchange="renderLayers()"> Pipeline Routing Map</label>
+          <label class="layer-item"><input type="checkbox" id="chkLyrHeatmap" onchange="renderLayers()"> Difference Heatmap</label>
+        </div>
+      </div>
+
+      <div class="section-card" style="flex:1;">
+        <div class="section-title">
+          <span>Admitted Regions</span>
+          <span style="color:var(--accent);" id="lblRegionCount">0 Regions</span>
+        </div>
+        <div class="region-list" id="regionListContainer">
+          <div style="font-size:11px; color:var(--text-secondary); text-align:center; padding:16px;">
+            Load an image and click <b>1 · Detect &amp; Segment</b> to inspect admitted regions.
+          </div>
+        </div>
       </div>
     </div>
   </div>
-</div>
+
+  <!-- TAB 2: OCR DIAGNOSTIC WORKBENCH (PP-OCRv6) -->
+  <div class="tab-content" id="tabOcr">
+    <div class="panel-left">
+      <div class="section-card">
+        <div class="section-title">PP-OCRv6 Manga Parameters</div>
+        <div class="control-group">
+          <div class="control-label"><span>Detection Thresh</span><span id="lblOcrThresh">0.15</span></div>
+          <input type="range" id="sliderOcrThresh" min="0.05" max="0.5" step="0.01" value="0.15" oninput="document.getElementById('lblOcrThresh').innerText = this.value">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Box Score Thresh</span><span id="lblOcrBox">0.25</span></div>
+          <input type="range" id="sliderOcrBox" min="0.1" max="0.6" step="0.01" value="0.25" oninput="document.getElementById('lblOcrBox').innerText = this.value">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Unclip Ratio</span><span id="lblOcrUnclip">1.4</span></div>
+          <input type="range" id="sliderOcrUnclip" min="1.0" max="2.2" step="0.05" value="1.4" oninput="document.getElementById('lblOcrUnclip').innerText = this.value">
+        </div>
+      </div>
+      <button class="btn-step btn-step-1" onclick="runOcrOnly()">Run PP-OCRv6 Recognition</button>
+    </div>
+
+    <div class="panel-center" style="display:flex; flex-direction:row;">
+      <div class="canvas-stage" id="ocrCanvasStage" style="flex:1;">
+        <div class="canvas-container" id="ocrCanvasContainer">
+          <canvas id="ocrCanvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-right">
+      <div class="section-card">
+        <div class="section-title">Recognized Text Lines</div>
+        <div class="region-list" id="ocrTextList">
+          <div style="font-size:11px; color:var(--text-secondary); text-align:center; padding:16px;">
+            No OCR text recognized yet.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span id="statusMessage">Ready. Load an image to begin.</span>
+  <span id="engineStatus">Detector: Active · Recognizer: Active · Segmenter: Active · AOT: Active</span>
+</footer>
 
 <script>
-  let currentFile = null;
-  let ocrData = null;
-  let scale = 1.0;
-  let panX = 0, panY = 0;
-  let isPanning = false;
-  let startX = 0, startY = 0;
-  let activeIndex = -1;
+// State Management
+let currentImageUri = null;
+let imgWidth = 0;
+let imgHeight = 0;
+let baseImageObj = null;
+let cleanImageObj = null;
+let heatmapImageObj = null;
 
-  const viewport = document.getElementById('viewport');
-  const canvasContainer = document.getElementById('canvas-container');
-  const mainImage = document.getElementById('main-image');
-  const overlayCanvas = document.getElementById('overlay-canvas');
-  const emptyState = document.getElementById('empty-state');
-  const linesList = document.getElementById('lines-list');
+let detectedRegions = null;
+let inpaintResults = null;
+let ocrResults = null;
 
-  function updateParamLabel(key) {
-    document.getElementById('val-' + key).textContent = document.getElementById('param-' + key).value;
-  }
+let zoomLevel = 1.0;
+let panX = 0;
+let panY = 0;
+let isPanning = false;
+let startPanX = 0;
+let startPanY = 0;
 
-  // File picker handler
-  document.getElementById('file-input').addEventListener('change', e => {
-    if (e.target.files.length > 0) {
-      loadFile(e.target.files[0]);
+let curtainPos = 0.5; // 0..1
+let isDraggingCurtain = false;
+let currentViewMode = "clean"; // clean, original, curtain, diff
+
+let currentQualityMode = "balance";
+let currentCvMethod = "telea";
+let brushActive = false;
+let brushMaskCanvas = null;
+let selectedRegionId = null;
+
+const modeDescriptions = {
+  fast: "Fast: OpenCV Telea / Navier-Stokes on all regions (instant turnaround).",
+  balance: "Balance: OpenCV on speech bubbles, AOT GAN on free text (recommended).",
+  full: "Full Quality: Neural AOT GAN on speech bubbles and free text.",
+  legacy: "Legacy: Kotlin median fill on bubbles, AOT GAN on free text.",
+  manual: "Manual: Per-box customized backend overrides."
+};
+
+function switchTab(tab) {
+  document.getElementById("tabBtnInpaint").classList.toggle("active", tab === "inpaint");
+  document.getElementById("tabBtnOcr").classList.toggle("active", tab === "ocr");
+  document.getElementById("tabInpaint").classList.toggle("active", tab === "inpaint");
+  document.getElementById("tabOcr").classList.toggle("active", tab === "ocr");
+}
+
+function setQualityMode(mode, btn) {
+  currentQualityMode = mode;
+  document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById("modeDesc").innerText = modeDescriptions[mode];
+}
+
+function updateCvMethod(method) {
+  currentCvMethod = method;
+}
+
+function onFileSelected(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    currentImageUri = evt.target.result;
+    loadImage(currentImageUri);
+  };
+  reader.readAsDataURL(file);
+}
+
+function loadImage(uri) {
+  baseImageObj = new Image();
+  baseImageObj.onload = function() {
+    imgWidth = baseImageObj.width;
+    imgHeight = baseImageObj.height;
+
+    setupCanvases(imgWidth, imgHeight);
+    resetZoom();
+
+    document.getElementById("statusMessage").innerText = `Loaded image: ${imgWidth}x${imgHeight}px. Click '1 · Detect & Segment' or 'Auto: Run Full Pipeline'.`;
+    // Auto run full pipeline
+    runAllPipeline();
+  };
+  baseImageObj.src = uri;
+}
+
+function setupCanvases(w, h) {
+  ["canvasBase", "canvasClean", "canvasOverlay", "canvasBrush", "ocrCanvas"].forEach(id => {
+    const c = document.getElementById(id);
+    if (c) {
+      c.width = w;
+      c.height = h;
     }
   });
 
-  // Drag & drop
-  viewport.addEventListener('dragover', e => { e.preventDefault(); viewport.style.borderColor = '#6366F1'; });
-  viewport.addEventListener('dragleave', e => { e.preventDefault(); viewport.style.borderColor = 'transparent'; });
-  viewport.addEventListener('drop', e => {
+  const ctxBase = document.getElementById("canvasBase").getContext("2d");
+  ctxBase.drawImage(baseImageObj, 0, 0);
+
+  const ocrCtx = document.getElementById("ocrCanvas").getContext("2d");
+  ocrCtx.drawImage(baseImageObj, 0, 0);
+
+  brushMaskCanvas = document.createElement("canvas");
+  brushMaskCanvas.width = w;
+  brushMaskCanvas.height = h;
+}
+
+function resetZoom() {
+  const stage = document.getElementById("stageContainer");
+  const scaleX = (stage.clientWidth - 40) / imgWidth;
+  const scaleY = (stage.clientHeight - 40) / imgHeight;
+  zoomLevel = Math.min(1.0, Math.min(scaleX, scaleY));
+  panX = (stage.clientWidth - imgWidth * zoomLevel) / 2;
+  panY = (stage.clientHeight - imgHeight * zoomLevel) / 2;
+  applyTransform();
+}
+
+function zoomCanvas(factor) {
+  zoomLevel = Math.max(0.1, Math.min(10.0, zoomLevel * factor));
+  applyTransform();
+}
+
+function applyTransform() {
+  const cont = document.getElementById("canvasContainer");
+  cont.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+  document.getElementById("lblZoom").innerText = Math.round(zoomLevel * 100) + "%";
+  updateCurtainPosition();
+}
+
+function setViewMode(mode) {
+  currentViewMode = mode;
+  document.querySelectorAll("#btnModeClean, #btnModeOriginal, #btnModeCurtain, #btnModeDiff").forEach(b => b.classList.remove("active"));
+  if (mode === "clean") document.getElementById("btnModeClean").classList.add("active");
+  if (mode === "original") document.getElementById("btnModeOriginal").classList.add("active");
+  if (mode === "curtain") document.getElementById("btnModeCurtain").classList.add("active");
+  if (mode === "diff") document.getElementById("btnModeDiff").classList.add("active");
+
+  const curtain = document.getElementById("curtainDivider");
+  curtain.style.display = (mode === "curtain") ? "block" : "none";
+  updateCurtainPosition();
+  renderLayers();
+}
+
+function updateCurtainPosition() {
+  if (currentViewMode !== "curtain") return;
+  const stage = document.getElementById("stageContainer");
+  const divider = document.getElementById("curtainDivider");
+  const dividerX = stage.clientWidth * curtainPos;
+  divider.style.left = dividerX + "px";
+  renderLayers();
+}
+
+function onCurtainMouseDown(e) {
+  isDraggingCurtain = true;
+  e.stopPropagation();
+}
+
+function onStageMouseDown(e) {
+  if (brushActive) {
+    drawBrushStroke(e);
+    return;
+  }
+  isPanning = true;
+  startPanX = e.clientX - panX;
+  startPanY = e.clientY - panY;
+}
+
+function onStageMouseMove(e) {
+  if (isDraggingCurtain) {
+    const stage = document.getElementById("stageContainer");
+    const rect = stage.getBoundingClientRect();
+    curtainPos = Math.max(0.01, Math.min(0.99, (e.clientX - rect.left) / stage.clientWidth));
+    updateCurtainPosition();
+    return;
+  }
+  if (isPanning) {
+    panX = e.clientX - startPanX;
+    panY = e.clientY - startPanY;
+    applyTransform();
+    return;
+  }
+  if (brushActive && (e.buttons === 1)) {
+    drawBrushStroke(e);
+  }
+}
+
+function onStageMouseUp(e) {
+  isDraggingCurtain = false;
+  isPanning = false;
+}
+
+function onStageWheel(e) {
+  e.preventDefault();
+  const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+  zoomCanvas(zoomFactor);
+}
+
+// Spacebar to peek original
+window.addEventListener("keydown", function(e) {
+  if (e.code === "Space" && e.target === document.body) {
     e.preventDefault();
-    if (e.dataTransfer.files.length > 0) {
-      loadFile(e.dataTransfer.files[0]);
-    }
-  });
-
-  function loadFile(file) {
-    currentFile = file;
-    const reader = new FileReader();
-    reader.onload = e => {
-      mainImage.src = e.target.result;
-      mainImage.onload = () => {
-        emptyState.style.display = 'none';
-        resetZoom();
-        runOcr(e.target.result);
-      };
-    };
-    reader.readAsDataURL(file);
+    document.getElementById("canvasClean").style.display = "none";
   }
-
-  function rerunOcr() {
-    if (mainImage.src) {
-      runOcr(mainImage.src);
-    }
+});
+window.addEventListener("keyup", function(e) {
+  if (e.code === "Space") {
+    document.getElementById("canvasClean").style.display = "block";
   }
+});
 
-  async function runOcr(dataUrl) {
-    document.getElementById('lines-list').innerHTML = `
-      <div style="color:var(--text-secondary);font-size:13px;text-align:center;margin-top:40px;">
-        Running PP-OCRv6 Manga v0.2 inference...
-      </div>`;
+function toggleBrushMode() {
+  brushActive = !brushActive;
+  const btn = document.getElementById("btnBrushToggle");
+  btn.classList.toggle("active", brushActive);
+  btn.innerText = brushActive ? "Brush Active" : "Enable Brush";
+}
 
-    const payload = {
-      image: dataUrl,
-      thresh: parseFloat(document.getElementById('param-thresh').value),
-      box_thresh: parseFloat(document.getElementById('param-box').value),
-      unclip_ratio: parseFloat(document.getElementById('param-unclip').value),
-    };
-
-    try {
-      const res = await fetch('/api/ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      ocrData = data;
-
-      document.getElementById('stat-lines').textContent = data.lines.length;
-      document.getElementById('stat-det').textContent = data.timing.det_ms + ' ms';
-      document.getElementById('stat-rec').textContent = data.timing.rec_ms + ' ms';
-      document.getElementById('stat-total').textContent = data.timing.total_ms + ' ms';
-      document.getElementById('line-count').textContent = data.lines.length;
-
-      renderOverlay();
-      renderSidebar();
-    } catch (err) {
-      alert('OCR Failed: ' + err);
-    }
+function clearBrushMask() {
+  if (brushMaskCanvas) {
+    const ctx = brushMaskCanvas.getContext("2d");
+    ctx.clearRect(0, 0, imgWidth, imgHeight);
+    const brushCtx = document.getElementById("canvasBrush").getContext("2d");
+    brushCtx.clearRect(0, 0, imgWidth, imgHeight);
   }
+}
 
-  function renderOverlay() {
-    if (!ocrData || !mainImage.naturalWidth) return;
-    overlayCanvas.width = mainImage.naturalWidth;
-    overlayCanvas.height = mainImage.naturalHeight;
-    const ctx = overlayCanvas.getContext('2d');
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+function drawBrushStroke(e) {
+  if (!brushMaskCanvas) return;
+  const rect = document.getElementById("canvasBase").getBoundingClientRect();
+  const x = (e.clientX - rect.left) / zoomLevel;
+  const y = (e.clientY - rect.top) / zoomLevel;
+  const radius = parseInt(document.getElementById("sliderBrushSize").value);
 
-    const showBoxes = document.getElementById('chk-boxes').checked;
-    const showBadges = document.getElementById('chk-badges').checked;
+  const ctx = brushMaskCanvas.getContext("2d");
+  ctx.fillStyle = "#FF0000";
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
 
-    ocrData.lines.forEach((line, idx) => {
-      const isSelected = (idx === activeIndex);
-      const pts = line.box;
+  const visCtx = document.getElementById("canvasBrush").getContext("2d");
+  visCtx.fillStyle = "rgba(239, 68, 68, 0.4)";
+  visCtx.beginPath();
+  visCtx.arc(x, y, radius, 0, Math.PI * 2);
+  visCtx.fill();
+}
 
-      if (showBoxes) {
-        ctx.beginPath();
-        ctx.moveTo(pts[0][0], pts[0][1]);
-        for (let i = 1; i < pts.length; i++) {
-          ctx.lineTo(pts[i][0], pts[i][1]);
-        }
-        ctx.closePath();
+// ---------------------------------------------------------
+// Pipeline Step 1: Detect & Segment
+// ---------------------------------------------------------
+async function runDetectionStep() {
+  if (!currentImageUri) {
+    alert("Please load a manga page image first.");
+    return;
+  }
+  const btn = document.getElementById("btnDetect");
+  btn.disabled = true;
+  document.getElementById("statusMessage").innerText = "Step 1: Running OCR detection & YOLO11 bubble segmentation...";
 
-        ctx.lineWidth = isSelected ? 4 : 2;
-        ctx.strokeStyle = isSelected ? '#10B981' : (line.vertical ? '#F59E0B' : '#6366F1');
-        ctx.fillStyle = isSelected ? 'rgba(16, 185, 129, 0.25)' : (line.vertical ? 'rgba(245, 158, 11, 0.12)' : 'rgba(99, 102, 241, 0.12)');
-        ctx.fill();
-        ctx.stroke();
-      }
+  const payload = {
+    image: currentImageUri,
+    mode: currentQualityMode,
+    erosion_radius: parseInt(document.getElementById("sliderErosion").value)
+  };
 
-      if (showBadges) {
-        const topX = Math.min(...pts.map(p => p[0]));
-        const topY = Math.min(...pts.map(p => p[1]));
-        ctx.fillStyle = isSelected ? '#10B981' : '#1F2937';
-        ctx.fillRect(topX - 2, Math.max(0, topY - 18), 24, 18);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.fillText('#' + line.id, topX + 2, Math.max(12, topY - 5));
-      }
+  try {
+    const resp = await fetch("/api/detect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
     });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    detectedRegions = data.regions;
+    populateRegions(detectedRegions);
+
+    document.getElementById("valSegMs").innerText = data.timing.seg_ms;
+    document.getElementById("subDetMs").innerText = data.timing.det_ms;
+
+    // Draw detected boxes & bubble outlines on canvas
+    drawBoxesOnOverlay(detectedRegions);
+
+    document.getElementById("statusMessage").innerText = `Step 1 Complete: ${detectedRegions.length} regions identified (${data.stats.bubble_count} bubbles, ${data.stats.text_count} text lines). Ready to inpaint.`;
+    btn.disabled = false;
+  } catch (err) {
+    alert("Detection error: " + err.message);
+    btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------
+// Pipeline Step 2: Inpaint Detected Regions
+// ---------------------------------------------------------
+async function runInpaintStep() {
+  if (!currentImageUri) {
+    alert("Please load an image first.");
+    return;
   }
 
-  function renderSidebar() {
-    if (!ocrData) return;
-    linesList.innerHTML = '';
+  const btn = document.getElementById("btnInpaint");
+  btn.disabled = true;
+  document.getElementById("statusMessage").innerText = "Step 2: Inpainting detected regions...";
 
-    if (ocrData.lines.length === 0) {
-      linesList.innerHTML = '<div style="color:var(--text-secondary);text-align:center;margin-top:40px;">No text detected with current thresholds. Try reducing Binarize Thresh.</div>';
-      return;
-    }
+  let brushMaskUri = null;
+  if (brushMaskCanvas) {
+    brushMaskUri = brushMaskCanvas.toDataURL("image/png");
+  }
 
-    ocrData.lines.forEach((line, idx) => {
-      const card = document.createElement('div');
-      card.className = 'line-card' + (idx === activeIndex ? ' active' : '');
-      card.id = 'card-' + idx;
-      card.onclick = () => {
-        activeIndex = idx;
-        renderOverlay();
-        document.querySelectorAll('.line-card').forEach(c => c.classList.remove('active'));
-        card.classList.add('active');
+  const payload = {
+    image: currentImageUri,
+    mode: currentQualityMode,
+    opencv_method: currentCvMethod,
+    opencv_radius: parseInt(document.getElementById("sliderRadius").value),
+    erosion_radius: parseInt(document.getElementById("sliderErosion").value),
+    context_pad: parseInt(document.getElementById("sliderPad").value),
+    tile_oversized: document.getElementById("chkTile").checked,
+    brush_mask: brushMaskUri
+  };
+
+  try {
+    const resp = await fetch("/api/inpaint", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    inpaintResults = data;
+    detectedRegions = data.regions;
+
+    cleanImageObj = new Image();
+    cleanImageObj.onload = function() {
+      heatmapImageObj = new Image();
+      heatmapImageObj.onload = function() {
+        updateTelemetry(data);
+        setViewMode("clean");
+        populateRegions(data.regions);
+        document.getElementById("statusMessage").innerText = `✓ Inpainting Complete: Cleaned ${data.regions.length} regions in ${data.timing.total_ms} ms.`;
+        btn.disabled = false;
       };
+      heatmapImageObj.src = data.heatmap_uri;
+    };
+    cleanImageObj.src = data.cleaned_uri;
 
-      card.innerHTML = `
-        <div class="card-top">
-          <span class="badge-id">#${line.id}</span>
-          <span class="badge-orient ${line.vertical ? 'vert' : 'horiz'}">${line.vertical ? 'Vertical (90° CCW)' : 'Horizontal'}</span>
-          <span style="color:var(--green);font-weight:600">${Math.round(line.rec_conf * 100)}%</span>
-          <span style="color:var(--text-secondary)">${line.width}×${line.height}</span>
+  } catch (err) {
+    console.error(err);
+    alert("Inpainting error: " + err.message);
+    btn.disabled = false;
+  }
+}
+
+async function runAllPipeline() {
+  await runInpaintStep();
+}
+
+function updateTelemetry(data) {
+  document.getElementById("valTotalMs").innerText = data.timing.total_ms;
+  document.getElementById("valSegMs").innerText = data.timing.seg_ms;
+  document.getElementById("valAotMs").innerText = data.timing.aot_ms;
+  document.getElementById("subDetMs").innerText = data.timing.det_ms;
+  document.getElementById("subCvMs").innerText = data.timing.cv_ms;
+  document.getElementById("subTiles").innerText = data.stats.tile_count || 0;
+
+  const mpix = (imgWidth * imgHeight / 1000000) / (data.timing.total_ms / 1000);
+  document.getElementById("valMpix").innerText = mpix.toFixed(1);
+  document.getElementById("subCov").innerText = data.stats.coverage_pct + "%";
+}
+
+function drawBoxesOnOverlay(regions) {
+  const canvasOverlay = document.getElementById("canvasOverlay");
+  const ctx = canvasOverlay.getContext("2d");
+  ctx.clearRect(0, 0, imgWidth, imgHeight);
+
+  if (!regions) return;
+
+  regions.forEach(reg => {
+    const [x1, y1, x2, y2] = reg.rect;
+    const isBubble = reg.class === "bubble_text" || reg.class === "bubble";
+    const isSelected = reg.id === selectedRegionId;
+
+    ctx.lineWidth = isSelected ? 3 : 1.5;
+    ctx.strokeStyle = isSelected ? "#F43F5E" : (isBubble ? "#10B981" : "#6366F1");
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+    ctx.fillStyle = isBubble ? "#10B981" : "#6366F1";
+    ctx.fillRect(x1, Math.max(0, y1 - 16), 56, 16);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "bold 9px sans-serif";
+    ctx.fillText(reg.route.toUpperCase(), x1 + 4, Math.max(12, y1 - 4));
+  });
+}
+
+function renderLayers() {
+  const canvasClean = document.getElementById("canvasClean");
+  const canvasOverlay = document.getElementById("canvasOverlay");
+  const ctxClean = canvasClean.getContext("2d");
+
+  ctxClean.clearRect(0, 0, imgWidth, imgHeight);
+
+  if (!cleanImageObj) return;
+
+  const showClean = document.getElementById("chkLyrCleaned").checked;
+  const showBoxes = document.getElementById("chkLyrBoxes").checked;
+  const showHeatmap = document.getElementById("chkLyrHeatmap").checked;
+
+  if (currentViewMode === "original") {
+    // Canvas clean is clear, showing canvasBase
+  } else if (currentViewMode === "diff" || showHeatmap) {
+    if (heatmapImageObj) ctxClean.drawImage(heatmapImageObj, 0, 0);
+  } else if (currentViewMode === "curtain") {
+    const stage = document.getElementById("stageContainer");
+    const dividerStageX = stage.clientWidth * curtainPos;
+    const dividerCanvasX = (dividerStageX - panX) / zoomLevel;
+
+    ctxClean.save();
+    ctxClean.beginPath();
+    ctxClean.rect(dividerCanvasX, 0, imgWidth - dividerCanvasX, imgHeight);
+    ctxClean.clip();
+    ctxClean.drawImage(cleanImageObj, 0, 0);
+    ctxClean.restore();
+  } else if (showClean) {
+    ctxClean.drawImage(cleanImageObj, 0, 0);
+  }
+
+  if (showBoxes && (detectedRegions || (inpaintResults && inpaintResults.regions))) {
+    drawBoxesOnOverlay(detectedRegions || inpaintResults.regions);
+  } else {
+    canvasOverlay.getContext("2d").clearRect(0, 0, imgWidth, imgHeight);
+  }
+}
+
+function populateRegions(regions) {
+  const container = document.getElementById("regionListContainer");
+  container.innerHTML = "";
+  if (!regions) return;
+
+  document.getElementById("lblRegionCount").innerText = `${regions.length} Regions`;
+
+  regions.forEach(reg => {
+    const item = document.createElement("div");
+    item.className = "region-item" + (reg.id === selectedRegionId ? " selected" : "");
+    const [x1, y1, x2, y2] = reg.rect;
+    item.innerHTML = `
+      <div class="region-header">
+        <span style="font-weight:700;">#${reg.id} · ${x2 - x1}x${y2 - y1}px</span>
+        <span class="badge ${reg.class === 'bubble_text' || reg.class === 'bubble' ? 'badge-bubble' : 'badge-free'}">${reg.class.replace('_', ' ')}</span>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="color:var(--text-secondary); font-size:10px;">[${x1},${y1}] &rarr; [${x2},${y2}]</span>
+        <span class="badge badge-route">${reg.route}</span>
+      </div>
+    `;
+    item.onclick = () => selectRegion(reg.id, reg.rect);
+    container.appendChild(item);
+  });
+}
+
+function selectRegion(id, rect) {
+  selectedRegionId = id;
+  const [x1, y1, x2, y2] = rect;
+  const stage = document.getElementById("stageContainer");
+  const rw = x2 - x1;
+  const rh = y2 - y1;
+  zoomLevel = Math.min(2.5, Math.min(stage.clientWidth / (rw * 1.5), stage.clientHeight / (rh * 1.5)));
+  panX = stage.clientWidth / 2 - (x1 + rw / 2) * zoomLevel;
+  panY = stage.clientHeight / 2 - (y1 + rh / 2) * zoomLevel;
+  applyTransform();
+  renderLayers();
+  populateRegions(detectedRegions || (inpaintResults ? inpaintResults.regions : []));
+}
+
+async function runOcrOnly() {
+  if (!currentImageUri) {
+    alert("Please load an image first.");
+    return;
+  }
+  document.getElementById("statusMessage").innerText = "Running PP-OCRv6 Manga recognition...";
+
+  const payload = {
+    image: currentImageUri,
+    thresh: parseFloat(document.getElementById("sliderOcrThresh").value),
+    box_thresh: parseFloat(document.getElementById("sliderOcrBox").value),
+    unclip_ratio: parseFloat(document.getElementById("sliderOcrUnclip").value)
+  };
+
+  try {
+    const resp = await fetch("/api/ocr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    ocrResults = data;
+
+    const canvas = document.getElementById("ocrCanvas");
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(baseImageObj, 0, 0);
+
+    const list = document.getElementById("ocrTextList");
+    list.innerHTML = "";
+
+    data.lines.forEach(l => {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#10B981";
+      const [x1, y1, x2, y2] = l.rect;
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+      const div = document.createElement("div");
+      div.className = "region-item";
+      div.innerHTML = `
+        <div class="region-header">
+          <span style="font-weight:700;">#${l.id} · Conf: ${l.rec_conf}</span>
+          <span class="badge badge-bubble">${l.vertical ? 'Vertical' : 'Horizontal'}</span>
         </div>
-        <div class="card-body">
-          <img class="crop-preview" src="${line.crop}" title="Rec Input Crop">
-          <div class="card-text">${escapeHtml(line.text || '(empty)')}</div>
-          <button class="copy-btn" onclick="copyText('${escapeHtml(line.text)}', event)" title="Copy line">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-        </div>
+        <div style="font-size:12px; font-weight:600; color:#fff; margin-top:2px;">${l.text || '(blank)'}</div>
       `;
-      linesList.appendChild(card);
+      list.appendChild(div);
     });
+
+    document.getElementById("statusMessage").innerText = `OCR complete: ${data.lines.length} lines detected.`;
+  } catch (err) {
+    alert("OCR Error: " + err.message);
   }
-
-  function escapeHtml(str) {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  function copyText(str, e) {
-    if (e) e.stopPropagation();
-    navigator.clipboard.writeText(str);
-  }
-
-  function copyAllText() {
-    if (!ocrData) return;
-    const all = ocrData.lines.map(l => l.text).filter(t => t.length > 0).join('\\n');
-    navigator.clipboard.writeText(all);
-    alert('Copied all ' + ocrData.lines.length + ' lines to clipboard!');
-  }
-
-  // Pan & Zoom
-  function updateTransform() {
-    canvasContainer.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-  }
-
-  function resetZoom() {
-    if (!mainImage.naturalWidth) return;
-    const pw = viewport.clientWidth;
-    const ph = viewport.clientHeight;
-    const iw = mainImage.naturalWidth;
-    const ih = mainImage.naturalHeight;
-    scale = Math.min((pw - 40) / iw, (ph - 40) / ih, 1.0);
-    panX = (pw - iw * scale) / 2;
-    panY = (ph - ih * scale) / 2;
-    updateTransform();
-  }
-
-  function zoomBy(factor) {
-    scale = Math.max(0.1, Math.min(10.0, scale * factor));
-    updateTransform();
-  }
-
-  viewport.addEventListener('wheel', e => {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.15 : 0.85;
-    zoomBy(factor);
-  });
-
-  viewport.addEventListener('mousedown', e => {
-    isPanning = true;
-    startX = e.clientX - panX;
-    startY = e.clientY - panY;
-  });
-
-  window.addEventListener('mousemove', e => {
-    if (!isPanning) return;
-    panX = e.clientX - startX;
-    panY = e.clientY - startY;
-    updateTransform();
-  });
-
-  window.addEventListener('mouseup', () => { isPanning = false; });
+}
 </script>
 
 </body>
@@ -834,17 +1678,11 @@ HTML_PAGE = """<!DOCTYPE html>
 """
 
 # ---------------------------------------------------------
-# HTTP Server
+# HTTP Request Handler
 # ---------------------------------------------------------
-class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
-
-class OcrRequestHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        pass # Silence verbose console request logging
-
+class StudioRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/" or self.path.startswith("/index"):
+        if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
@@ -856,82 +1694,308 @@ class OcrRequestHandler(BaseHTTPRequestHandler):
             resp = {
                 "detector": DET_MODEL_PATH,
                 "recognizer": REC_MODEL_PATH,
-                "vocab_size": len(OCR_ENGINE.vocab) if OCR_ENGINE else 0
+                "segmenter": SEG_MODEL_PATH,
+                "aot_512": AOT_512_MODEL_PATH
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
         else:
             self.send_error(404, "Not Found")
 
     def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        post_data = self.rfile.read(content_length)
+        data = json.loads(post_data.decode("utf-8"))
+        img_data_uri = data.get("image", "")
+
+        if "," in img_data_uri:
+            img_data_uri = img_data_uri.split(",", 1)[1]
+        img_bytes = base64.b64decode(img_data_uri)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if img_bgr is None:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Failed to decode image"}).encode("utf-8"))
+            return
+
+        h, w = img_bgr.shape[:2]
+
         if self.path == "/api/ocr":
-            content_length = int(self.headers.get("Content-Length", 0))
-            post_data = self.rfile.read(content_length)
-            try:
-                data = json.loads(post_data.decode("utf-8"))
-                img_data_uri = data.get("image", "")
-                thresh = float(data.get("thresh", 0.15))
-                box_thresh = float(data.get("box_thresh", 0.25))
-                unclip_ratio = float(data.get("unclip_ratio", 1.4))
+            thresh = float(data.get("thresh", 0.15))
+            box_thresh = float(data.get("box_thresh", 0.25))
+            unclip_ratio = float(data.get("unclip_ratio", 1.4))
+            res = OCR_ENGINE.process(img_bgr, thresh=thresh, box_thresh=box_thresh, unclip_ratio=unclip_ratio)
+            resp_bytes = json.dumps(res).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(resp_bytes)
 
-                if "," in img_data_uri:
-                    img_data_uri = img_data_uri.split(",", 1)[1]
-                img_bytes = base64.b64decode(img_data_uri)
-                nparr = np.frombuffer(img_bytes, np.uint8)
-                img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        elif self.path == "/api/detect":
+            mode = data.get("mode", "balance").lower()
+            erosion_radius = int(data.get("erosion_radius", 2))
 
-                if img_bgr is None:
-                    raise ValueError("Failed to decode image")
+            t0 = time.perf_counter()
+            ocr_res = OCR_ENGINE.process(img_bgr)
+            det_ms = round((time.perf_counter() - t0) * 1000, 1)
 
-                result = OCR_ENGINE.process(img_bgr, thresh=thresh, box_thresh=box_thresh, unclip_ratio=unclip_ratio)
-                
-                resp_bytes = json.dumps(result).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(resp_bytes)))
-                self.end_headers()
-                self.wfile.write(resp_bytes)
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                err_msg = json.dumps({"error": str(e)}).encode("utf-8")
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(err_msg)
+            seg_res = SEG_ENGINE.segment(img_bgr, erosion_radius=erosion_radius)
+            seg_ms = seg_res["seg_ms"]
+
+            bubble_rects = [b["rect"] for b in seg_res["bubbles"]]
+
+            regions = []
+            # Speech Bubbles from Segmenter
+            for b in seg_res["bubbles"]:
+                route = "telea"
+                if mode == "fast": route = "telea"
+                elif mode == "balance": route = "telea"
+                elif mode == "full": route = "aot"
+                elif mode == "legacy": route = "median"
+
+                regions.append({
+                    "id": len(regions) + 1,
+                    "rect": b["rect"],
+                    "class": "bubble",
+                    "route": route
+                })
+
+            # Text Lines from OCR
+            for line in ocr_res["lines"]:
+                rect = line["rect"]
+                rx1, ry1, rx2, ry2 = rect
+                text_area = max(1, (rx2 - rx1) * (ry2 - ry1))
+
+                is_bubble_text = False
+                for bx1, by1, bx2, by2 in bubble_rects:
+                    iw = max(0, min(rx2, bx2) - max(rx1, bx1))
+                    ih = max(0, min(ry2, by2) - max(ry1, by1))
+                    if (iw * ih) / float(text_area) >= 0.12:
+                        is_bubble_text = True
+                        break
+
+                if not is_bubble_text:
+                    route = "telea" if mode == "fast" else "aot"
+                    regions.append({
+                        "id": len(regions) + 1,
+                        "rect": rect,
+                        "class": "free_text",
+                        "route": route
+                    })
+
+            resp_payload = {
+                "regions": regions,
+                "timing": {
+                    "det_ms": det_ms,
+                    "seg_ms": seg_ms
+                },
+                "stats": {
+                    "bubble_count": len(seg_res["bubbles"]),
+                    "text_count": len(ocr_res["lines"])
+                }
+            }
+            resp_bytes = json.dumps(resp_payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(resp_bytes)
+
+        elif self.path == "/api/inpaint":
+            t_start = time.perf_counter()
+            mode = data.get("mode", "balance").lower()
+            cv_method = data.get("opencv_method", "telea").lower()
+            cv_radius = int(data.get("opencv_radius", 3))
+            erosion_radius = int(data.get("erosion_radius", 2))
+            context_pad = int(data.get("context_pad", 32))
+            tile_oversized = bool(data.get("tile_oversized", True))
+            brush_mask_uri = data.get("brush_mask", None)
+
+            # 1. OCR Detection
+            t_det_0 = time.perf_counter()
+            ocr_res = OCR_ENGINE.process(img_bgr)
+            det_ms = round((time.perf_counter() - t_det_0) * 1000, 1)
+
+            # 2. Bubble Segmentation
+            seg_res = SEG_ENGINE.segment(img_bgr, erosion_radius=erosion_radius)
+            seg_ms = seg_res["seg_ms"]
+
+            bubble_rects = [b["rect"] for b in seg_res["bubbles"]]
+            eroded_bubble_mask = seg_res["page_eroded_mask"]
+
+            # 3. Geometric Classification & Region Assembly
+            regions = []
+            text_pill_rects = []
+            for b in seg_res["bubbles"]:
+                route = cv_method
+                if mode == "fast": route = cv_method
+                elif mode == "balance": route = cv_method
+                elif mode == "full": route = "aot"
+                elif mode == "legacy": route = "median"
+
+                regions.append({
+                    "id": len(regions) + 1,
+                    "rect": b["rect"],
+                    "class": "bubble",
+                    "route": route
+                })
+
+            for line in ocr_res["lines"]:
+                rect = line["rect"]
+                rx1, ry1, rx2, ry2 = rect
+                text_area = max(1, (rx2 - rx1) * (ry2 - ry1))
+
+                is_bubble_text = False
+                for bx1, by1, bx2, by2 in bubble_rects:
+                    iw = max(0, min(rx2, bx2) - max(rx1, bx1))
+                    ih = max(0, min(ry2, by2) - max(ry1, by1))
+                    if (iw * ih) / float(text_area) >= 0.12:
+                        is_bubble_text = True
+                        break
+
+                if not is_bubble_text:
+                    route = cv_method if mode == "fast" else "aot"
+                    regions.append({
+                        "id": len(regions) + 1,
+                        "rect": rect,
+                        "class": "free_text",
+                        "route": route
+                    })
+                    text_pill_rects.append(rect)
+                else:
+                    text_pill_rects.append(rect)
+
+            # 4. Mask Assembly
+            pill_mask = build_dynamic_pill_mask(text_pill_rects, w, h, pad=6)
+            combined_mask = cv2.bitwise_or(eroded_bubble_mask, pill_mask)
+
+            # Add manual brush strokes if present
+            if brush_mask_uri and "," in brush_mask_uri:
+                b_bytes = base64.b64decode(brush_mask_uri.split(",", 1)[1])
+                b_arr = np.frombuffer(b_bytes, np.uint8)
+                b_img = cv2.imdecode(b_arr, cv2.IMREAD_UNCHANGED)
+                if b_img is not None:
+                    if b_img.shape[-1] == 4:
+                        brush_alpha = b_img[:, :, 3]
+                        combined_mask = cv2.bitwise_or(combined_mask, (brush_alpha > 10).astype(np.uint8) * 255)
+
+            # 5. Inpainting Execution
+            cleaned_bgr = img_bgr.copy()
+            cv_ms = 0
+            aot_ms = 0
+            tile_count = 0
+
+            # Execute OpenCV / Median regions
+            if mode in ["fast", "balance", "legacy"]:
+                # Fast: all mask goes to OpenCV
+                # Balance: bubble mask goes to OpenCV
+                # Legacy: bubble mask goes to Median
+                if mode == "fast":
+                    target_classical_mask = combined_mask
+                else:
+                    target_classical_mask = eroded_bubble_mask
+
+                if np.count_nonzero(target_classical_mask) > 0:
+                    t_cv_0 = time.perf_counter()
+                    if mode == "legacy":
+                        cleaned_bgr = MangaInpaintEngine.inpaint_legacy_median(cleaned_bgr, target_classical_mask)
+                    else:
+                        cleaned_bgr = MangaInpaintEngine.inpaint_opencv(cleaned_bgr, target_classical_mask, method=cv_method, radius=cv_radius)
+                    cv_ms = round((time.perf_counter() - t_cv_0) * 1000, 1)
+
+            # Execute Neural AOT GAN regions
+            aot_regions = [r for r in regions if r["route"] == "aot"]
+            if aot_regions:
+                t_aot_0 = time.perf_counter()
+                for reg in aot_regions:
+                    cleaned_bgr, tiles = INPAINT_ENGINE.inpaint_aot_region(
+                        cleaned_bgr, combined_mask, reg["rect"],
+                        context_pad=context_pad, tile_oversized=tile_oversized
+                    )
+                    tile_count += tiles
+                aot_ms = round((time.perf_counter() - t_aot_0) * 1000, 1)
+
+            total_ms = round((time.perf_counter() - t_start) * 1000, 1)
+
+            # 6. Generate Difference Heatmap
+            diff = cv2.absdiff(img_bgr, cleaned_bgr)
+            diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
+            diff_norm = cv2.normalize(diff_gray, None, 0, 255, cv2.NORM_MINMAX)
+            heatmap = cv2.applyColorMap(diff_norm, cv2.COLORMAP_JET)
+            heatmap_masked = np.zeros_like(heatmap)
+            heatmap_masked[diff_gray > 2] = heatmap[diff_gray > 2]
+
+            # Encode Outputs
+            _, clean_buf = cv2.imencode(".jpg", cleaned_bgr, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            clean_b64 = "data:image/jpeg;base64," + base64.b64encode(clean_buf).decode("ascii")
+
+            _, heat_buf = cv2.imencode(".png", heatmap_masked)
+            heat_b64 = "data:image/png;base64," + base64.b64encode(heat_buf).decode("ascii")
+
+            masked_pixels = int(np.count_nonzero(combined_mask))
+            coverage_pct = round((masked_pixels / float(w * h)) * 100, 2)
+
+            resp_payload = {
+                "cleaned_uri": clean_b64,
+                "heatmap_uri": heat_b64,
+                "timing": {
+                    "det_ms": det_ms,
+                    "seg_ms": seg_ms,
+                    "cv_ms": cv_ms,
+                    "aot_ms": aot_ms,
+                    "total_ms": total_ms
+                },
+                "stats": {
+                    "tile_count": tile_count,
+                    "masked_pixels": masked_pixels,
+                    "coverage_pct": coverage_pct
+                },
+                "regions": regions
+            }
+
+            resp_bytes = json.dumps(resp_payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(resp_bytes)))
+            self.end_headers()
+            self.wfile.write(resp_bytes)
         else:
             self.send_error(404, "Not Found")
 
-# ---------------------------------------------------------
-# Main Entry Point
-# ---------------------------------------------------------
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
 def main():
-    global OCR_ENGINE
-    print("=" * 65)
-    print("  PP-OCRv6 Manga v0.2 Visual Diagnostic Workbench")
-    print("=" * 65)
-    
-    if not os.path.exists(DET_MODEL_PATH):
-        print(f"[!] Error: Detector model not found at {DET_MODEL_PATH}")
-        sys.exit(1)
-    if not os.path.exists(REC_MODEL_PATH):
-        print(f"[!] Error: Recognizer model not found at {REC_MODEL_PATH}")
-        sys.exit(1)
-    if not os.path.exists(DICT_PATH):
-        print(f"[!] Error: Dictionary file not found at {DICT_PATH}")
-        sys.exit(1)
+    global OCR_ENGINE, SEG_ENGINE, INPAINT_ENGINE
+    print("=" * 70)
+    print("  TachiyomiAT Vision Diagnostic & Inpainting Quality Studio")
+    print("=" * 70)
+
+    for p, name in [
+        (DET_MODEL_PATH, "Detector"),
+        (REC_MODEL_PATH, "Recognizer"),
+        (DICT_PATH, "Vocabulary"),
+        (SEG_MODEL_PATH, "Bubble Segmenter"),
+        (AOT_512_MODEL_PATH, "AOT GAN 512")
+    ]:
+        if not os.path.exists(p):
+            print(f"[!] Error: {name} not found at {p}")
+            sys.exit(1)
 
     OCR_ENGINE = MangaOcrEngine(DET_MODEL_PATH, REC_MODEL_PATH, DICT_PATH)
+    SEG_ENGINE = MangaSegmentationEngine(SEG_MODEL_PATH)
+    INPAINT_ENGINE = MangaInpaintEngine(AOT_512_MODEL_PATH, AOT_DYN_MODEL_PATH)
 
-    server = ThreadedHTTPServer(("127.0.0.1", PORT), OcrRequestHandler)
+    server = ThreadedHTTPServer(("127.0.0.1", PORT), StudioRequestHandler)
     url = f"http://127.0.0.1:{PORT}"
-    print(f"\n[+] Desktop Diagnostic UI running at: {url}")
+    print(f"\n[+] Studio UI running at: {url}")
     print("[+] Opening browser automatically...")
     webbrowser.open(url)
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[*] Shutting down workbench server.")
+        print("\n[*] Shutting down studio server.")
         server.server_close()
 
 if __name__ == "__main__":

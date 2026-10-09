@@ -213,6 +213,10 @@ internal class EngineLane(
     internal var currentPaddleOcrBatch: PaddleOcrRecognitionBatch = PaddleOcrRecognitionBatch.B1
         private set
 
+    @Volatile
+    internal var currentVisionGpu: Boolean = false
+        private set
+
     // Snapshot of EVERY config dimension used to build textTranslator. The rebuild gate
     // compares a fresh signature so changing engine category, provider, key, model, temp,
     // max-tokens, reading-order, or languages forces a rebuild — not just
@@ -346,6 +350,9 @@ internal class EngineLane(
         ocrModel: OcrModel,
         mode: InpaintingMode,
     ): PageRecognitionEngine {
+        if (testState != null) {
+            return testState.recognitionEngine
+        }
         val onnx = RoiPageRecognitionEngine(context, lang, ocrModel, mode)
         if (onnx.isAvailable) {
             logcat(LogPriority.INFO) { "Using ONNX recognition engine for $lang with OCR model $ocrModel" }
@@ -480,34 +487,31 @@ internal class EngineLane(
         val desiredInpaintingMode = inpaintingModeFromPref()
         val desiredReadingOrder = translationPreferences.translationReadingOrder().get()
         val rebuildClosedEngines = enginesClosed
-        // Include inpainting mode AND reading order so FAST<->QUALITY or AUTO/RTL/LTR
-        // changes take effect without a language/OCR change or restart.
+        val livePaddleProvider = translationPreferences.paddleOcrExecutionProvider().get()
+        val livePaddleBatch = translationPreferences.paddleOcrRecognitionBatch().get()
+        val liveVisionGpu = translationPreferences.translationVisionGpuAcceleration().get()
+        // Include inpainting mode, reading order, paddle provider/batch, and vision GPU changes
+        // so setting adjustments take effect immediately without restart.
         val shouldRebuildRecognition = rebuildClosedEngines ||
             fromLang != currentFromLang ||
             selectedOcrModel != currentOcrModel ||
             desiredInpaintingMode != currentInpaintingMode ||
-            desiredReadingOrder != currentReadingOrder
+            desiredReadingOrder != currentReadingOrder ||
+            liveVisionGpu != currentVisionGpu ||
+            (selectedOcrModel == OcrModel.PADDLEOCR_V6_SMALL && (
+                livePaddleProvider != currentPaddleOcrProvider ||
+                livePaddleBatch != currentPaddleOcrBatch
+            ))
         if (shouldRebuildRecognition) {
             recognitionEngine.close()
             currentFromLang = fromLang
             currentOcrModel = selectedOcrModel
             currentInpaintingMode = desiredInpaintingMode
             currentReadingOrder = desiredReadingOrder
-            currentPaddleOcrProvider = translationPreferences.paddleOcrExecutionProvider().get()
-            currentPaddleOcrBatch = translationPreferences.paddleOcrRecognitionBatch().get()
+            currentPaddleOcrProvider = livePaddleProvider
+            currentPaddleOcrBatch = livePaddleBatch
+            currentVisionGpu = liveVisionGpu
             recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
-        } else {
-            val livePaddleProvider = translationPreferences.paddleOcrExecutionProvider().get()
-            val livePaddleBatch = translationPreferences.paddleOcrRecognitionBatch().get()
-            if (currentPaddleOcrProvider != livePaddleProvider || currentPaddleOcrBatch != livePaddleBatch) {
-                TelemetryTrace.log(
-                    "hardware",
-                    "stale_engine_detected",
-                    "currentProvider" to currentPaddleOcrProvider.wireLabel,
-                    "userPrefProvider" to livePaddleProvider.wireLabel,
-                    "action" to "ignored_until_restart",
-                )
-            }
         }
         // Rebuild the translator whenever the full engine configuration differs — not just
         // on language change. The AI translators capture these at construction and never re-read.

@@ -120,10 +120,15 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         }
         try {
             val createdSession = try {
-                createSessionWithOptFallback(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+                createSessionWithOptFallback(OrtSession.SessionOptions.OptLevel.ALL_OPT)
             } catch (e: Exception) {
-                logcat(LogPriority.WARN, e) { "PaddleOCR v6 small BASIC_OPT failed, retrying with NO_OPT" }
-                createSessionWithOptFallback(OrtSession.SessionOptions.OptLevel.NO_OPT)
+                logcat(LogPriority.WARN, e) { "PaddleOCR v6 small ALL_OPT failed, retrying with BASIC_OPT" }
+                try {
+                    createSessionWithOptFallback(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+                } catch (e2: Exception) {
+                    logcat(LogPriority.WARN, e2) { "PaddleOCR v6 small BASIC_OPT failed, retrying with NO_OPT" }
+                    createSessionWithOptFallback(OrtSession.SessionOptions.OptLevel.NO_OPT)
+                }
             }
             if (this.strictProviderMode && executionProviderLabel.isCpuLikeProvider()) {
                 createdSession.close()
@@ -311,18 +316,21 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
             val pixels = IntArray(inputWidth * RECOGNITION_HEIGHT)
             sourceBitmap.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, RECOGNITION_HEIGHT)
-            // NCHW RGB, written via absolute puts into the direct buffer (no
-            // intermediate FloatArray; leaves the buffer position untouched).
             val planeSize = RECOGNITION_HEIGHT * inputWidth
-            for (y in 0 until RECOGNITION_HEIGHT) {
-                for (x in 0 until inputWidth) {
-                    val pixel = pixels[y * inputWidth + x]
-                    val offset = y * inputWidth + x
-                    out.put(baseOffset + offset, normalize(pixel shr 16 and 0xFF)) // R
-                    out.put(baseOffset + planeSize + offset, normalize(pixel shr 8 and 0xFF)) // G
-                    out.put(baseOffset + planeSize * 2 + offset, normalize(pixel and 0xFF)) // B
-                }
+            val totalElements = planeSize * 3
+            val floats = FloatArray(totalElements)
+            val gOffset = planeSize
+            val bOffset = planeSize * 2
+            for (i in 0 until planeSize) {
+                val pixel = pixels[i]
+                floats[i] = normalize(pixel shr 16 and 0xFF)
+                floats[gOffset + i] = normalize(pixel shr 8 and 0xFF)
+                floats[bOffset + i] = normalize(pixel and 0xFF)
             }
+            val originalPosition = out.position()
+            out.position(baseOffset)
+            out.put(floats, 0, totalElements)
+            out.position(originalPosition)
             return inputWidth
         } finally {
             if (padded != null) BitmapPool.putARGB8888(padded)

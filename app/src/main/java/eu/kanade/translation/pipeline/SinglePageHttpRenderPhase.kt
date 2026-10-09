@@ -55,9 +55,6 @@ import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -661,6 +658,7 @@ internal class SinglePageHttpRenderPhase(
 
             coroutineContext.ensureActive()
 
+            var pendingCleanedPublication = ctx.pendingCleanedPublication
             if (ctx.inpaintJob != null) {
                 val cleaned = try {
                     ctx.inpaintJob.await()
@@ -684,6 +682,7 @@ internal class SinglePageHttpRenderPhase(
                     )
                     published?.pendingCleanedPublication?.let {
                         deferredCleanedBitmap = cleaned
+                        pendingCleanedPublication = it
                     }
                     published?.commitPrecondition?.let {
                         commitPrecondition = it
@@ -789,7 +788,7 @@ internal class SinglePageHttpRenderPhase(
                             }
                         }
                     } finally {
-                        if (cleanedBitmap != null && ctx.pendingCleanedPublication == null) {
+                        if (cleanedBitmap != null && pendingCleanedPublication == null) {
                             try {
                                 cleanedBitmap.recycle()
                             } catch (_: Exception) {}
@@ -953,6 +952,25 @@ internal class SinglePageHttpRenderPhase(
             // dependency fingerprint / artifact page version) — per  the
             // lease holder is the page's exclusive writer, so plan-level
             // identity re-planning must not invalidate its in-flight result.
+            if (pendingCleanedPublication != null) {
+                val flushSpan = TranslationTrace.beginStage(
+                    TranslationTraceStage.STORE_FLUSH,
+                    lane = TranslationTraceLane.STORAGE,
+                )
+                try {
+                    store.flush()
+                } catch (t: Throwable) {
+                    logcat(LogPriority.WARN, t) { "TachiyomiAT store flush failed: pageKey=$pageKey" }
+                } finally {
+                    flushSpan.end()
+                    deferredCleanedBitmap?.let {
+                        try {
+                            it.recycle()
+                        } catch (_: Exception) {}
+                    }
+                    deferredCleanedBitmap = null
+                }
+            }
             if (store.pageLeaseOwner(pageKey) == origin) {
                 val fresh = store.snapshot(pageKey)
                 //  ( flake): refresh on ANY store drift under our own
@@ -1027,34 +1045,15 @@ internal class SinglePageHttpRenderPhase(
                 governorSpanSettled = true
                 governorSpan?.end()
             }
-            if (store.isLazyPersistenceEnabled()) {
-                val lazyFlushBitmap = deferredCleanedBitmap
-                deferredCleanedBitmap = null
-                CoroutineScope(Dispatchers.IO).launch {
-                    val flushSpan = TranslationTrace.beginStage(
-                        TranslationTraceStage.STORE_FLUSH,
-                        lane = TranslationTraceLane.STORAGE,
-                    )
-                    try {
-                        store.flush()
-                    } catch (t: Throwable) {
-                        logcat(LogPriority.WARN, t) { "TachiyomiAT async store flush failed: pageKey=$pageKey" }
-                    } finally {
-                        flushSpan.end()
-                        lazyFlushBitmap?.let {
-                            try {
-                                it.recycle()
-                            } catch (_: Exception) {}
-                        }
-                    }
-                }
-            } else {
+            if (deferredCleanedBitmap != null) {
                 val flushSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.STORE_FLUSH,
                     lane = TranslationTraceLane.STORAGE,
                 )
                 try {
                     store.flush()
+                } catch (t: Throwable) {
+                    logcat(LogPriority.WARN, t) { "TachiyomiAT store flush failed: pageKey=$pageKey" }
                 } finally {
                     flushSpan.end()
                     deferredCleanedBitmap?.let {
@@ -1062,6 +1061,7 @@ internal class SinglePageHttpRenderPhase(
                             it.recycle()
                         } catch (_: Exception) {}
                     }
+                    deferredCleanedBitmap = null
                 }
             }
             // Cancel background inpaint if still active
@@ -1070,10 +1070,9 @@ internal class SinglePageHttpRenderPhase(
             }
             // Defensive recycle: a cancel/timeout can unwind here from before render, where
             // cleanedBitmap (the inpainted full-page bitmap, ~10–48 MB) was never recycled.
-            val currentCleaned = pageTranslation.cleanedBitmap
-            if (currentCleaned != null && currentCleaned !== deferredCleanedBitmap) {
+            pageTranslation.cleanedBitmap?.let {
                 try {
-                    currentCleaned.recycle()
+                    it.recycle()
                 } catch (_: Exception) {}
             }
             pageTranslation.cleanedBitmap = null
