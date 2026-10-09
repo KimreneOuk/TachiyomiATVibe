@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.vision.ocr
 
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrDynamicPageBatchPolicy
 import java.io.Closeable
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,8 +29,8 @@ internal class PaddleOcrV6BatchBufferPool(
 ) {
 
     private val maxOutputElements: Long =
-        maxBatchSize.toLong() * (maxWidth / OUTPUT_TIME_STEP_STRIDE).toLong() *
-            (dictionarySize + OUTPUT_EXTRA_CLASSES).toLong()
+        maxBatchSize.toLong() * (maxWidth / PaddleOcrDynamicPageBatchPolicy.OUTPUT_TIME_STEP_STRIDE).toLong() *
+            (dictionarySize + PaddleOcrDynamicPageBatchPolicy.OUTPUT_EXTRA_CLASSES).toLong()
 
     private val availableInputs = ArrayDeque<FloatBuffer>()
     private var createdInputs = 0
@@ -195,11 +196,5 @@ internal class PaddleOcrV6BatchBufferPool(
     private companion object {
         const val CHANNELS = 3L
         const val HEIGHT = 48L
-
-        // The checked-in PP-OCRv6 small model emits width / 8 CTC steps.
-        const val OUTPUT_TIME_STEP_STRIDE = 8
-
-        // CTC blank plus the dictionary's explicit space token.
-        const val OUTPUT_EXTRA_CLASSES = 2
     }
 }

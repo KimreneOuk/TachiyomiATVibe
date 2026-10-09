@@ -1,5 +1,6 @@
 package eu.kanade.translation.engines.vision.ocr
 
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrDynamicPageBatchPolicy
 import java.nio.FloatBuffer
 import java.util.concurrent.CancellationException
 
@@ -309,14 +310,13 @@ internal class PaddleOcrV6BatchExecutor(
         dictionaryClassCount = dictionary.size + 2,
     )
 
-    private fun normalizeBatch(maxBatch: Int): Int = when {
-        maxBatch >= MAX_BATCH_SIZE -> MAX_BATCH_SIZE
-        maxBatch >= MEDIUM_BATCH_SIZE -> MEDIUM_BATCH_SIZE
-        maxBatch >= SMALL_BATCH_SIZE -> SMALL_BATCH_SIZE
-        else -> MIN_BATCH_SIZE
-    }
+    private fun normalizeBatch(maxBatch: Int): Int = maxBatch.coerceIn(MIN_BATCH_SIZE, HARD_MAX_BATCH)
 
     private fun lowerBatch(batchSize: Int): Int = when {
+        // Dynamic page batches halve so the largest working size is found
+        // quickly; at/below the reviewed fixed tiers the B8 -> B4 -> B1
+        // production ladder is preserved.
+        batchSize > MAX_BATCH_SIZE -> (batchSize / 2).coerceAtLeast(MIN_BATCH_SIZE)
         batchSize >= MAX_BATCH_SIZE -> MEDIUM_BATCH_SIZE
         // Keep the reviewed B8 -> B4 -> B1 emergency ladder. B2 is an
         // explicit benchmark size, but a B4 runtime failure still goes
@@ -333,6 +333,7 @@ internal class PaddleOcrV6BatchExecutor(
         const val MEDIUM_BATCH_SIZE = 4
         const val SMALL_BATCH_SIZE = 2
         const val MIN_BATCH_SIZE = 1
+        const val HARD_MAX_BATCH = PaddleOcrDynamicPageBatchPolicy.HARD_MAX_BATCH
         const val NANOS_PER_MILLISECOND = 1_000_000.0
     }
 }

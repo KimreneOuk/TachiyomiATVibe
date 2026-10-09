@@ -277,6 +277,85 @@ class PaddleOcrV6BatchExecutorTest {
         session.calls.size shouldBe 1
     }
 
+    @Test
+    fun `dynamic batch above eight runs as one call when the pool allows it`() {
+        val session = FakeSession()
+        val execution = PaddleOcrV6BatchExecutor(
+            session = session,
+            bufferPool = newPool(maxBatchSize = 32),
+            dictionary = DICTIONARY,
+        ).execute(
+            crops = (0 until 15).toList(),
+            widthBucket = 640,
+            maxBatch = 15,
+            writeSample = ::writeMarker,
+        )
+
+        session.calls.map { it.shape[0].toInt() } shouldContainExactly listOf(15)
+        execution.telemetry.actualBatchSizes shouldContainExactly listOf(15)
+        execution.results.size shouldBe 15
+    }
+
+    @Test
+    fun `provider failure on a dynamic batch halves instead of using the fixed ladder`() {
+        val session = FakeSession(failuresByBatch = mutableMapOf(15 to 1))
+        val execution = PaddleOcrV6BatchExecutor(
+            session = session,
+            bufferPool = newPool(maxBatchSize = 32),
+            dictionary = DICTIONARY,
+        ).execute(
+            crops = (0 until 15).toList(),
+            widthBucket = 640,
+            maxBatch = 15,
+            writeSample = ::writeMarker,
+        )
+
+        session.calls.map { it.shape[0].toInt() } shouldContainExactly listOf(15, 7, 7, 1)
+        execution.telemetry.downgradeReasons shouldContainExactly listOf("provider_failure")
+        execution.results.size shouldBe 15
+    }
+
+    @Test
+    fun `latency overrun on a dynamic batch halves and retries the same rows`() {
+        var now = 0L
+        val session = FakeSession(onRun = { batch ->
+            now += if (batch >= 15) 100_000_000L else 1_000_000L
+        })
+        val execution = PaddleOcrV6BatchExecutor(
+            session = session,
+            bufferPool = newPool(maxBatchSize = 32),
+            dictionary = DICTIONARY,
+            latencyBudgetMs = 50.0,
+            clockNanos = { now },
+        ).execute(
+            crops = (0 until 15).toList(),
+            widthBucket = 640,
+            maxBatch = 15,
+            writeSample = ::writeMarker,
+        )
+
+        session.calls.map { it.shape[0].toInt() } shouldContainExactly listOf(15, 7, 7, 1)
+        execution.telemetry.downgradeReasons shouldContainExactly listOf("latency_failure")
+        execution.results.size shouldBe 15
+    }
+
+    @Test
+    fun `normalizeBatch clamps oversized requests to the hard max`() {
+        val session = FakeSession()
+        PaddleOcrV6BatchExecutor(
+            session = session,
+            bufferPool = newPool(maxBatchSize = 32),
+            dictionary = DICTIONARY,
+        ).execute(
+            crops = (0 until 40).toList(),
+            widthBucket = 640,
+            maxBatch = 40,
+            writeSample = ::writeMarker,
+        )
+
+        session.calls.map { it.shape[0].toInt() } shouldContainExactly listOf(32, 8)
+    }
+
     private fun executor(session: FakeSession): PaddleOcrV6BatchExecutor =
         PaddleOcrV6BatchExecutor(
             session = session,
@@ -285,10 +364,11 @@ class PaddleOcrV6BatchExecutorTest {
         )
 
     private fun newPool(
+        maxBatchSize: Int = 8,
         allocator: PaddleOcrV6BatchBufferPool.FloatBufferAllocator =
             PaddleOcrV6BatchBufferPool.FloatBufferAllocator { capacity -> FloatBuffer.allocate(capacity) },
     ): PaddleOcrV6BatchBufferPool = PaddleOcrV6BatchBufferPool(
-        maxBatchSize = 8,
+        maxBatchSize = maxBatchSize,
         maxWidth = 1600,
         dictionarySize = DICTIONARY.size,
         allocator = allocator,
