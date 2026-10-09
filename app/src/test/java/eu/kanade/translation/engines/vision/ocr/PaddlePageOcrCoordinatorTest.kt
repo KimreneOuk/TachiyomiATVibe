@@ -35,11 +35,11 @@ class PaddlePageOcrCoordinatorTest {
             pageGeneration = fixture.page,
             policy = PaddlePageOcrPolicy(PaddlePageOcrMode.CHAPTER, PaddleOcrBatchSize.B1),
             batchCallMutex = Mutex(),
-            recognizeBatch = { crops, bucket, requested ->
+            recognizeBatch = { crops, bucket, maxBatch ->
                 paddleB1Executor(session, paddleB1Pool()).execute(
                     crops = crops,
                     widthBucket = bucket.paddedWidth,
-                    maxBatch = requested.value,
+                    maxBatch = maxBatch,
                     writeSample = ::writePaddleB1Marker,
                 ).results
             },
@@ -136,6 +136,34 @@ class PaddlePageOcrCoordinatorTest {
             retry.results,
         )
         retryLeaves.forEach { assertTrue(it.cropOwnership.isReleased) }
+    }
+
+    @Test
+    fun `dynamic ceiling batches the whole page per width bucket in one call`() = runBlocking<Unit> {
+        val page = PaddleOcrPageGeneration("chapter/page-dynamic", generation = 21L)
+        val calls = ArrayList<Int>()
+        val dispatcher = PaddlePageOcrBatchDispatcher<String, String>(
+            pageGeneration = page,
+            policy = PaddlePageOcrPolicy(
+                PaddlePageOcrMode.AUTO,
+                PaddleOcrBatchSize.B8,
+                dynamicCeiling = { 15 },
+            ),
+            batchCallMutex = Mutex(),
+            recognizeBatch = { crops, _, maxBatch ->
+                calls += maxBatch
+                crops.map { "recognized-$it" }
+            },
+        )
+        val dynamicLeaves = leaves(page, count = 12)
+
+        dynamicLeaves.forEach { dispatcher.submit(it) }
+        dispatcher.finish()
+
+        // one whole-page call: the chunk was the full bucket, not the B8 tier
+        assertEquals(listOf(12), calls)
+        assertEquals(12, dispatcher.resolvedLeafCount)
+        assertEquals(listOf(12), dispatcher.batchTraces.map { it.requestedChunkSize })
     }
 
     private fun dispatcher(

@@ -38,11 +38,19 @@ internal enum class PaddlePageOcrMode {
 
 /**
  * Batch sizing defaults to B1; the device gate can inject a larger
- * size without changing page ownership or mapping.
+ * size without changing page ownership or mapping. [dynamicCeiling] arms
+ * whole-page chunking; null (function or return) keeps fixed tier chunking.
  */
 internal data class PaddlePageOcrPolicy(
     val mode: PaddlePageOcrMode,
     val validatedBatchSize: PaddleOcrBatchSize = PaddleOcrBatchSize.B1,
+    /**
+     * Whole-page dynamic chunking; null (function or return) keeps fixed tier
+     * chunking. The return is nullable so a caller can arm the seam before the
+     * dynamic policy exists (the engine passes a helper that returns null when
+     * fixed-tier batching is active).
+     */
+    val dynamicCeiling: ((bucket: PaddleOcrWidthBucket) -> Int?)? = null,
 )
 
 internal data class PaddlePageRegionResult(
@@ -57,6 +65,7 @@ internal data class PaddlePageBatchTrace(
     val widthBucket: PaddleOcrWidthBucket,
     val leafIdentities: List<PaddleOcrLeafIdentity>,
     val requestedBatchSize: PaddleOcrBatchSize,
+    val requestedChunkSize: Int = requestedBatchSize.value,
     val queueWaitMs: Double,
     val admissionWaitMs: Double,
     val batchLatencyMs: Double,
@@ -74,14 +83,20 @@ internal class PaddlePageOcrBatchDispatcher<CROP, RESULT>(
     private val recognizeBatch: suspend (
         crops: List<CROP>,
         widthBucket: PaddleOcrWidthBucket,
-        requestedBatchSize: PaddleOcrBatchSize,
+        maxBatch: Int,
     ) -> List<RESULT>,
     private val batchCallMutex: Mutex,
     private val nowNanos: () -> Long = System::nanoTime,
     private val traceSequence: () -> Long = { 0L },
     private val executorLatencyMs: () -> Double? = { null },
 ) {
-    private val planner = PaddleOcrBatchPlanner<CROP>(pageGeneration, policy.validatedBatchSize)
+    private val planner = PaddleOcrBatchPlanner<CROP>(
+        pageGeneration,
+        policy.validatedBatchSize,
+        chunkSizeFor = { bucket ->
+            policy.dynamicCeiling?.invoke(bucket) ?: policy.validatedBatchSize.value
+        },
+    )
     private val admittedAtNanos = LinkedHashMap<PaddleOcrLeafIdentity, Long>()
     private val resultsByIdentity = LinkedHashMap<PaddleOcrLeafIdentity, RESULT>()
     private val traces = ArrayList<PaddlePageBatchTrace>()
@@ -122,7 +137,7 @@ internal class PaddlePageOcrBatchDispatcher<CROP, RESULT>(
         val beforeMutex = nowNanos()
         try {
             val rows = batchCallMutex.withLock {
-                recognizeBatch(batch.leaves.map { it.crop }, batch.widthBucket, policy.validatedBatchSize)
+                recognizeBatch(batch.leaves.map { it.crop }, batch.widthBucket, batch.leaves.size)
             }
             val afterMutex = nowNanos()
             planner.complete(batch, rows) { leaf, result ->
@@ -137,6 +152,7 @@ internal class PaddlePageOcrBatchDispatcher<CROP, RESULT>(
                 widthBucket = batch.widthBucket,
                 leafIdentities = batch.leaves.map { it.identity },
                 requestedBatchSize = policy.validatedBatchSize,
+                requestedChunkSize = batch.size,
                 queueWaitMs = nanosToMs(beforeMutex - firstAdmission),
                 admissionWaitMs = nanosToMs(afterMutex - beforeMutex),
                 batchLatencyMs = executorLatencyMs()?.takeIf { it.isFinite() && it >= 0.0 }
@@ -166,6 +182,7 @@ internal class PaddlePageOcrBatchDispatcher<CROP, RESULT>(
 internal class PaddlePageOcrCoordinator(
     private val engine: PaddleOcrV6SmallEngine,
     internal val validatedBatchSize: PaddleOcrBatchSize = PaddleOcrBatchSize.B1,
+    private val dynamicCeiling: ((bucket: PaddleOcrWidthBucket) -> Int?)? = null,
     private val nowNanos: () -> Long = System::nanoTime,
 ) {
     /** One guard per engine session; no output-buffer downgrade is concurrency design. */
@@ -190,7 +207,7 @@ internal class PaddlePageOcrCoordinator(
         mode: PaddlePageOcrMode,
         isClosed: () -> Boolean,
     ): List<PaddlePageRegionResult> {
-        val policy = PaddlePageOcrPolicy(mode, validatedBatchSize)
+        val policy = PaddlePageOcrPolicy(mode, validatedBatchSize, dynamicCeiling)
         val initialDispatcher = dispatcher(pageGeneration, policy)
         val states = ArrayList<RegionState>(detections.size)
         var fallbackDispatcher: PaddlePageOcrBatchDispatcher<Bitmap, Pair<String, Float>>? = null
@@ -289,7 +306,8 @@ internal class PaddlePageOcrCoordinator(
             NativeVisionTelemetry.logCropSummary(
                 pageKey = pageGeneration.pageId,
                 leafCount = leafCount,
-                batchSize = validatedBatchSize.value,
+                // Dynamic chunks can exceed the tier; report the largest used.
+                batchSize = maxOf(validatedBatchSize.value, traces.maxOfOrNull { it.requestedChunkSize } ?: 0),
                 avgInferMs = avgInferMs,
                 provider = engine.executionProviderLabel,
             )
@@ -316,11 +334,11 @@ internal class PaddlePageOcrCoordinator(
         traceSequence = {
             nextTraceSequence++
         },
-        recognizeBatch = { crops, widthBucket, requestedBatchSize ->
-            if (requestedBatchSize == PaddleOcrBatchSize.B1) {
+        recognizeBatch = { crops, widthBucket, maxBatch ->
+            if (maxBatch <= 1) {
                 crops.map { engine.recognizeWithConf(it) }
             } else {
-                engine.recognizeBucketBatch(crops, widthBucket.paddedWidth, requestedBatchSize.value)
+                engine.recognizeBucketBatch(crops, widthBucket.paddedWidth, maxBatch)
             }
         },
     )

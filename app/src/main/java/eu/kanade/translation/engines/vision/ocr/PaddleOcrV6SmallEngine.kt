@@ -10,6 +10,7 @@ import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrSessionFactory
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrDynamicPageBatchPolicy
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -41,6 +42,10 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     @Volatile
     var lastBatchTelemetry: PaddleOcrV6BatchTelemetry? = null
         private set
+
+    /** Loaded dictionary line count; feeds the dynamic page batch ceiling math. */
+    val dictionarySize: Int
+        get() = dictionary.size
 
     /** Provider that actually serves this recognizer ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
     override var executionProviderLabel: String = "uninitialized"
@@ -134,7 +139,9 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
                 providerLabel = executionProviderLabel,
             )
             batchBufferPool = PaddleOcrV6BatchBufferPool(
-                maxBatchSize = MAX_BATCH_SIZE,
+                // Sized for the dynamic whole-page ceiling; input leases stay
+                // lazily allocated at the actual batch size (see the pool).
+                maxBatchSize = PaddleOcrDynamicPageBatchPolicy.HARD_MAX_BATCH,
                 maxWidth = MAX_RECOGNITION_WIDTH,
                 dictionarySize = dictionary.size,
             )
@@ -352,7 +359,6 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         const val MIN_TARGET_WIDTH = 640
         const val BUCKET_WIDTH_SMALL = 640
         const val MAX_RECOGNITION_WIDTH = 1600
-        const val MAX_BATCH_SIZE = 8
 
         // Gray that normalizes to 0.0 (the normalization mean) — used for the
         // right-side padding instead of white, matching the reference pipeline.
