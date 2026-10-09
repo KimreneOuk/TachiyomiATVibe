@@ -123,18 +123,17 @@ class PaddleOcrV6DetEngine : Closeable {
     }
 
     /**
-     * Detect text lines across an entire [bitmap] (full page, strip, or crop).
-     * Returns boxes in **bitmap pixel coords** (already back-projected from the model's resized map space).
+     * Detect text lines in [crop]. Returns boxes in **crop pixel coords**
+     * (already back-projected from the model's resized map space).
      */
-    fun detectPageLines(
-        bitmap: Bitmap,
+    fun detectLines(
+        crop: Bitmap,
         thresh: Float = DbPostProcess.Defaults.THRESH,
         boxThresh: Float = DbPostProcess.Defaults.BOX_THRESH,
-        unclipRatio: Float = DbPostProcess.Defaults.UNCLIP_RATIO,
     ): List<TextLine> {
         val localSession = session ?: throw IllegalStateException("PaddleOCR v6 det not initialized")
-        val w = bitmap.width
-        val h = bitmap.height
+        val w = crop.width
+        val h = crop.height
         if (w <= 0 || h <= 0) return emptyList()
 
         val t0 = System.nanoTime()
@@ -144,7 +143,7 @@ class PaddleOcrV6DetEngine : Closeable {
         try {
             pixelBuffer = inputPixelPool.acquire()
             pixelBuffer.clear()
-            val pre = preprocess(bitmap, pixelBuffer)
+            val pre = preprocess(crop, pixelBuffer)
             pixelBuffer.flip()
             inputTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
@@ -168,9 +167,9 @@ class PaddleOcrV6DetEngine : Closeable {
                 height = mapHeight,
                 threshold = thresh,
                 boxThreshold = boxThresh,
-                unclipRatio = unclipRatio,
+                unclipRatio = DbPostProcess.Defaults.UNCLIP_RATIO,
             )
-            val pageLines = ArrayList<TextLine>(mapLines.size)
+            val cropLines = ArrayList<TextLine>(mapLines.size)
             for (ml in mapLines) {
                 val cb = DbPostProcess.backProject(
                     bbox = ml.bbox,
@@ -180,7 +179,7 @@ class PaddleOcrV6DetEngine : Closeable {
                     cropHeight = h,
                 )
                 if (cb[2] > cb[0] && cb[3] > cb[1]) {
-                    pageLines.add(TextLine(bbox = cb, meanScore = ml.meanScore))
+                    cropLines.add(TextLine(bbox = cb, meanScore = ml.meanScore))
                 }
             }
             if (isDiagnosticsEnabled()) {
@@ -189,27 +188,17 @@ class PaddleOcrV6DetEngine : Closeable {
                     "[paddle_det] total=${(t2 - t0) / 1_000_000.0}ms " +
                         "requestedProvider=$requestedProviderLabel provider=$executionProviderLabel " +
                         "infer=${(t1 - t0) / 1_000_000.0}ms " +
-                        "page=${w}x$h map=${mapWidth}x$mapHeight " +
-                        "lines=${pageLines.size}"
+                        "crop=${w}x$h map=${mapWidth}x$mapHeight " +
+                        "lines=${cropLines.size}"
                 }
             }
-            return pageLines
+            return cropLines
         } finally {
             result?.close()
             inputTensor?.close()
             pixelBuffer?.let { inputPixelPool.release(it) }
         }
     }
-
-    /**
-     * Detect text lines in [crop]. Returns boxes in **crop pixel coords**
-     * (already back-projected from the model's resized map space).
-     */
-    fun detectLines(
-        crop: Bitmap,
-        thresh: Float = DbPostProcess.Defaults.THRESH,
-        boxThresh: Float = DbPostProcess.Defaults.BOX_THRESH,
-    ): List<TextLine> = detectPageLines(crop, thresh = thresh, boxThresh = boxThresh)
 
     private var scratchPixels: IntArray? = null
     private var scratchPlane: FloatArray? = null
@@ -313,34 +302,24 @@ class PaddleOcrV6DetEngine : Closeable {
         private const val STD_G = 0.224f
         private const val STD_B = 0.225f
 
+        private fun isDiagnosticsEnabled(): Boolean = OcrDiagnostics.isEnabled()
+
         /**
-         * Dynamic det sizing:
-         *  - For normal aspect ratios (<= 2:1): scale longest side to [MAX_DET_SIZE] (960)
-         *    and round both dimensions to multiples of 32 (min 32).
-         *  - For long strips (> 2:1, e.g. webtoons): scale so the total area stays within
-         *    the pixel budget of a 3:4 page at 960 (approx 691k pixels), preserving line
-         *    aspect without exceeding ONNX / buffer limits.
+         * Calculates detection input dimensions matching PP-OCRv6_manga reference:
+         * - Longest side scaled to 960, rounded to multiples of 32 (min 32).
+         * - For long strips (aspect ratio > 2:1), uses pixel budget of 3:4 page at 960.
          */
         fun calculateDetDimensions(w: Int, h: Int): Pair<Int, Int> {
-            val maxSide = max(w, h)
-            val minSide = min(w, h)
-            val aspect = maxSide.toFloat() / minSide.coerceAtLeast(1)
-
-            val ratio = if (aspect <= 2.0f) {
-                if (maxSide <= MAX_DET_SIZE) 1.0f else MAX_DET_SIZE.toFloat() / maxSide
+            val maxDim = max(h, w).toDouble()
+            val minDim = min(h, w).toDouble()
+            val ratio = if (minDim > 0.0 && maxDim / minDim > 2.0) {
+                min(1.0, sqrt(0.75 * MAX_DET_SIZE.toDouble() * MAX_DET_SIZE.toDouble() / (h.toDouble() * w.toDouble())))
             } else {
-                val budget = 0.75f * MAX_DET_SIZE * MAX_DET_SIZE
-                val current = (w.toLong() * h.toLong()).toFloat()
-                min(1.0f, sqrt(budget / current))
+                min(1.0, MAX_DET_SIZE.toDouble() / max(1.0, maxDim))
             }
-
-            var rw = round(w * ratio / 32f).toInt() * 32
-            var rh = round(h * ratio / 32f).toInt() * 32
-            rw = max(32, rw)
-            rh = max(32, rh)
+            val rh = max(32, (round(h.toDouble() * ratio / 32.0) * 32.0).toInt())
+            val rw = max(32, (round(w.toDouble() * ratio / 32.0) * 32.0).toInt())
             return Pair(rw, rh)
         }
-
-        private fun isDiagnosticsEnabled(): Boolean = false
     }
 }

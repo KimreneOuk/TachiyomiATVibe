@@ -20,8 +20,6 @@ data class TextLine(
     val bbox: IntArray,
     val meanScore: Float,
 ) {
-    val score: Float get() = meanScore
-
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is TextLine) return false
@@ -365,7 +363,7 @@ object DbPostProcess {
     /**
      * Convenience: back-project a single map-space bbox to crop-space using the
      * per-axis scale factors from the det model's resize step. Exposed so the
-     * engine can keep the back-projection alongside the pure postprocess.\
+     * engine can keep the back-projection alongside the pure postprocess.
      */
     fun backProject(bbox: IntArray, scaleX: Float, scaleY: Float, cropWidth: Int, cropHeight: Int): IntArray {
         val x1 = (bbox[0] * scaleX).toInt().coerceIn(0, cropWidth - 1)

@@ -13,8 +13,6 @@ import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrWidthBucke
 import eu.kanade.translation.engines.vision.ocr.paddleB1Executor
 import eu.kanade.translation.engines.vision.ocr.paddleB1Pool
 import eu.kanade.translation.engines.vision.ocr.writePaddleB1Marker
-import eu.kanade.translation.model.Detection
-import eu.kanade.translation.model.TextRecognizerLanguage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -140,76 +138,6 @@ class PaddlePageOcrCoordinatorTest {
         retryLeaves.forEach { assertTrue(it.cropOwnership.isReleased) }
     }
 
-    @Test
-    fun `recognizePage with groupedRegions uses precomputed lines without calling paddleDet detectLines`() = runBlocking<Unit> {
-        val fakeBitmap = io.mockk.mockk<android.graphics.Bitmap>(relaxed = true) {
-            io.mockk.every { width } returns 500
-            io.mockk.every { height } returns 500
-        }
-        val fakeEngine = io.mockk.mockk<PaddleOcrV6SmallEngine>(relaxed = true) {
-            io.mockk.coEvery { recognizeWithConf(any()) } returns Pair("Hello", 0.95f)
-        }
-        val fakePaddleDet = io.mockk.mockk<PaddleOcrV6DetEngine>(relaxed = true)
-
-        io.mockk.mockkStatic(android.graphics.Bitmap::class)
-        try {
-            io.mockk.every {
-                android.graphics.Bitmap.createBitmap(
-                    any<android.graphics.Bitmap>(),
-                    any(),
-                    any(),
-                    any(),
-                    any(),
-                    any(),
-                    any(),
-                )
-            } returns fakeBitmap
-            io.mockk.every {
-                android.graphics.Bitmap.createBitmap(
-                    any<android.graphics.Bitmap>(),
-                    any(),
-                    any(),
-                    any(),
-                    any(),
-                )
-            } returns fakeBitmap
-
-            val coordinator = PaddlePageOcrCoordinator(fakeEngine)
-            val detection = Detection(
-                bbox = intArrayOf(100, 100, 200, 200),
-                score = 0.9f,
-                label = 1,
-            )
-            val line = TextLine(
-                bbox = intArrayOf(110, 110, 190, 150),
-                meanScore = 0.9f,
-            )
-            val groupedRegion = PaddleGroupedRegion(
-                detection = detection,
-                lines = listOf(line),
-            )
-
-            val results = coordinator.recognizePage(
-                pageGeneration = PaddleOcrPageGeneration("test-page", 1L),
-                bitmap = fakeBitmap,
-                detections = listOf(detection),
-                paddleDet = fakePaddleDet,
-                language = TextRecognizerLanguage.ENGLISH,
-                isVerticalLanguage = false,
-                mode = PaddlePageOcrMode.MANUAL,
-                groupedRegions = listOf(groupedRegion),
-                isClosed = { false },
-            )
-
-            assertEquals(1, results.size)
-            assertEquals("Hello", results[0].text)
-            io.mockk.verify(exactly = 0) { fakePaddleDet.detectLines(any(), any(), any()) }
-            io.mockk.verify(exactly = 0) { fakePaddleDet.detectPageLines(any(), any(), any(), any()) }
-        } finally {
-            io.mockk.unmockkAll()
-        }
-    }
-
     private fun dispatcher(
         page: PaddleOcrPageGeneration,
         mode: PaddlePageOcrMode,
@@ -239,12 +167,9 @@ class PaddlePageOcrCoordinatorTest {
             lineIndex = 0,
             glyphIndex = null,
             crop = crop,
-            cropOwnership = PaddleOcrCropOwnership(
-                token = "${page.pageId}:${page.generation}:$region:initial:0",
-                onRelease = {
-                    releases[crop] = (releases[crop] ?: 0) + 1
-                },
-            ),
+            cropOwnership = PaddleOcrCropOwnership(crop) {
+                releases[crop] = (releases[crop] ?: 0) + 1
+            },
             rotation = PaddleOcrRotation.NONE,
             fallbackKind = PaddleOcrFallbackKind.DETECTOR_LINE,
             widthBucket = PaddleOcrWidthBucket.WIDTH_640,

@@ -1,13 +1,10 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.engines.vision.ocr.TextLine
-
 data class Detection(
     override val bbox: IntArray,
     override val label: Int,
     override val score: Float,
-    override val className: String = "",
-    val lines: List<TextLine>? = null,
+    override val className: String,
 ) : DetectionView {
     override val left: Int get() = bbox[0]
     override val top: Int get() = bbox[1]
