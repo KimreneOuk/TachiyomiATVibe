@@ -467,27 +467,48 @@ class RoiPageRecognitionEngine(
                 )
                 val geometricallyDeduped = dedupeTextDetections(textDetections, bubbles)
                 val filteredDetections = suppressCrossLabelDuplicates(geometricallyDeduped, bubbles)
-                // stash on the per-page translation so concurrent pages
-                // can't overwrite each other's data before inpaint() reads it back.
-                lockedPageTranslation.allTextDetections =
-                    filteredDetections + (textDetections.filter { it !in filteredDetections && it !in geometricallyDeduped })
-                logcat(LogPriority.INFO) {
-                    "ONNX recognition detections: bubbles=${bubbles.size} text=${textDetections.size} " +
-                        "geometricText=${geometricallyDeduped.size} filteredText=${filteredDetections.size}"
-                }
-                val lockedRecognizedBlocks = mutableListOf<RecognizedBlock>()
-                val engine = localOcrEngine
                 val isWebtoonMode = WebtoonSlidingDetector.isTallImage(bitmap.width, bitmap.height) ||
                     language == TextRecognizerLanguage.KOREAN ||
                     !resolveReadingOrderRtl()
                 val isVerticalLanguage = (language == TextRecognizerLanguage.JAPANESE) &&
                     !isWebtoonMode
 
+                val localDet = paddleDet
+                val groupedRegions = if (localOcrEngine is PaddleOcrV6SmallEngine && localDet != null) {
+                    val pageLines = localDet.detectPageLines(bitmap)
+                    PaddleLineGrouper.groupLinesIntoRegions(
+                        detections = detections,
+                        lines = pageLines,
+                        imageWidth = bitmap.width,
+                        imageHeight = bitmap.height,
+                        isVerticalLanguage = isVerticalLanguage,
+                        isRtl = resolveReadingOrderRtl(),
+                    )
+                } else {
+                    null
+                }
+                val targetDetections = groupedRegions?.map { it.detection } ?: filteredDetections
+
+                // stash on the per-page translation so concurrent pages
+                // can't overwrite each other's data before inpaint() reads it back.
+                lockedPageTranslation.allTextDetections = if (groupedRegions != null) {
+                    targetDetections
+                } else {
+                    filteredDetections + (textDetections.filter { it !in filteredDetections && it !in geometricallyDeduped })
+                }
+                logcat(LogPriority.INFO) {
+                    "ONNX recognition detections: bubbles=${bubbles.size} text=${textDetections.size} " +
+                        "geometricText=${geometricallyDeduped.size} filteredText=${filteredDetections.size} " +
+                        "groupedRegions=${groupedRegions?.size ?: 0}"
+                }
+                val lockedRecognizedBlocks = mutableListOf<RecognizedBlock>()
+                val engine = localOcrEngine
+
                 val ocrStart = System.nanoTime()
                 val ocrSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.OCR,
                     provider = TranslationPipelineDiagnostics.providerFromLabel(localOcrEngine.executionProviderLabel),
-                    normalizationUnits = filteredDetections.size.toLong(),
+                    normalizationUnits = targetDetections.size.toLong(),
                     model = when (localOcrEngine) {
                         is MangaOcrEngine -> TranslationTraceModel.MANGA_OCR
                         is PaddleOcrV6SmallEngine -> TranslationTraceModel.PADDLE_OCR
@@ -515,11 +536,12 @@ class RoiPageRecognitionEngine(
                     pagePaddlePageCoordinator.recognizePage(
                         pageGeneration = pageGeneration,
                         bitmap = bitmap,
-                        detections = filteredDetections,
-                        paddleDet = paddleDet,
+                        detections = targetDetections,
+                        paddleDet = localDet,
                         language = language,
                         isVerticalLanguage = isVerticalLanguage,
                         mode = mode,
+                        groupedRegions = groupedRegions,
                         isClosed = { closed },
                     ).also { results ->
                         val waitMs = pagePaddlePageCoordinator.lastBatchTrace.sumOf {
@@ -610,7 +632,7 @@ class RoiPageRecognitionEngine(
                         )
                     }
                 } else {
-                    for ((detectionIndex, detection) in filteredDetections.withIndex()) {
+                    for ((detectionIndex, detection) in targetDetections.withIndex()) {
                         // The Paddle adapter has already completed every final
                         // line/glyph leaf for this page. Other horizontal engines
                         // stay on the original sequential crop path below.
@@ -858,25 +880,36 @@ class RoiPageRecognitionEngine(
         bubbleMasks: List<BubbleMaskRle>,
         lockedRecognizedBlocks: MutableList<RecognizedBlock>,
     ) {
-        val bbox = detection.bbox
-        val boxWidth = (bbox[2] - bbox[0]).toFloat()
-        val boxHeight = (bbox[3] - bbox[1]).toFloat()
-        val centerX = (bbox[0] + bbox[2]) / 2.0
-        val centerY = (bbox[1] + bbox[3]) / 2.0
-        val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
+        val lines = detection.lines
+        val textBbox = if (!lines.isNullOrEmpty()) {
+            intArrayOf(
+                lines.minOf { it.bbox[0] },
+                lines.minOf { it.bbox[1] },
+                lines.maxOf { it.bbox[2] },
+                lines.maxOf { it.bbox[3] },
+            )
+        } else {
+            detection.bbox
+        }
+        val boxWidth = (textBbox[2] - textBbox[0]).toFloat()
+        val boxHeight = (textBbox[3] - textBbox[1]).toFloat()
+        val centerX = (textBbox[0] + textBbox[2]) / 2.0
+        val centerY = (textBbox[1] + textBbox[3]) / 2.0
+        val rawParent = if (detection.label == 0) detection else selectParentBubble(detection, textBbox, bubbles, centerX, centerY)
         val parentBbox = rawParent?.let { rp ->
             val siblings = bubbles.filter { it !== rp }.map { it.bbox }
-            trimParentBbox(rp.bbox, bbox, siblings)
+            trimParentBbox(rp.bbox, textBbox, siblings)
         } ?: rawParent?.bbox
         val renderColors = RenderColorEstimator.estimate(
             bitmap,
-            bbox[0],
-            bbox[1],
-            bbox[2],
-            bbox[3],
+            textBbox[0],
+            textBbox[1],
+            textBbox[2],
+            textBbox[3],
             parentBbox,
         )
         val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
+        val effectiveLabel = if (detection.label == 0) 1 else detection.label
         lockedRecognizedBlocks.add(
             RecognizedBlock(
                 detection = detection,
@@ -884,12 +917,12 @@ class RoiPageRecognitionEngine(
                     text = text,
                     width = boxWidth,
                     height = boxHeight,
-                    x = bbox[0].toFloat(),
-                    y = bbox[1].toFloat(),
+                    x = textBbox[0].toFloat(),
+                    y = textBbox[1].toFloat(),
                     symWidth = boxWidth * 0.1f,
                     symHeight = boxHeight * 0.1f,
                     angle = 0f,
-                    label = detection.label,
+                    label = effectiveLabel,
                     score = detection.score,
                     parentX = parentBbox?.get(0)?.toFloat() ?: 0f,
                     parentY = parentBbox?.get(1)?.toFloat() ?: 0f,

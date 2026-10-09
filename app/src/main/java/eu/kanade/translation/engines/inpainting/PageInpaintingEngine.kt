@@ -81,6 +81,7 @@ class PageInpaintingEngine(
                 labels = input.labels,
                 mode = effectiveMode,
                 blocks = pageTranslation.blocks,
+                detections = pageTranslation.allTextDetections,
             )
             markReady(pageTranslation)
             cleaned

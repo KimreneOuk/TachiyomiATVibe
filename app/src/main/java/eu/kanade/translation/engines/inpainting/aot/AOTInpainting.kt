@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.RectF
 import android.os.Build
 import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.model.Detection
 import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
@@ -389,6 +390,7 @@ class AOTInpainting(
         labels: List<Int>? = null,
         mode: InpaintingMode = InpaintingMode.QUALITY,
         blocks: List<eu.kanade.translation.model.TranslationBlock>? = null,
+        detections: List<Detection>? = null,
     ): Bitmap {
         if (boxes.isEmpty()) return image.copy(Bitmap.Config.ARGB_8888, true)
         val fixedSess = fixedSession
@@ -435,7 +437,7 @@ class AOTInpainting(
         var paddleLinesTotal = 0
         var paddleFallback = 0
         val rawFreeTextGroups: List<List<IntArray>> = if (paddleDetector != null && freeTextDetectorBoxes.isNotEmpty()) {
-            val refined = refineFreeTextGroups(image, freeTextDetectorBoxes)
+            val refined = refineFreeTextGroups(image, freeTextDetectorBoxes, detections)
             paddleLinesTotal = refined.paddleLineCount
             paddleFallback = refined.fallbackCount
             refined.groups
@@ -488,6 +490,7 @@ class AOTInpainting(
     private fun refineFreeTextGroups(
         image: Bitmap,
         detectorBoxes: List<IntArray>,
+        detections: List<Detection>? = null,
     ): RefinedFreeTextGroups {
         val w = image.width
         val h = image.height
@@ -496,6 +499,35 @@ class AOTInpainting(
         var paddleLineCount = 0
         var fallbackCount = 0
         for (det in detectorBoxes) {
+            val matchingLines = detections?.firstOrNull { d ->
+                !d.lines.isNullOrEmpty() && (
+                    d.bbox.contentEquals(det) ||
+                    (kotlin.math.abs(d.bbox[0] - det[0]) <= 4 &&
+                     kotlin.math.abs(d.bbox[1] - det[1]) <= 4 &&
+                     kotlin.math.abs(d.bbox[2] - det[2]) <= 4 &&
+                     kotlin.math.abs(d.bbox[3] - det[3]) <= 4)
+                )
+            }?.lines
+
+            if (!matchingLines.isNullOrEmpty()) {
+                val group = ArrayList<IntArray>(matchingLines.size)
+                for (line in matchingLines) {
+                    val b = line.bbox
+                    if (b.size < 4) continue
+                    val px1 = (b[0] - REPORT_FREE_TEXT_PAD).coerceIn(0, w)
+                    val py1 = (b[1] - REPORT_FREE_TEXT_PAD).coerceIn(0, h)
+                    val px2 = (b[2] + REPORT_FREE_TEXT_PAD).coerceIn(0, w)
+                    val py2 = (b[3] + REPORT_FREE_TEXT_PAD).coerceIn(0, h)
+                    if (px2 > px1 && py2 > py1) {
+                        group.add(intArrayOf(px1, py1, px2, py2))
+                        paddleLineCount++
+                    }
+                }
+                if (group.isNotEmpty()) {
+                    groups.add(group)
+                    continue
+                }
+            }
             val cx1 = (det[0] - PADDLE_CROP_PAD).coerceIn(0, w)
             val cy1 = (det[1] - PADDLE_CROP_PAD).coerceIn(0, h)
             val cx2 = (det[2] + PADDLE_CROP_PAD).coerceIn(0, w)
