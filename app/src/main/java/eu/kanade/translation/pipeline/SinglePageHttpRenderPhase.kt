@@ -55,6 +55,9 @@ import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -265,10 +268,7 @@ internal class SinglePageHttpRenderPhase(
         // translator borrow above is the admission gate) and settled by the
         // first translator invocation; when no translation runs, the outer
         // finally settles it. Queue-class stage: feeds schedule maxQueueMs.
-        val governorSpan = TranslationTrace.beginStage(
-            TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
-            lane = TranslationTraceLane.PROVIDER,
-        )
+        var governorSpan: eu.kanade.translation.diagnostics.TranslationStageSpan? = null
         var governorSpanSettled = false
         var translationOutcome: TranslationCompletionOutcome = TranslationCompletionOutcome.Completed()
         var lastPermitWaitMs = 0.0
@@ -420,7 +420,7 @@ internal class SinglePageHttpRenderPhase(
             // governor/admission wait ends.
             if (!governorSpanSettled) {
                 governorSpanSettled = true
-                governorSpan.end()
+                governorSpan?.end()
             }
             // Provider busy time measures the actual translation call, excluding
             // governor wait, context preparation, render, and storage work.
@@ -523,6 +523,12 @@ internal class SinglePageHttpRenderPhase(
                         readingOrder,
                     )
                     var singlePageRetry = 0
+                    if (governorSpan == null) {
+                        governorSpan = TranslationTrace.beginStage(
+                            TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+                            lane = TranslationTraceLane.PROVIDER,
+                        )
+                    }
                     withRequestRetryBudget(retryBudget) {
                         runTranslate(pageTranslation)
                         TranslationBlockValidation.applyTo(
@@ -654,6 +660,39 @@ internal class SinglePageHttpRenderPhase(
             }
 
             coroutineContext.ensureActive()
+
+            if (ctx.inpaintJob != null) {
+                val cleaned = try {
+                    ctx.inpaintJob.await()
+                } catch (t: Throwable) {
+                    if (t is CancellationException) throw t
+                    null
+                }
+                pageTranslation.cleanedBitmap = cleaned
+                val freshPrecondition = store.snapshot(pageKey).toPrecondition()
+                if (cleaned != null) {
+                    pageTranslation.inpaintStatus = StageStatus.READY
+                    val published = cleanedPublication.persistOnnxCleanedImage(
+                        manga = manga,
+                        chapter = chapter,
+                        source = source,
+                        pageKey = pageKey,
+                        result = ctx.copy(
+                            pageTranslation = pageTranslation,
+                            commitPrecondition = freshPrecondition,
+                        ),
+                    )
+                    published?.pendingCleanedPublication?.let {
+                        deferredCleanedBitmap = cleaned
+                    }
+                    published?.commitPrecondition?.let {
+                        commitPrecondition = it
+                    }
+                } else {
+                    pageTranslation.inpaintStatus = StageStatus.FAILED
+                    commitPrecondition = freshPrecondition
+                }
+            }
 
             if (translationOutcome is TranslationCompletionOutcome.Completed &&
                 pageTranslation.blocks.isNotEmpty() &&
@@ -986,33 +1025,55 @@ internal class SinglePageHttpRenderPhase(
             // and measure the durable flush (storage lane). All non-suspending.
             if (!governorSpanSettled) {
                 governorSpanSettled = true
-                governorSpan.end()
+                governorSpan?.end()
             }
-            val flushSpan = TranslationTrace.beginStage(
-                TranslationTraceStage.STORE_FLUSH,
-                lane = TranslationTraceLane.STORAGE,
-            )
-            // Settle the flush span even when store.flush() throws. The
-            // original exception still propagates.
-            try {
-                store.flush()
-            } finally {
-                flushSpan.end()
-                // The flush above is the durability barrier for the lazy
-                // cleaned image. Release the bitmap even when the barrier
-                // reports an error; the live page commit did not wait for this
-                // disk path.
-                deferredCleanedBitmap?.let {
+            if (store.isLazyPersistenceEnabled()) {
+                val lazyFlushBitmap = deferredCleanedBitmap
+                deferredCleanedBitmap = null
+                CoroutineScope(Dispatchers.IO).launch {
+                    val flushSpan = TranslationTrace.beginStage(
+                        TranslationTraceStage.STORE_FLUSH,
+                        lane = TranslationTraceLane.STORAGE,
+                    )
                     try {
-                        it.recycle()
-                    } catch (_: Exception) {}
+                        store.flush()
+                    } catch (t: Throwable) {
+                        logcat(LogPriority.WARN, t) { "TachiyomiAT async store flush failed: pageKey=$pageKey" }
+                    } finally {
+                        flushSpan.end()
+                        lazyFlushBitmap?.let {
+                            try {
+                                it.recycle()
+                            } catch (_: Exception) {}
+                        }
+                    }
                 }
+            } else {
+                val flushSpan = TranslationTrace.beginStage(
+                    TranslationTraceStage.STORE_FLUSH,
+                    lane = TranslationTraceLane.STORAGE,
+                )
+                try {
+                    store.flush()
+                } finally {
+                    flushSpan.end()
+                    deferredCleanedBitmap?.let {
+                        try {
+                            it.recycle()
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+            // Cancel background inpaint if still active
+            ctx.inpaintJob?.let {
+                if (it.isActive) it.cancel()
             }
             // Defensive recycle: a cancel/timeout can unwind here from before render, where
             // cleanedBitmap (the inpainted full-page bitmap, ~10–48 MB) was never recycled.
-            pageTranslation.cleanedBitmap?.let {
+            val currentCleaned = pageTranslation.cleanedBitmap
+            if (currentCleaned != null && currentCleaned !== deferredCleanedBitmap) {
                 try {
-                    it.recycle()
+                    currentCleaned.recycle()
                 } catch (_: Exception) {}
             }
             pageTranslation.cleanedBitmap = null

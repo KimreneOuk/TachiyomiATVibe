@@ -79,7 +79,7 @@ data class ProviderRequestMetadata(
 data class ProviderQuotaPolicy(
     val requestsPerMinute: Int = 60,
     val tokensPerMinute: Int = 60_000,
-    val minimumSpacingMs: Long = 1_000L,
+    val minimumSpacingMs: Long = 0L,
     val maxInFlight: Int = 1,
     val maxForegroundWaitMs: Long = 15_000L,
     val interactiveMaxAgeMs: Long = 30_000L,
@@ -564,6 +564,7 @@ class ProviderRequestGovernor(
         val inFlightReady = bucket.inFlight < quota.maxInFlight
         val cooldownReady = now >= bucket.cooldownUntilEpochMs
         val spacingReady = bucket.lastAdmissionAtEpochMs == null ||
+            quota.minimumSpacingMs == 0L ||
             now >= safeAdd(bucket.lastAdmissionAtEpochMs!!, quota.minimumSpacingMs)
         if (requestsReady && tokensReady && inFlightReady && cooldownReady && spacingReady) {
             val reservation = Reservation(now, tokenCost)
@@ -610,7 +611,9 @@ class ProviderRequestGovernor(
     ): Long {
         var next = now + quota.pollIntervalMs
         next = maxOf(next, bucket.cooldownUntilEpochMs)
-        bucket.lastAdmissionAtEpochMs?.let { next = maxOf(next, safeAdd(it, quota.minimumSpacingMs)) }
+        if (quota.minimumSpacingMs > 0L) {
+            bucket.lastAdmissionAtEpochMs?.let { next = maxOf(next, safeAdd(it, quota.minimumSpacingMs)) }
+        }
         if (bucket.inFlight >= quota.maxInFlight) next = maxOf(next, safeAdd(now, quota.pollIntervalMs))
         if (bucket.reservations.size >= quota.requestsPerMinute) {
             bucket.reservations.firstOrNull()?.let { next = maxOf(next, safeAdd(it.admittedAtEpochMs, quota.windowMs)) }
@@ -768,14 +771,16 @@ class ProviderRequestGovernor(
 
     companion object {
         fun defaultPolicy(key: ProviderRequestKey): ProviderQuotaPolicy = when {
-            key.backend == "desktop" -> ProviderQuotaPolicy(
+            key.backend in setOf("desktop", "local", "mlkit", "builtin", "offline") -> ProviderQuotaPolicy(
                 requestsPerMinute = 1_000,
                 tokensPerMinute = Int.MAX_VALUE,
-                minimumSpacingMs = 0,
-                maxInFlight = 1,
+                minimumSpacingMs = 0L,
+                maxInFlight = 2,
                 maxForegroundWaitMs = 15_000,
             )
-            else -> ProviderQuotaPolicy()
+            else -> ProviderQuotaPolicy(
+                minimumSpacingMs = 0L,
+            )
         }
     }
 }

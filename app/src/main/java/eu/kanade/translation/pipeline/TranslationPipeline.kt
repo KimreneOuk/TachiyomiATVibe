@@ -658,23 +658,27 @@ class TranslationPipeline private constructor(
             // settles on every exit, including a throw from persistOnnxCleanedImage (cancellation or a
             // store exception on paths that historically propagate) — no
             // stage_start is left dangling.
-            val persistSpan = traceRun?.beginStage(
-                TranslationTraceStage.CLEANED_PERSIST,
-                lane = TranslationTraceLane.STORAGE,
-            )
-            val publishedResult = try {
-                val result = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
-                persistSpan?.end(
-                    if (result == null) {
-                        TranslationTraceOutcome.FAILURE
-                    } else {
-                        TranslationTraceOutcome.SUCCESS
-                    },
+            val publishedResult = if (onnxResult.inpaintJob != null) {
+                onnxResult
+            } else {
+                val persistSpan = traceRun?.beginStage(
+                    TranslationTraceStage.CLEANED_PERSIST,
+                    lane = TranslationTraceLane.STORAGE,
                 )
-                result
-            } catch (t: Throwable) {
-                persistSpan?.end(TranslationTraceOutcome.FAILURE, error = t)
-                throw t
+                try {
+                    val result = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
+                    persistSpan?.end(
+                        if (result == null) {
+                            TranslationTraceOutcome.FAILURE
+                        } else {
+                            TranslationTraceOutcome.SUCCESS
+                        },
+                    )
+                    result
+                } catch (t: Throwable) {
+                    persistSpan?.end(TranslationTraceOutcome.FAILURE, error = t)
+                    throw t
+                }
             }
             if (publishedResult == null) {
                 return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
@@ -936,6 +940,14 @@ class TranslationPipeline private constructor(
             if (onnxResult == null) {
                 return buildTerminalPreparedPage(manga, chapter, source, pageKey)
             }
+            val onnxReadyResult = if (onnxResult.inpaintJob != null) {
+                val cleaned = onnxResult.inpaintJob.await()
+                onnxResult.pageTranslation.cleanedBitmap = cleaned
+                val currentStore = resolveActiveStore(manga, chapter, source)
+                onnxResult.copy(commitPrecondition = currentStore?.snapshot(pageKey)?.toPrecondition() ?: onnxResult.commitPrecondition)
+            } else {
+                onnxResult
+            }
 
             // Durability gate: persist the cleaned image BEFORE publishing the
             // prepared reference. If publication fails the page is not prepared.
@@ -946,7 +958,7 @@ class TranslationPipeline private constructor(
                 lane = TranslationTraceLane.STORAGE,
             )
             val published = try {
-                val result = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
+                val result = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxReadyResult)
                 persistSpan?.end(
                     if (result == null) {
                         TranslationTraceOutcome.FAILURE
