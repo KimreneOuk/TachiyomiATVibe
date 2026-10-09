@@ -80,12 +80,20 @@ class PaddleOcrBatch<CROP> internal constructor(
 /**
  * Page-scoped streaming planner. Full batches are returned as soon as a bucket fills;
  * [finishPage] emits each remaining partial batch without waiting for another page.
+ *
+ * [chunkSizeFor] sizes the emitted batch per width bucket; the default keeps the
+ * fixed [batchSize] tier. Dynamic whole-page batching passes a memory-derived
+ * ceiling so a page with fewer leaves than the ceiling produces exactly one
+ * batch per bucket.
  */
 class PaddleOcrBatchPlanner<CROP>(
     val pageGeneration: PaddleOcrPageGeneration,
     val batchSize: PaddleOcrBatchSize,
+    private val chunkSizeFor: (PaddleOcrWidthBucket) -> Int = { batchSize.value },
 ) {
-    val maxInFlightLeavesPerBucket: Int = batchSize.value * 2
+    fun chunkSize(bucket: PaddleOcrWidthBucket): Int = chunkSizeFor(bucket).coerceAtLeast(1)
+
+    fun maxInFlightLeavesPerBucket(bucket: PaddleOcrWidthBucket): Int = chunkSize(bucket) * 2
 
     private val pending = PaddleOcrWidthBucket.values().associateWith {
         ArrayDeque<PaddleOcrLeafWork<CROP>>()
@@ -96,8 +104,8 @@ class PaddleOcrBatchPlanner<CROP>(
     private var pageFinished = false
 
     /**
-     * Admits one final leaf. A non-null return means that bucket just reached B and
-     * can be submitted to the Paddle adapter immediately.
+     * Admits one final leaf. A non-null return means that bucket just reached its
+     * chunk size and can be submitted to the Paddle adapter immediately.
      */
     fun admit(leaf: PaddleOcrLeafWork<CROP>): PaddleOcrBatch<CROP>? {
         check(!pageFinished) { "page $pageGeneration has already been finished" }
@@ -109,14 +117,14 @@ class PaddleOcrBatchPlanner<CROP>(
         }
 
         val bucket = leaf.widthBucket
-        if (inFlightLeafCount(bucket) >= maxInFlightLeavesPerBucket) {
+        if (inFlightLeafCount(bucket) >= maxInFlightLeavesPerBucket(bucket)) {
             admittedIdentities.remove(leaf.identity)
-            throw PaddleOcrBatchWindowFullException(bucket, maxInFlightLeavesPerBucket)
+            throw PaddleOcrBatchWindowFullException(bucket, maxInFlightLeavesPerBucket(bucket))
         }
 
         val queue = pending.getValue(bucket)
         queue.addLast(leaf)
-        return if (queue.size == batchSize.value) {
+        return if (queue.size >= chunkSize(bucket)) {
             emit(bucket)
         } else {
             null
@@ -202,8 +210,8 @@ class PaddleOcrBatchPlanner<CROP>(
 
     private fun emit(bucket: PaddleOcrWidthBucket): PaddleOcrBatch<CROP> {
         val queue = pending.getValue(bucket)
-        val leaves = ArrayList<PaddleOcrLeafWork<CROP>>(batchSize.value)
-        while (queue.isNotEmpty() && leaves.size < batchSize.value) {
+        val leaves = ArrayList<PaddleOcrLeafWork<CROP>>(chunkSize(bucket))
+        while (queue.isNotEmpty() && leaves.size < chunkSize(bucket)) {
             leaves += queue.removeFirst()
         }
         return PaddleOcrBatch(

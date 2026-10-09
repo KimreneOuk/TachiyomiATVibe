@@ -160,7 +160,7 @@ class PaddleOcrBatchPlannerTest {
         val first = leaves.take(4).mapNotNull { planner.admit(it) }.single()
         val second = leaves.slice(4..7).mapNotNull { planner.admit(it) }.single()
 
-        assertEquals(8, planner.maxInFlightLeavesPerBucket)
+        assertEquals(8, planner.maxInFlightLeavesPerBucket(PaddleOcrWidthBucket.WIDTH_640))
         assertEquals(8, planner.inFlightLeafCount(PaddleOcrWidthBucket.WIDTH_640))
         assertThrows(PaddleOcrBatchWindowFullException::class.java) {
             planner.admit(leaves[8])
@@ -246,6 +246,60 @@ class PaddleOcrBatchPlannerTest {
         }
     }
 
+    @Test
+    fun `dynamic chunk admits the whole page into one batch at finish`() {
+        val dynamicPage = PaddleOcrPageGeneration(pageId = "chapter/page-dyn", generation = 1L)
+        val planner = PaddleOcrBatchPlanner<String>(dynamicPage, PaddleOcrBatchSize.B8, chunkSizeFor = { 15 })
+        val leaves = leavesIn(dynamicPage, count = 12, bucket = PaddleOcrWidthBucket.WIDTH_640)
+
+        leaves.forEach { assertNull(planner.admit(it)) }
+        val batches = planner.finishPage()
+
+        assertEquals(listOf(12), batches.map { it.size })
+        planner.complete(batches.single(), List(12) { "ok" }) { _, _ -> }
+        assertTrue(planner.isDrained)
+    }
+
+    @Test
+    fun `dynamic chunk denser than the ceiling still streams full chunks`() {
+        val dynamicPage = PaddleOcrPageGeneration(pageId = "chapter/page-dyn2", generation = 1L)
+        val planner = PaddleOcrBatchPlanner<String>(dynamicPage, PaddleOcrBatchSize.B8, chunkSizeFor = { 15 })
+        val leaves = leavesIn(dynamicPage, count = 20, bucket = PaddleOcrWidthBucket.WIDTH_640)
+
+        val streamed = leaves.mapNotNull { planner.admit(it) }
+        val remainder = planner.finishPage()
+
+        assertEquals(listOf(15, 5), (streamed + remainder).map { it.size })
+    }
+
+    @Test
+    fun `dynamic chunks are independent per width bucket`() {
+        val dynamicPage = PaddleOcrPageGeneration(pageId = "chapter/page-dyn3", generation = 1L)
+        val planner = PaddleOcrBatchPlanner<String>(
+            dynamicPage,
+            PaddleOcrBatchSize.B8,
+            chunkSizeFor = { bucket ->
+                if (bucket == PaddleOcrWidthBucket.WIDTH_640) 15 else 6
+            },
+        )
+        val narrow = leavesIn(dynamicPage, count = 3, bucket = PaddleOcrWidthBucket.WIDTH_640)
+        val wide = leavesIn(dynamicPage, count = 2, bucket = PaddleOcrWidthBucket.WIDTH_1600, firstRegion = 100)
+
+        (narrow + wide).forEach { planner.admit(it) }
+        // finishPage() emits in enum declaration order: WIDTH_640, then
+        // WIDTH_1600. (Do NOT sort by name — "WIDTH_1600" sorts before
+        // "WIDTH_640".)
+        val batches = planner.finishPage()
+
+        assertEquals(
+            listOf(
+                3 to PaddleOcrWidthBucket.WIDTH_640,
+                2 to PaddleOcrWidthBucket.WIDTH_1600,
+            ),
+            batches.map { it.size to it.widthBucket },
+        )
+    }
+
     private fun collect(
         planner: PaddleOcrBatchPlanner<String>,
         leaves: List<PaddleOcrLeafWork<String>>,
@@ -262,6 +316,15 @@ class PaddleOcrBatchPlannerTest {
             planner.complete(batch, List(batch.size) { Unit }) { _, _ -> }
         }
         return batches
+    }
+
+    private fun leavesIn(
+        page: PaddleOcrPageGeneration,
+        count: Int,
+        bucket: PaddleOcrWidthBucket,
+        firstRegion: Int = 0,
+    ): List<PaddleOcrLeafWork<String>> = (0 until count).map {
+        leaf(page = page, region = firstRegion + it, line = 0, bucket = bucket)
     }
 
     private fun leaf(
