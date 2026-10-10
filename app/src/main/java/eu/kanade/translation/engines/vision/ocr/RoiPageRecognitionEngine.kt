@@ -215,7 +215,12 @@ class RoiPageRecognitionEngine(
         get() = !initFailed && (initialized || modelStore.modelsAvailable() || modelStore.assetsAvailable())
 
     /** True only after the inpainting model sessions are built and usable. */
-    fun neuralInpaintAvailable(): Boolean = inpainting?.isInitialized() == true
+    fun neuralInpaintAvailable(): Boolean =
+        if (neuralInpaintModel == tachiyomi.domain.translation.NeuralInpaintModel.LAMA_LITERT_GPU) {
+            litertInpainting?.isAvailable() == true
+        } else {
+            inpainting?.isInitialized() == true
+        }
 
     /**
      * Warms up engine sessions outside the timed recognition region.
@@ -932,11 +937,12 @@ class RoiPageRecognitionEngine(
                     null
                 } else {
                     val activePageInpainter = pageInpainter ?: PageInpaintingEngine(
-                        inpaintingMode,
-                        inpainting ?: AOTInpainting(
+                        mode = inpaintingMode,
+                        inpainter = inpainting ?: AOTInpainting(
                             neuralModel = neuralInpaintModel,
                             hardwareOverride = inpaintingHardwareOverride,
                         ),
+                        litertInpainter = litertInpainting,
                         neuralModel = neuralInpaintModel,
                     )
                     activePageInpainter.inpaint(bitmap, pageTranslation)

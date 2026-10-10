@@ -56,6 +56,10 @@ android {
         }
     }
 
+    androidResources {
+        noCompress += listOf("tflite")
+    }
+
     signingConfigs {
         named("debug") {
             enableV1Signing = true

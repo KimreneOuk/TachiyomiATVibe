@@ -14,6 +14,7 @@ import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
 import tachiyomi.core.common.util.system.logcat
+import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -70,44 +71,58 @@ class LiteRTMangaInpaintingEngine(
         if (isInitialized) return
         val startInit = System.currentTimeMillis()
         try {
-            val modelBuffer = loadModelFile(context, modelAssetPath)
-            if (modelBuffer == null) {
-                logcat(LogPriority.WARN) { "[LiteRTInpaint] Asset $modelAssetPath not found; LiteRT inpainter unavailable" }
+            val modelFile = getOrExtractModelFile(context, modelAssetPath)
+            if (modelFile == null || !modelFile.exists() || modelFile.length() == 0L) {
+                logcat(LogPriority.WARN) { "[LiteRTInpaint] Model file not available for $modelAssetPath; LiteRT inpainter unavailable" }
                 isInitialized = true
                 return
             }
 
             val compatList = CompatibilityList()
-            val options = Interpreter.Options()
+            var createdInterpreter: Interpreter? = null
 
+            // 1. Attempt Hardware GPU delegate if supported by hardware
             if (compatList.isDelegateSupportedOnThisDevice) {
+                var delegate: GpuDelegate? = null
                 try {
                     val gpuOptions = compatList.bestOptionsForThisDevice
-                    val delegate = GpuDelegate(gpuOptions)
-                    options.addDelegate(delegate)
+                    delegate = GpuDelegate(gpuOptions)
+                    val gpuInterpOptions = Interpreter.Options().apply {
+                        addDelegate(delegate)
+                    }
+                    createdInterpreter = Interpreter(modelFile, gpuInterpOptions)
                     gpuDelegate = delegate
                     isGpuAccelerated = true
                     backendName = "GPU (Adreno/Mali OpenCL/Vulkan)"
-                    logcat(LogPriority.INFO) { "[LiteRTInpaint] Hardware GPU delegate enabled successfully" }
+                    logcat(LogPriority.INFO) { "[LiteRTInpaint] Hardware GPU delegate initialized successfully" }
                 } catch (e: Throwable) {
-                    logcat(LogPriority.WARN, e) { "[LiteRTInpaint] Failed to create GPU delegate; falling back to CPU XNNPACK" }
-                    options.setNumThreads(4)
-                    options.setUseXNNPACK(true)
-                    isGpuAccelerated = false
-                    backendName = "CPU (XNNPACK 4T)"
+                    logcat(LogPriority.WARN, e) { "[LiteRTInpaint] GPU delegate init failed; falling back to CPU XNNPACK" }
+                    try {
+                        delegate?.close()
+                    } catch (_: Throwable) {}
+                    gpuDelegate = null
+                    createdInterpreter = null
                 }
             } else {
-                options.setNumThreads(4)
-                options.setUseXNNPACK(true)
-                isGpuAccelerated = false
-                backendName = "CPU (XNNPACK 4T)"
                 logcat(LogPriority.INFO) { "[LiteRTInpaint] Device reports GPU delegate unsupported; using CPU XNNPACK" }
             }
 
-            interpreter = Interpreter(modelBuffer, options)
+            // 2. Guaranteed fallback to multi-threaded CPU XNNPACK
+            if (createdInterpreter == null) {
+                val cpuOptions = Interpreter.Options().apply {
+                    setNumThreads(4)
+                    setUseXNNPACK(true)
+                }
+                createdInterpreter = Interpreter(modelFile, cpuOptions)
+                isGpuAccelerated = false
+                backendName = "CPU (XNNPACK 4T)"
+                logcat(LogPriority.INFO) { "[LiteRTInpaint] CPU XNNPACK interpreter initialized successfully" }
+            }
+
+            interpreter = createdInterpreter
             val elapsed = System.currentTimeMillis() - startInit
             logcat(LogPriority.INFO) {
-                "[InpaintBenchmark] [LiteRTInpaint] Initialized in ${elapsed}ms | Backend: $backendName | Model: $modelAssetPath"
+                "[InpaintBenchmark] [LiteRTInpaint] Ready in ${elapsed}ms | Backend: $backendName | Model: ${modelFile.name}"
             }
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e) { "[LiteRTInpaint] Initialization failed completely" }
@@ -116,15 +131,32 @@ class LiteRTMangaInpaintingEngine(
         }
     }
 
-    private fun loadModelFile(context: Context, assetPath: String): ByteBuffer? {
+    private fun getOrExtractModelFile(context: Context, assetPath: String): File? {
+        val targetDir = File(context.filesDir, "models/inpainting")
+        if (!targetDir.exists()) targetDir.mkdirs()
+        val targetFile = File(targetDir, File(assetPath).name)
+
+        if (targetFile.exists() && targetFile.length() > 0L) {
+            return targetFile
+        }
+
         return try {
-            val fileDescriptor = context.assets.openFd(assetPath)
-            val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
-            val fileChannel = inputStream.channel
-            val startOffset = fileDescriptor.startOffset
-            val declaredLength = fileDescriptor.declaredLength
-            fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
+            val tempFile = File(targetDir, "${targetFile.name}.tmp")
+            context.assets.open(assetPath).use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (!tempFile.renameTo(targetFile)) {
+                tempFile.copyTo(targetFile, overwrite = true)
+                tempFile.delete()
+            }
+            logcat(LogPriority.INFO) {
+                "[LiteRTInpaint] Extracted asset $assetPath to ${targetFile.absolutePath} (${targetFile.length()} bytes)"
+            }
+            targetFile
         } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "[LiteRTInpaint] Failed to extract asset $assetPath to storage" }
             null
         }
     }
@@ -222,10 +254,17 @@ class LiteRTMangaInpaintingEngine(
                 inputFloatBuffer.put(maskVal)
             }
 
+            // Explicitly rewind direct ByteBuffers for native JNI
+            inputBuffer.rewind()
+            inputBuffer.position(0)
+            outputBuffer.rewind()
+            outputBuffer.position(0)
+
             // 2. Pure neural inference
             val inferStart = System.currentTimeMillis()
-            outputBuffer.rewind()
-            outputFloatBuffer.rewind()
+            logcat(LogPriority.INFO) {
+                "[LiteRTInpaint] Running neural inference for patch ${patchCount + 1}/${patches.size} ($cropW x $cropH) on $backendName..."
+            }
 
             synchronized(this) {
                 interp.run(inputBuffer, outputBuffer)
@@ -233,6 +272,9 @@ class LiteRTMangaInpaintingEngine(
             val inferElapsed = System.currentTimeMillis() - inferStart
             totalInferMs += inferElapsed
             patchCount++
+            logcat(LogPriority.INFO) {
+                "[LiteRTInpaint] Patch $patchCount completed in ${inferElapsed}ms"
+            }
 
             // 3. Unpack output tensor [1, 512, 512, 3] NHWC into bitmap
             outputFloatBuffer.rewind()
