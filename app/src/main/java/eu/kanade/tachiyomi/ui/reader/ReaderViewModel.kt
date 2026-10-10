@@ -46,21 +46,22 @@ import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.diagnostics.TelemetryTrace
+import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.rendering.PersistedLayoutReaderBridge
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.model.isTranslationDisplayReady
-import eu.kanade.translation.scheduling.AutoSmoothnessTelemetry
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.AutoChapterIdentity
+import eu.kanade.translation.scheduling.AutoSmoothnessTelemetry
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.workflow.TranslationManager
 import eu.kanade.translation.workflow.TranslationSessionState
@@ -185,6 +186,7 @@ class ReaderViewModel @JvmOverloads constructor(
             )
 
     internal val aiModelFetchState = MutableStateFlow<AiModelListState>(AiModelListState.Idle)
+    private val inpaintingHardwareOverride = MutableStateFlow(InpaintingHardwareOverride.CPU)
 
     val translationSettingsState: kotlinx.coroutines.flow.StateFlow<TranslationSettingsState> = combine(
         combine(
@@ -231,7 +233,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 AiSubPrefs(apiKey, baseUrl, model, recentRaw)
             }
         },
-    ) { part1, part2, ocrInfo, aiSubPrefs ->
+        inpaintingHardwareOverride,
+    ) { part1, part2, ocrInfo, aiSubPrefs, hardwareOverride ->
         val (q1, q2) = part1
         val (q3, fetchState) = part2
         val (ocrModel, ocrModelEntries) = ocrInfo
@@ -252,6 +255,7 @@ class ReaderViewModel @JvmOverloads constructor(
             ocrModelEntries = ocrModelEntries,
             inpaintingMode = q2.d.first,
             inpaintingNeuralModel = q2.d.second,
+            inpaintingHardwareOverride = hardwareOverride,
             engineCategory = q3.a,
             standardEngine = q3.b,
             deeplApiKey = q3.c,
@@ -545,6 +549,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val translationController by lazy { ReaderTranslationController(this) }
 
     init {
+        translationManager.setInpaintingHardwareOverride(InpaintingHardwareOverride.CPU)
         // TachiyomiAT: Auto-translate is a per-session convenience, not a
         // persistent default. Force it off on reader entry so a chapter never
         // starts translating the instant the reader opens — the user must opt in
@@ -794,6 +799,7 @@ class ReaderViewModel @JvmOverloads constructor(
         currentTranslationStore = null
         val readerStop = translationManager.requestReaderStop("reader closed")
         registerReaderCleanupAfterStop(readerStop) {
+            translationManager.setInpaintingHardwareOverride(InpaintingHardwareOverride.CPU)
             // The joined manager boundary guarantees no in-flight work can open a retained page
             // stream. Keep this callback independent of viewModelScope so cleanup survives
             // onCleared and cannot recycle an Epub/HTTP loader early.
@@ -1079,7 +1085,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val pages = selectedChapter.pages ?: return
         val pageIndex = page.index
 
-        val effectiveKey = page.sourceFileName ?: page.url ?: "page_${pageIndex}"
+        val effectiveKey = page.sourceFileName ?: page.url ?: "page_$pageIndex"
         val isReady = page.translation?.isTranslationDisplayReady == true
         val arrivalEpochMs = System.currentTimeMillis()
         pageArrivalTimes[pageIndex] = arrivalEpochMs
@@ -1748,6 +1754,11 @@ class ReaderViewModel @JvmOverloads constructor(
     fun setTranslationInpaintingNeuralModel(model: NeuralInpaintModel) =
         translationController.setTranslationInpaintingNeuralModel(model)
 
+    fun setTranslationInpaintingHardwareOverride(override: InpaintingHardwareOverride) {
+        inpaintingHardwareOverride.value = override
+        translationManager.setInpaintingHardwareOverride(override)
+    }
+
     fun setTranslationEngineCategory(category: TranslationEngineCategory) =
         translationController.setTranslationEngineCategory(category)
 
@@ -1831,6 +1842,7 @@ data class TranslationSettingsState(
     val ocrModelEntries: ImmutableMap<OcrModel, String> = persistentMapOf(),
     val inpaintingMode: String = "",
     val inpaintingNeuralModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
+    val inpaintingHardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
     val engineCategory: TranslationEngineCategory = TranslationEngineCategory.STANDARD,
     val standardEngine: StandardEngine = StandardEngine.GOOGLE,
     val deeplApiKey: String = "",

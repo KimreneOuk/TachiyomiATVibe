@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
+import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
@@ -794,6 +795,11 @@ class TranslationManager private constructor(
     /** Warms engine sessions before translation work enters the critical path. */
     suspend fun warmUp() {
         pipeline.warmUp()
+    }
+
+    /** Reader-session-only provider choice; the pipeline never persists it. */
+    fun setInpaintingHardwareOverride(override: InpaintingHardwareOverride) {
+        pipeline.setInpaintingHardwareOverride(override)
     }
 
     /**

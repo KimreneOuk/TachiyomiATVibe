@@ -34,6 +34,20 @@
       "license": "Apache-2.0"
     },
     {
+      "path": "inpainting/lama-512-int8.onnx",
+      "size_bytes": 62074990,
+      "sha256": "cab19978adc306622fe37ef60d4a52103b99c98141d499c2a2366a7ed1255dbe",
+      "source_url": "https://huggingface.co/g-ronimo/lama/resolve/main/lama_512_int8.onnx",
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "inpainting/lama-512-fp16.onnx",
+      "size_bytes": 106559381,
+      "sha256": "1fa042eaf30a6660b9190f0a1512d27bdceff90fab172af295303cdf2905e516",
+      "source_url": "https://huggingface.co/g-ronimo/lama/resolve/main/lama_512_fp16.onnx",
+      "license": "Apache-2.0"
+    },
+    {
       "path": "inpainting/aot-512.onnx",
       "size_bytes": 22854564,
       "sha256": "b1d0e7c50f95910cf1ea58fac646699a97ce2efadf7e2c57af3785bf0ea4f9eb",

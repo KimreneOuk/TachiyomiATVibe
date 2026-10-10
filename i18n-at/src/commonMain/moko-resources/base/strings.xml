@@ -84,7 +84,14 @@
     <string name="pref_inpainting_neural_model_summary">Choose the model used by Balance and Quality modes.</string>
     <string name="pref_inpainting_neural_model_lama_manga">LaMa Manga (Recommended)</string>
     <string name="pref_inpainting_neural_model_lama_manga_fp16">LaMa Manga FP16 (Experimental)</string>
+    <string name="pref_inpainting_neural_model_lama_512_int8">LaMa 512 INT8 (Experimental)</string>
+    <string name="pref_inpainting_neural_model_lama_512_fp16">LaMa 512 FP16 (Experimental)</string>
     <string name="pref_inpainting_neural_model_aot_gan">AOT-GAN (Legacy)</string>
+    <string name="pref_inpainting_hardware_override">Inpainting hardware (Experimental)</string>
+    <string name="pref_inpainting_hardware_override_summary">Temporary for this reader session. CPU is the default; unsupported GPU or NPU routes fall back to CPU.</string>
+    <string name="pref_inpainting_hardware_cpu">CPU</string>
+    <string name="pref_inpainting_hardware_gpu">GPU</string>
+    <string name="pref_inpainting_hardware_npu">NPU</string>
     <string name="pref_hardware_acceleration">Hardware acceleration</string>
     <string name="pref_hardware_acceleration_summary">Runs detection and inpainting models on the NPU. Auto probes the device once per app start and falls back to CPU if the NPU rejects the workload.</string>
     <string name="pref_hardware_accelerator_auto">Auto (probe on startup)</string>

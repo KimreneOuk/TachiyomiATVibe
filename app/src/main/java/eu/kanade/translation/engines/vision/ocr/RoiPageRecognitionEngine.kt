@@ -9,6 +9,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceModel
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.PageInpaintingEngine
 import eu.kanade.translation.engines.inpainting.PageInpaintingPlanner
@@ -64,6 +65,7 @@ class RoiPageRecognitionEngine(
     private val ocrModel: OcrModel,
     private val inpaintingMode: InpaintingMode = InpaintingMode.QUALITY,
     private val neuralInpaintModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
+    private val inpaintingHardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
 ) : PageRecognitionEngine {
 
     private val modelStore = OnnxModelStore(context)
@@ -379,7 +381,10 @@ class RoiPageRecognitionEngine(
                     "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), " +
                         "preparing inpainting (mode=$inpaintingMode model=$neuralInpaintModel)"
                 }
-                val localInpainting = AOTInpainting(neuralModel = neuralInpaintModel)
+                val localInpainting = AOTInpainting(
+                    neuralModel = neuralInpaintModel,
+                    hardwareOverride = inpaintingHardwareOverride,
+                )
                 localInpainting.paddleDetector = paddleDet
                 if (inpaintingMode.initializesNeuralSessions) {
                     localInpainting.initialize(
@@ -387,6 +392,8 @@ class RoiPageRecognitionEngine(
                         dynamicModelFile = paths.inpaintModel,
                         lamaMangaModelFile = paths.lamaMangaModel,
                         lamaMangaFp16ModelFile = paths.lamaMangaFp16Model,
+                        lama512Int8ModelFile = paths.lama512Int8Model,
+                        lama512Fp16ModelFile = paths.lama512Fp16Model,
                     )
                 } else {
                     logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping AOT session initialization" }
@@ -916,7 +923,10 @@ class RoiPageRecognitionEngine(
                 } else {
                     val activePageInpainter = pageInpainter ?: PageInpaintingEngine(
                         inpaintingMode,
-                        inpainting ?: AOTInpainting(neuralModel = neuralInpaintModel),
+                        inpainting ?: AOTInpainting(
+                            neuralModel = neuralInpaintModel,
+                            hardwareOverride = inpaintingHardwareOverride,
+                        ),
                         neuralModel = neuralInpaintModel,
                     )
                     activePageInpainter.inpaint(bitmap, pageTranslation)

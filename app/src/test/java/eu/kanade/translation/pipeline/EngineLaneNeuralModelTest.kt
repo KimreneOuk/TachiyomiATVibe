@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline
 
+import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -28,6 +29,30 @@ class EngineLaneNeuralModelTest {
                 newMode = InpaintingMode.BALANCE,
                 oldModel = NeuralInpaintModel.LAMA_MANGA,
                 newModel = NeuralInpaintModel.LAMA_MANGA,
+            ),
+        )
+    }
+
+    @Test
+    fun `hardware override change rebuilds recognition while mode and model stay the same`() {
+        assertTrue(
+            EngineLane.shouldRebuildRecognitionForInpainting(
+                oldMode = InpaintingMode.QUALITY,
+                newMode = InpaintingMode.QUALITY,
+                oldModel = NeuralInpaintModel.LAMA_512_FP16,
+                newModel = NeuralInpaintModel.LAMA_512_FP16,
+                oldHardwareOverride = InpaintingHardwareOverride.CPU,
+                newHardwareOverride = InpaintingHardwareOverride.NPU,
+            ),
+        )
+        assertFalse(
+            EngineLane.shouldRebuildRecognitionForInpainting(
+                oldMode = InpaintingMode.QUALITY,
+                newMode = InpaintingMode.QUALITY,
+                oldModel = NeuralInpaintModel.LAMA_512_FP16,
+                newModel = NeuralInpaintModel.LAMA_512_FP16,
+                oldHardwareOverride = InpaintingHardwareOverride.NPU,
+                newHardwareOverride = InpaintingHardwareOverride.NPU,
             ),
         )
     }

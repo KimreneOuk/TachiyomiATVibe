@@ -190,4 +190,53 @@ class InpaintStampDecisionTest {
             ),
         )
     }
+
+    @Test
+    fun `LaMa 512 model stamps are distinct and invalidate each other`() {
+        InpaintingMode.QUALITY.stampName(
+            neuralModel = NeuralInpaintModel.LAMA_512_INT8,
+            neuralAvailable = true,
+        ) shouldBe "QUALITY:LAMA512"
+        InpaintingMode.QUALITY.stampName(
+            neuralModel = NeuralInpaintModel.LAMA_512_FP16,
+            neuralAvailable = true,
+        ) shouldBe "QUALITY:LAMA512F"
+
+        assertTrue(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:LAMA512",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_512_FP16,
+            ),
+        )
+        assertTrue(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:LAMA512F",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_512_INT8,
+            ),
+        )
+        assertFalse(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:LAMA512F",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_512_FP16,
+            ),
+        )
+    }
+
+    @Test
+    fun `hardware provider override is not part of the persisted inpainting stamp`() {
+        InpaintingMode.QUALITY.stampName(
+            neuralModel = NeuralInpaintModel.LAMA_512_FP16,
+            neuralAvailable = true,
+        ) shouldBe "QUALITY:LAMA512F"
+        assertFalse(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:LAMA512F",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_512_FP16,
+            ),
+        )
+    }
 }

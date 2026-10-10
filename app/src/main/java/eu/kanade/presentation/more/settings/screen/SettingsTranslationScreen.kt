@@ -134,6 +134,8 @@ object SettingsTranslationScreen : SearchableSettings {
         val neuralModels = mapOf(
             NeuralInpaintModel.LAMA_MANGA to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_manga),
             NeuralInpaintModel.LAMA_MANGA_FP16 to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_manga_fp16),
+            NeuralInpaintModel.LAMA_512_INT8 to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_512_int8),
+            NeuralInpaintModel.LAMA_512_FP16 to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_512_fp16),
             NeuralInpaintModel.AOT_GAN to stringResource(ATMR.strings.pref_inpainting_neural_model_aot_gan),
         )
         val preferenceItems = persistentListOf<Preference.PreferenceItem<out Any>>(

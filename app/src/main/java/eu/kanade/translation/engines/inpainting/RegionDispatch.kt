@@ -62,6 +62,8 @@ data class InpaintStampDecision(
             val neuralModel = when (modelToken?.removeSuffix(InpaintingMode.DEGRADED_SUFFIX)) {
                 "LAMA" -> NeuralInpaintModel.LAMA_MANGA
                 "LAMA16" -> NeuralInpaintModel.LAMA_MANGA_FP16
+                "LAMA512" -> NeuralInpaintModel.LAMA_512_INT8
+                "LAMA512F" -> NeuralInpaintModel.LAMA_512_FP16
                 "AOT" -> NeuralInpaintModel.AOT_GAN
                 null -> NeuralInpaintModel.AOT_GAN
                 else -> return null

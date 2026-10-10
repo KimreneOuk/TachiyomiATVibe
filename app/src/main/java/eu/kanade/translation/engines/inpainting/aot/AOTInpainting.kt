@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
 import android.os.Build
+import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.RegionBackend
 import eu.kanade.translation.engines.inpainting.RegionDispatch
@@ -15,6 +16,9 @@ import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
 import eu.kanade.translation.engines.inpainting.bubble.BubbleOpenCvInpainter
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
 import eu.kanade.translation.engines.inpainting.resolveDispatch
+import eu.kanade.translation.engines.inpainting.runWithInpaintingProviderRecovery
+import eu.kanade.translation.engines.inpainting.toAotBackend
+import eu.kanade.translation.engines.inpainting.toHardwareRoute
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.DeviceCapability
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
@@ -37,6 +41,7 @@ import kotlin.math.roundToInt
 class AOTInpainting(
     val performanceMode: String? = "burst",
     val neuralModel: NeuralInpaintModel = NeuralInpaintModel.AOT_GAN,
+    val hardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
 ) {
 
     companion object {
@@ -111,10 +116,14 @@ class AOTInpainting(
     private var fixedNnapiSession: OrtSession? = null
     private var fixedQnnSession: OrtSession? = null
     private var fixedQnnBackend: AotExecutionCoordinator.Backend? = null
+    private var fixedQnnModelId: String? = null
     private var dynamicSession: OrtSession? = null
     private var dynamicSessionRoute = "dynamic_cpu"
     private var lamaSession: OrtSession? = null
     private var lamaSessionRoute = "lama_manga_cpu"
+    private var lamaSessionHardwareRoute = HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
+    private var lamaModelFile: File? = null
+    private var lamaModelRouteTag: String? = null
     private val nnapiHealth = NnapiHealthMonitor()
     var paddleDetector: eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine? = null
 
@@ -145,16 +154,27 @@ class AOTInpainting(
         dynamicModelFile: File?,
         lamaMangaModelFile: File? = null,
         lamaMangaFp16ModelFile: File? = null,
+        lama512Int8ModelFile: File? = null,
+        lama512Fp16ModelFile: File? = null,
     ) {
         val lamaSelection = selectLamaMangaModel(
             neuralModel = neuralModel,
             lamaMangaModelFile = lamaMangaModelFile,
             lamaMangaFp16ModelFile = lamaMangaFp16ModelFile,
+            lama512Int8ModelFile = lama512Int8ModelFile,
+            lama512Fp16ModelFile = lama512Fp16ModelFile,
         )
         if (lamaSelection != null) {
-            lamaSession = initializeLamaSession(lamaSelection.modelFile, lamaSelection.routeTag)
+            lamaModelFile = lamaSelection.modelFile
+            lamaModelRouteTag = lamaSelection.routeTag
+            lamaSession = initializeLamaSession(
+                modelFile = lamaSelection.modelFile,
+                routeTag = lamaSelection.routeTag,
+                requestedHardwareRoute = hardwareOverride.toHardwareRoute(),
+            )
             logcat(LogPriority.INFO) {
-                "[inpaint] init model=$neuralModel session=${lamaSession != null} route=$lamaSessionRoute " +
+                "[inpaint] init model=$neuralModel session=${lamaSession != null} " +
+                    "requestedHardware=$hardwareOverride route=$lamaSessionRoute " +
                     DeviceCapability.describe()
             }
             return
@@ -162,11 +182,12 @@ class AOTInpainting(
 
         fixedSession = initializeSession(fixedModelFile, AotModelContract.Kind.FIXED_512, "fixed")
         dynamicSession = initializeSession(dynamicModelFile, AotModelContract.Kind.DYNAMIC, "dynamic")
-        val selectedAccelerator = AotExecutionCoordinator.preferredAccelerator(HardwareDiscoveryEngine.resolveRoute())
+        val selectedAccelerator = hardwareOverride.toAotBackend()
         when (selectedAccelerator) {
             AotExecutionCoordinator.Backend.QNN_HTP,
             AotExecutionCoordinator.Backend.QNN_GPU,
             -> if (fixedModelFile != null && fixedModelFile.exists()) {
+                fixedQnnModelId = ModelRoutingEngine.resolveModelId(fixedModelFile.absolutePath)
                 fixedQnnSession = initializeQnnSession(fixedModelFile, selectedAccelerator)
                 if (fixedQnnSession != null) fixedQnnBackend = selectedAccelerator
             }
@@ -181,11 +202,17 @@ class AOTInpainting(
             "[inpaint] init fixedSession=${fixedSession != null} fixedRoute=$fixedSessionRoute " +
                 "fixedQnn=${fixedQnnSession != null} fixedNnapi=${fixedNnapiSession != null} " +
                 "dynamic=${dynamicSession != null} dynamicRoute=$dynamicSessionRoute " +
+                "requestedHardware=$hardwareOverride " +
                 DeviceCapability.describe()
         }
     }
 
-    private fun initializeLamaSession(modelFile: File?, routeTag: String): OrtSession? {
+    private fun initializeLamaSession(
+        modelFile: File?,
+        routeTag: String,
+        requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute,
+    ): OrtSession? {
+        lamaSessionHardwareRoute = HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
         if (modelFile == null || !modelFile.exists()) {
             lamaSessionRoute = "${routeTag}_missing"
             logcat(LogPriority.WARN) {
@@ -198,9 +225,11 @@ class AOTInpainting(
         return try {
             created = OnnxRuntimeProvider.createSessionWithFallback(
                 modelPath = modelFile.absolutePath,
-                useXnnpack = true,
+                useAccelerator = requestedHardwareRoute != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK,
+                useXnnpack = requestedHardwareRoute == HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK,
                 disableIntraOpSpinning = true,
                 providerSink = { registeredProvider -> provider = registeredProvider },
+                requestedHardwareRoute = requestedHardwareRoute,
             )
             val inputs = created.inputInfo
             val input = inputs[LamaMangaTensorContract.inputTensorName]?.info as? ai.onnxruntime.TensorInfo
@@ -215,8 +244,15 @@ class AOTInpainting(
                 "LaMa Manga output shape changed: ${output?.shape?.contentToString()}"
             }
             lamaSessionRoute = "${routeTag}_$provider"
+            lamaSessionHardwareRoute = when (provider) {
+                "qnn_htp" -> HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP
+                "qnn_gpu" -> HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU
+                else -> HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
+            }
             logcat(LogPriority.INFO) {
-                "[inpaint] route=$routeTag init=ok provider=${provider.uppercase()} perfRoute=$lamaSessionRoute " +
+                "[inpaint] route=$routeTag init=ok selectedHardware=$hardwareOverride " +
+                    "requestedRoute=$requestedHardwareRoute " +
+                    "provider=${provider.uppercase()} perfRoute=$lamaSessionRoute " +
                     "model=${modelFile.name} input=${input?.shape?.contentToString()} " +
                     "output=${output?.shape?.contentToString()}"
             }
@@ -229,7 +265,9 @@ class AOTInpainting(
             }
             lamaSessionRoute = "${routeTag}_$provider"
             logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=$routeTag init=failed provider=${provider.uppercase()} model=${modelFile.name}"
+                "[inpaint] route=$routeTag init=failed selectedHardware=$hardwareOverride " +
+                    "requestedRoute=$requestedHardwareRoute " +
+                    "provider=${provider.uppercase()} model=${modelFile.name}"
             }
             null
         }
@@ -243,7 +281,7 @@ class AOTInpainting(
         }
         val routeLabel = if (backend == AotExecutionCoordinator.Backend.QNN_GPU) "qnn_gpu" else "qnn_htp"
         val modelId = ModelRoutingEngine.resolveModelId(modelFile.absolutePath)
-        if (!ModelRoutingEngine.isSupported(modelId, route)) {
+        if (!ModelRoutingEngine.isAcceleratorAttemptAllowed(modelId, route)) {
             logcat(LogPriority.INFO) { "[inpaint] route=$routeLabel model=$modelId is marked UNSUPPORTED; skipping" }
             return null
         }
@@ -298,16 +336,13 @@ class AOTInpainting(
 
         var opts: OrtSession.SessionOptions? = null
         var created: OrtSession? = null
-        var qnnSessionCreationFailure = false
         return try {
-            qnnSessionCreationFailure = true
             opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(
                 contextCacheFile = stagingCtxFile,
                 strictCpuFallbackDisabled = true,
                 qnnOptions = qnnOptions,
             )
             created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
-            qnnSessionCreationFailure = false
             AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(created))
             if (app != null && stagingCtxFile != null) {
                 QnnContextCacheManager.commitStaging(app, modelFile, qnnOptions)
@@ -322,9 +357,6 @@ class AOTInpainting(
                 created?.close()
             } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
-            }
-            if (qnnSessionCreationFailure && error !is OutOfMemoryError) {
-                HardwareDiscoveryEngine.tripCircuitBreaker("qnn_session_creation_failed", error)
             }
             val canRetry = ModelRoutingEngine.recordFailure(modelId, route, error)
             logcat(LogPriority.ERROR, error) {
@@ -472,6 +504,8 @@ class AOTInpainting(
     fun isInitialized(): Boolean = when (neuralModel) {
         NeuralInpaintModel.LAMA_MANGA,
         NeuralInpaintModel.LAMA_MANGA_FP16,
+        NeuralInpaintModel.LAMA_512_INT8,
+        NeuralInpaintModel.LAMA_512_FP16,
         -> lamaSession != null
         NeuralInpaintModel.AOT_GAN ->
             fixedSession != null || dynamicSession != null || fixedQnnSession != null || fixedNnapiSession != null
@@ -480,6 +514,8 @@ class AOTInpainting(
     private fun neuralSessionCount(): Int = when (neuralModel) {
         NeuralInpaintModel.LAMA_MANGA,
         NeuralInpaintModel.LAMA_MANGA_FP16,
+        NeuralInpaintModel.LAMA_512_INT8,
+        NeuralInpaintModel.LAMA_512_FP16,
         -> if (lamaSession != null) 1 else 0
         NeuralInpaintModel.AOT_GAN ->
             (if (fixedSession != null) 1 else 0) +
@@ -1038,6 +1074,8 @@ class AOTInpainting(
         val modelTag = when (neuralModel) {
             NeuralInpaintModel.LAMA_MANGA -> "lama_manga"
             NeuralInpaintModel.LAMA_MANGA_FP16 -> "lama_manga_fp16"
+            NeuralInpaintModel.LAMA_512_INT8 -> "lama_512_int8"
+            NeuralInpaintModel.LAMA_512_FP16 -> "lama_512_fp16"
             NeuralInpaintModel.AOT_GAN -> "aot"
         }
         val memoryDecision = EngineMemoryBudget.neuralInpaintDecision(
@@ -1070,7 +1108,12 @@ class AOTInpainting(
                 "sysHeadroom=${memoryDecision.systemHeadroomBytes?.div(1024L * 1024L)}MiB crop=${side}x$side $logExtra",
         )
 
-        if (neuralModel == NeuralInpaintModel.LAMA_MANGA || neuralModel == NeuralInpaintModel.LAMA_MANGA_FP16) {
+        if (
+            neuralModel == NeuralInpaintModel.LAMA_MANGA ||
+            neuralModel == NeuralInpaintModel.LAMA_MANGA_FP16 ||
+            neuralModel == NeuralInpaintModel.LAMA_512_INT8 ||
+            neuralModel == NeuralInpaintModel.LAMA_512_FP16
+        ) {
             return runLamaMangaCandidate(image, localMaskBytes, crop, side, logTag)
         }
 
@@ -1194,7 +1237,12 @@ class AOTInpainting(
                         AotExecutionCoordinator.Backend.QNN_HTP,
                         AotExecutionCoordinator.Backend.QNN_GPU,
                         -> {
-                            HardwareDiscoveryEngine.tripCircuitBreaker("qnn_execution_failed", error)
+                            val route = when (backend) {
+                                AotExecutionCoordinator.Backend.QNN_HTP -> HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP
+                                AotExecutionCoordinator.Backend.QNN_GPU -> HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU
+                                else -> throw IllegalStateException("Not a QNN backend: $backend")
+                            }
+                            fixedQnnModelId?.let { modelId -> ModelRoutingEngine.recordFailure(modelId, route, error) }
                             closeAndDetachQnn("execution_failed", error)
                         }
 
@@ -1276,7 +1324,44 @@ class AOTInpainting(
                 LamaMangaTensorContract.inputShape(),
             )
             inputTensor = tensor
-            val inference = session.run(mapOf(LamaMangaTensorContract.inputTensorName to tensor))
+            val input = mapOf(LamaMangaTensorContract.inputTensorName to tensor)
+            val modelPath = requireNotNull(lamaModelFile) { "LaMa model path was not retained" }.absolutePath
+            val modelId = ModelRoutingEngine.resolveModelId(modelPath)
+            val inferenceRoute = lamaSessionHardwareRoute
+            val inference = runWithInpaintingProviderRecovery(
+                route = inferenceRoute,
+                inference = { session.run(input) },
+                retryOnCpu = { providerError ->
+                    logcat(LogPriority.WARN, providerError) {
+                        "[inpaint] route=$lamaSessionRoute runtime_failed provider=${inferenceRoute.name} retry=cpu " +
+                            "model=$modelId"
+                    }
+                    if (lamaSession === session) {
+                        lamaSession = null
+                        try {
+                            session.close()
+                        } catch (closeError: Throwable) {
+                            providerError.addSuppressed(closeError)
+                            logcat(LogPriority.ERROR, closeError) {
+                                "[inpaint] route=$lamaSessionRoute failedSessionClose=failed"
+                            }
+                        }
+                    }
+                    val cpuSession = initializeLamaSession(
+                        modelFile = lamaModelFile,
+                        routeTag = requireNotNull(lamaModelRouteTag) { "LaMa route tag was not retained" },
+                        requestedHardwareRoute = HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK,
+                    ) ?: throw IllegalStateException("LaMa CPU fallback session initialization failed for $modelId")
+                    lamaSession = cpuSession
+                    cpuSession.run(input).also {
+                        logcat(LogPriority.INFO) {
+                            "[inpaint] route=$lamaSessionRoute runtime_fallback=cpu init=ok model=$modelId"
+                        }
+                    }
+                },
+                recordFailure = { error -> ModelRoutingEngine.recordFailure(modelId, inferenceRoute, error) },
+                recordSuccess = { ModelRoutingEngine.recordSuccessfulInference(modelId, inferenceRoute) },
+            )
             results = inference
             val outputTensor = inference[0] as? OnnxTensor
                 ?: throw IllegalStateException("LaMa Manga returned a non-tensor output")
@@ -1991,6 +2076,7 @@ class AOTInpainting(
         fixedNnapiSession = null
         fixedQnnSession = null
         fixedQnnBackend = null
+        fixedQnnModelId = null
         dynamicSession = null
         lamaSession = null
         AotSessionLifecycle.closeIndependently(fixed, dynamic, nnapi, qnn) { failure ->

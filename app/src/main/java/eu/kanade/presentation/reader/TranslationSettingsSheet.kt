@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -31,6 +32,7 @@ import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidge
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
+import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
 import eu.kanade.translation.engines.translator.providers.AiModelFetcher
@@ -77,6 +79,7 @@ fun TranslationSettingsSheet(
     onOcrModelChange: (OcrModel) -> Unit,
     onTranslationInpaintingModeChange: (String) -> Unit,
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
+    onTranslationInpaintingHardwareOverrideChange: (InpaintingHardwareOverride) -> Unit,
     onTranslationEngineCategoryChange: (TranslationEngineCategory) -> Unit,
     onTranslationStandardEngineChange: (StandardEngine) -> Unit,
     onTranslationDeeplApiKeyChange: (String) -> Unit,
@@ -143,8 +146,10 @@ fun TranslationSettingsSheet(
                 InpaintSection(
                     inpaintingMode = state.inpaintingMode,
                     neuralModel = state.inpaintingNeuralModel,
+                    hardwareOverride = state.inpaintingHardwareOverride,
                     onTranslationInpaintingModeChange = onTranslationInpaintingModeChange,
                     onTranslationInpaintingNeuralModelChange = onTranslationInpaintingNeuralModelChange,
+                    onTranslationInpaintingHardwareOverrideChange = onTranslationInpaintingHardwareOverrideChange,
                 )
                 EngineSection(
                     state = state,
@@ -476,8 +481,10 @@ private fun SearchableLanguageRow(
 private fun ColumnScope.InpaintSection(
     inpaintingMode: String,
     neuralModel: NeuralInpaintModel,
+    hardwareOverride: InpaintingHardwareOverride,
     onTranslationInpaintingModeChange: (String) -> Unit,
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
+    onTranslationInpaintingHardwareOverrideChange: (InpaintingHardwareOverride) -> Unit,
 ) {
     val entries = mapOf(
         "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
@@ -496,6 +503,8 @@ private fun ColumnScope.InpaintSection(
         val neuralModelEntries = mapOf(
             NeuralInpaintModel.LAMA_MANGA to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_manga),
             NeuralInpaintModel.LAMA_MANGA_FP16 to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_manga_fp16),
+            NeuralInpaintModel.LAMA_512_INT8 to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_512_int8),
+            NeuralInpaintModel.LAMA_512_FP16 to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_512_fp16),
             NeuralInpaintModel.AOT_GAN to stringResource(ATMR.strings.pref_inpainting_neural_model_aot_gan),
         )
         EngineListRow(
@@ -503,6 +512,37 @@ private fun ColumnScope.InpaintSection(
             entries = neuralModelEntries,
             value = neuralModel,
             onValueChange = onTranslationInpaintingNeuralModelChange,
+        )
+        Text(
+            text = stringResource(ATMR.strings.pref_inpainting_hardware_override),
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+        ) {
+            InpaintingHardwareOverride.entries.forEach { option ->
+                FilterChip(
+                    selected = hardwareOverride == option,
+                    onClick = { onTranslationInpaintingHardwareOverrideChange(option) },
+                    label = {
+                        Text(
+                            text = stringResource(
+                                when (option) {
+                                    InpaintingHardwareOverride.CPU -> ATMR.strings.pref_inpainting_hardware_cpu
+                                    InpaintingHardwareOverride.GPU -> ATMR.strings.pref_inpainting_hardware_gpu
+                                    InpaintingHardwareOverride.NPU -> ATMR.strings.pref_inpainting_hardware_npu
+                                },
+                            ),
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        Text(
+            text = stringResource(ATMR.strings.pref_inpainting_hardware_override_summary),
+            style = MaterialTheme.typography.bodySmall,
         )
     }
 }

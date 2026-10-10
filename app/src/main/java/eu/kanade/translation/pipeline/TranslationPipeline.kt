@@ -13,6 +13,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.inpainting.InpaintStampDecision
+import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.NativeStallState
@@ -363,6 +364,10 @@ class TranslationPipeline private constructor(
     private fun inpaintingModeFromPref(): InpaintingMode = engines.inpaintingModeFromPref()
 
     private fun inpaintingStampDecision(): InpaintStampDecision = engines.inpaintingStampDecision()
+
+    internal fun setInpaintingHardwareOverride(override: InpaintingHardwareOverride) {
+        engines.setInpaintingHardwareOverride(override)
+    }
 
     fun closeEngines() {
         engines.closeEngines()

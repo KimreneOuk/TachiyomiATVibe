@@ -24,6 +24,8 @@ class PageInpaintingEngine(
     private val neuralModelDisplayName = when (neuralModel) {
         NeuralInpaintModel.LAMA_MANGA -> "LaMa Manga"
         NeuralInpaintModel.LAMA_MANGA_FP16 -> "LaMa Manga FP16"
+        NeuralInpaintModel.LAMA_512_INT8 -> "LaMa 512 INT8"
+        NeuralInpaintModel.LAMA_512_FP16 -> "LaMa 512 FP16"
         NeuralInpaintModel.AOT_GAN -> "AOT-GAN"
     }
 

@@ -26,6 +26,12 @@ class NeuralInpaintModelTest {
     }
 
     @Test
+    fun `LaMa 512 variants are recognized case insensitively`() {
+        NeuralInpaintModel.fromPrefOrNull("LAMA_512_INT8") shouldBe NeuralInpaintModel.LAMA_512_INT8
+        NeuralInpaintModel.fromPrefOrNull("lama_512_fp16") shouldBe NeuralInpaintModel.LAMA_512_FP16
+    }
+
+    @Test
     fun `neural model preference defaults to LaMa Manga`() {
         val preferences = TranslationPreferences(InMemoryPreferenceStore())
 
@@ -40,5 +46,15 @@ class NeuralInpaintModelTest {
         modelPreference.set(NeuralInpaintModel.LAMA_MANGA_FP16)
 
         modelPreference.get() shouldBe NeuralInpaintModel.LAMA_MANGA_FP16
+    }
+
+    @Test
+    fun `LaMa 512 FP16 model persists through the preference`() {
+        val preferences = TranslationPreferences(InMemoryPreferenceStore())
+        val modelPreference = preferences.translationInpaintingNeuralModel()
+
+        modelPreference.set(NeuralInpaintModel.LAMA_512_FP16)
+
+        modelPreference.get() shouldBe NeuralInpaintModel.LAMA_512_FP16
     }
 }
