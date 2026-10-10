@@ -486,7 +486,7 @@ private fun ColumnScope.InpaintSection(
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
     onTranslationInpaintingHardwareOverrideChange: (InpaintingHardwareOverride) -> Unit,
 ) {
-    val lamaCpuOnly = neuralModel != NeuralInpaintModel.AOT_GAN
+    val lamaCpuOnly = neuralModel != NeuralInpaintModel.AOT_GAN && neuralModel != NeuralInpaintModel.LAMA_LITERT_GPU
     val entries = mapOf(
         "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
         "BALANCE" to stringResource(ATMR.strings.pref_inpainting_mode_balance),
@@ -502,6 +502,7 @@ private fun ColumnScope.InpaintSection(
 
     if (inpaintingMode == "BALANCE" || inpaintingMode == "QUALITY") {
         val neuralModelEntries = mapOf(
+            NeuralInpaintModel.LAMA_LITERT_GPU to stringResource(ATMR.strings.pref_inpainting_mode_lama_gpu),
             NeuralInpaintModel.LAMA_MANGA to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_manga),
             NeuralInpaintModel.LAMA_MANGA_FP16 to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_manga_fp16),
             NeuralInpaintModel.LAMA_512_INT8 to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_512_int8),

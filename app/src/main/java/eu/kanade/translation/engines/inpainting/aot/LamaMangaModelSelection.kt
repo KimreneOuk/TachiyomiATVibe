@@ -20,5 +20,7 @@ internal fun selectLamaMangaModel(
     NeuralInpaintModel.LAMA_MANGA_FP16 -> LamaMangaModelSelection(lamaMangaFp16ModelFile, "lama_manga_fp16")
     NeuralInpaintModel.LAMA_512_INT8 -> LamaMangaModelSelection(lama512Int8ModelFile, "lama_512_int8")
     NeuralInpaintModel.LAMA_512_FP16 -> LamaMangaModelSelection(lama512Fp16ModelFile, "lama_512_fp16")
-    NeuralInpaintModel.AOT_GAN -> null
+    NeuralInpaintModel.AOT_GAN,
+    NeuralInpaintModel.LAMA_LITERT_GPU,
+    -> null
 }

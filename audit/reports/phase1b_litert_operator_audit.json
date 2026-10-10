@@ -1,0 +1,366 @@
+{
+  "audit_timestamp": "2026-10-10 15:14:55 UTC",
+  "phase": "Phase 1B \u2014 LiteRT Flatbuffer Operator Whitelist Audit",
+  "target_delegates": [
+    "Qualcomm Adreno OpenCL GPU Delegate",
+    "MediaTek Mali / Immortalis Vulkan GPU Delegate"
+  ],
+  "models": {
+    "fp16": {
+      "model_file": "manga_lama_fused_fp16.tflite",
+      "file_size_bytes": 102334964,
+      "file_size_mb": 97.59,
+      "subgraph_count": 1,
+      "total_operators": 2170,
+      "total_tensors": 2583,
+      "input_signature": {
+        "name": "serving_default_input:0",
+        "shape": [
+          1,
+          512,
+          512,
+          4
+        ],
+        "dtype": "<class 'numpy.float32'>"
+      },
+      "output_signature": {
+        "name": "PartitionedCall:0",
+        "shape": [
+          1,
+          512,
+          512,
+          3
+        ],
+        "dtype": "<class 'numpy.float32'>"
+      },
+      "tensor_type_distribution": {
+        "FLOAT32": 2171,
+        "INT32": 24,
+        "FLOAT16": 388
+      },
+      "operator_distribution": {
+        "DEQUANTIZE": 388,
+        "MIRROR_PAD": 77,
+        "CONV_2D": 222,
+        "ADD": 216,
+        "TRANSPOSE": 428,
+        "FULLY_CONNECTED": 144,
+        "BATCH_MATMUL": 288,
+        "NEG": 36,
+        "RESHAPE": 144,
+        "SUB": 108,
+        "CONCATENATION": 37,
+        "GATHER": 72,
+        "TRANSPOSE_CONV": 3,
+        "STRIDED_SLICE": 3,
+        "RELU": 3,
+        "LOGISTIC": 1
+      },
+      "operator_audit": {
+        "TRANSPOSE": {
+          "count": 428,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Tensor Transposition / Permutation",
+          "delegate_contract": "Permutation vector must be constant."
+        },
+        "DEQUANTIZE": {
+          "count": 388,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "FP16 weight dequantization / pass-through",
+          "delegate_contract": "Folded directly into FP16 GPU buffers during delegate initialization."
+        },
+        "BATCH_MATMUL": {
+          "count": 288,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Batch Matrix Multiplication for Static Fourier Unit",
+          "delegate_contract": "Supported for static rank 3 and 4 tensors."
+        },
+        "CONV_2D": {
+          "count": 222,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "2D Convolution with optional fused ReLU/ReLU6/Logistic",
+          "delegate_contract": "Dialations, strides supported. Dynamic shape not supported."
+        },
+        "ADD": {
+          "count": 216,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Elementwise addition with broadcasting",
+          "delegate_contract": "Supports fused ReLU."
+        },
+        "FULLY_CONNECTED": {
+          "count": 144,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Fully Connected / Dense Linear layer",
+          "delegate_contract": "Supported on both delegates."
+        },
+        "RESHAPE": {
+          "count": 144,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Tensor Reshape",
+          "delegate_contract": "Target shape must be constant."
+        },
+        "SUB": {
+          "count": 108,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Elementwise subtraction with broadcasting",
+          "delegate_contract": "Supports fused ReLU."
+        },
+        "MIRROR_PAD": {
+          "count": 77,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Reflection / Symmetric Padding",
+          "delegate_contract": "Padding margins must be constant."
+        },
+        "GATHER": {
+          "count": 72,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Gather slices along frequency dimension",
+          "delegate_contract": "Indices must be constant or rank <= 2."
+        },
+        "CONCATENATION": {
+          "count": 37,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Concatenation along channel axis",
+          "delegate_contract": "Axis must be constant."
+        },
+        "NEG": {
+          "count": 36,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Elementwise unary negation",
+          "delegate_contract": "Supported on both delegates."
+        },
+        "TRANSPOSE_CONV": {
+          "count": 3,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "2D Transpose Convolution (Deconvolution)",
+          "delegate_contract": "Fixed stride and padding supported."
+        },
+        "STRIDED_SLICE": {
+          "count": 3,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Strided Slice for spatial cropping",
+          "delegate_contract": "Supported with constant slice boundaries."
+        },
+        "RELU": {
+          "count": 3,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Rectified Linear Activation",
+          "delegate_contract": "Supported standalone and fused."
+        },
+        "LOGISTIC": {
+          "count": 1,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Sigmoid Activation for output [0, 1] normalization",
+          "delegate_contract": "Supported on both delegates."
+        }
+      },
+      "gpu_delegate_compatibility": {
+        "qualcomm_adreno_opencl": {
+          "compatible": true,
+          "unsupported_operators": [],
+          "expected_partitions": 1,
+          "cpu_fallback_nodes": 0
+        },
+        "mediatek_mali_vulkan": {
+          "compatible": true,
+          "unsupported_operators": [],
+          "expected_partitions": 1,
+          "cpu_fallback_nodes": 0
+        },
+        "fully_gpu_accelerated": true
+      }
+    },
+    "fp32": {
+      "model_file": "manga_lama_fused_fp32.tflite",
+      "file_size_bytes": 204191308,
+      "file_size_mb": 194.73,
+      "subgraph_count": 1,
+      "total_operators": 1782,
+      "total_tensors": 2195,
+      "input_signature": {
+        "name": "serving_default_input:0",
+        "shape": [
+          1,
+          512,
+          512,
+          4
+        ],
+        "dtype": "<class 'numpy.float32'>"
+      },
+      "output_signature": {
+        "name": "PartitionedCall:0",
+        "shape": [
+          1,
+          512,
+          512,
+          3
+        ],
+        "dtype": "<class 'numpy.float32'>"
+      },
+      "tensor_type_distribution": {
+        "FLOAT32": 2171,
+        "INT32": 24
+      },
+      "operator_distribution": {
+        "MIRROR_PAD": 77,
+        "CONV_2D": 222,
+        "ADD": 216,
+        "TRANSPOSE": 428,
+        "FULLY_CONNECTED": 144,
+        "BATCH_MATMUL": 288,
+        "NEG": 36,
+        "RESHAPE": 144,
+        "SUB": 108,
+        "CONCATENATION": 37,
+        "GATHER": 72,
+        "TRANSPOSE_CONV": 3,
+        "STRIDED_SLICE": 3,
+        "RELU": 3,
+        "LOGISTIC": 1
+      },
+      "operator_audit": {
+        "TRANSPOSE": {
+          "count": 428,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Tensor Transposition / Permutation",
+          "delegate_contract": "Permutation vector must be constant."
+        },
+        "BATCH_MATMUL": {
+          "count": 288,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Batch Matrix Multiplication for Static Fourier Unit",
+          "delegate_contract": "Supported for static rank 3 and 4 tensors."
+        },
+        "CONV_2D": {
+          "count": 222,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "2D Convolution with optional fused ReLU/ReLU6/Logistic",
+          "delegate_contract": "Dialations, strides supported. Dynamic shape not supported."
+        },
+        "ADD": {
+          "count": 216,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Elementwise addition with broadcasting",
+          "delegate_contract": "Supports fused ReLU."
+        },
+        "FULLY_CONNECTED": {
+          "count": 144,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Fully Connected / Dense Linear layer",
+          "delegate_contract": "Supported on both delegates."
+        },
+        "RESHAPE": {
+          "count": 144,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Tensor Reshape",
+          "delegate_contract": "Target shape must be constant."
+        },
+        "SUB": {
+          "count": 108,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Elementwise subtraction with broadcasting",
+          "delegate_contract": "Supports fused ReLU."
+        },
+        "MIRROR_PAD": {
+          "count": 77,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Reflection / Symmetric Padding",
+          "delegate_contract": "Padding margins must be constant."
+        },
+        "GATHER": {
+          "count": 72,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Gather slices along frequency dimension",
+          "delegate_contract": "Indices must be constant or rank <= 2."
+        },
+        "CONCATENATION": {
+          "count": 37,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Concatenation along channel axis",
+          "delegate_contract": "Axis must be constant."
+        },
+        "NEG": {
+          "count": 36,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Elementwise unary negation",
+          "delegate_contract": "Supported on both delegates."
+        },
+        "TRANSPOSE_CONV": {
+          "count": 3,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "2D Transpose Convolution (Deconvolution)",
+          "delegate_contract": "Fixed stride and padding supported."
+        },
+        "STRIDED_SLICE": {
+          "count": 3,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Strided Slice for spatial cropping",
+          "delegate_contract": "Supported with constant slice boundaries."
+        },
+        "RELU": {
+          "count": 3,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Rectified Linear Activation",
+          "delegate_contract": "Supported standalone and fused."
+        },
+        "LOGISTIC": {
+          "count": 1,
+          "adreno_opencl_supported": true,
+          "mali_vulkan_supported": true,
+          "description": "Sigmoid Activation for output [0, 1] normalization",
+          "delegate_contract": "Supported on both delegates."
+        }
+      },
+      "gpu_delegate_compatibility": {
+        "qualcomm_adreno_opencl": {
+          "compatible": true,
+          "unsupported_operators": [],
+          "expected_partitions": 1,
+          "cpu_fallback_nodes": 0
+        },
+        "mediatek_mali_vulkan": {
+          "compatible": true,
+          "unsupported_operators": [],
+          "expected_partitions": 1,
+          "cpu_fallback_nodes": 0
+        },
+        "fully_gpu_accelerated": true
+      }
+    }
+  },
+  "audit_verdict": {
+    "fp16_gpu_delegate_pass": true,
+    "fp32_gpu_delegate_pass": true,
+    "zero_cpu_fallback_guarantee": true
+  }
+}

@@ -1,0 +1,520 @@
+{
+  "timestamp": "2026-10-10 15:02:42 UTC",
+  "phase": "Phase 1B \u2014 Google LiteRT 2.x Conversion & Parity Verification",
+  "fp16_evaluation": {
+    "model_file": "manga_lama_fused_fp16.tflite",
+    "precision": "FP16",
+    "input_signature": [
+      1,
+      512,
+      512,
+      4
+    ],
+    "output_signature": [
+      1,
+      512,
+      512,
+      3
+    ],
+    "case_count": 8,
+    "mean_latency_ms": 11302.34,
+    "mean_psnr_db": 65.93,
+    "min_psnr_db": 53.66,
+    "mean_ssim": 0.999992,
+    "min_ssim": 0.999949,
+    "mean_mae": 0.0002357641151320422,
+    "mean_rmse": 0.0006592666868527886,
+    "max_error_across_all_cases": 0.06672805547714233,
+    "max_error_255_across_all_cases": 17.0157,
+    "acceptance_gate": {
+      "psnr_passed": true,
+      "ssim_passed": true,
+      "max_ae_passed": false,
+      "overall_passed": false
+    },
+    "per_case_results": {
+      "real_case1_ch201_p1_screentone_bubble": {
+        "name": "real_case1_ch201_p1_screentone_bubble",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11281.18,
+        "metrics": {
+          "psnr_db": 70.87,
+          "ssim": 1.0,
+          "mae": 9.531682735541835e-05,
+          "rmse": 0.00028595401090569794,
+          "max_absolute_error": 0.014135539531707764,
+          "max_absolute_error_255": 3.6046
+        },
+        "hole_region": {
+          "mae": 0.00045778139610774815,
+          "psnr_db": 61.35,
+          "max_error_255": 3.6046
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0757,
+          "gt_2_255": 0.0032,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case2_ch201_p2_lineart_character": {
+        "name": "real_case2_ch201_p2_lineart_character",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11312.68,
+        "metrics": {
+          "psnr_db": 67.43,
+          "ssim": 0.999999,
+          "mae": 0.00012146006338298321,
+          "rmse": 0.0004253481747582555,
+          "max_absolute_error": 0.01656705141067505,
+          "max_absolute_error_255": 4.2246
+        },
+        "hole_region": {
+          "mae": 0.00046128834947012365,
+          "psnr_db": 60.52,
+          "max_error_255": 4.2246
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.1972,
+          "gt_2_255": 0.0196,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case3_ch201_p8_heavy_tone_dialogue": {
+        "name": "real_case3_ch201_p8_heavy_tone_dialogue",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11272.03,
+        "metrics": {
+          "psnr_db": 67.79,
+          "ssim": 0.999999,
+          "mae": 0.00010908983676927164,
+          "rmse": 0.0004080836952198297,
+          "max_absolute_error": 0.015341401100158691,
+          "max_absolute_error_255": 3.9121
+        },
+        "hole_region": {
+          "mae": 0.0004316600679885596,
+          "psnr_db": 60.17,
+          "max_error_255": 3.9121
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.2254,
+          "gt_2_255": 0.0271,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case4_ch201_p10_color_speech_bubble": {
+        "name": "real_case4_ch201_p10_color_speech_bubble",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11283.38,
+        "metrics": {
+          "psnr_db": 71.78,
+          "ssim": 0.999999,
+          "mae": 7.086482219165191e-05,
+          "rmse": 0.0002576997794676572,
+          "max_absolute_error": 0.01195460557937622,
+          "max_absolute_error_255": 3.0484
+        },
+        "hole_region": {
+          "mae": 0.00027198289171792567,
+          "psnr_db": 65.1,
+          "max_error_255": 3.0484
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0387,
+          "gt_2_255": 0.0022,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case5_ch202_p1_splash_screentone": {
+        "name": "real_case5_ch202_p1_splash_screentone",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11337.93,
+        "metrics": {
+          "psnr_db": 53.66,
+          "ssim": 0.999949,
+          "mae": 0.0009132502600550652,
+          "rmse": 0.0020739359315484762,
+          "max_absolute_error": 0.06672805547714233,
+          "max_absolute_error_255": 17.0157
+        },
+        "hole_region": {
+          "mae": 0.001984570175409317,
+          "psnr_db": 50.1,
+          "max_error_255": 17.0157
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 5.8749,
+          "gt_2_255": 1.1987,
+          "gt_5_255": 0.0729
+        }
+      },
+      "real_case6_ch202_p3_gradient_shading_bubble": {
+        "name": "real_case6_ch202_p3_gradient_shading_bubble",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11284.91,
+        "metrics": {
+          "psnr_db": 68.68,
+          "ssim": 0.999999,
+          "mae": 9.937960567185655e-05,
+          "rmse": 0.0003681998641695827,
+          "max_absolute_error": 0.012778520584106445,
+          "max_absolute_error_255": 3.2585
+        },
+        "hole_region": {
+          "mae": 0.0003730892203748226,
+          "psnr_db": 61.46,
+          "max_error_255": 3.2585
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.163,
+          "gt_2_255": 0.0151,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case7_ch202_p6_dense_bubble_cluster": {
+        "name": "real_case7_ch202_p6_dense_bubble_cluster",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11331.11,
+        "metrics": {
+          "psnr_db": 59.68,
+          "ssim": 0.999994,
+          "mae": 0.0003393504593987018,
+          "rmse": 0.0010374491102993488,
+          "max_absolute_error": 0.031005680561065674,
+          "max_absolute_error_255": 7.9064
+        },
+        "hole_region": {
+          "mae": 0.0008975716773420572,
+          "psnr_db": 54.96,
+          "max_error_255": 7.9064
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 1.7668,
+          "gt_2_255": 0.2735,
+          "gt_5_255": 0.0051
+        }
+      },
+      "real_case8_ch202_p11_color_action_bubble": {
+        "name": "real_case8_ch202_p11_color_action_bubble",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11315.5,
+        "metrics": {
+          "psnr_db": 67.59,
+          "ssim": 0.999999,
+          "mae": 0.00013740104623138905,
+          "rmse": 0.00041746292845346034,
+          "max_absolute_error": 0.01423993706703186,
+          "max_absolute_error_255": 3.6312
+        },
+        "hole_region": {
+          "mae": 0.0004197961534373462,
+          "psnr_db": 61.89,
+          "max_error_255": 3.6312
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.1572,
+          "gt_2_255": 0.0205,
+          "gt_5_255": 0.0
+        }
+      }
+    }
+  },
+  "fp32_evaluation": {
+    "model_file": "manga_lama_fused_fp32.tflite",
+    "precision": "FP32",
+    "input_signature": [
+      1,
+      512,
+      512,
+      4
+    ],
+    "output_signature": [
+      1,
+      512,
+      512,
+      3
+    ],
+    "case_count": 8,
+    "mean_latency_ms": 11305.02,
+    "mean_psnr_db": 122.51,
+    "min_psnr_db": 113.7,
+    "mean_ssim": 1.0,
+    "min_ssim": 1.0,
+    "mean_mae": 3.2393547133580114e-07,
+    "mean_rmse": 8.823927792889208e-07,
+    "max_error_across_all_cases": 7.05718994140625e-05,
+    "max_error_255_across_all_cases": 0.018,
+    "acceptance_gate": {
+      "psnr_passed": true,
+      "ssim_passed": true,
+      "max_ae_passed": true,
+      "overall_passed": true
+    },
+    "per_case_results": {
+      "real_case1_ch201_p1_screentone_bubble": {
+        "name": "real_case1_ch201_p1_screentone_bubble",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11294.62,
+        "metrics": {
+          "psnr_db": 127.95,
+          "ssim": 1.0,
+          "mae": 1.9446173382675624e-07,
+          "rmse": 4.0046185745268303e-07,
+          "max_absolute_error": 1.3172626495361328e-05,
+          "max_absolute_error_255": 0.0034
+        },
+        "hole_region": {
+          "mae": 6.476697080870508e-07,
+          "psnr_db": 119.26,
+          "max_error_255": 0.0034
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case2_ch201_p2_lineart_character": {
+        "name": "real_case2_ch201_p2_lineart_character",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11302.24,
+        "metrics": {
+          "psnr_db": 123.45,
+          "ssim": 1.0,
+          "mae": 2.1600014576961257e-07,
+          "rmse": 6.721140834997641e-07,
+          "max_absolute_error": 2.968311309814453e-05,
+          "max_absolute_error_255": 0.0076
+        },
+        "hole_region": {
+          "mae": 7.071357117638399e-07,
+          "psnr_db": 116.65,
+          "max_error_255": 0.0076
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case3_ch201_p8_heavy_tone_dialogue": {
+        "name": "real_case3_ch201_p8_heavy_tone_dialogue",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11311.08,
+        "metrics": {
+          "psnr_db": 122.73,
+          "ssim": 1.0,
+          "mae": 2.215900138935467e-07,
+          "rmse": 7.306565521503217e-07,
+          "max_absolute_error": 4.190206527709961e-05,
+          "max_absolute_error_255": 0.0107
+        },
+        "hole_region": {
+          "mae": 7.36840547688189e-07,
+          "psnr_db": 115.24,
+          "max_error_255": 0.0107
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case4_ch201_p10_color_speech_bubble": {
+        "name": "real_case4_ch201_p10_color_speech_bubble",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11304.04,
+        "metrics": {
+          "psnr_db": 128.64,
+          "ssim": 1.0,
+          "mae": 1.180397575240022e-07,
+          "rmse": 3.700014303831267e-07,
+          "max_absolute_error": 1.2874603271484375e-05,
+          "max_absolute_error_255": 0.0033
+        },
+        "hole_region": {
+          "mae": 3.87785718203304e-07,
+          "psnr_db": 122.1,
+          "max_error_255": 0.0033
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case5_ch202_p1_splash_screentone": {
+        "name": "real_case5_ch202_p1_splash_screentone",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11302.44,
+        "metrics": {
+          "psnr_db": 113.7,
+          "ssim": 1.0,
+          "mae": 9.783492487258627e-07,
+          "rmse": 2.0656264041463146e-06,
+          "max_absolute_error": 4.589557647705078e-05,
+          "max_absolute_error_255": 0.0117
+        },
+        "hole_region": {
+          "mae": 1.9928088477172423e-06,
+          "psnr_db": 110.17,
+          "max_error_255": 0.0117
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case6_ch202_p3_gradient_shading_bubble": {
+        "name": "real_case6_ch202_p3_gradient_shading_bubble",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11327.53,
+        "metrics": {
+          "psnr_db": 120.99,
+          "ssim": 1.0,
+          "mae": 2.0882534101929195e-07,
+          "rmse": 8.923223049350781e-07,
+          "max_absolute_error": 7.05718994140625e-05,
+          "max_absolute_error_255": 0.018
+        },
+        "hole_region": {
+          "mae": 6.952093940526538e-07,
+          "psnr_db": 113.8,
+          "max_error_255": 0.018
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case7_ch202_p6_dense_bubble_cluster": {
+        "name": "real_case7_ch202_p6_dense_bubble_cluster",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11267.86,
+        "metrics": {
+          "psnr_db": 117.08,
+          "ssim": 1.0,
+          "mae": 4.625142935310578e-07,
+          "rmse": 1.3994256278238026e-06,
+          "max_absolute_error": 4.792213439941406e-05,
+          "max_absolute_error_255": 0.0122
+        },
+        "hole_region": {
+          "mae": 1.1118340808025096e-06,
+          "psnr_db": 112.4,
+          "max_error_255": 0.0122
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case8_ch202_p11_color_action_bubble": {
+        "name": "real_case8_ch202_p11_color_action_bubble",
+        "bubble_type": "unknown",
+        "resolution": [
+          512,
+          512
+        ],
+        "mask_ratio_pct": 0.0,
+        "inference_time_ms": 11330.31,
+        "metrics": {
+          "psnr_db": 125.54,
+          "ssim": 1.0,
+          "mae": 1.9170323639627895e-07,
+          "rmse": 5.285339739202755e-07,
+          "max_absolute_error": 2.6106834411621094e-05,
+          "max_absolute_error_255": 0.0067
+        },
+        "hole_region": {
+          "mae": 4.846769456889888e-07,
+          "psnr_db": 120.0,
+          "max_error_255": 0.0067
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      }
+    }
+  }
+}

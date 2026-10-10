@@ -34,3 +34,5 @@
 
 # Binary artifacts: never normalize line endings
 *.aar binary
+*.tflite binary
+*.npy binary

@@ -1,6 +1,8 @@
 package eu.kanade.translation.engines.inpainting
+
 import android.graphics.Bitmap
 import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
+import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -16,12 +18,14 @@ import uy.kohesive.injekt.api.get
 class PageInpaintingEngine(
     private val mode: InpaintingMode,
     private val inpainter: AOTInpainting = AOTInpainting(),
+    private val litertInpainter: LiteRTMangaInpaintingEngine? = null,
     private val qualityFallbackPref: () -> Boolean = {
         Injekt.get<TranslationPreferences>().translationInpaintQualityFallback().get()
     },
-    private val neuralModel: NeuralInpaintModel = NeuralInpaintModel.AOT_GAN,
+    private val neuralModel: NeuralInpaintModel = NeuralInpaintModel.LAMA_LITERT_GPU,
 ) {
     private val neuralModelDisplayName = when (neuralModel) {
+        NeuralInpaintModel.LAMA_LITERT_GPU -> "Manga LaMa (LiteRT GPU)"
         NeuralInpaintModel.LAMA_MANGA -> "LaMa Manga"
         NeuralInpaintModel.LAMA_MANGA_FP16 -> "LaMa Manga FP16"
         NeuralInpaintModel.LAMA_512_INT8 -> "LaMa 512 INT8"
@@ -43,12 +47,16 @@ class PageInpaintingEngine(
         return try {
             pageTranslation.inpaintStatus = StageStatus.RUNNING
             pageTranslation.updatedAt = System.currentTimeMillis()
-            val neuralAvailable = inpainter.isInitialized()
+            val neuralAvailable = if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU) {
+                litertInpainter?.isAvailable() == true
+            } else {
+                inpainter.isInitialized()
+            }
             logcat(LogPriority.INFO) {
                 "Page inpainting input: boxes=${input.boxes.size} extraDetector=${input.extraDetectorCount} " +
                     "labels=${input.labels.groupingBy {
                         it
-                    }.eachCount()} mode=$mode neural=$neuralAvailable"
+                    }.eachCount()} mode=$mode neuralModel=$neuralModel neuralAvailable=$neuralAvailable"
             }
             EngineMemoryBudget.logSnapshot(
                 "before_inpaint",
@@ -56,6 +64,7 @@ class PageInpaintingEngine(
                 bitmap.height,
                 "boxes=${input.boxes.size}",
             )
+
             // Neural modes fail without sessions unless the preference allows
             // classical fallback. Read the setting live for every page.
             if (mode.resolveDispatch(neuralAvailable = true).usesNeural && !neuralAvailable) {
@@ -78,14 +87,36 @@ class PageInpaintingEngine(
                     )
                 }
             }
-            val dispatch = mode.resolveDispatch(neuralAvailable)
-            val cleaned = inpainter.inpaintRegions(
-                image = bitmap,
-                boxes = input.boxes,
-                labels = input.labels,
-                dispatch = dispatch,
-                blocks = pageTranslation.blocks,
-            )
+
+            val cleaned = if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU && mode != InpaintingMode.FAST) {
+                val lama = litertInpainter
+                if (lama != null && lama.isAvailable()) {
+                    lama.inpaintRegions(
+                        image = bitmap,
+                        boxes = input.boxes,
+                        labels = input.labels,
+                        blocks = pageTranslation.blocks,
+                    )
+                } else {
+                    val dispatch = mode.resolveDispatch(neuralAvailable)
+                    inpainter.inpaintRegions(
+                        image = bitmap,
+                        boxes = input.boxes,
+                        labels = input.labels,
+                        dispatch = dispatch,
+                        blocks = pageTranslation.blocks,
+                    )
+                }
+            } else {
+                val dispatch = mode.resolveDispatch(neuralAvailable)
+                inpainter.inpaintRegions(
+                    image = bitmap,
+                    boxes = input.boxes,
+                    labels = input.labels,
+                    dispatch = dispatch,
+                    blocks = pageTranslation.blocks,
+                )
+            }
             markReady(pageTranslation)
             cleaned
         } catch (e: Exception) {
@@ -103,6 +134,7 @@ class PageInpaintingEngine(
 
     fun close() {
         inpainter.close()
+        litertInpainter?.close()
     }
 
     private fun markReady(pageTranslation: PageTranslation, degraded: Boolean = inpainter.lastRunDegraded) {
@@ -110,7 +142,7 @@ class PageInpaintingEngine(
         pageTranslation.errorMessage = null
         pageTranslation.inpaintingModeUsed = mode.stampName(
             neuralModel = neuralModel,
-            neuralAvailable = inpainter.isInitialized(),
+            neuralAvailable = if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU) litertInpainter?.isAvailable() == true else inpainter.isInitialized(),
             degraded = degraded,
         )
         pageTranslation.updatedAt = System.currentTimeMillis()

@@ -1,0 +1,62 @@
+[
+  {
+    "model_name": "lama-manga.onnx",
+    "model_path": "audit/models/lama-manga.onnx",
+    "file_size_mb": 197.87,
+    "sha256": "4512adab295ee5a5e02ccd1bdf8d45dccbac88309d9cff1532ffd5de876f02a4",
+    "init_time_ms": 9863.7,
+    "cold_latency_ms": 2817.78,
+    "iterations": 30,
+    "mean_latency_ms": 2685.73,
+    "median_latency_ms": 2674.79,
+    "min_latency_ms": 2561.93,
+    "p95_latency_ms": 2808.65,
+    "mem_init_delta_mb": 272.5,
+    "peak_rss_mb": 335.3
+  },
+  {
+    "model_name": "lama-manga_fp16.onnx",
+    "model_path": "audit/models/lama-manga_fp16.onnx",
+    "file_size_mb": 103.78,
+    "sha256": "043946afd8c66db5680a76266a4fd5269149a7a91f6d45357b63fb429e340e1e",
+    "init_time_ms": 1863.5,
+    "cold_latency_ms": 2645.65,
+    "iterations": 30,
+    "mean_latency_ms": 2664.36,
+    "median_latency_ms": 2566.5,
+    "min_latency_ms": 2472.49,
+    "p95_latency_ms": 3086.2,
+    "mem_init_delta_mb": 260.7,
+    "peak_rss_mb": 940.6
+  },
+  {
+    "model_name": "lama-manga_int8.onnx",
+    "model_path": "audit/models/lama-manga_int8.onnx",
+    "file_size_mb": 57.04,
+    "sha256": "502ce98fbd8d030501040d4505daea0616003266f4eb82b1d27fd4fca5b55f4a",
+    "init_time_ms": 1557.0,
+    "cold_latency_ms": 2804.43,
+    "iterations": 30,
+    "mean_latency_ms": 2626.65,
+    "median_latency_ms": 2702.1,
+    "min_latency_ms": 2216.93,
+    "p95_latency_ms": 2760.88,
+    "mem_init_delta_mb": 141.5,
+    "peak_rss_mb": 1767.0
+  },
+  {
+    "model_name": "lama_512_fp16.onnx",
+    "model_path": "audit/models/lama_512_fp16.onnx",
+    "file_size_mb": 101.62,
+    "sha256": "1fa042eaf30a6660b9190f0a1512d27bdceff90fab172af295303cdf2905e516",
+    "init_time_ms": 954.88,
+    "cold_latency_ms": 2217.24,
+    "iterations": 30,
+    "mean_latency_ms": 1867.95,
+    "median_latency_ms": 1934.22,
+    "min_latency_ms": 1535.83,
+    "p95_latency_ms": 2092.32,
+    "mem_init_delta_mb": 221.5,
+    "peak_rss_mb": 2547.0
+  }
+]

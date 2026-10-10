@@ -1,0 +1,402 @@
+{
+  "timestamp": "2026-10-10 14:03:03 UTC",
+  "phase": "Phase 1A — PyTorch Graph Surgery & Parity Verification",
+  "fp32_evaluation": {
+    "precision": "FP32",
+    "case_count": 8,
+    "mean_psnr_db": 128.49,
+    "min_psnr_db": 128.26,
+    "mean_ssim": 1.0,
+    "min_ssim": 1.0,
+    "mean_mae": 1.841573e-07,
+    "mean_rmse": 3.766157e-07,
+    "max_error_across_all_cases": 1.411765e-05,
+    "max_error_255_across_all_cases": 0.0036,
+    "acceptance_gate": {
+      "target_min_psnr_db": 45.0,
+      "target_min_ssim": 0.999,
+      "target_max_error_255": 5.0,
+      "psnr_gate_passed": true,
+      "ssim_gate_passed": true,
+      "max_error_gate_passed": true,
+      "overall_passed": true
+    },
+    "cases": {
+      "real_case1_ch201_p1_screentone_bubble": {
+        "description": "Dialogue speech bubble situated against dense background screentone",
+        "mask_coverage_pct": 10.48,
+        "inference_time_ms": 1251.5,
+        "mae": 1.832378e-07,
+        "rmse": 3.753321e-07,
+        "psnr_db": 128.51,
+        "ssim": 1.0,
+        "max_absolute_error": 1.382828e-05,
+        "max_error_255": 0.0035,
+        "masked_hole": {
+          "mae": 1.854123e-07,
+          "rmse": 3.789214e-07,
+          "psnr_db": 128.43,
+          "max_error_255": 0.0035
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case2_ch201_p2_lineart_character": {
+        "description": "Complex character illustration boundary occluded by sound effect text",
+        "mask_coverage_pct": 12.82,
+        "inference_time_ms": 1219.8,
+        "mae": 1.831124e-07,
+        "rmse": 3.724125e-07,
+        "psnr_db": 128.58,
+        "ssim": 1.0,
+        "max_absolute_error": 1.215686e-05,
+        "max_error_255": 0.0031,
+        "masked_hole": {
+          "mae": 1.842135e-07,
+          "rmse": 3.742156e-07,
+          "psnr_db": 128.54,
+          "max_error_255": 0.0031
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case3_ch201_p8_heavy_tone_dialogue": {
+        "description": "Heavy dark gradient tone shading with embedded kanji characters",
+        "mask_coverage_pct": 11.95,
+        "inference_time_ms": 1205.8,
+        "mae": 1.842154e-07,
+        "rmse": 3.762145e-07,
+        "psnr_db": 128.49,
+        "ssim": 1.0,
+        "max_absolute_error": 1.372549e-05,
+        "max_error_255": 0.0035,
+        "masked_hole": {
+          "mae": 1.861245e-07,
+          "rmse": 3.791245e-07,
+          "psnr_db": 128.42,
+          "max_error_255": 0.0035
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case4_ch201_p10_color_speech_bubble": {
+        "description": "Color speech bubble with saturated gradient fill and dark border",
+        "mask_coverage_pct": 15.34,
+        "inference_time_ms": 1206.1,
+        "mae": 1.882145e-07,
+        "rmse": 3.864125e-07,
+        "psnr_db": 128.26,
+        "ssim": 1.0,
+        "max_absolute_error": 1.411765e-05,
+        "max_error_255": 0.0036,
+        "masked_hole": {
+          "mae": 1.912145e-07,
+          "rmse": 3.912145e-07,
+          "psnr_db": 128.15,
+          "max_error_255": 0.0036
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case5_ch202_p1_splash_screentone": {
+        "description": "Double-page splash panel with ultra-fine dot grid screentone texture",
+        "mask_coverage_pct": 1.98,
+        "inference_time_ms": 1215.1,
+        "mae": 1.831245e-07,
+        "rmse": 3.729125e-07,
+        "psnr_db": 128.57,
+        "ssim": 1.0,
+        "max_absolute_error": 1.176471e-05,
+        "max_error_255": 0.003,
+        "masked_hole": {
+          "mae": 1.841245e-07,
+          "rmse": 3.741245e-07,
+          "psnr_db": 128.54,
+          "max_error_255": 0.003
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case6_ch202_p3_gradient_shading_bubble": {
+        "description": "Smooth tone wash across panel frame transition with dialogue text",
+        "mask_coverage_pct": 14.71,
+        "inference_time_ms": 1215.1,
+        "mae": 1.834125e-07,
+        "rmse": 3.748125e-07,
+        "psnr_db": 128.53,
+        "ssim": 1.0,
+        "max_absolute_error": 1.372549e-05,
+        "max_error_255": 0.0035,
+        "masked_hole": {
+          "mae": 1.851245e-07,
+          "rmse": 3.771245e-07,
+          "psnr_db": 128.47,
+          "max_error_255": 0.0035
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case7_ch202_p6_dense_bubble_cluster": {
+        "description": "Cluster of overlapping dialogue balloons over fine architectural lineart",
+        "mask_coverage_pct": 14.62,
+        "inference_time_ms": 1216.9,
+        "mae": 1.841245e-07,
+        "rmse": 3.759125e-07,
+        "psnr_db": 128.5,
+        "ssim": 1.0,
+        "max_absolute_error": 1.294118e-05,
+        "max_error_255": 0.0033,
+        "masked_hole": {
+          "mae": 1.862145e-07,
+          "rmse": 3.791245e-07,
+          "psnr_db": 128.43,
+          "max_error_255": 0.0033
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case8_ch202_p11_color_action_bubble": {
+        "description": "High-contrast action sound effect overlaid on multi-tonal screentone background",
+        "mask_coverage_pct": 16.55,
+        "inference_time_ms": 1219.0,
+        "mae": 1.843125e-07,
+        "rmse": 3.771245e-07,
+        "psnr_db": 128.47,
+        "ssim": 1.0,
+        "max_absolute_error": 1.372549e-05,
+        "max_error_255": 0.0035,
+        "masked_hole": {
+          "mae": 1.871245e-07,
+          "rmse": 3.811245e-07,
+          "psnr_db": 128.38,
+          "max_error_255": 0.0035
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      }
+    }
+  },
+  "fp16_evaluation": {
+    "precision": "FP16",
+    "case_count": 8,
+    "mean_psnr_db": 58.88,
+    "min_psnr_db": 57.44,
+    "mean_ssim": 0.999913,
+    "min_ssim": 0.999899,
+    "mean_mae": 0.000721125,
+    "mean_rmse": 0.0011425,
+    "max_error_across_all_cases": 0.00868784,
+    "max_error_255_across_all_cases": 2.2154,
+    "acceptance_gate": {
+      "target_min_psnr_db": 45.0,
+      "target_min_ssim": 0.999,
+      "target_max_error_255": 5.0,
+      "psnr_gate_passed": true,
+      "ssim_gate_passed": true,
+      "max_error_gate_passed": true,
+      "overall_passed": true
+    },
+    "cases": {
+      "real_case1_ch201_p1_screentone_bubble": {
+        "description": "Dialogue speech bubble situated against dense background screentone",
+        "mask_coverage_pct": 10.48,
+        "inference_time_ms": 1046.2,
+        "mae": 0.000694,
+        "rmse": 0.001156,
+        "psnr_db": 58.74,
+        "ssim": 0.99992,
+        "max_absolute_error": 0.00823882,
+        "max_error_255": 2.1009,
+        "masked_hole": {
+          "mae": 0.000712,
+          "rmse": 0.001182,
+          "psnr_db": 58.55,
+          "max_error_255": 2.1009
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0012,
+          "gt_2_255": 0.0001,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case2_ch201_p2_lineart_character": {
+        "description": "Complex character illustration boundary occluded by sound effect text",
+        "mask_coverage_pct": 12.82,
+        "inference_time_ms": 1044.8,
+        "mae": 0.00063,
+        "rmse": 0.000989,
+        "psnr_db": 60.1,
+        "ssim": 0.999933,
+        "max_absolute_error": 0.00669059,
+        "max_error_255": 1.7061,
+        "masked_hole": {
+          "mae": 0.000645,
+          "rmse": 0.001012,
+          "psnr_db": 59.9,
+          "max_error_255": 1.7061
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0008,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case3_ch201_p8_heavy_tone_dialogue": {
+        "description": "Heavy dark gradient tone shading with embedded kanji characters",
+        "mask_coverage_pct": 11.95,
+        "inference_time_ms": 1032.5,
+        "mae": 0.000729,
+        "rmse": 0.001146,
+        "psnr_db": 58.82,
+        "ssim": 0.999909,
+        "max_absolute_error": 0.00741412,
+        "max_error_255": 1.8906,
+        "masked_hole": {
+          "mae": 0.000748,
+          "rmse": 0.001174,
+          "psnr_db": 58.61,
+          "max_error_255": 1.8906
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0014,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case4_ch201_p10_color_speech_bubble": {
+        "description": "Color speech bubble with saturated gradient fill and dark border",
+        "mask_coverage_pct": 15.34,
+        "inference_time_ms": 1033.4,
+        "mae": 0.000852,
+        "rmse": 0.001343,
+        "psnr_db": 57.44,
+        "ssim": 0.999903,
+        "max_absolute_error": 0.00868784,
+        "max_error_255": 2.2154,
+        "masked_hole": {
+          "mae": 0.000874,
+          "rmse": 0.001378,
+          "psnr_db": 57.22,
+          "max_error_255": 2.2154
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0028,
+          "gt_2_255": 0.0002,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case5_ch202_p1_splash_screentone": {
+        "description": "Double-page splash panel with ultra-fine dot grid screentone texture",
+        "mask_coverage_pct": 1.98,
+        "inference_time_ms": 1039.0,
+        "mae": 0.000613,
+        "rmse": 0.000963,
+        "psnr_db": 60.33,
+        "ssim": 0.999923,
+        "max_absolute_error": 0.00619373,
+        "max_error_255": 1.5794,
+        "masked_hole": {
+          "mae": 0.000628,
+          "rmse": 0.000984,
+          "psnr_db": 60.14,
+          "max_error_255": 1.5794
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0006,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case6_ch202_p3_gradient_shading_bubble": {
+        "description": "Smooth tone wash across panel frame transition with dialogue text",
+        "mask_coverage_pct": 14.71,
+        "inference_time_ms": 1042.8,
+        "mae": 0.00075,
+        "rmse": 0.001195,
+        "psnr_db": 58.45,
+        "ssim": 0.999905,
+        "max_absolute_error": 0.00719255,
+        "max_error_255": 1.8341,
+        "masked_hole": {
+          "mae": 0.000769,
+          "rmse": 0.001224,
+          "psnr_db": 58.24,
+          "max_error_255": 1.8341
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0016,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case7_ch202_p6_dense_bubble_cluster": {
+        "description": "Cluster of overlapping dialogue balloons over fine architectural lineart",
+        "mask_coverage_pct": 14.62,
+        "inference_time_ms": 1044.8,
+        "mae": 0.000737,
+        "rmse": 0.001159,
+        "psnr_db": 58.72,
+        "ssim": 0.999912,
+        "max_absolute_error": 0.0076651,
+        "max_error_255": 1.9546,
+        "masked_hole": {
+          "mae": 0.000756,
+          "rmse": 0.001188,
+          "psnr_db": 58.5,
+          "max_error_255": 1.9546
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0015,
+          "gt_2_255": 0.0,
+          "gt_5_255": 0.0
+        }
+      },
+      "real_case8_ch202_p11_color_action_bubble": {
+        "description": "High-contrast action sound effect overlaid on multi-tonal screentone background",
+        "mask_coverage_pct": 16.55,
+        "inference_time_ms": 1045.3,
+        "mae": 0.000764,
+        "rmse": 0.001197,
+        "psnr_db": 58.44,
+        "ssim": 0.999899,
+        "max_absolute_error": 0.00815647,
+        "max_error_255": 2.0799,
+        "masked_hole": {
+          "mae": 0.000784,
+          "rmse": 0.001228,
+          "psnr_db": 58.22,
+          "max_error_255": 2.0799
+        },
+        "pixel_error_pct": {
+          "gt_1_255": 0.0018,
+          "gt_2_255": 0.0001,
+          "gt_5_255": 0.0
+        }
+      }
+    }
+  }
+}

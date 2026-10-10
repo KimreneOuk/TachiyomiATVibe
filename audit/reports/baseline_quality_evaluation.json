@@ -1,0 +1,162 @@
+{
+  "case1_bubble_screentone": {
+    "liiesl_fp16": {
+      "global_mae": 2.6e-06,
+      "global_maxae": 0.001638,
+      "global_maxae_255": 0.42,
+      "global_rmse": 1.08e-05,
+      "global_psnr": 99.3,
+      "global_ssim": 1.0,
+      "masked_mae": 2e-07,
+      "masked_maxae": 4e-05,
+      "masked_psnr": 116.88,
+      "boundary_mae": 3e-07,
+      "boundary_maxae": 5.3e-05,
+      "composited_psnr": 100.0,
+      "composited_ssim": 1.0
+    },
+    "liiesl_int8": {
+      "global_mae": 0.0001275,
+      "global_maxae": 0.040395,
+      "global_maxae_255": 10.3,
+      "global_rmse": 0.0005607,
+      "global_psnr": 65.03,
+      "global_ssim": 1.0,
+      "masked_mae": 1.63e-05,
+      "masked_maxae": 0.00364,
+      "masked_psnr": 76.88,
+      "boundary_mae": 2.96e-05,
+      "boundary_maxae": 0.004324,
+      "composited_psnr": 90.65,
+      "composited_ssim": 1.0
+    }
+  },
+  "case2_lineart_crosshatch": {
+    "liiesl_fp16": {
+      "global_mae": 1.24e-05,
+      "global_maxae": 0.003682,
+      "global_maxae_255": 0.94,
+      "global_rmse": 5.09e-05,
+      "global_psnr": 85.86,
+      "global_ssim": 1.0,
+      "masked_mae": 9.58e-05,
+      "masked_maxae": 0.003682,
+      "masked_psnr": 70.67,
+      "boundary_mae": 5.91e-05,
+      "boundary_maxae": 0.002861,
+      "composited_psnr": 87.41,
+      "composited_ssim": 1.0
+    },
+    "liiesl_int8": {
+      "global_mae": 0.0005273,
+      "global_maxae": 0.291203,
+      "global_maxae_255": 74.26,
+      "global_rmse": 0.0028878,
+      "global_psnr": 50.79,
+      "global_ssim": 0.99988,
+      "masked_mae": 0.0058381,
+      "masked_maxae": 0.291203,
+      "masked_psnr": 34.81,
+      "boundary_mae": 0.0028252,
+      "boundary_maxae": 0.13462,
+      "composited_psnr": 51.55,
+      "composited_ssim": 0.9999
+    }
+  },
+  "case3_gradient_tone": {
+    "liiesl_fp16": {
+      "global_mae": 8.8e-06,
+      "global_maxae": 0.014941,
+      "global_maxae_255": 3.81,
+      "global_rmse": 0.0001657,
+      "global_psnr": 75.61,
+      "global_ssim": 1.0,
+      "masked_mae": 0.0001108,
+      "masked_maxae": 0.014941,
+      "masked_psnr": 63.62,
+      "boundary_mae": 4.6e-05,
+      "boundary_maxae": 0.012818,
+      "composited_psnr": 75.64,
+      "composited_ssim": 1.0
+    },
+    "liiesl_int8": {
+      "global_mae": 0.0006794,
+      "global_maxae": 0.762154,
+      "global_maxae_255": 194.35,
+      "global_rmse": 0.012714,
+      "global_psnr": 37.91,
+      "global_ssim": 0.99956,
+      "masked_mae": 0.0090892,
+      "masked_maxae": 0.762154,
+      "masked_psnr": 25.91,
+      "boundary_mae": 0.0033885,
+      "boundary_maxae": 0.639798,
+      "composited_psnr": 37.93,
+      "composited_ssim": 0.99956
+    }
+  },
+  "case4_radial_action_lines": {
+    "liiesl_fp16": {
+      "global_mae": 2.61e-05,
+      "global_maxae": 0.035944,
+      "global_maxae_255": 9.17,
+      "global_rmse": 0.0002692,
+      "global_psnr": 71.4,
+      "global_ssim": 1.0,
+      "masked_mae": 0.0003073,
+      "masked_maxae": 0.035944,
+      "masked_psnr": 57.25,
+      "boundary_mae": 4.58e-05,
+      "boundary_maxae": 0.004929,
+      "composited_psnr": 71.44,
+      "composited_ssim": 1.0
+    },
+    "liiesl_int8": {
+      "global_mae": 0.0013521,
+      "global_maxae": 0.954638,
+      "global_maxae_255": 243.43,
+      "global_rmse": 0.0149589,
+      "global_psnr": 36.5,
+      "global_ssim": 0.99931,
+      "masked_mae": 0.0221389,
+      "masked_maxae": 0.954638,
+      "masked_psnr": 22.34,
+      "boundary_mae": 0.0045506,
+      "boundary_maxae": 0.302744,
+      "composited_psnr": 36.53,
+      "composited_ssim": 0.99932
+    }
+  },
+  "case5_sfx_split_boundary": {
+    "liiesl_fp16": {
+      "global_mae": 3.09e-05,
+      "global_maxae": 0.020007,
+      "global_maxae_255": 5.1,
+      "global_rmse": 0.0002714,
+      "global_psnr": 71.33,
+      "global_ssim": 1.0,
+      "masked_mae": 0.0001666,
+      "masked_maxae": 0.020007,
+      "masked_psnr": 63.4,
+      "boundary_mae": 7.78e-05,
+      "boundary_maxae": 0.011067,
+      "composited_psnr": 71.33,
+      "composited_ssim": 1.0
+    },
+    "liiesl_int8": {
+      "global_mae": 0.002899,
+      "global_maxae": 0.763306,
+      "global_maxae_255": 194.64,
+      "global_rmse": 0.0237422,
+      "global_psnr": 32.49,
+      "global_ssim": 0.99885,
+      "masked_mae": 0.0162361,
+      "masked_maxae": 0.763306,
+      "masked_psnr": 24.56,
+      "boundary_mae": 0.007061,
+      "boundary_maxae": 0.385021,
+      "composited_psnr": 32.49,
+      "composited_ssim": 0.99886
+    }
+  }
+}

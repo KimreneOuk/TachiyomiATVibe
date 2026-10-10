@@ -1,0 +1,403 @@
+{
+  "stage_summary": {
+    "0_other": {
+      "node_count": 221,
+      "conv_count": 0,
+      "bn_count": 0,
+      "matmul_count": 0,
+      "einsum_count": 0,
+      "fft_math_count": 0,
+      "param_count": 9545152,
+      "param_bytes_mb": 36.41,
+      "top_ops": {
+        "Constant": 218,
+        "Sub": 1,
+        "Mul": 1,
+        "Concat": 1
+      }
+    },
+    "1_encoder_downsampling": {
+      "node_count": 106,
+      "conv_count": 5,
+      "bn_count": 0,
+      "matmul_count": 0,
+      "einsum_count": 0,
+      "fft_math_count": 0,
+      "param_count": 0,
+      "param_bytes_mb": 0.0,
+      "top_ops": {
+        "Constant": 48,
+        "Reshape": 12,
+        "ConstantOfShape": 6,
+        "Concat": 6,
+        "Slice": 6
+      }
+    },
+    "2_ffc_resnet_block_01": {
+      "node_count": 967,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 385,
+        "Concat": 76,
+        "Reshape": 76,
+        "Slice": 74,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_02": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_03": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_04": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_05": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_06": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_07": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_08": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_09": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_10": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_11": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_12": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_13": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_14": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_15": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_16": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_17": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "2_ffc_resnet_block_18": {
+      "node_count": 950,
+      "conv_count": 12,
+      "bn_count": 4,
+      "matmul_count": 12,
+      "einsum_count": 12,
+      "fft_math_count": 34,
+      "param_count": 2215936,
+      "param_bytes_mb": 8.45,
+      "top_ops": {
+        "Constant": 376,
+        "Concat": 75,
+        "Reshape": 74,
+        "Slice": 73,
+        "Shape": 66
+      }
+    },
+    "3_decoder_upsampling": {
+      "node_count": 6,
+      "conv_count": 0,
+      "bn_count": 1,
+      "matmul_count": 0,
+      "einsum_count": 0,
+      "fft_math_count": 0,
+      "param_count": 1180928,
+      "param_bytes_mb": 4.5,
+      "top_ops": {
+        "Relu": 3,
+        "Concat": 1,
+        "ConvTranspose": 1,
+        "BatchNormalization": 1
+      }
+    },
+    "4_output_head": {
+      "node_count": 22,
+      "conv_count": 1,
+      "bn_count": 2,
+      "matmul_count": 0,
+      "einsum_count": 0,
+      "fft_math_count": 0,
+      "param_count": 379011,
+      "param_bytes_mb": 1.45,
+      "top_ops": {
+        "Constant": 8,
+        "ConvTranspose": 2,
+        "BatchNormalization": 2,
+        "Reshape": 2,
+        "ConstantOfShape": 1
+      }
+    }
+  },
+  "ffc_branch_stats": {
+    "spatial_l2l": {
+      "param_count": 18432,
+      "param_bytes": 73728,
+      "conv_count": 0
+    },
+    "spatial_g2l": {
+      "param_count": 0,
+      "param_bytes": 0,
+      "conv_count": 0
+    },
+    "spectral_l2g": {
+      "param_count": 0,
+      "param_bytes": 0,
+      "conv_count": 0
+    },
+    "spectral_g2g": {
+      "param_count": 55296,
+      "param_bytes": 221184,
+      "conv_count": 0
+    },
+    "other": {
+      "param_count": 0,
+      "param_bytes": 0,
+      "conv_count": 0
+    }
+  }
+}

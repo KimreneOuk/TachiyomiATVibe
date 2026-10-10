@@ -1,0 +1,230 @@
+{
+  "manifest_version": 1,
+  "audit_target": "Manga LaMa ONNX Forensic Audit for Google LiteRT Mobile GPU Optimization",
+  "models": [
+    {
+      "id": "manga_lama_fp32_original",
+      "name": "lama-manga.onnx",
+      "description": "Original FP32 Manga LaMa reference model (dual-input)",
+      "source_repository": "https://huggingface.co/mayocream/lama-manga-onnx",
+      "source_commit": "b55497aadbfcb9740e1ed16f008268d71b4f3f79",
+      "license": "Apache-2.0",
+      "upstream_lineage": {
+        "training_checkpoint": "dreMaz/AnimeMangaInpainting (lama_large_512px.ckpt, MIT)",
+        "base_architecture": "Carve-Photos/lama (commit 5a67a02ad5047c33326695acf3bff8f9f44f19ac: FourierUnitJIT)",
+        "foundation_paper": "Resolution-robust Large Mask Inpainting with Fourier Convolutions (Suvorov et al., WACV 2022)"
+      },
+      "file_path": "audit/models/lama-manga.onnx",
+      "file_size_bytes": 207482644,
+      "sha256": "4512adab295ee5a5e02ccd1bdf8d45dccbac88309d9cff1532ffd5de876f02a4",
+      "opset_version": 17,
+      "inputs": [
+        {
+          "name": "image",
+          "shape": [
+            "batch",
+            3,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0.0 - 1.0"
+        },
+        {
+          "name": "mask",
+          "shape": [
+            "batch",
+            1,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0.0 (keep) - 1.0 (hole)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "shape": [
+            "batch",
+            3,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0.0 - 1.0"
+        }
+      ],
+      "parameter_count": 50991939,
+      "parameters_by_dtype": {
+        "FLOAT": 50991939
+      },
+      "total_graph_nodes": 17472,
+      "compute_precision": "FP32",
+      "weight_storage_precision": "FP32",
+      "provenance_confidence": "VERIFIED"
+    },
+    {
+      "id": "manga_lama_fp16_weight_only",
+      "name": "lama-manga_fp16.onnx",
+      "description": "Liiesl weight-only FP16 compressed export (single-input 512)",
+      "source_repository": "https://huggingface.co/Liiesl/lama-manga-onnx-quant",
+      "source_commit": "51d07e18caf9b1258585d3706fec8986ccbb8cfb",
+      "license": "Apache-2.0",
+      "upstream_lineage": {
+        "source_model": "mayocream/lama-manga-onnx (lama-manga.onnx)",
+        "transformation": "Graph surgery dual->single input (4ch), 222 Conv weights converted to FLOAT16 with Cast(FLOAT16->FLOAT) before execution."
+      },
+      "file_path": "audit/models/lama-manga_fp16.onnx",
+      "file_size_bytes": 108818588,
+      "sha256": "043946afd8c66db5680a76266a4fd5269149a7a91f6d45357b63fb429e340e1e",
+      "opset_version": 17,
+      "inputs": [
+        {
+          "name": "input",
+          "shape": [
+            1,
+            4,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0-2: masked RGB (0-1), 3: binary mask (0/1)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "shape": [
+            "batch",
+            3,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0.0 - 1.0"
+        }
+      ],
+      "parameter_count": 50991939,
+      "parameters_by_dtype": {
+        "FLOAT16": 49345984,
+        "FLOAT": 1645955
+      },
+      "total_graph_nodes": 17690,
+      "compute_precision": "FP32 (via Cast to FP32)",
+      "weight_storage_precision": "FP16 (222 Conv weights) + FP32 (BN and Fourier weights)",
+      "provenance_confidence": "VERIFIED"
+    },
+    {
+      "id": "manga_lama_int8_weight_only",
+      "name": "lama-manga_int8.onnx",
+      "description": "Liiesl weight-only per-channel asymmetric UINT8 compressed export (single-input 512)",
+      "source_repository": "https://huggingface.co/Liiesl/lama-manga-onnx-quant",
+      "source_commit": "51d07e18caf9b1258585d3706fec8986ccbb8cfb",
+      "license": "Apache-2.0",
+      "upstream_lineage": {
+        "source_model": "mayocream/lama-manga-onnx (lama-manga.onnx)",
+        "transformation": "Per-channel asymmetric UINT8 quantization of 222 Conv weights with DequantizeLinear(axis=0) to FP32."
+      },
+      "file_path": "audit/models/lama-manga_int8.onnx",
+      "file_size_bytes": 59809275,
+      "sha256": "502ce98fbd8d030501040d4505daea0616003266f4eb82b1d27fd4fca5b55f4a",
+      "opset_version": 17,
+      "inputs": [
+        {
+          "name": "input",
+          "shape": [
+            1,
+            4,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0-2: masked RGB (0-1), 3: binary mask (0/1)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "shape": [
+            "batch",
+            3,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0.0 - 1.0"
+        }
+      ],
+      "parameter_count": 51109065,
+      "parameters_by_dtype": {
+        "UINT8": 49404547,
+        "FLOAT": 1704518
+      },
+      "total_graph_nodes": 17690,
+      "compute_precision": "FP32 (via DequantizeLinear to FP32)",
+      "weight_storage_precision": "UINT8 (222 Conv weights) + FP32 scales/BN/Fourier",
+      "provenance_confidence": "VERIFIED"
+    },
+    {
+      "id": "gronimo_lama_512_fp16_reference",
+      "name": "lama_512_fp16.onnx",
+      "description": "g-ronimo full-FP16 compute reference model with precomputed 64x64 DFT matmuls and reparameterized BN",
+      "source_repository": "https://huggingface.co/g-ronimo/lama",
+      "source_commit": "418036c6b541e526cdbb0bead1ec3a87dabede53",
+      "license": "Apache-2.0",
+      "upstream_lineage": {
+        "base_checkpoint": "advimman/lama (big-lama checkpoint trained on Places2, NOT manga)",
+        "transformation": "FFT replaced by precomputed 64x64/64x33 DFT MatMuls; BatchNorm running variance absorbed into scale/shift (running_var=1.0); pure FP16 compute graph."
+      },
+      "file_path": "audit/models/lama_512_fp16.onnx",
+      "file_size_bytes": 106559381,
+      "sha256": "1fa042eaf30a6660b9190f0a1512d27bdceff90fab172af295303cdf2905e516",
+      "opset_version": 20,
+      "inputs": [
+        {
+          "name": "input",
+          "shape": [
+            1,
+            4,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0-2: masked RGB (0-1), 3: binary mask (0/1)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "shape": [
+            1,
+            3,
+            512,
+            512
+          ],
+          "dtype": "FLOAT",
+          "layout": "NCHW",
+          "range": "0.0 - 1.0"
+        }
+      ],
+      "parameter_count": 51592103,
+      "parameters_by_dtype": {
+        "FLOAT16": 51592067,
+        "INT64": 36
+      },
+      "total_graph_nodes": 1580,
+      "compute_precision": "FP16 end-to-end",
+      "weight_storage_precision": "FP16",
+      "provenance_confidence": "VERIFIED"
+    }
+  ]
+}

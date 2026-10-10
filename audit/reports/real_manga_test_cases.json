@@ -1,0 +1,242 @@
+[
+  {
+    "id": "real_case1_ch201_p1_screentone_bubble",
+    "ch": "chapter-201.410030",
+    "page": 1,
+    "center": [
+      651,
+      502
+    ],
+    "bubble": [
+      519,
+      375,
+      265,
+      254
+    ],
+    "split": "calibration",
+    "category": "speech_bubble_dense_screentone",
+    "description": "Dialogue speech bubble situated against dense background screentone",
+    "crop_origin": [
+      395,
+      246
+    ],
+    "crop_size": [
+      512,
+      512
+    ],
+    "mask_pixels": 27461,
+    "mask_coverage_pct": 10.48,
+    "img_path": "audit/reference_data\\test_images\\real_case1_ch201_p1_screentone_bubble.png",
+    "mask_path": "audit/reference_data\\test_masks\\real_case1_ch201_p1_screentone_bubble_mask.png"
+  },
+  {
+    "id": "real_case2_ch201_p2_lineart_character",
+    "ch": "chapter-201.410030",
+    "page": 2,
+    "center": [
+      1029,
+      836
+    ],
+    "bubble": [
+      845,
+      662,
+      369,
+      348
+    ],
+    "split": "calibration",
+    "category": "line_art_character_intersection",
+    "description": "Speech bubble boundary intersecting fine line art of character hair and facial contours",
+    "crop_origin": [
+      773,
+      580
+    ],
+    "crop_size": [
+      512,
+      512
+    ],
+    "mask_pixels": 52560,
+    "mask_coverage_pct": 20.05,
+    "img_path": "audit/reference_data\\test_images\\real_case2_ch201_p2_lineart_character.png",
+    "mask_path": "audit/reference_data\\test_masks\\real_case2_ch201_p2_lineart_character_mask.png"
+  },
+  {
+    "id": "real_case3_ch201_p8_heavy_tone_dialogue",
+    "ch": "chapter-201.410030",
+    "page": 8,
+    "center": [
+      811,
+      564
+    ],
+    "bubble": [
+      659,
+      335,
+      304,
+      459
+    ],
+    "split": "calibration",
+    "category": "heavy_screentone_shadow",
+    "description": "Heavy screentone shadow background with dark hatching and dialogue bubble",
+    "crop_origin": [
+      555,
+      308
+    ],
+    "crop_size": [
+      512,
+      512
+    ],
+    "mask_pixels": 44255,
+    "mask_coverage_pct": 16.88,
+    "img_path": "audit/reference_data\\test_images\\real_case3_ch201_p8_heavy_tone_dialogue.png",
+    "mask_path": "audit/reference_data\\test_masks\\real_case3_ch201_p8_heavy_tone_dialogue_mask.png"
+  },
+  {
+    "id": "real_case4_ch201_p10_color_speech_bubble",
+    "ch": "chapter-201.410030",
+    "page": 10,
+    "center": [
+      278,
+      712
+    ],
+    "bubble": [
+      113,
+      498,
+      425,
+      429
+    ],
+    "split": "calibration",
+    "category": "color_illustration_bubble",
+    "description": "Full-color painted manga illustration with integrated dialogue bubble",
+    "crop_origin": [
+      22,
+      456
+    ],
+    "crop_size": [
+      512,
+      512
+    ],
+    "mask_pixels": 54976,
+    "mask_coverage_pct": 20.97,
+    "img_path": "audit/reference_data\\test_images\\real_case4_ch201_p10_color_speech_bubble.png",
+    "mask_path": "audit/reference_data\\test_masks\\real_case4_ch201_p10_color_speech_bubble_mask.png"
+  },
+  {
+    "id": "real_case5_ch202_p1_splash_screentone",
+    "ch": "chapter-202.412574",
+    "page": 1,
+    "center": [
+      675,
+      960
+    ],
+    "bubble": [
+      500,
+      800,
+      350,
+      320
+    ],
+    "split": "held_out",
+    "category": "splash_art_screentone_overlay",
+    "description": "Cover/splash illustration with extreme screentone halftone frequency and text overlay",
+    "crop_origin": [
+      419,
+      704
+    ],
+    "crop_size": [
+      512,
+      512
+    ],
+    "mask_pixels": 115200,
+    "mask_coverage_pct": 43.95,
+    "img_path": "audit/reference_data\\test_images\\real_case5_ch202_p1_splash_screentone.png",
+    "mask_path": "audit/reference_data\\test_masks\\real_case5_ch202_p1_splash_screentone_mask.png"
+  },
+  {
+    "id": "real_case6_ch202_p3_gradient_shading_bubble",
+    "ch": "chapter-202.412574",
+    "page": 3,
+    "center": [
+      797,
+      1677
+    ],
+    "bubble": [
+      632,
+      1470,
+      330,
+      415
+    ],
+    "split": "held_out",
+    "category": "gradient_screentone_closeup",
+    "description": "Character close-up with soft gradient screentones and speech bubble",
+    "crop_origin": [
+      541,
+      1408
+    ],
+    "crop_size": [
+      512,
+      512
+    ],
+    "mask_pixels": 48373,
+    "mask_coverage_pct": 18.45,
+    "img_path": "audit/reference_data\\test_images\\real_case6_ch202_p3_gradient_shading_bubble.png",
+    "mask_path": "audit/reference_data\\test_masks\\real_case6_ch202_p3_gradient_shading_bubble_mask.png"
+  },
+  {
+    "id": "real_case7_ch202_p6_dense_bubble_cluster",
+    "ch": "chapter-202.412574",
+    "page": 6,
+    "center": [
+      970,
+      706
+    ],
+    "bubble": [
+      695,
+      573,
+      550,
+      267
+    ],
+    "split": "held_out",
+    "category": "dense_bubble_panel_cluster",
+    "description": "High-density multi-panel layout with speech bubble clusters and vertical dialogue",
+    "crop_origin": [
+      714,
+      450
+    ],
+    "crop_size": [
+      512,
+      512
+    ],
+    "mask_pixels": 87812,
+    "mask_coverage_pct": 33.5,
+    "img_path": "audit/reference_data\\test_images\\real_case7_ch202_p6_dense_bubble_cluster.png",
+    "mask_path": "audit/reference_data\\test_masks\\real_case7_ch202_p6_dense_bubble_cluster_mask.png"
+  },
+  {
+    "id": "real_case8_ch202_p11_color_action_bubble",
+    "ch": "chapter-202.412574",
+    "page": 11,
+    "center": [
+      820,
+      1153
+    ],
+    "bubble": [
+      663,
+      912,
+      314,
+      483
+    ],
+    "split": "held_out",
+    "category": "color_action_scene",
+    "description": "Full-color action scene with saturated color artwork and dialogue bubble",
+    "crop_origin": [
+      564,
+      897
+    ],
+    "crop_size": [
+      512,
+      512
+    ],
+    "mask_pixels": 69218,
+    "mask_coverage_pct": 26.4,
+    "img_path": "audit/reference_data\\test_images\\real_case8_ch202_p11_color_action_bubble.png",
+    "mask_path": "audit/reference_data\\test_masks\\real_case8_ch202_p11_color_action_bubble_mask.png"
+  }
+]

@@ -66,3 +66,9 @@ kilo.json
 /app/src/main/assets/models/**
 !/app/src/main/assets/models/**/
 !/app/src/main/assets/models/**/.gitkeep
+!/app/src/main/assets/models/inpainting/manga_lama_fused_fp16.tflite
+
+# Audit models and large profiler dumps (>100MB)
+/audit/models/*
+!/audit/models/.gitkeep
+/audit/reports/ort_profile_*.json

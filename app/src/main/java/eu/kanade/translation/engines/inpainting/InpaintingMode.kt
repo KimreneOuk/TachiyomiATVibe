@@ -39,6 +39,7 @@ fun InpaintingMode.stampName(
         return if (degraded) name + InpaintingMode.DEGRADED_SUFFIX else name
     }
     val modelTag = when (neuralModel) {
+        NeuralInpaintModel.LAMA_LITERT_GPU -> "LAMA_LITERT"
         NeuralInpaintModel.LAMA_MANGA -> "LAMA"
         NeuralInpaintModel.LAMA_MANGA_FP16 -> "LAMA16"
         NeuralInpaintModel.LAMA_512_INT8 -> "LAMA512"

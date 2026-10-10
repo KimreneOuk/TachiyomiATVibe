@@ -1,6 +1,7 @@
 package tachiyomi.domain.translation
 
 enum class NeuralInpaintModel(val prefValue: String) {
+    LAMA_LITERT_GPU("LAMA_LITERT_GPU"),
     LAMA_MANGA("LAMA_MANGA"),
     LAMA_MANGA_FP16("LAMA_MANGA_FP16"),
     LAMA_512_INT8("LAMA_512_INT8"),
@@ -8,7 +9,7 @@ enum class NeuralInpaintModel(val prefValue: String) {
     AOT_GAN("AOT_GAN");
 
     companion object {
-        val DEFAULT = LAMA_MANGA
+        val DEFAULT = LAMA_LITERT_GPU
 
         fun fromPrefOrNull(value: String?): NeuralInpaintModel? =
             entries.firstOrNull { it.prefValue.equals(value, ignoreCase = true) }

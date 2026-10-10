@@ -1,0 +1,749 @@
+{
+  "models": {
+    "lama-manga_fp32": {
+      "init_time_ms": 10009.83,
+      "mem_delta_mb": 271.8,
+      "file_size_mb": 197.87
+    },
+    "lama-manga_fp16": {
+      "init_time_ms": 1849.34,
+      "mem_delta_mb": 256.38,
+      "file_size_mb": 103.78
+    },
+    "lama-manga_int8": {
+      "init_time_ms": 1619.82,
+      "mem_delta_mb": 113.57,
+      "file_size_mb": 57.04
+    },
+    "lama_512_fp16": {
+      "init_time_ms": 1015.73,
+      "mem_delta_mb": 202.67,
+      "file_size_mb": 101.62
+    }
+  },
+  "peak_rss_mb": 3787.0,
+  "case_benchmarks": {
+    "real_case1_ch201_p1_screentone_bubble": {
+      "lama-manga_fp32": {
+        "cold_latency_ms": 2131.85,
+        "warm_median_ms": 2058.59,
+        "warm_mean_ms": 2063.23,
+        "warm_std_ms": 52.72,
+        "warm_min_ms": 2008.54,
+        "warm_max_ms": 2157.89
+      },
+      "lama-manga_fp16": {
+        "cold_latency_ms": 2063.2,
+        "warm_median_ms": 2009.0,
+        "warm_mean_ms": 2023.38,
+        "warm_std_ms": 36.94,
+        "warm_min_ms": 1992.51,
+        "warm_max_ms": 2096.05
+      },
+      "lama-manga_int8": {
+        "cold_latency_ms": 2206.56,
+        "warm_median_ms": 2136.31,
+        "warm_mean_ms": 2138.63,
+        "warm_std_ms": 31.64,
+        "warm_min_ms": 2088.07,
+        "warm_max_ms": 2177.55
+      },
+      "lama_512_fp16": {
+        "cold_latency_ms": 1538.83,
+        "warm_median_ms": 1531.43,
+        "warm_mean_ms": 1523.93,
+        "warm_std_ms": 21.24,
+        "warm_min_ms": 1483.71,
+        "warm_max_ms": 1546.63
+      }
+    },
+    "real_case2_ch201_p2_lineart_character": {
+      "lama-manga_fp32": {
+        "cold_latency_ms": 2049.47,
+        "warm_median_ms": 2043.67,
+        "warm_mean_ms": 2038.06,
+        "warm_std_ms": 37.44,
+        "warm_min_ms": 1972.96,
+        "warm_max_ms": 2089.23
+      },
+      "lama-manga_fp16": {
+        "cold_latency_ms": 2076.56,
+        "warm_median_ms": 2054.69,
+        "warm_mean_ms": 2047.66,
+        "warm_std_ms": 49.91,
+        "warm_min_ms": 1959.04,
+        "warm_max_ms": 2095.62
+      },
+      "lama-manga_int8": {
+        "cold_latency_ms": 2263.39,
+        "warm_median_ms": 2392.17,
+        "warm_mean_ms": 2402.44,
+        "warm_std_ms": 105.17,
+        "warm_min_ms": 2273.04,
+        "warm_max_ms": 2551.75
+      },
+      "lama_512_fp16": {
+        "cold_latency_ms": 1982.44,
+        "warm_median_ms": 1980.48,
+        "warm_mean_ms": 1986.55,
+        "warm_std_ms": 28.58,
+        "warm_min_ms": 1956.32,
+        "warm_max_ms": 2036.28
+      }
+    },
+    "real_case3_ch201_p8_heavy_tone_dialogue": {
+      "lama-manga_fp32": {
+        "cold_latency_ms": 2486.03,
+        "warm_median_ms": 2486.43,
+        "warm_mean_ms": 2488.36,
+        "warm_std_ms": 22.35,
+        "warm_min_ms": 2454.87,
+        "warm_max_ms": 2513.23
+      },
+      "lama-manga_fp16": {
+        "cold_latency_ms": 2439.48,
+        "warm_median_ms": 2442.54,
+        "warm_mean_ms": 2451.55,
+        "warm_std_ms": 17.76,
+        "warm_min_ms": 2436.23,
+        "warm_max_ms": 2484.85
+      },
+      "lama-manga_int8": {
+        "cold_latency_ms": 2545.66,
+        "warm_median_ms": 2553.07,
+        "warm_mean_ms": 2554.22,
+        "warm_std_ms": 10.57,
+        "warm_min_ms": 2540.08,
+        "warm_max_ms": 2569.09
+      },
+      "lama_512_fp16": {
+        "cold_latency_ms": 1935.09,
+        "warm_median_ms": 1978.63,
+        "warm_mean_ms": 1971.3,
+        "warm_std_ms": 16.15,
+        "warm_min_ms": 1945.25,
+        "warm_max_ms": 1987.87
+      }
+    },
+    "real_case4_ch201_p10_color_speech_bubble": {
+      "lama-manga_fp32": {
+        "cold_latency_ms": 2517.91,
+        "warm_median_ms": 2458.09,
+        "warm_mean_ms": 2465.34,
+        "warm_std_ms": 18.11,
+        "warm_min_ms": 2444.86,
+        "warm_max_ms": 2492.23
+      },
+      "lama-manga_fp16": {
+        "cold_latency_ms": 2449.47,
+        "warm_median_ms": 2429.15,
+        "warm_mean_ms": 2430.25,
+        "warm_std_ms": 16.96,
+        "warm_min_ms": 2402.41,
+        "warm_max_ms": 2451.24
+      },
+      "lama-manga_int8": {
+        "cold_latency_ms": 2555.47,
+        "warm_median_ms": 2530.55,
+        "warm_mean_ms": 2527.43,
+        "warm_std_ms": 31.67,
+        "warm_min_ms": 2475.53,
+        "warm_max_ms": 2567.5
+      },
+      "lama_512_fp16": {
+        "cold_latency_ms": 1981.27,
+        "warm_median_ms": 1958.56,
+        "warm_mean_ms": 1962.21,
+        "warm_std_ms": 20.45,
+        "warm_min_ms": 1937.01,
+        "warm_max_ms": 1987.28
+      }
+    },
+    "real_case5_ch202_p1_splash_screentone": {
+      "lama-manga_fp32": {
+        "cold_latency_ms": 2477.33,
+        "warm_median_ms": 2472.3,
+        "warm_mean_ms": 2483.2,
+        "warm_std_ms": 28.1,
+        "warm_min_ms": 2451.81,
+        "warm_max_ms": 2526.64
+      },
+      "lama-manga_fp16": {
+        "cold_latency_ms": 2455.11,
+        "warm_median_ms": 2463.62,
+        "warm_mean_ms": 2466.56,
+        "warm_std_ms": 13.94,
+        "warm_min_ms": 2447.74,
+        "warm_max_ms": 2488.94
+      },
+      "lama-manga_int8": {
+        "cold_latency_ms": 2553.83,
+        "warm_median_ms": 2629.67,
+        "warm_mean_ms": 2612.21,
+        "warm_std_ms": 31.24,
+        "warm_min_ms": 2556.46,
+        "warm_max_ms": 2643.21
+      },
+      "lama_512_fp16": {
+        "cold_latency_ms": 1951.07,
+        "warm_median_ms": 1957.8,
+        "warm_mean_ms": 1957.79,
+        "warm_std_ms": 11.09,
+        "warm_min_ms": 1944.9,
+        "warm_max_ms": 1972.04
+      }
+    },
+    "real_case6_ch202_p3_gradient_shading_bubble": {
+      "lama-manga_fp32": {
+        "cold_latency_ms": 2511.77,
+        "warm_median_ms": 2482.28,
+        "warm_mean_ms": 2475.65,
+        "warm_std_ms": 20.79,
+        "warm_min_ms": 2443.99,
+        "warm_max_ms": 2499.62
+      },
+      "lama-manga_fp16": {
+        "cold_latency_ms": 2477.91,
+        "warm_median_ms": 2557.15,
+        "warm_mean_ms": 2541.01,
+        "warm_std_ms": 42.58,
+        "warm_min_ms": 2486.18,
+        "warm_max_ms": 2600.61
+      },
+      "lama-manga_int8": {
+        "cold_latency_ms": 2610.49,
+        "warm_median_ms": 2616.26,
+        "warm_mean_ms": 2602.33,
+        "warm_std_ms": 40.45,
+        "warm_min_ms": 2542.36,
+        "warm_max_ms": 2649.8
+      },
+      "lama_512_fp16": {
+        "cold_latency_ms": 1971.09,
+        "warm_median_ms": 1966.02,
+        "warm_mean_ms": 1973.81,
+        "warm_std_ms": 33.4,
+        "warm_min_ms": 1939.06,
+        "warm_max_ms": 2036.09
+      }
+    },
+    "real_case7_ch202_p6_dense_bubble_cluster": {
+      "lama-manga_fp32": {
+        "cold_latency_ms": 2520.09,
+        "warm_median_ms": 2509.38,
+        "warm_mean_ms": 2517.06,
+        "warm_std_ms": 15.31,
+        "warm_min_ms": 2501.42,
+        "warm_max_ms": 2541.5
+      },
+      "lama-manga_fp16": {
+        "cold_latency_ms": 2489.39,
+        "warm_median_ms": 2500.46,
+        "warm_mean_ms": 2492.98,
+        "warm_std_ms": 13.12,
+        "warm_min_ms": 2476.71,
+        "warm_max_ms": 2507.94
+      },
+      "lama-manga_int8": {
+        "cold_latency_ms": 2606.53,
+        "warm_median_ms": 2543.38,
+        "warm_mean_ms": 2401.27,
+        "warm_std_ms": 198.14,
+        "warm_min_ms": 2135.13,
+        "warm_max_ms": 2572.74
+      },
+      "lama_512_fp16": {
+        "cold_latency_ms": 1525.44,
+        "warm_median_ms": 1492.22,
+        "warm_mean_ms": 1505.52,
+        "warm_std_ms": 63.39,
+        "warm_min_ms": 1441.64,
+        "warm_max_ms": 1608.06
+      }
+    },
+    "real_case8_ch202_p11_color_action_bubble": {
+      "lama-manga_fp32": {
+        "cold_latency_ms": 1954.44,
+        "warm_median_ms": 2000.02,
+        "warm_mean_ms": 1992.84,
+        "warm_std_ms": 32.77,
+        "warm_min_ms": 1933.22,
+        "warm_max_ms": 2030.22
+      },
+      "lama-manga_fp16": {
+        "cold_latency_ms": 2017.38,
+        "warm_median_ms": 2036.15,
+        "warm_mean_ms": 2027.75,
+        "warm_std_ms": 55.16,
+        "warm_min_ms": 1936.49,
+        "warm_max_ms": 2105.53
+      },
+      "lama-manga_int8": {
+        "cold_latency_ms": 2358.64,
+        "warm_median_ms": 2178.39,
+        "warm_mean_ms": 2189.67,
+        "warm_std_ms": 57.25,
+        "warm_min_ms": 2098.39,
+        "warm_max_ms": 2268.94
+      },
+      "lama_512_fp16": {
+        "cold_latency_ms": 1496.77,
+        "warm_median_ms": 1511.94,
+        "warm_mean_ms": 1515.19,
+        "warm_std_ms": 23.19,
+        "warm_min_ms": 1486.35,
+        "warm_max_ms": 1557.27
+      }
+    }
+  },
+  "quality_evaluations": {
+    "real_case1_ch201_p1_screentone_bubble": {
+      "lama-manga_fp16": {
+        "global_mae": 6.72e-05,
+        "global_maxae": 0.004679,
+        "global_maxae_255": 1.19,
+        "global_rmse": 0.0001199,
+        "global_psnr_db": 78.42,
+        "global_ssim": 1.0,
+        "masked_mae": 0.0001829,
+        "masked_maxae": 0.004679,
+        "masked_rmse": 0.0003162,
+        "masked_psnr_db": 70.0,
+        "boundary_mae": 9.13e-05,
+        "boundary_maxae": 0.003101,
+        "boundary_rmse": 0.0001501,
+        "boundary_psnr_db": 76.47,
+        "composited_psnr_db": 79.8,
+        "composited_ssim": 1.0
+      },
+      "lama-manga_int8": {
+        "global_mae": 0.0052485,
+        "global_maxae": 0.284385,
+        "global_maxae_255": 72.52,
+        "global_rmse": 0.0104245,
+        "global_psnr_db": 39.64,
+        "global_ssim": 0.99932,
+        "masked_mae": 0.0149233,
+        "masked_maxae": 0.284385,
+        "masked_rmse": 0.026196,
+        "masked_psnr_db": 31.64,
+        "boundary_mae": 0.0078632,
+        "boundary_maxae": 0.263039,
+        "boundary_rmse": 0.0129546,
+        "boundary_psnr_db": 37.75,
+        "composited_psnr_db": 41.43,
+        "composited_ssim": 0.99955
+      },
+      "lama_512_fp16": {
+        "global_mae": 0.0208583,
+        "global_maxae": 0.901965,
+        "global_maxae_255": 230.0,
+        "global_rmse": 0.0483047,
+        "global_psnr_db": 26.32,
+        "global_ssim": 0.98558,
+        "masked_mae": 0.0855314,
+        "masked_maxae": 0.901965,
+        "masked_rmse": 0.1363187,
+        "masked_psnr_db": 17.31,
+        "boundary_mae": 0.0512488,
+        "boundary_maxae": 0.818779,
+        "boundary_rmse": 0.0865171,
+        "boundary_psnr_db": 21.26,
+        "composited_psnr_db": 27.11,
+        "composited_ssim": 0.98788
+      }
+    },
+    "real_case2_ch201_p2_lineart_character": {
+      "lama-manga_fp16": {
+        "global_mae": 6.79e-05,
+        "global_maxae": 0.008211,
+        "global_maxae_255": 2.09,
+        "global_rmse": 0.0001937,
+        "global_psnr_db": 74.26,
+        "global_ssim": 1.0,
+        "masked_mae": 0.0002128,
+        "masked_maxae": 0.008211,
+        "masked_rmse": 0.0004217,
+        "masked_psnr_db": 67.5,
+        "boundary_mae": 8.55e-05,
+        "boundary_maxae": 0.005379,
+        "boundary_rmse": 0.000184,
+        "boundary_psnr_db": 74.7,
+        "composited_psnr_db": 74.48,
+        "composited_ssim": 1.0
+      },
+      "lama-manga_int8": {
+        "global_mae": 0.0050145,
+        "global_maxae": 0.363376,
+        "global_maxae_255": 92.66,
+        "global_rmse": 0.013145,
+        "global_psnr_db": 37.62,
+        "global_ssim": 0.99935,
+        "masked_mae": 0.0146085,
+        "masked_maxae": 0.363376,
+        "masked_rmse": 0.0275751,
+        "masked_psnr_db": 31.19,
+        "boundary_mae": 0.0059947,
+        "boundary_maxae": 0.238248,
+        "boundary_rmse": 0.0115105,
+        "boundary_psnr_db": 38.78,
+        "composited_psnr_db": 38.17,
+        "composited_ssim": 0.99943
+      },
+      "lama_512_fp16": {
+        "global_mae": 0.0283252,
+        "global_maxae": 0.994136,
+        "global_maxae_255": 253.5,
+        "global_rmse": 0.0820605,
+        "global_psnr_db": 21.72,
+        "global_ssim": 0.97461,
+        "masked_mae": 0.1040887,
+        "masked_maxae": 0.958322,
+        "masked_rmse": 0.1794777,
+        "masked_psnr_db": 14.92,
+        "boundary_mae": 0.0385875,
+        "boundary_maxae": 0.958322,
+        "boundary_rmse": 0.0784228,
+        "boundary_psnr_db": 22.11,
+        "composited_psnr_db": 21.9,
+        "composited_ssim": 0.97589
+      }
+    },
+    "real_case3_ch201_p8_heavy_tone_dialogue": {
+      "lama-manga_fp16": {
+        "global_mae": 6.38e-05,
+        "global_maxae": 0.01005,
+        "global_maxae_255": 2.56,
+        "global_rmse": 0.0001916,
+        "global_psnr_db": 74.35,
+        "global_ssim": 1.0,
+        "masked_mae": 0.0001952,
+        "masked_maxae": 0.01005,
+        "masked_rmse": 0.0004487,
+        "masked_psnr_db": 66.96,
+        "boundary_mae": 7.89e-05,
+        "boundary_maxae": 0.003302,
+        "boundary_rmse": 0.0001707,
+        "boundary_psnr_db": 75.35,
+        "composited_psnr_db": 74.69,
+        "composited_ssim": 1.0
+      },
+      "lama-manga_int8": {
+        "global_mae": 0.0049732,
+        "global_maxae": 0.397113,
+        "global_maxae_255": 101.26,
+        "global_rmse": 0.0123754,
+        "global_psnr_db": 38.15,
+        "global_ssim": 0.99919,
+        "masked_mae": 0.0127345,
+        "masked_maxae": 0.397113,
+        "masked_rmse": 0.0271112,
+        "masked_psnr_db": 31.34,
+        "boundary_mae": 0.0059351,
+        "boundary_maxae": 0.306412,
+        "boundary_rmse": 0.0124709,
+        "boundary_psnr_db": 38.08,
+        "composited_psnr_db": 39.06,
+        "composited_ssim": 0.99934
+      },
+      "lama_512_fp16": {
+        "global_mae": 0.0250587,
+        "global_maxae": 0.889528,
+        "global_maxae_255": 226.83,
+        "global_rmse": 0.0689167,
+        "global_psnr_db": 23.23,
+        "global_ssim": 0.97492,
+        "masked_mae": 0.0899831,
+        "masked_maxae": 0.889528,
+        "masked_rmse": 0.1620974,
+        "masked_psnr_db": 15.8,
+        "boundary_mae": 0.0389092,
+        "boundary_maxae": 0.786114,
+        "boundary_rmse": 0.0813045,
+        "boundary_psnr_db": 21.8,
+        "composited_psnr_db": 23.53,
+        "composited_ssim": 0.97655
+      }
+    },
+    "real_case4_ch201_p10_color_speech_bubble": {
+      "lama-manga_fp16": {
+        "global_mae": 3.98e-05,
+        "global_maxae": 0.004797,
+        "global_maxae_255": 1.22,
+        "global_rmse": 0.0001265,
+        "global_psnr_db": 77.96,
+        "global_ssim": 1.0,
+        "masked_mae": 0.0001371,
+        "masked_maxae": 0.004797,
+        "masked_rmse": 0.0002688,
+        "masked_psnr_db": 71.41,
+        "boundary_mae": 6.14e-05,
+        "boundary_maxae": 0.004797,
+        "boundary_rmse": 0.0001406,
+        "boundary_psnr_db": 77.04,
+        "composited_psnr_db": 78.2,
+        "composited_ssim": 1.0
+      },
+      "lama-manga_int8": {
+        "global_mae": 0.0026969,
+        "global_maxae": 0.190253,
+        "global_maxae_255": 48.51,
+        "global_rmse": 0.0083806,
+        "global_psnr_db": 41.53,
+        "global_ssim": 0.99895,
+        "masked_mae": 0.0088444,
+        "masked_maxae": 0.190253,
+        "masked_rmse": 0.0171674,
+        "masked_psnr_db": 35.31,
+        "boundary_mae": 0.004167,
+        "boundary_maxae": 0.139849,
+        "boundary_rmse": 0.0090895,
+        "boundary_psnr_db": 40.83,
+        "composited_psnr_db": 42.09,
+        "composited_ssim": 0.99907
+      },
+      "lama_512_fp16": {
+        "global_mae": 0.010645,
+        "global_maxae": 0.86348,
+        "global_maxae_255": 220.19,
+        "global_rmse": 0.0328366,
+        "global_psnr_db": 29.67,
+        "global_ssim": 0.98353,
+        "masked_mae": 0.0354516,
+        "masked_maxae": 0.86348,
+        "masked_rmse": 0.0698358,
+        "masked_psnr_db": 23.12,
+        "boundary_mae": 0.0160141,
+        "boundary_maxae": 0.851093,
+        "boundary_rmse": 0.03854,
+        "boundary_psnr_db": 28.28,
+        "composited_psnr_db": 29.9,
+        "composited_ssim": 0.98438
+      }
+    },
+    "real_case5_ch202_p1_splash_screentone": {
+      "lama-manga_fp16": {
+        "global_mae": 0.000204,
+        "global_maxae": 0.009716,
+        "global_maxae_255": 2.48,
+        "global_rmse": 0.0004117,
+        "global_psnr_db": 67.71,
+        "global_ssim": 1.0,
+        "masked_mae": 0.0003848,
+        "masked_maxae": 0.009716,
+        "masked_rmse": 0.000615,
+        "masked_psnr_db": 64.22,
+        "boundary_mae": 0.0001168,
+        "boundary_maxae": 0.001591,
+        "boundary_rmse": 0.0001732,
+        "boundary_psnr_db": 75.23,
+        "composited_psnr_db": 67.79,
+        "composited_ssim": 1.0
+      },
+      "lama-manga_int8": {
+        "global_mae": 0.0190329,
+        "global_maxae": 0.584933,
+        "global_maxae_255": 149.16,
+        "global_rmse": 0.0360784,
+        "global_psnr_db": 28.86,
+        "global_ssim": 0.98487,
+        "masked_mae": 0.0365465,
+        "masked_maxae": 0.584933,
+        "masked_rmse": 0.053779,
+        "masked_psnr_db": 25.39,
+        "boundary_mae": 0.0112697,
+        "boundary_maxae": 0.16709,
+        "boundary_rmse": 0.0177541,
+        "boundary_psnr_db": 35.01,
+        "composited_psnr_db": 28.96,
+        "composited_ssim": 0.98564
+      },
+      "lama_512_fp16": {
+        "global_mae": 0.0731299,
+        "global_maxae": 0.875484,
+        "global_maxae_255": 223.25,
+        "global_rmse": 0.1207725,
+        "global_psnr_db": 18.36,
+        "global_ssim": 0.83166,
+        "masked_mae": 0.1408813,
+        "masked_maxae": 0.875484,
+        "masked_rmse": 0.1795207,
+        "masked_psnr_db": 14.92,
+        "boundary_mae": 0.0782226,
+        "boundary_maxae": 0.728942,
+        "boundary_rmse": 0.1151481,
+        "boundary_psnr_db": 18.77,
+        "composited_psnr_db": 18.49,
+        "composited_ssim": 0.83795
+      }
+    },
+    "real_case6_ch202_p3_gradient_shading_bubble": {
+      "lama-manga_fp16": {
+        "global_mae": 5.89e-05,
+        "global_maxae": 0.01141,
+        "global_maxae_255": 2.91,
+        "global_rmse": 0.0001991,
+        "global_psnr_db": 74.02,
+        "global_ssim": 1.0,
+        "masked_mae": 0.0001798,
+        "masked_maxae": 0.01141,
+        "masked_rmse": 0.000451,
+        "masked_psnr_db": 66.92,
+        "boundary_mae": 7.63e-05,
+        "boundary_maxae": 0.006715,
+        "boundary_rmse": 0.0001745,
+        "boundary_psnr_db": 75.16,
+        "composited_psnr_db": 74.26,
+        "composited_ssim": 1.0
+      },
+      "lama-manga_int8": {
+        "global_mae": 0.0045162,
+        "global_maxae": 0.685283,
+        "global_maxae_255": 174.75,
+        "global_rmse": 0.0143675,
+        "global_psnr_db": 36.85,
+        "global_ssim": 0.99915,
+        "masked_mae": 0.0123657,
+        "masked_maxae": 0.685283,
+        "masked_rmse": 0.0315647,
+        "masked_psnr_db": 30.02,
+        "boundary_mae": 0.0051517,
+        "boundary_maxae": 0.458874,
+        "boundary_rmse": 0.0123032,
+        "boundary_psnr_db": 38.2,
+        "composited_psnr_db": 37.36,
+        "composited_ssim": 0.99925
+      },
+      "lama_512_fp16": {
+        "global_mae": 0.0235776,
+        "global_maxae": 0.998103,
+        "global_maxae_255": 254.52,
+        "global_rmse": 0.0796811,
+        "global_psnr_db": 21.97,
+        "global_ssim": 0.97395,
+        "masked_mae": 0.0878408,
+        "masked_maxae": 0.998103,
+        "masked_rmse": 0.1823564,
+        "masked_psnr_db": 14.78,
+        "boundary_mae": 0.0324007,
+        "boundary_maxae": 0.899588,
+        "boundary_rmse": 0.0775785,
+        "boundary_psnr_db": 22.21,
+        "composited_psnr_db": 22.12,
+        "composited_ssim": 0.97498
+      }
+    },
+    "real_case7_ch202_p6_dense_bubble_cluster": {
+      "lama-manga_fp16": {
+        "global_mae": 0.0001078,
+        "global_maxae": 0.006166,
+        "global_maxae_255": 1.57,
+        "global_rmse": 0.0002473,
+        "global_psnr_db": 72.14,
+        "global_ssim": 1.0,
+        "masked_mae": 0.0002271,
+        "masked_maxae": 0.006166,
+        "masked_rmse": 0.0004169,
+        "masked_psnr_db": 67.6,
+        "boundary_mae": 0.000116,
+        "boundary_maxae": 0.004149,
+        "boundary_rmse": 0.0002291,
+        "boundary_psnr_db": 72.8,
+        "composited_psnr_db": 72.35,
+        "composited_ssim": 1.0
+      },
+      "lama-manga_int8": {
+        "global_mae": 0.0088468,
+        "global_maxae": 0.422653,
+        "global_maxae_255": 107.78,
+        "global_rmse": 0.0212541,
+        "global_psnr_db": 33.45,
+        "global_ssim": 0.99764,
+        "masked_mae": 0.0190283,
+        "masked_maxae": 0.422653,
+        "masked_rmse": 0.0357352,
+        "masked_psnr_db": 28.94,
+        "boundary_mae": 0.0096839,
+        "boundary_maxae": 0.285933,
+        "boundary_rmse": 0.0216399,
+        "boundary_psnr_db": 33.29,
+        "composited_psnr_db": 33.69,
+        "composited_ssim": 0.99779
+      },
+      "lama_512_fp16": {
+        "global_mae": 0.0396036,
+        "global_maxae": 0.950486,
+        "global_maxae_255": 242.37,
+        "global_rmse": 0.0802366,
+        "global_psnr_db": 21.91,
+        "global_ssim": 0.96682,
+        "masked_mae": 0.092272,
+        "masked_maxae": 0.950486,
+        "masked_rmse": 0.1354596,
+        "masked_psnr_db": 17.36,
+        "boundary_mae": 0.0456528,
+        "boundary_maxae": 0.699738,
+        "boundary_rmse": 0.0787455,
+        "boundary_psnr_db": 22.08,
+        "composited_psnr_db": 22.11,
+        "composited_ssim": 0.96837
+      }
+    },
+    "real_case8_ch202_p11_color_action_bubble": {
+      "lama-manga_fp16": {
+        "global_mae": 6.72e-05,
+        "global_maxae": 0.005784,
+        "global_maxae_255": 1.47,
+        "global_rmse": 0.000156,
+        "global_psnr_db": 76.14,
+        "global_ssim": 1.0,
+        "masked_mae": 0.0001556,
+        "masked_maxae": 0.005784,
+        "masked_rmse": 0.0002909,
+        "masked_psnr_db": 70.72,
+        "boundary_mae": 8.2e-05,
+        "boundary_maxae": 0.005782,
+        "boundary_rmse": 0.0001578,
+        "boundary_psnr_db": 76.04,
+        "composited_psnr_db": 76.51,
+        "composited_ssim": 1.0
+      },
+      "lama-manga_int8": {
+        "global_mae": 0.004919,
+        "global_maxae": 0.558818,
+        "global_maxae_255": 142.5,
+        "global_rmse": 0.0128944,
+        "global_psnr_db": 37.79,
+        "global_ssim": 0.99886,
+        "masked_mae": 0.0117043,
+        "masked_maxae": 0.558818,
+        "masked_rmse": 0.0236838,
+        "masked_psnr_db": 32.51,
+        "boundary_mae": 0.0066848,
+        "boundary_maxae": 0.442497,
+        "boundary_rmse": 0.0145454,
+        "boundary_psnr_db": 36.75,
+        "composited_psnr_db": 38.29,
+        "composited_ssim": 0.99899
+      },
+      "lama_512_fp16": {
+        "global_mae": 0.0181069,
+        "global_maxae": 0.917463,
+        "global_maxae_255": 233.95,
+        "global_rmse": 0.0459987,
+        "global_psnr_db": 26.75,
+        "global_ssim": 0.98565,
+        "masked_mae": 0.047098,
+        "masked_maxae": 0.917463,
+        "masked_rmse": 0.0863232,
+        "masked_psnr_db": 21.28,
+        "boundary_mae": 0.0258191,
+        "boundary_maxae": 0.827957,
+        "boundary_rmse": 0.0519299,
+        "boundary_psnr_db": 25.69,
+        "composited_psnr_db": 27.06,
+        "composited_ssim": 0.98661
+      }
+    }
+  }
+}

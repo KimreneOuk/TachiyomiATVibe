@@ -534,6 +534,9 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
     implementation(libs.mlkit.text.translate)
     implementation(libs.onnxruntime.android)
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.gpu)
+    implementation(libs.tensorflow.lite.gpu.api)
     implementation(libs.jtokkit)
     implementation(libs.opencv)
 }

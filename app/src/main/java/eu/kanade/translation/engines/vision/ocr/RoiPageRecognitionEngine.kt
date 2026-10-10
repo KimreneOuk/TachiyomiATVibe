@@ -14,6 +14,7 @@ import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.PageInpaintingEngine
 import eu.kanade.translation.engines.inpainting.PageInpaintingPlanner
 import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
+import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
@@ -111,6 +112,7 @@ class RoiPageRecognitionEngine(
      */
     private var paddleDet: PaddleOcrV6DetEngine? = null
     private var inpainting: AOTInpainting? = null
+    private var litertInpainting: LiteRTMangaInpaintingEngine? = null
     private var pageInpainter: PageInpaintingEngine? = null
 
     @Volatile
@@ -386,22 +388,30 @@ class RoiPageRecognitionEngine(
                     hardwareOverride = inpaintingHardwareOverride,
                 )
                 localInpainting.paddleDetector = paddleDet
+                var localLiteRT: LiteRTMangaInpaintingEngine? = null
                 if (inpaintingMode.initializesNeuralSessions) {
-                    localInpainting.initialize(
-                        fixedModelFile = paths.inpaint512Model,
-                        dynamicModelFile = paths.inpaintModel,
-                        lamaMangaModelFile = paths.lamaMangaModel,
-                        lamaMangaFp16ModelFile = paths.lamaMangaFp16Model,
-                        lama512Int8ModelFile = paths.lama512Int8Model,
-                        lama512Fp16ModelFile = paths.lama512Fp16Model,
-                    )
+                    if (neuralInpaintModel == NeuralInpaintModel.LAMA_LITERT_GPU) {
+                        logcat(LogPriority.INFO) { "LiteRT init: Preparing Manga LaMa LiteRT GPU engine" }
+                        localLiteRT = LiteRTMangaInpaintingEngine(context)
+                    } else {
+                        localInpainting.initialize(
+                            fixedModelFile = paths.inpaint512Model,
+                            dynamicModelFile = paths.inpaintModel,
+                            lamaMangaModelFile = paths.lamaMangaModel,
+                            lamaMangaFp16ModelFile = paths.lamaMangaFp16Model,
+                            lama512Int8ModelFile = paths.lama512Int8Model,
+                            lama512Fp16ModelFile = paths.lama512Fp16Model,
+                        )
+                    }
                 } else {
-                    logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping AOT session initialization" }
+                    logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping neural session initialization" }
                 }
                 inpainting = localInpainting
+                litertInpainting = localLiteRT
                 pageInpainter = PageInpaintingEngine(
-                    inpaintingMode,
-                    localInpainting,
+                    mode = inpaintingMode,
+                    inpainter = localInpainting,
+                    litertInpainter = localLiteRT,
                     neuralModel = neuralInpaintModel,
                 )
                 initialized = true
@@ -1207,6 +1217,13 @@ class RoiPageRecognitionEngine(
             logcat(LogPriority.ERROR, e) { "Error closing inpainting" }
         } finally {
             inpainting = null
+        }
+        try {
+            litertInpainting?.close()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Error closing litertInpainting" }
+        } finally {
+            litertInpainting = null
         }
         try {
             panelDetector?.close()

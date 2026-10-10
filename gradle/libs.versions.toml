@@ -16,6 +16,7 @@ firebase-bom = "33.7.0"
 onnxruntime-android-version = "1.28.0"
 jtokkit_version = "1.1.0"
 opencv = "4.9.0"
+tensorflow-lite-version = "2.16.1"
 
 [libraries]
 desugar = "com.android.tools:desugar_jdk_libs:2.1.4"
@@ -43,6 +44,9 @@ mlkit-text-translate = { module = "com.google.mlkit:translate", version.ref = "m
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android-qnn", version.ref = "onnxruntime-android-version" }
 jtokkit = { module = "com.knuddels:jtokkit", version.ref = "jtokkit_version" }
 opencv = { module = "org.opencv:opencv", version.ref = "opencv" }
+tensorflow-lite = { module = "org.tensorflow:tensorflow-lite", version.ref = "tensorflow-lite-version" }
+tensorflow-lite-gpu = { module = "org.tensorflow:tensorflow-lite-gpu", version.ref = "tensorflow-lite-version" }
+tensorflow-lite-gpu-api = { module = "org.tensorflow:tensorflow-lite-gpu-api", version.ref = "tensorflow-lite-version" }
 
 disklrucache = "com.jakewharton:disklrucache:2.0.2"
 unifile = "com.github.tachiyomiorg:unifile:e0def6b3dc"

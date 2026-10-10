@@ -534,6 +534,7 @@ class AOTInpainting(
         -> lamaSession != null
         NeuralInpaintModel.AOT_GAN ->
             fixedSession != null || dynamicSession != null || fixedQnnSession != null || fixedNnapiSession != null
+        NeuralInpaintModel.LAMA_LITERT_GPU -> false
     }
 
     private fun neuralSessionCount(): Int = when (neuralModel) {
@@ -547,6 +548,7 @@ class AOTInpainting(
                 (if (fixedQnnSession != null) 1 else 0) +
                 (if (fixedNnapiSession != null && nnapiHealth.isHealthy()) 1 else 0) +
                 (if (dynamicSession != null) 1 else 0)
+        NeuralInpaintModel.LAMA_LITERT_GPU -> 0
     }
 
     fun inpaintRegions(
@@ -1097,6 +1099,7 @@ class AOTInpainting(
         require(localMaskBytes.size.toLong() == side.toLong() * side)
 
         val modelTag = when (neuralModel) {
+            NeuralInpaintModel.LAMA_LITERT_GPU -> "lama_litert_gpu"
             NeuralInpaintModel.LAMA_MANGA -> "lama_manga"
             NeuralInpaintModel.LAMA_MANGA_FP16 -> "lama_manga_fp16"
             NeuralInpaintModel.LAMA_512_INT8 -> "lama_512_int8"

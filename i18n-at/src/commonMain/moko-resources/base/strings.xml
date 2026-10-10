@@ -80,12 +80,13 @@
     <string name="pref_inpainting_mode_quality">Quality</string>
     <string name="pref_inpainting_mode_fast">Fast</string>
     <string name="pref_inpainting_mode_balance">Balance</string>
+    <string name="pref_inpainting_mode_lama_gpu">Manga LaMa (LiteRT GPU)</string>
     <string name="pref_inpainting_neural_model">Neural inpainting model</string>
     <string name="pref_inpainting_neural_model_summary">Choose the model used by Balance and Quality modes.</string>
-    <string name="pref_inpainting_neural_model_lama_manga">LaMa Manga (Recommended)</string>
-    <string name="pref_inpainting_neural_model_lama_manga_fp16">LaMa Manga FP16 (Experimental)</string>
-    <string name="pref_inpainting_neural_model_lama_512_int8">LaMa 512 INT8 (Experimental)</string>
-    <string name="pref_inpainting_neural_model_lama_512_fp16">LaMa 512 FP16 (Experimental)</string>
+    <string name="pref_inpainting_neural_model_lama_manga">LaMa Manga (ONNX)</string>
+    <string name="pref_inpainting_neural_model_lama_manga_fp16">LaMa Manga FP16 (ONNX)</string>
+    <string name="pref_inpainting_neural_model_lama_512_int8">LaMa 512 INT8 (ONNX)</string>
+    <string name="pref_inpainting_neural_model_lama_512_fp16">LaMa 512 FP16 (ONNX)</string>
     <string name="pref_inpainting_neural_model_aot_gan">AOT-GAN (Legacy)</string>
     <string name="pref_inpainting_hardware_override">Inpainting hardware (Experimental)</string>
     <string name="pref_inpainting_hardware_override_summary">Temporary for this reader session. CPU is the default; unsupported GPU or NPU routes fall back to CPU.</string>
