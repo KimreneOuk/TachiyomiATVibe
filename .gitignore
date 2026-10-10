@@ -35,6 +35,7 @@ logs/
 
 # Inpaint debug viewer: local-only dev tool, not a build dependency
 tools/inpaint-debug-viewer/
+tools/downloader/output/
 # Downloaded raw manga test images (regenerable; very long path names)
 tools/*Rawkuma*/
 __pycache__/
