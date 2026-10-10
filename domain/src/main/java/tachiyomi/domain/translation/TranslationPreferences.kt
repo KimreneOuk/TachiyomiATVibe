@@ -115,6 +115,9 @@ class TranslationPreferences(
 
     fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "FAST")
 
+    fun translationInpaintingNeuralModel(): Preference<NeuralInpaintModel> =
+        preferenceStore.getEnum("translation_inpainting_neural_model", NeuralInpaintModel.DEFAULT)
+
     /**
      * Opt-in fallback: when QUALITY inpainting is selected but the neural AOT
      * model is absent, fall back to FAST instead of failing. Default OFF — keeps
