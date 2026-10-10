@@ -12,7 +12,7 @@ Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Larger changes are easi
 
 ## Build and test
 
-The translation model assets are not committed to Git. Before building or testing translation features, fetch them once (~159 MB, hash-verified):
+The translation model assets are not committed to Git. Before building or testing translation features, fetch them once (about 190 MiB / 199,479,458 bytes, hash-verified):
 
 ```sh
 python3 -m pip install -r scripts/converters/requirements.txt
