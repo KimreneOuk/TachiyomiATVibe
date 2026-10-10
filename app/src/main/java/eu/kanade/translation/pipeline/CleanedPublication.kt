@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.stampName
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
@@ -23,6 +24,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.translation.NeuralInpaintModel
 import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.util.UUID
@@ -36,7 +38,13 @@ internal class CleanedPublication(
     private val provider: TranslationFileProvider,
     private val streamRegistry: TranslationStreamRegistry,
     private val currentInpaintingMode: () -> InpaintingMode,
+    private val currentNeuralInpaintModel: () -> NeuralInpaintModel = { NeuralInpaintModel.AOT_GAN },
 ) {
+
+    private fun currentInpaintingStamp(): String = currentInpaintingMode().stampName(
+        neuralModel = currentNeuralInpaintModel(),
+        neuralAvailable = true,
+    )
 
     /**
      * Deletes cleaned-image files retained by the store after newer committed
@@ -167,7 +175,7 @@ internal class CleanedPublication(
                             cleanedImageName = newName
                             cleanedImageContentHash = writtenHash
                             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                            inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingMode().name
+                            inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
                             inpaintFingerprint = pageTranslation.inpaintFingerprint
                             inpaintStatus = StageStatus.READY
                             originalImageFallback = false
@@ -208,7 +216,7 @@ internal class CleanedPublication(
                 pageTranslation.cleanedImageName = result.name
                 pageTranslation.cleanedImageContentHash = writtenImage?.contentSha256
                 pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingMode().name
+                pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
                 pageTranslation.inpaintStatus = StageStatus.READY
                 pageTranslation.originalImageFallback = false
                 pageTranslation.errorMessage = null
@@ -305,7 +313,7 @@ internal class CleanedPublication(
                 cleanedImageName = finalName
                 cleanedImageContentHash = null
                 inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingMode().name
+                inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
                 inpaintFingerprint = pageTranslation.inpaintFingerprint
                 inpaintStatus = StageStatus.READY
                 originalImageFallback = false
@@ -330,7 +338,7 @@ internal class CleanedPublication(
         pageTranslation.cleanedImageName = finalName
         pageTranslation.cleanedImageContentHash = null
         pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-        pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingMode().name
+        pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
         pageTranslation.inpaintStatus = StageStatus.READY
         pageTranslation.originalImageFallback = false
         pageTranslation.errorMessage = null

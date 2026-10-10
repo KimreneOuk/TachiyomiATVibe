@@ -13,6 +13,7 @@ import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.inpainting.InpaintStampDecision
+import eu.kanade.translation.engines.inpainting.stampName
 import eu.kanade.translation.engines.inpainting.stampNeedsReinpaint
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
@@ -865,7 +866,11 @@ internal class SinglePageOnnxPhase(
                 }
                 pageTranslation.cleanedBitmap = scaledCleaned
                 if (pageTranslation.inpaintingModeUsed == null) {
-                    pageTranslation.inpaintingModeUsed = currentInpaintingMode.name
+                    val decision = inpaintingStampDecision()
+                    pageTranslation.inpaintingModeUsed = decision.mode.stampName(
+                        neuralModel = decision.neuralModel,
+                        neuralAvailable = decision.neuralAvailable ?: true,
+                    )
                 }
                 pageTranslation.inpaintStatus = StageStatus.READY
                 pageTranslation.errorMessage = null

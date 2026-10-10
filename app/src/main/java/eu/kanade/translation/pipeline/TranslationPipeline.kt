@@ -780,6 +780,7 @@ class TranslationPipeline private constructor(
         provider = provider,
         streamRegistry = streamRegistry,
         currentInpaintingMode = { currentInpaintingMode },
+        currentNeuralInpaintModel = { engines.currentNeuralInpaintModel },
     )
 
     // SinglePageHttpRenderPhase owns provider translation and display rendering.

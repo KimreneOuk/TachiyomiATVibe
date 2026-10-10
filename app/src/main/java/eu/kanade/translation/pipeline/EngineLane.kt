@@ -369,7 +369,7 @@ internal class EngineLane(
     internal fun inpaintingStampDecision(): InpaintStampDecision {
         val mode = inpaintingModeFromPref()
         val neuralReady = (recognitionEngine as? RoiPageRecognitionEngine)?.neuralInpaintAvailable()
-        return InpaintStampDecision(mode, neuralReady)
+        return InpaintStampDecision(mode, neuralReady, neuralInpaintModelFromPref())
     }
 
     private fun createRecognitionEngine(

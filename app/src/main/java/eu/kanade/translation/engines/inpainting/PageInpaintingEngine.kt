@@ -105,11 +105,11 @@ class PageInpaintingEngine(
     private fun markReady(pageTranslation: PageTranslation, degraded: Boolean = inpainter.lastRunDegraded) {
         pageTranslation.inpaintStatus = StageStatus.READY
         pageTranslation.errorMessage = null
-        pageTranslation.inpaintingModeUsed = if (degraded) {
-            mode.name + InpaintingMode.DEGRADED_SUFFIX
-        } else {
-            mode.stampName(neuralAvailable = inpainter.isInitialized())
-        }
+        pageTranslation.inpaintingModeUsed = mode.stampName(
+            neuralModel = neuralModel,
+            neuralAvailable = inpainter.isInitialized(),
+            degraded = degraded,
+        )
         pageTranslation.updatedAt = System.currentTimeMillis()
     }
 }

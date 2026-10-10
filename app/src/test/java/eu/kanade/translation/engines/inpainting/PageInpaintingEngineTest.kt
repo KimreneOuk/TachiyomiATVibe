@@ -133,12 +133,21 @@ class PageInpaintingEngineTest {
         val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
 
         PageInpaintingEngine(InpaintingMode.BALANCE, inpainter).inpaint(bitmap(), page) shouldBe cleaned
-        page.inpaintingModeUsed shouldBe "BALANCE"
+        page.inpaintingModeUsed shouldBe "BALANCE:AOT"
 
         every { inpainter.lastRunDegraded } returns true
         val degradedPage = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
         PageInpaintingEngine(InpaintingMode.BALANCE, inpainter).inpaint(bitmap(), degradedPage) shouldBe cleaned
-        degradedPage.inpaintingModeUsed shouldBe "BALANCE_DEGRADED"
+        degradedPage.inpaintingModeUsed shouldBe "BALANCE:AOT_DEGRADED"
+
+        every { inpainter.lastRunDegraded } returns false
+        val lamaPage = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
+        PageInpaintingEngine(
+            InpaintingMode.BALANCE,
+            inpainter,
+            neuralModel = tachiyomi.domain.translation.NeuralInpaintModel.LAMA_MANGA,
+        ).inpaint(bitmap(), lamaPage) shouldBe cleaned
+        lamaPage.inpaintingModeUsed shouldBe "BALANCE:LAMA"
     }
 
     @Test

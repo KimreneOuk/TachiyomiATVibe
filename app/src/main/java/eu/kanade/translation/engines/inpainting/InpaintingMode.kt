@@ -1,5 +1,7 @@
 package eu.kanade.translation.engines.inpainting
 
+import tachiyomi.domain.translation.NeuralInpaintModel
+
 enum class InpaintingMode {
     FAST,
     BALANCE,
@@ -26,3 +28,20 @@ enum class InpaintingMode {
 /** Neural modes with unavailable sessions are stamped as degraded for honest persistence. */
 fun InpaintingMode.stampName(neuralAvailable: Boolean): String =
     if (initializesNeuralSessions && !neuralAvailable) name + InpaintingMode.DEGRADED_SUFFIX else name
+
+/** Persists the selected neural route while preserving FAST's classical-only stamp. */
+fun InpaintingMode.stampName(
+    neuralModel: NeuralInpaintModel,
+    neuralAvailable: Boolean,
+    degraded: Boolean = false,
+): String {
+    if (this == InpaintingMode.FAST) {
+        return if (degraded) name + InpaintingMode.DEGRADED_SUFFIX else name
+    }
+    val modelTag = when (neuralModel) {
+        NeuralInpaintModel.LAMA_MANGA -> "LAMA"
+        NeuralInpaintModel.AOT_GAN -> "AOT"
+    }
+    val degradedTag = if (degraded || !neuralAvailable) InpaintingMode.DEGRADED_SUFFIX else ""
+    return "$name:$modelTag$degradedTag"
+}

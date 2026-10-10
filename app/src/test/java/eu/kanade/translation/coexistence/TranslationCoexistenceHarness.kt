@@ -401,6 +401,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 provider = provider,
                 streamRegistry = streamRegistry,
                 currentInpaintingMode = { engineLane.currentInpaintingMode },
+                currentNeuralInpaintModel = { engineLane.currentNeuralInpaintModel },
             )
 
             // Mock only as a DELEGATING replacement HOOK: every method forwards
