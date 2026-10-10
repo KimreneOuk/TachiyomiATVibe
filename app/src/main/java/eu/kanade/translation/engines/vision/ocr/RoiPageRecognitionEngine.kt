@@ -50,6 +50,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.domain.translation.TranslationPreferences
@@ -62,6 +63,7 @@ class RoiPageRecognitionEngine(
     private val language: TextRecognizerLanguage,
     private val ocrModel: OcrModel,
     private val inpaintingMode: InpaintingMode = InpaintingMode.QUALITY,
+    private val neuralInpaintModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
 ) : PageRecognitionEngine {
 
     private val modelStore = OnnxModelStore(context)
@@ -373,19 +375,27 @@ class RoiPageRecognitionEngine(
                         "ONNX init: PaddleOCR det asset missing; free-text erase falls back to detector-v4 boxes"
                     }
                 }
-                logcat(LogPriority.INFO) { "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), preparing inpainting (mode=$inpaintingMode)" }
-                val localInpainting = AOTInpainting()
+                logcat(LogPriority.INFO) {
+                    "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), " +
+                        "preparing inpainting (mode=$inpaintingMode model=$neuralInpaintModel)"
+                }
+                val localInpainting = AOTInpainting(neuralModel = neuralInpaintModel)
                 localInpainting.paddleDetector = paddleDet
                 if (inpaintingMode.initializesNeuralSessions) {
                     localInpainting.initialize(
                         fixedModelFile = paths.inpaint512Model,
                         dynamicModelFile = paths.inpaintModel,
+                        lamaMangaModelFile = paths.lamaMangaModel,
                     )
                 } else {
                     logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping AOT session initialization" }
                 }
                 inpainting = localInpainting
-                pageInpainter = PageInpaintingEngine(inpaintingMode, localInpainting)
+                pageInpainter = PageInpaintingEngine(
+                    inpaintingMode,
+                    localInpainting,
+                    neuralModel = neuralInpaintModel,
+                )
                 initialized = true
                 val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
                 logcat(LogPriority.INFO) { "RoiPageRecognitionEngine initialized in ${elapsedMs}ms" }
@@ -903,8 +913,12 @@ class RoiPageRecognitionEngine(
                     pageTranslation.updatedAt = System.currentTimeMillis()
                     null
                 } else {
-                    (pageInpainter ?: PageInpaintingEngine(inpaintingMode, inpainting ?: AOTInpainting()))
-                        .inpaint(bitmap, pageTranslation)
+                    val activePageInpainter = pageInpainter ?: PageInpaintingEngine(
+                        inpaintingMode,
+                        inpainting ?: AOTInpainting(neuralModel = neuralInpaintModel),
+                        neuralModel = neuralInpaintModel,
+                    )
+                    activePageInpainter.inpaint(bitmap, pageTranslation)
                 }
             }
         } catch (t: Throwable) {

@@ -23,6 +23,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
@@ -63,6 +64,7 @@ internal class EngineLane(
         val translatorSignature: EngineSignature,
         val paddleOcrProvider: PaddleOcrExecutionProvider = PaddleOcrExecutionProvider.CPU,
         val paddleOcrBatch: PaddleOcrRecognitionBatch = PaddleOcrRecognitionBatch.B1,
+        val neuralInpaintModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
     )
 
     internal companion object {
@@ -88,6 +90,14 @@ internal class EngineLane(
             translatorFactory = translatorFactory,
             testState = state,
         )
+
+        @VisibleForTesting
+        internal fun shouldRebuildRecognitionForInpainting(
+            oldMode: InpaintingMode,
+            newMode: InpaintingMode,
+            oldModel: NeuralInpaintModel,
+            newModel: NeuralInpaintModel,
+        ): Boolean = oldMode != newMode || oldModel != newModel
 
         /**
          * Engine teardown uses a short drain grace. If it expires, the epoch
@@ -205,6 +215,10 @@ internal class EngineLane(
         private set
 
     @Volatile
+    internal var currentNeuralInpaintModel: NeuralInpaintModel
+        private set
+
+    @Volatile
     internal var currentPaddleOcrProvider: PaddleOcrExecutionProvider = PaddleOcrExecutionProvider.CPU
         private set
 
@@ -279,6 +293,7 @@ internal class EngineLane(
             currentOcrModel = testState.ocrModel
             currentReadingOrder = testState.readingOrder
             currentInpaintingMode = testState.inpaintingMode
+            currentNeuralInpaintModel = testState.neuralInpaintModel
             textTranslator = testState.translator
             recognitionEngine = testState.recognitionEngine
             currentTranslatorSignature = testState.translatorSignature
@@ -297,10 +312,16 @@ internal class EngineLane(
                 currentFromLang = fromLang
                 currentOcrModel = ocrModel
                 currentInpaintingMode = inpaintingModeFromPref()
+                currentNeuralInpaintModel = neuralInpaintModelFromPref()
                 currentReadingOrder = translationPreferences.translationReadingOrder().get()
                 currentPaddleOcrProvider = translationPreferences.paddleOcrExecutionProvider().get()
                 currentPaddleOcrBatch = translationPreferences.paddleOcrRecognitionBatch().get()
-                recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
+                recognitionEngine = createRecognitionEngine(
+                    fromLang,
+                    ocrModel,
+                    currentInpaintingMode,
+                    currentNeuralInpaintModel,
+                )
                 textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
                 currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
             } catch (e: Exception) {
@@ -310,6 +331,7 @@ internal class EngineLane(
                 currentFromLang = TextRecognizerLanguage.JAPANESE
                 currentOcrModel = OcrModel.MLKIT
                 currentInpaintingMode = InpaintingMode.FAST
+                currentNeuralInpaintModel = NeuralInpaintModel.DEFAULT
                 currentReadingOrder = tachiyomi.domain.translation.TranslationReadingOrder.AUTO
                 currentPaddleOcrProvider = PaddleOcrExecutionProvider.CPU
                 currentPaddleOcrBatch = PaddleOcrRecognitionBatch.B1
@@ -340,6 +362,9 @@ internal class EngineLane(
     internal fun inpaintingModeFromPref(): InpaintingMode =
         InpaintingMode.fromPref(translationPreferences.translationInpaintingMode().get())
 
+    internal fun neuralInpaintModelFromPref(): NeuralInpaintModel =
+        translationPreferences.translationInpaintingNeuralModel().get()
+
     /** Neural availability is unknown until the recognition engine is built. */
     internal fun inpaintingStampDecision(): InpaintStampDecision {
         val mode = inpaintingModeFromPref()
@@ -351,11 +376,12 @@ internal class EngineLane(
         lang: TextRecognizerLanguage,
         ocrModel: OcrModel,
         mode: InpaintingMode,
+        neuralModel: NeuralInpaintModel,
     ): PageRecognitionEngine {
         if (testState != null) {
             return testState.recognitionEngine
         }
-        val onnx = RoiPageRecognitionEngine(context, lang, ocrModel, mode)
+        val onnx = RoiPageRecognitionEngine(context, lang, ocrModel, mode, neuralModel)
         if (onnx.isAvailable) {
             logcat(LogPriority.INFO) { "Using ONNX recognition engine for $lang with OCR model $ocrModel" }
             return onnx
@@ -487,6 +513,7 @@ internal class EngineLane(
     ) {
         val selectedOcrModel = runScopedOcrModel ?: OcrModelCatalog.selectedModel(translationPreferences, fromLang)
         val desiredInpaintingMode = inpaintingModeFromPref()
+        val desiredNeuralInpaintModel = neuralInpaintModelFromPref()
         val desiredReadingOrder = translationPreferences.translationReadingOrder().get()
         val rebuildClosedEngines = enginesClosed
         val livePaddleProvider = translationPreferences.paddleOcrExecutionProvider().get()
@@ -497,7 +524,12 @@ internal class EngineLane(
         val shouldRebuildRecognition = rebuildClosedEngines ||
             fromLang != currentFromLang ||
             selectedOcrModel != currentOcrModel ||
-            desiredInpaintingMode != currentInpaintingMode ||
+            shouldRebuildRecognitionForInpainting(
+                oldMode = currentInpaintingMode,
+                newMode = desiredInpaintingMode,
+                oldModel = currentNeuralInpaintModel,
+                newModel = desiredNeuralInpaintModel,
+            ) ||
             desiredReadingOrder != currentReadingOrder ||
             liveVisionGpu != currentVisionGpu ||
             (
@@ -512,11 +544,17 @@ internal class EngineLane(
             currentFromLang = fromLang
             currentOcrModel = selectedOcrModel
             currentInpaintingMode = desiredInpaintingMode
+            currentNeuralInpaintModel = desiredNeuralInpaintModel
             currentReadingOrder = desiredReadingOrder
             currentPaddleOcrProvider = livePaddleProvider
             currentPaddleOcrBatch = livePaddleBatch
             currentVisionGpu = liveVisionGpu
-            recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
+            recognitionEngine = createRecognitionEngine(
+                fromLang,
+                currentOcrModel,
+                currentInpaintingMode,
+                currentNeuralInpaintModel,
+            )
         }
         // Rebuild the translator whenever the full engine configuration differs — not just
         // on language change. The AI translators capture these at construction and never re-read.

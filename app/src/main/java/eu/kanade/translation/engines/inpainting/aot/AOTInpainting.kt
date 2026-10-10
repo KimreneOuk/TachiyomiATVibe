@@ -23,6 +23,7 @@ import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.QnnContextCacheManager
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
 import uy.kohesive.injekt.Injekt
@@ -35,6 +36,7 @@ import kotlin.math.roundToInt
 
 class AOTInpainting(
     val performanceMode: String? = "burst",
+    val neuralModel: NeuralInpaintModel = NeuralInpaintModel.AOT_GAN,
 ) {
 
     companion object {
@@ -77,6 +79,10 @@ class AOTInpainting(
         bufferCapacityBytes = MAX_TOTAL_PIXELS * Float.SIZE_BYTES,
         maxPoolSize = 2,
     )
+    private val lamaInputPool = DirectBufferPool(
+        bufferCapacityBytes = 4 * AotPadPath.SIZE * AotPadPath.SIZE * Float.SIZE_BYTES,
+        maxPoolSize = 2,
+    )
 
     private var sharedImgPixels: IntArray? = null
     private var sharedMaskPixels: IntArray? = null
@@ -107,6 +113,8 @@ class AOTInpainting(
     private var fixedQnnBackend: AotExecutionCoordinator.Backend? = null
     private var dynamicSession: OrtSession? = null
     private var dynamicSessionRoute = "dynamic_cpu"
+    private var lamaSession: OrtSession? = null
+    private var lamaSessionRoute = "lama_manga_cpu"
     private val nnapiHealth = NnapiHealthMonitor()
     var paddleDetector: eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine? = null
 
@@ -130,9 +138,22 @@ class AOTInpainting(
     var lastRunDegraded: Boolean = false
         private set
 
-    // Model: manga-tuned AOT-GAN (zyddnys / manga-image-translator) via
-    // ogkalu/aot-inpainting@42ffc84f — see scripts/models.manifest provenance note.
-    fun initialize(fixedModelFile: File?, dynamicModelFile: File?) {
+    // Load only the selected neural model. The legacy AOT-GAN provenance is
+    // recorded in scripts/models.manifest; LaMa uses its own validated tensor contract.
+    fun initialize(
+        fixedModelFile: File?,
+        dynamicModelFile: File?,
+        lamaMangaModelFile: File? = null,
+    ) {
+        if (neuralModel == NeuralInpaintModel.LAMA_MANGA) {
+            lamaSession = initializeLamaSession(lamaMangaModelFile)
+            logcat(LogPriority.INFO) {
+                "[inpaint] init model=$neuralModel session=${lamaSession != null} route=$lamaSessionRoute " +
+                    DeviceCapability.describe()
+            }
+            return
+        }
+
         fixedSession = initializeSession(fixedModelFile, AotModelContract.Kind.FIXED_512, "fixed")
         dynamicSession = initializeSession(dynamicModelFile, AotModelContract.Kind.DYNAMIC, "dynamic")
         val selectedAccelerator = AotExecutionCoordinator.preferredAccelerator(HardwareDiscoveryEngine.resolveRoute())
@@ -155,6 +176,54 @@ class AOTInpainting(
                 "fixedQnn=${fixedQnnSession != null} fixedNnapi=${fixedNnapiSession != null} " +
                 "dynamic=${dynamicSession != null} dynamicRoute=$dynamicSessionRoute " +
                 DeviceCapability.describe()
+        }
+    }
+
+    private fun initializeLamaSession(modelFile: File?): OrtSession? {
+        if (modelFile == null || !modelFile.exists()) {
+            logcat(LogPriority.WARN) {
+                "[inpaint] route=lama_manga init=skipped reason=model_missing path=${modelFile?.absolutePath}"
+            }
+            return null
+        }
+        var provider = "cpu"
+        var created: OrtSession? = null
+        return try {
+            created = OnnxRuntimeProvider.createSessionWithFallback(
+                modelPath = modelFile.absolutePath,
+                useXnnpack = true,
+                disableIntraOpSpinning = true,
+                providerSink = { registeredProvider -> provider = registeredProvider },
+            )
+            val inputs = created.inputInfo
+            val input = inputs[LamaMangaTensorContract.inputTensorName]?.info as? ai.onnxruntime.TensorInfo
+            val output = created.outputInfo.values.singleOrNull()?.info as? ai.onnxruntime.TensorInfo
+            require(inputs.keys == setOf(LamaMangaTensorContract.inputTensorName)) {
+                "LaMa Manga input names changed: ${inputs.keys}"
+            }
+            require(input?.shape?.contentEquals(LamaMangaTensorContract.inputShape()) == true) {
+                "LaMa Manga input shape changed: ${input?.shape?.contentToString()}"
+            }
+            require(output?.shape?.contentEquals(LamaMangaTensorContract.outputShape()) == true) {
+                "LaMa Manga output shape changed: ${output?.shape?.contentToString()}"
+            }
+            lamaSessionRoute = "lama_manga_$provider"
+            logcat(LogPriority.INFO) {
+                "[inpaint] route=lama_manga init=ok provider=${provider.uppercase()} " +
+                    "model=${modelFile.name} input=${input?.shape?.contentToString()} " +
+                    "output=${output?.shape?.contentToString()}"
+            }
+            created
+        } catch (error: Throwable) {
+            try {
+                created?.close()
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
+            logcat(LogPriority.ERROR, error) {
+                "[inpaint] route=lama_manga init=failed provider=${provider.uppercase()} model=${modelFile.name}"
+            }
+            null
         }
     }
 
@@ -392,14 +461,20 @@ class AOTInpainting(
         )
     }
 
-    fun isInitialized(): Boolean =
-        fixedSession != null || dynamicSession != null || fixedQnnSession != null || fixedNnapiSession != null
+    fun isInitialized(): Boolean = when (neuralModel) {
+        NeuralInpaintModel.LAMA_MANGA -> lamaSession != null
+        NeuralInpaintModel.AOT_GAN ->
+            fixedSession != null || dynamicSession != null || fixedQnnSession != null || fixedNnapiSession != null
+    }
 
-    private fun neuralSessionCount(): Int =
-        (if (fixedSession != null) 1 else 0) +
-            (if (fixedQnnSession != null) 1 else 0) +
-            (if (fixedNnapiSession != null && nnapiHealth.isHealthy()) 1 else 0) +
-            (if (dynamicSession != null) 1 else 0)
+    private fun neuralSessionCount(): Int = when (neuralModel) {
+        NeuralInpaintModel.LAMA_MANGA -> if (lamaSession != null) 1 else 0
+        NeuralInpaintModel.AOT_GAN ->
+            (if (fixedSession != null) 1 else 0) +
+                (if (fixedQnnSession != null) 1 else 0) +
+                (if (fixedNnapiSession != null && nnapiHealth.isHealthy()) 1 else 0) +
+                (if (dynamicSession != null) 1 else 0)
+    }
 
     fun inpaintRegions(
         image: Bitmap,
@@ -469,7 +544,7 @@ class AOTInpainting(
             "[inpaint] pipeline=investigation_report bubbleText=${bubbleTextBoxes.size} " +
                 "freeDets=${freeTextDetectorBoxes.size} rawGroups=${rawFreeTextGroups.size} clusteredGroups=${freeTextGroups.size} " +
                 "dispatch=$dispatch fixed=${fixedSess != null} qnn=${fixedQnnSession != null} nnapi=${fixedNnapiSession != null} " +
-                "dynamic=${dynamicSess != null}"
+                "dynamic=${dynamicSess != null} model=$neuralModel lama=${lamaSession != null}"
         }
         if (paddleDetector != null && freeTextDetectorBoxes.isNotEmpty()) {
             logcat(LogPriority.INFO) {
@@ -483,9 +558,7 @@ class AOTInpainting(
 
         for (group in freeTextGroups) {
             if (group.isEmpty()) continue
-            if (dispatch.freeText == RegionBackend.AOT_NEURAL &&
-                (fixedSess != null || fixedQnnSession != null || fixedNnapiSession != null || dynamicSess != null)
-            ) {
+            if (dispatch.freeText == RegionBackend.AOT_NEURAL && isInitialized()) {
                 result = inpaintReportFreeTextNeural(result, group)
             } else {
                 result = inpaintReportFreeTextFast(
@@ -950,6 +1023,7 @@ class AOTInpainting(
         require(crop.size >= 4 && crop[2] - crop[0] == side && crop[3] - crop[1] == side)
         require(localMaskBytes.size.toLong() == side.toLong() * side)
 
+        val modelTag = if (neuralModel == NeuralInpaintModel.LAMA_MANGA) "lama_manga" else "aot"
         val memoryDecision = EngineMemoryBudget.neuralInpaintDecision(
             pageWidth = image.width,
             pageHeight = image.height,
@@ -959,10 +1033,10 @@ class AOTInpainting(
         )
         if (!memoryDecision.canRun) {
             EngineMemoryBudget.logSnapshot(
-                tag = "skip_${logTag}_aot",
+                tag = "skip_${logTag}_$modelTag",
                 width = image.width,
                 height = image.height,
-                extra = "neuralMode=${memoryDecision.mode} " +
+                extra = "neuralMode=${memoryDecision.mode} model=$neuralModel " +
                     "sessions=${memoryDecision.sessionCount} " +
                     "nativeSystemReserve=${memoryDecision.nativeSystemReserveBytes / (1024L * 1024L)}MiB " +
                     "sysHeadroom=${memoryDecision.systemHeadroomBytes?.div(1024L * 1024L)}MiB " +
@@ -972,13 +1046,17 @@ class AOTInpainting(
             return null
         }
         EngineMemoryBudget.logSnapshot(
-            tag = "run_${logTag}_aot",
+            tag = "run_${logTag}_$modelTag",
             width = image.width,
             height = image.height,
             extra = "neuralMode=${memoryDecision.mode} sessions=${memoryDecision.sessionCount} " +
-                "nativeSystemReserve=${memoryDecision.nativeSystemReserveBytes / (1024L * 1024L)}MiB " +
+                "model=$neuralModel nativeSystemReserve=${memoryDecision.nativeSystemReserveBytes / (1024L * 1024L)}MiB " +
                 "sysHeadroom=${memoryDecision.systemHeadroomBytes?.div(1024L * 1024L)}MiB crop=${side}x$side $logExtra",
         )
+
+        if (neuralModel == NeuralInpaintModel.LAMA_MANGA) {
+            return runLamaMangaCandidate(image, localMaskBytes, crop, side, logTag)
+        }
 
         val maskBitmap = BitmapPool.getALPHA8(side, side)
         var prepared: PreparedFixedInput? = null
@@ -1128,6 +1206,96 @@ class AOTInpainting(
                 logcat(LogPriority.WARN, error) { "[inpaint] fixed_input close=failed" }
             } finally {
                 BitmapPool.putALPHA8(maskBitmap)
+            }
+        }
+    }
+
+    private fun runLamaMangaCandidate(
+        image: Bitmap,
+        localMaskBytes: ByteArray,
+        crop: IntArray,
+        side: Int,
+        logTag: String,
+    ): IntArray? {
+        val session = lamaSession ?: return null
+        var inputBuffer: FloatBuffer? = null
+        var inputTensor: OnnxTensor? = null
+        var results: OrtSession.Result? = null
+        val started = System.nanoTime()
+        return try {
+            val sourcePixels = IntArray(side * side)
+            image.getPixels(sourcePixels, 0, side, crop[0], crop[1], side, side)
+
+            var totalChroma = 0
+            val sampleStride = max(1, sourcePixels.size / 400)
+            var sampleCount = 0
+            for (index in sourcePixels.indices step sampleStride) {
+                val pixel = sourcePixels[index]
+                val red = pixel shr 16 and 0xFF
+                val green = pixel shr 8 and 0xFF
+                val blue = pixel and 0xFF
+                totalChroma += max(red, max(green, blue)) - min(red, min(green, blue))
+                sampleCount++
+            }
+            val grayscale = sampleCount > 0 && totalChroma / sampleCount < 15
+            val paddedPixels = getImgPixels()
+            AotPadPath.padSquareReplicateInto(sourcePixels, side, paddedPixels)
+            val localMaskPixels = IntArray(side * side) { index ->
+                if (localMaskBytes[index] != 0.toByte()) 0xFFFFFFFF.toInt() else 0
+            }
+            val paddedMask = getMaskPixels()
+            AotPadPath.padSquareInto(localMaskPixels, side, 0, paddedMask)
+
+            val acquiredBuffer = lamaInputPool.acquire()
+            inputBuffer = acquiredBuffer
+            val offset = LamaMangaTensorContract.writeInput(
+                paddedImage = paddedPixels,
+                paddedMask = paddedMask,
+                sourceSize = side,
+                inputBuffer = acquiredBuffer,
+            )
+            val tensor = OnnxTensor.createTensor(
+                OnnxRuntimeProvider.environment,
+                acquiredBuffer,
+                LamaMangaTensorContract.inputShape(),
+            )
+            inputTensor = tensor
+            val inference = session.run(mapOf(LamaMangaTensorContract.inputTensorName to tensor))
+            results = inference
+            val outputTensor = inference[0] as? OnnxTensor
+                ?: throw IllegalStateException("LaMa Manga returned a non-tensor output")
+            val candidate = LamaMangaTensorContract.decodeOutput(
+                output = outputTensor.floatBuffer,
+                outputShape = outputTensor.info.shape,
+                sourceSize = side,
+                offset = offset,
+                grayscale = grayscale,
+            )
+            lastAcceptedRoute = lamaSessionRoute
+            logcat(LogPriority.INFO) {
+                "[inpaint] route=$lamaSessionRoute accepted totalMs=${elapsedMs(started)} " +
+                    "crop=${side}x$side tensor=512x512 offset=$offset,$offset model=$neuralModel " +
+                    "stage=$logTag outputDiagnostic=only"
+            }
+            candidate
+        } catch (oom: OutOfMemoryError) {
+            loggedFailure(lamaSessionRoute, "oom", crop, side, oom, started)
+            null
+        } catch (error: Throwable) {
+            loggedFailure(lamaSessionRoute, "exception", crop, side, error, started)
+            null
+        } finally {
+            try {
+                results?.close()
+            } catch (error: Throwable) {
+                logcat(LogPriority.WARN, error) { "[inpaint] route=$lamaSessionRoute outputClose=failed" }
+            }
+            try {
+                inputTensor?.close()
+            } catch (error: Throwable) {
+                logcat(LogPriority.WARN, error) { "[inpaint] route=$lamaSessionRoute inputClose=failed" }
+            } finally {
+                inputBuffer?.let(lamaInputPool::release)
             }
         }
     }
@@ -1799,6 +1967,7 @@ class AOTInpainting(
         val nnapi = fixedNnapiSession
         val qnn = fixedQnnSession
         val dynamic = dynamicSession
+        val lama = lamaSession
         // Detach first so repeated/concurrent lifecycle teardown cannot close a
         // native handle twice. Each distinct session is still attempted when its
         // sibling close fails.
@@ -1807,14 +1976,21 @@ class AOTInpainting(
         fixedQnnSession = null
         fixedQnnBackend = null
         dynamicSession = null
+        lamaSession = null
         AotSessionLifecycle.closeIndependently(fixed, dynamic, nnapi, qnn) { failure ->
             logcat(LogPriority.ERROR, failure.error) {
                 "[inpaint] route=${failure.route} close=failed"
             }
         }
+        try {
+            lama?.close()
+        } catch (error: Throwable) {
+            logcat(LogPriority.ERROR, error) { "[inpaint] route=lama_manga close=failed" }
+        }
         clearScratch()
         imgInputPool.clear()
         maskInputPool.clear()
+        lamaInputPool.clear()
     }
 
     fun freeNativeSessions() {
@@ -1829,11 +2005,13 @@ class AOTInpainting(
     fun reclaimPooledMemory() {
         imgInputPool.clear()
         maskInputPool.clear()
+        lamaInputPool.clear()
     }
 
     fun forceReleaseNativeBuffers() {
         clearScratch()
         imgInputPool.clear()
         maskInputPool.clear()
+        lamaInputPool.clear()
     }
 }

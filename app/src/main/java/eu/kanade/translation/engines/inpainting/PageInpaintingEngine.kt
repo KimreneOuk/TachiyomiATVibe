@@ -8,6 +8,7 @@ import eu.kanade.translation.model.recordAttemptFailure
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -18,7 +19,13 @@ class PageInpaintingEngine(
     private val qualityFallbackPref: () -> Boolean = {
         Injekt.get<TranslationPreferences>().translationInpaintQualityFallback().get()
     },
+    private val neuralModel: NeuralInpaintModel = NeuralInpaintModel.AOT_GAN,
 ) {
+    private val neuralModelDisplayName = when (neuralModel) {
+        NeuralInpaintModel.LAMA_MANGA -> "LaMa Manga"
+        NeuralInpaintModel.AOT_GAN -> "AOT-GAN"
+    }
+
     fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         // Persisted masks and detector-only regions can outlive OCR blocks.
         // Only an empty erase plan makes inpainting a no-op.
@@ -59,12 +66,12 @@ class PageInpaintingEngine(
                 }
                 if (fallbackAllowed) {
                     logcat(LogPriority.WARN) {
-                        "$mode inpainting: neural AOT model not loaded; classical fallback enabled by user setting"
+                        "$mode inpainting: neural $neuralModelDisplayName model not loaded; classical fallback enabled by user setting"
                     }
                 } else {
                     throw IllegalStateException(
                         "$mode inpainting unavailable (neural model not loaded); " +
-                            "set inpainting to FAST, load the AOT model, or enable the neural fallback in Translation settings",
+                            "set inpainting to FAST, load the $neuralModelDisplayName model, or enable the neural fallback in Translation settings",
                     )
                 }
             }
