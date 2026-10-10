@@ -33,6 +33,31 @@ class InpaintStampDecisionTest {
     }
 
     @Test
+    fun `LaMa int8 and FP16 stamps invalidate each other`() {
+        assertTrue(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:LAMA",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+            ),
+        )
+        assertTrue(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:LAMA16",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_MANGA,
+            ),
+        )
+        assertFalse(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:LAMA16",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+            ),
+        )
+    }
+
+    @Test
     fun `legacy neural stamps remain compatible with the incumbent AOT route`() {
         assertFalse(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
@@ -92,6 +117,28 @@ class InpaintStampDecisionTest {
             neuralModel = NeuralInpaintModel.AOT_GAN,
             neuralAvailable = true,
         ) shouldBe "BALANCE:AOT"
+        InpaintingMode.QUALITY.stampName(
+            neuralModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+            neuralAvailable = true,
+        ) shouldBe "QUALITY:LAMA16"
+    }
+
+    @Test
+    fun `legacy untagged stamps remain AOT-compatible with FP16 model selection`() {
+        assertTrue(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+            ),
+        )
+        assertFalse(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.AOT_GAN,
+            ),
+        )
     }
 
     @Test
@@ -114,6 +161,31 @@ class InpaintStampDecisionTest {
                 existingStamp = stored,
                 desiredMode = InpaintingMode.QUALITY,
                 desiredModel = NeuralInpaintModel.LAMA_MANGA,
+                neuralAvailable = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `degraded FP16 route keeps its model tag and recovery semantics`() {
+        val stored = InpaintingMode.QUALITY.stampName(
+            neuralModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+            neuralAvailable = false,
+        )
+        stored shouldBe "QUALITY:LAMA16_DEGRADED"
+        assertFalse(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = stored,
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+                neuralAvailable = false,
+            ),
+        )
+        assertTrue(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = stored,
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
                 neuralAvailable = true,
             ),
         )

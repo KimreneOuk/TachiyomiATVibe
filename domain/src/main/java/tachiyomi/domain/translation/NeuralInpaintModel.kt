@@ -2,6 +2,7 @@ package tachiyomi.domain.translation
 
 enum class NeuralInpaintModel(val prefValue: String) {
     LAMA_MANGA("LAMA_MANGA"),
+    LAMA_MANGA_FP16("LAMA_MANGA_FP16"),
     AOT_GAN("AOT_GAN");
 
     companion object {

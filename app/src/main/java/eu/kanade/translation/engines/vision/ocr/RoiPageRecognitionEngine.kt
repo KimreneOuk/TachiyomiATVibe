@@ -386,6 +386,7 @@ class RoiPageRecognitionEngine(
                         fixedModelFile = paths.inpaint512Model,
                         dynamicModelFile = paths.inpaintModel,
                         lamaMangaModelFile = paths.lamaMangaModel,
+                        lamaMangaFp16ModelFile = paths.lamaMangaFp16Model,
                     )
                 } else {
                     logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping AOT session initialization" }

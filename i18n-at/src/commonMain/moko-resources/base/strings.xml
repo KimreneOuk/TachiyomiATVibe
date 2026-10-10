@@ -83,6 +83,7 @@
     <string name="pref_inpainting_neural_model">Neural inpainting model</string>
     <string name="pref_inpainting_neural_model_summary">Choose the model used by Balance and Quality modes.</string>
     <string name="pref_inpainting_neural_model_lama_manga">LaMa Manga (Recommended)</string>
+    <string name="pref_inpainting_neural_model_lama_manga_fp16">LaMa Manga FP16 (Experimental)</string>
     <string name="pref_inpainting_neural_model_aot_gan">AOT-GAN (Legacy)</string>
     <string name="pref_hardware_acceleration">Hardware acceleration</string>
     <string name="pref_hardware_acceleration_summary">Runs detection and inpainting models on the NPU. Auto probes the device once per app start and falls back to CPU if the NPU rejects the workload.</string>

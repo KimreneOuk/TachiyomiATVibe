@@ -32,6 +32,8 @@ data class ModelPaths(
     val bubbleSegmenterModel: File?,
     /** Optional LaMa Manga model; nullable when its asset is not bundled. */
     val lamaMangaModel: File? = null,
+    /** Optional experimental FP16 LaMa Manga model; nullable when its asset is not bundled. */
+    val lamaMangaFp16Model: File? = null,
 )
 
 data class PaddleOcrV6SmallPaths(
@@ -117,6 +119,13 @@ class OnnxModelStore(private val context: Context) {
             null
         }
 
+        val lamaMangaFp16File = try {
+            copyIfNeeded(dir, "lama-manga-fp16.onnx", "models/inpainting/lama-manga-fp16.onnx")
+        } catch (_: Exception) {
+            logcat(LogPriority.WARN) { "LaMa Manga FP16 inpainting model not found in assets, skipping" }
+            null
+        }
+
         // Panel detector is best-effort context (mirrors inpaint copy): a missing
         // asset or failed copy leaves it null so panel assignment is skipped, not crashed.
         val panelDetectorFile = try {
@@ -142,12 +151,15 @@ class OnnxModelStore(private val context: Context) {
             inpaintModel = inpaintFile,
             inpaint512Model = inpaint512File,
             lamaMangaModel = lamaMangaFile,
+            lamaMangaFp16Model = lamaMangaFp16File,
             panelDetectorModel = panelDetectorFile,
             bubbleSegmenterModel = bubbleSegmenterFile,
         )
     }
 
     fun getLamaMangaModelFile(): File = File(modelsDir, "lama-manga.onnx")
+
+    fun getLamaMangaFp16ModelFile(): File = File(modelsDir, "lama-manga-fp16.onnx")
 
     fun paddleOcrV6SmallAvailable(): Boolean {
         val dir = File(modelsDir, "paddle-v6-small")

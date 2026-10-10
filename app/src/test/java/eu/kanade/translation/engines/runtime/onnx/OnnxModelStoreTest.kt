@@ -8,6 +8,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayInputStream
@@ -24,6 +25,24 @@ class OnnxModelStoreTest {
         every { context.noBackupFilesDir } returns File(tempDir, "no-backup")
 
         OnnxModelStore(context).getLamaMangaModelFile().name shouldBe "lama-manga.onnx"
+    }
+
+    @Test
+    fun `ensureModels copies the experimental LaMa Manga FP16 asset`() = runBlocking<Unit> {
+        val noBackupDir = File(tempDir, "no-backup").apply { mkdirs() }
+        val assetBytes = validOnnxBytes()
+        val context = mockk<Context>()
+        val assets = mockk<AssetManager>()
+        every { context.noBackupFilesDir } returns noBackupDir
+        every { context.assets } returns assets
+        every { assets.open(any()) } answers { ByteArrayInputStream(assetBytes) }
+
+        val modelStore = OnnxModelStore(context)
+        modelStore.getLamaMangaFp16ModelFile().name shouldBe "lama-manga-fp16.onnx"
+
+        val modelFile = modelStore.ensureModels().lamaMangaFp16Model
+        modelFile?.name shouldBe "lama-manga-fp16.onnx"
+        modelFile?.readBytes()?.contentEquals(assetBytes) shouldBe true
     }
 
     @Test

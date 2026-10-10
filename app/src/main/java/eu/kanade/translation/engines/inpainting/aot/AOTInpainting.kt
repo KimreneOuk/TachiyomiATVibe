@@ -144,9 +144,15 @@ class AOTInpainting(
         fixedModelFile: File?,
         dynamicModelFile: File?,
         lamaMangaModelFile: File? = null,
+        lamaMangaFp16ModelFile: File? = null,
     ) {
-        if (neuralModel == NeuralInpaintModel.LAMA_MANGA) {
-            lamaSession = initializeLamaSession(lamaMangaModelFile)
+        val lamaSelection = selectLamaMangaModel(
+            neuralModel = neuralModel,
+            lamaMangaModelFile = lamaMangaModelFile,
+            lamaMangaFp16ModelFile = lamaMangaFp16ModelFile,
+        )
+        if (lamaSelection != null) {
+            lamaSession = initializeLamaSession(lamaSelection.modelFile, lamaSelection.routeTag)
             logcat(LogPriority.INFO) {
                 "[inpaint] init model=$neuralModel session=${lamaSession != null} route=$lamaSessionRoute " +
                     DeviceCapability.describe()
@@ -179,10 +185,11 @@ class AOTInpainting(
         }
     }
 
-    private fun initializeLamaSession(modelFile: File?): OrtSession? {
+    private fun initializeLamaSession(modelFile: File?, routeTag: String): OrtSession? {
         if (modelFile == null || !modelFile.exists()) {
+            lamaSessionRoute = "${routeTag}_missing"
             logcat(LogPriority.WARN) {
-                "[inpaint] route=lama_manga init=skipped reason=model_missing path=${modelFile?.absolutePath}"
+                "[inpaint] route=$routeTag init=skipped reason=model_missing path=${modelFile?.absolutePath}"
             }
             return null
         }
@@ -207,9 +214,9 @@ class AOTInpainting(
             require(output?.shape?.contentEquals(LamaMangaTensorContract.outputShape()) == true) {
                 "LaMa Manga output shape changed: ${output?.shape?.contentToString()}"
             }
-            lamaSessionRoute = "lama_manga_$provider"
+            lamaSessionRoute = "${routeTag}_$provider"
             logcat(LogPriority.INFO) {
-                "[inpaint] route=lama_manga init=ok provider=${provider.uppercase()} " +
+                "[inpaint] route=$routeTag init=ok provider=${provider.uppercase()} perfRoute=$lamaSessionRoute " +
                     "model=${modelFile.name} input=${input?.shape?.contentToString()} " +
                     "output=${output?.shape?.contentToString()}"
             }
@@ -220,8 +227,9 @@ class AOTInpainting(
             } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
             }
+            lamaSessionRoute = "${routeTag}_$provider"
             logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=lama_manga init=failed provider=${provider.uppercase()} model=${modelFile.name}"
+                "[inpaint] route=$routeTag init=failed provider=${provider.uppercase()} model=${modelFile.name}"
             }
             null
         }
@@ -462,13 +470,17 @@ class AOTInpainting(
     }
 
     fun isInitialized(): Boolean = when (neuralModel) {
-        NeuralInpaintModel.LAMA_MANGA -> lamaSession != null
+        NeuralInpaintModel.LAMA_MANGA,
+        NeuralInpaintModel.LAMA_MANGA_FP16,
+        -> lamaSession != null
         NeuralInpaintModel.AOT_GAN ->
             fixedSession != null || dynamicSession != null || fixedQnnSession != null || fixedNnapiSession != null
     }
 
     private fun neuralSessionCount(): Int = when (neuralModel) {
-        NeuralInpaintModel.LAMA_MANGA -> if (lamaSession != null) 1 else 0
+        NeuralInpaintModel.LAMA_MANGA,
+        NeuralInpaintModel.LAMA_MANGA_FP16,
+        -> if (lamaSession != null) 1 else 0
         NeuralInpaintModel.AOT_GAN ->
             (if (fixedSession != null) 1 else 0) +
                 (if (fixedQnnSession != null) 1 else 0) +
@@ -1023,7 +1035,11 @@ class AOTInpainting(
         require(crop.size >= 4 && crop[2] - crop[0] == side && crop[3] - crop[1] == side)
         require(localMaskBytes.size.toLong() == side.toLong() * side)
 
-        val modelTag = if (neuralModel == NeuralInpaintModel.LAMA_MANGA) "lama_manga" else "aot"
+        val modelTag = when (neuralModel) {
+            NeuralInpaintModel.LAMA_MANGA -> "lama_manga"
+            NeuralInpaintModel.LAMA_MANGA_FP16 -> "lama_manga_fp16"
+            NeuralInpaintModel.AOT_GAN -> "aot"
+        }
         val memoryDecision = EngineMemoryBudget.neuralInpaintDecision(
             pageWidth = image.width,
             pageHeight = image.height,
@@ -1054,7 +1070,7 @@ class AOTInpainting(
                 "sysHeadroom=${memoryDecision.systemHeadroomBytes?.div(1024L * 1024L)}MiB crop=${side}x$side $logExtra",
         )
 
-        if (neuralModel == NeuralInpaintModel.LAMA_MANGA) {
+        if (neuralModel == NeuralInpaintModel.LAMA_MANGA || neuralModel == NeuralInpaintModel.LAMA_MANGA_FP16) {
             return runLamaMangaCandidate(image, localMaskBytes, crop, side, logTag)
         }
 
@@ -1985,7 +2001,7 @@ class AOTInpainting(
         try {
             lama?.close()
         } catch (error: Throwable) {
-            logcat(LogPriority.ERROR, error) { "[inpaint] route=lama_manga close=failed" }
+            logcat(LogPriority.ERROR, error) { "[inpaint] route=$lamaSessionRoute close=failed" }
         }
         clearScratch()
         imgInputPool.clear()
