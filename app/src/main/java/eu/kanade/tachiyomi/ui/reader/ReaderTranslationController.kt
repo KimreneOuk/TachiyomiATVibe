@@ -79,6 +79,7 @@ import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
@@ -1119,6 +1120,10 @@ internal class ReaderTranslationController(
 
     internal fun setTranslationInpaintingMode(mode: String) {
         translationPreferences.translationInpaintingMode().set(mode)
+    }
+
+    internal fun setTranslationInpaintingNeuralModel(model: NeuralInpaintModel) {
+        translationPreferences.translationInpaintingNeuralModel().set(model)
     }
 
     internal fun setTranslationEngineCategory(category: TranslationEngineCategory) {

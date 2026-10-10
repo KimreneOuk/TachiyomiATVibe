@@ -109,6 +109,7 @@ import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
@@ -197,7 +198,10 @@ class ReaderViewModel @JvmOverloads constructor(
                 translationPreferences.translationRecentLanguagesFrom().changes(),
                 translationPreferences.translateToLanguage().changes(),
                 translationPreferences.translationRecentLanguagesTo().changes(),
-                translationPreferences.translationInpaintingMode().changes(),
+                combine(
+                    translationPreferences.translationInpaintingMode().changes(),
+                    translationPreferences.translationInpaintingNeuralModel().changes(),
+                ) { inpaintingMode, neuralModel -> inpaintingMode to neuralModel },
             ) { a, b, c, d -> Quad(a, b, c, d) },
         ) { q1, q2 -> Pair(q1, q2) },
         combine(
@@ -246,7 +250,8 @@ class ReaderViewModel @JvmOverloads constructor(
             translationRecentLanguagesTo = recentLangsTo,
             ocrModel = ocrModel,
             ocrModelEntries = ocrModelEntries,
-            inpaintingMode = q2.d,
+            inpaintingMode = q2.d.first,
+            inpaintingNeuralModel = q2.d.second,
             engineCategory = q3.a,
             standardEngine = q3.b,
             deeplApiKey = q3.c,
@@ -1740,6 +1745,9 @@ class ReaderViewModel @JvmOverloads constructor(
     fun setTranslationInpaintingMode(mode: String) =
         translationController.setTranslationInpaintingMode(mode)
 
+    fun setTranslationInpaintingNeuralModel(model: NeuralInpaintModel) =
+        translationController.setTranslationInpaintingNeuralModel(model)
+
     fun setTranslationEngineCategory(category: TranslationEngineCategory) =
         translationController.setTranslationEngineCategory(category)
 
@@ -1822,6 +1830,7 @@ data class TranslationSettingsState(
     val ocrModel: OcrModel = OcrModel.MLKIT,
     val ocrModelEntries: ImmutableMap<OcrModel, String> = persistentMapOf(),
     val inpaintingMode: String = "",
+    val inpaintingNeuralModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
     val engineCategory: TranslationEngineCategory = TranslationEngineCategory.STANDARD,
     val standardEngine: StandardEngine = StandardEngine.GOOGLE,
     val deeplApiKey: String = "",

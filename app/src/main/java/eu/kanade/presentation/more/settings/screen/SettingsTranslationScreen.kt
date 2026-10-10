@@ -28,6 +28,7 @@ import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.GeminiThinkingMode
+import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
 import tachiyomi.domain.translation.StandardEngine
@@ -130,18 +131,36 @@ object SettingsTranslationScreen : SearchableSettings {
             "BALANCE" to stringResource(ATMR.strings.pref_inpainting_mode_balance),
             "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
         )
+        val neuralModels = mapOf(
+            NeuralInpaintModel.LAMA_MANGA to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_manga),
+            NeuralInpaintModel.AOT_GAN to stringResource(ATMR.strings.pref_inpainting_neural_model_aot_gan),
+        )
+        val preferenceItems = persistentListOf<Preference.PreferenceItem<out Any>>(
+            Preference.PreferenceItem.ListPreference(
+                pref = translationPreferences.translationInpaintingMode(),
+                title = stringResource(ATMR.strings.pref_inpainting_mode),
+                entries = modes.toImmutableMap(),
+            ),
+        ).let { items ->
+            if (inpaintMode == "BALANCE" || inpaintMode == "QUALITY") {
+                items.add(
+                    Preference.PreferenceItem.ListPreference(
+                        pref = translationPreferences.translationInpaintingNeuralModel(),
+                        title = stringResource(ATMR.strings.pref_inpainting_neural_model),
+                        entries = neuralModels.toImmutableMap(),
+                    ),
+                )
+            } else {
+                items
+            }
+        }
         return Preference.PreferenceGroup(
             title = stringResource(ATMR.strings.pref_inpainting_mode),
-            preferenceItems = persistentListOf(
-                Preference.PreferenceItem.ListPreference(
-                    pref = translationPreferences.translationInpaintingMode(),
-                    title = stringResource(ATMR.strings.pref_inpainting_mode),
-                    entries = modes.toImmutableMap(),
-                ),
+            preferenceItems = preferenceItems.add(
                 Preference.PreferenceItem.SwitchPreference(
                     pref = translationPreferences.translationInpaintQualityFallback(),
                     title = "Neural → classical fallback",
-                    subtitle = "Use classical inpainting when the AOT model is unavailable (Balance/Quality)",
+                    subtitle = "Use classical inpainting when the neural model is unavailable (Balance/Quality)",
                     enabled = inpaintMode == "BALANCE" || inpaintMode == "QUALITY",
                 ),
             ),

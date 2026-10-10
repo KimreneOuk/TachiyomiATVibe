@@ -44,6 +44,7 @@ import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
@@ -75,6 +76,7 @@ fun TranslationSettingsSheet(
     onTranslateToLanguageChange: (String) -> Unit,
     onOcrModelChange: (OcrModel) -> Unit,
     onTranslationInpaintingModeChange: (String) -> Unit,
+    onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
     onTranslationEngineCategoryChange: (TranslationEngineCategory) -> Unit,
     onTranslationStandardEngineChange: (StandardEngine) -> Unit,
     onTranslationDeeplApiKeyChange: (String) -> Unit,
@@ -140,7 +142,9 @@ fun TranslationSettingsSheet(
             if (showAdvanced) {
                 InpaintSection(
                     inpaintingMode = state.inpaintingMode,
+                    neuralModel = state.inpaintingNeuralModel,
                     onTranslationInpaintingModeChange = onTranslationInpaintingModeChange,
+                    onTranslationInpaintingNeuralModelChange = onTranslationInpaintingNeuralModelChange,
                 )
                 EngineSection(
                     state = state,
@@ -471,7 +475,9 @@ private fun SearchableLanguageRow(
 @Composable
 private fun ColumnScope.InpaintSection(
     inpaintingMode: String,
+    neuralModel: NeuralInpaintModel,
     onTranslationInpaintingModeChange: (String) -> Unit,
+    onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
 ) {
     val entries = mapOf(
         "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
@@ -485,6 +491,19 @@ private fun ColumnScope.InpaintSection(
         value = inpaintingMode,
         onValueChange = onTranslationInpaintingModeChange,
     )
+
+    if (inpaintingMode == "BALANCE" || inpaintingMode == "QUALITY") {
+        val neuralModelEntries = mapOf(
+            NeuralInpaintModel.LAMA_MANGA to stringResource(ATMR.strings.pref_inpainting_neural_model_lama_manga),
+            NeuralInpaintModel.AOT_GAN to stringResource(ATMR.strings.pref_inpainting_neural_model_aot_gan),
+        )
+        EngineListRow(
+            title = stringResource(ATMR.strings.pref_inpainting_neural_model),
+            entries = neuralModelEntries,
+            value = neuralModel,
+            onValueChange = onTranslationInpaintingNeuralModelChange,
+        )
+    }
 }
 
 @Composable
