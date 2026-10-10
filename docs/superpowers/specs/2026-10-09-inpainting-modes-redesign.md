@@ -314,7 +314,7 @@ Bubble masks routinely exceed 512² (F1/F2). Design:
 | Fallback pref | `PageInpaintingEngine.kt:23-32` | read live per inpaint, or add to `ensureEnginesBuiltFor` rebuild key (fixes F5); switch applies when mode uses neural (BALANCE + QUALITY) |
 | Init gate | `RoiPageRecognitionEngine.kt:376-383` | `mode != FAST` initializes AOT (BALANCE needs free-text neural; fixes F3) |
 | QUALITY gate | `PageInpaintingEngine.kt:61-77` | throw-condition = `(BALANCE or QUALITY) && !initialized && !fallback`; downgrade target = FAST semantics per class |
-| Stamp | `SinglePageOnnxPhase.kt:866`, `CleanedPublication` | persist *effective* route per page: e.g. `BALANCE_DEGRADED_FREE_TEXT`, `QUALITY_DEGRADED_BUBBLES` — and make resume-reuse + PageDecode fingerprint consume it (fixes F4) |
+| Stamp | SinglePageOnnxPhase.kt, CleanedPublication | Persist the effective route per page. Resume-reuse consumes the stamp via the InpaintStampDecision predicate, while the PageDecode fingerprint stays keyed on the selected mode; folding in the degraded suffix would re-inpaint still-degraded pages every run. |
 | Trace span | `RoiPageRecognitionEngine.kt:885-889` | model label from actual session availability/backend mix, not unconditional `AOT_GAN` (F3b) |
 | UI | `SettingsTranslationScreen.kt:124-148` | three entries + descriptions; fallback switch enabled for BALANCE/QUALITY |
 | Strings | `i18n-at/.../strings.xml` | `pref_inpainting_mode_balance` (+ revise quality/fast descriptions) |
@@ -357,8 +357,10 @@ Bubble masks routinely exceed 512² (F1/F2). Design:
 - Neural-bubble: >512px bubble group → tiled, full erase (regression for F2);
   seg-mask erosion collapse fallback; NS fallback on neural failure; degraded
   stamp content.
-- Persistence: resume does not reuse `*_DEGRADED` outputs after model
-  recovery; fingerprint sees effective route (F4).
+- Persistence: the `InpaintStampDecision` resume predicate reuses legacy and
+  still-degraded pages, then requests one re-inpaint after neural availability
+  is positively restored; the PageDecode fingerprint stays keyed on selected
+  mode for configuration identity (F4).
 - Cancellation: `CancellationException` rethrow path (F6).
 - Visual regression: workbench corpus A/B — {median vs NS} bubbles,
   {ring-median vs replicate} AOT padding, {Telea vs NS} free-text, three-mode
@@ -414,18 +416,21 @@ workbench A/B gate.
 
 ---
 
-## 7. Open decisions (need product sign-off)
+## 7. Implementation decisions
 
-1. **Model action:** attest-only (recommended) vs re-derive `aot-512.onnx` vs
-   pursue a successor model (LaMa-class — separate work package).
-2. **Free-text classical method:** keep Telea (recommended) vs switch to NS
-   for method uniformity.
-3. **Unknown-pref policy:** map to FAST (recommended — never throws) vs keep
-   today's else→QUALITY.
-4. **QUALITY bubble tiling:** overlapping-tile blend (recommended) vs
-   downscale-infer-upscale (cheaper, softer output) — decide on workbench
-   evidence; Phase 4 is gated on this sign-off (the §4.2 text currently
-   embeds the tiling recommendation).
+The redesign implements these settled choices:
+
+1. **Model action:** attest-only; retain the incumbent manga-tuned AOT model
+   provenance without replacing or re-deriving model assets.
+2. **Free-text classical method:** retain Telea as the classical free-text
+   fallback; bubbles use Navier–Stokes in FAST and BALANCE.
+3. **Unknown-pref policy:** map unknown preference values to FAST.
+4. **QUALITY bubble tiling:** use overlapping 448px tiles with a 64px overlap.
+
+Code and filtered tests were completed after the manual gate was explicitly
+deferred. Original-page workbench baseline capture, visual A/B comparison, and
+device smoke remain pending before shipping; this document does not claim that
+evidence was captured.
 
 ---
 

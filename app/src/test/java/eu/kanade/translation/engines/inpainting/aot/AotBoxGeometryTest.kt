@@ -188,4 +188,34 @@ class AotBoxGeometryTest {
         val totalBoxes = clusters.sumOf { it.size }
         totalBoxes shouldBe 5
     }
+
+    @Test
+    fun `small bounds yield a single tile`() {
+        AotBoxGeometry.tileBounds(10, 20, 200, 300).map { it.toList() } shouldBe
+            listOf(listOf(10, 20, 200, 300))
+    }
+
+    @Test
+    fun `oversized bounds are fully covered by overlapping tiles`() {
+        val tiles = AotBoxGeometry.tileBounds(0, 0, 1300, 700)
+        val covered = BooleanArray(1300 * 700)
+        for (tile in tiles) {
+            (tile[2] - tile[0] <= 448 && tile[3] - tile[1] <= 448) shouldBe true
+            for (y in tile[1] until tile[3]) {
+                for (x in tile[0] until tile[2]) {
+                    covered[y * 1300 + x] = true
+                }
+            }
+        }
+        covered.all { it } shouldBe true
+    }
+
+    @Test
+    fun `adjacent tiles overlap so seams have context`() {
+        val tiles = AotBoxGeometry.tileBounds(0, 0, 1300, 100)
+        val xs = tiles.sortedBy { it[0] }.map { it[0] to it[2] }
+        for (index in 1 until xs.size) {
+            (xs[index].first < xs[index - 1].second) shouldBe true
+        }
+    }
 }

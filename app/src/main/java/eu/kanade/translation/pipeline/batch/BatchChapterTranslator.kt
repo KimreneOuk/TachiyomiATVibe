@@ -15,6 +15,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.engines.inpainting.InpaintStampDecision
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.TextTranslator
@@ -86,6 +87,7 @@ internal class BatchChapterTranslator(
     private val computeSourceFingerprintFn: suspend (() -> InputStream) -> String?,
     private val batchExpectedFingerprintsFn: (TextRecognizerLanguage, TextTranslatorLanguage) -> BatchExpectedFingerprints,
     private val inpaintingModeFromPref: () -> InpaintingMode,
+    private val inpaintingStampDecision: () -> InpaintStampDecision,
     private val releaseBatchPageLease: suspend (ChapterTranslationStore, String) -> Unit,
     private val persistPageWithOomRecovery: suspend (
         ChapterTranslationStore,
@@ -492,7 +494,7 @@ internal class BatchChapterTranslator(
                     sourceFingerprints = sourceFingerprints,
                     expectedBatchFingerprints = expectedBatchFingerprints,
                     contextFrontier = contextFrontier,
-                    inpaintingModeFromPref = inpaintingModeFromPref,
+                    inpaintingStampDecision = inpaintingStampDecision,
                 )
 
                 // All batch writers use this gate with the same identity map and

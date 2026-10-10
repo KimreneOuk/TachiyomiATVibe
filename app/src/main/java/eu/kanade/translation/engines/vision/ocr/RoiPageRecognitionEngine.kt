@@ -29,8 +29,8 @@ import eu.kanade.translation.engines.vision.ocr.OcrTextFilter
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.engines.vision.ocr.RoiOcrEngine
-import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchLatencyNormalizer
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchActivationPolicy
+import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchLatencyNormalizer
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatchSize
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrDynamicPageBatchPolicy
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrP95Action
@@ -208,6 +208,9 @@ class RoiPageRecognitionEngine(
     val isAvailable: Boolean
         get() = !initFailed && (initialized || modelStore.modelsAvailable() || modelStore.assetsAvailable())
 
+    /** True only after the inpainting model sessions are built and usable. */
+    fun neuralInpaintAvailable(): Boolean = inpainting?.isInitialized() == true
+
     /**
      * Warms up engine sessions outside the timed recognition region.
      */
@@ -373,7 +376,7 @@ class RoiPageRecognitionEngine(
                 logcat(LogPriority.INFO) { "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), preparing inpainting (mode=$inpaintingMode)" }
                 val localInpainting = AOTInpainting()
                 localInpainting.paddleDetector = paddleDet
-                if (inpaintingMode == InpaintingMode.QUALITY) {
+                if (inpaintingMode.initializesNeuralSessions) {
                     localInpainting.initialize(
                         fixedModelFile = paths.inpaint512Model,
                         dynamicModelFile = paths.inpaintModel,
@@ -885,7 +888,11 @@ class RoiPageRecognitionEngine(
         val inpaintSpan = TranslationTrace.beginStage(
             TranslationTraceStage.INPAINT,
             normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-            model = if (inpainting != null) TranslationTraceModel.AOT_GAN else TranslationTraceModel.NONE,
+            model = if (inpaintingMode.initializesNeuralSessions && inpainting?.isInitialized() == true) {
+                TranslationTraceModel.AOT_GAN
+            } else {
+                TranslationTraceModel.NONE
+            },
         )
         val inpaintStart = System.nanoTime()
         val result = try {

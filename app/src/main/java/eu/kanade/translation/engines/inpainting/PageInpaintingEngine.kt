@@ -5,6 +5,7 @@ import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
+import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.TranslationPreferences
@@ -14,40 +15,30 @@ import uy.kohesive.injekt.api.get
 class PageInpaintingEngine(
     private val mode: InpaintingMode,
     private val inpainter: AOTInpainting = AOTInpainting(),
+    private val qualityFallbackPref: () -> Boolean = {
+        Injekt.get<TranslationPreferences>().translationInpaintQualityFallback().get()
+    },
 ) {
-    @Volatile
-    private var qualityFallbackEnabled: Boolean = false
-
-    @Volatile
-    private var qualityFallbackResolved: Boolean = false
-    private fun resolveQualityFallback(): Boolean {
-        if (qualityFallbackResolved) return qualityFallbackEnabled
-        qualityFallbackEnabled = try {
-            Injekt.get<TranslationPreferences>().translationInpaintQualityFallback().get()
-        } catch (_: Throwable) {
-            false
-        }
-        qualityFallbackResolved = true
-        return qualityFallbackEnabled
-    }
-
     fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         // Persisted masks and detector-only regions can outlive OCR blocks.
         // Only an empty erase plan makes inpainting a no-op.
         val input = PageInpaintingPlanner.build(pageTranslation)
         if (input.isEmpty) {
-            markReady(pageTranslation)
+            // Do not inherit lastRunDegraded from a previous page using the
+            // same inpainter instance when this page needs no backend work.
+            markReady(pageTranslation, degraded = false)
             return null
         }
 
         return try {
             pageTranslation.inpaintStatus = StageStatus.RUNNING
             pageTranslation.updatedAt = System.currentTimeMillis()
+            val neuralAvailable = inpainter.isInitialized()
             logcat(LogPriority.INFO) {
                 "Page inpainting input: boxes=${input.boxes.size} extraDetector=${input.extraDetectorCount} " +
                     "labels=${input.labels.groupingBy {
                         it
-                    }.eachCount()} mode=$mode neural=${inpainter.isInitialized()}"
+                    }.eachCount()} mode=$mode neural=$neuralAvailable"
             }
             EngineMemoryBudget.logSnapshot(
                 "before_inpaint",
@@ -55,36 +46,40 @@ class PageInpaintingEngine(
                 bitmap.height,
                 "boxes=${input.boxes.size}",
             )
-            // Strict no-fallback by default: QUALITY throws when the neural model
-            // is unloaded (was silently downgraded to median-fill FAST). User must
-            // opt into QUALITY→FAST fallback via translation_inpaint_quality_fallback.
-            if (mode == InpaintingMode.QUALITY && !inpainter.isInitialized()) {
-                if (resolveQualityFallback()) {
+            // Neural modes fail without sessions unless the preference allows
+            // classical fallback. Read the setting live for every page.
+            if (mode.resolveDispatch(neuralAvailable = true).usesNeural && !neuralAvailable) {
+                val fallbackAllowed = try {
+                    qualityFallbackPref()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logcat(LogPriority.WARN, e) { "Could not read the neural inpainting fallback preference; keeping it disabled" }
+                    false
+                }
+                if (fallbackAllowed) {
                     logcat(LogPriority.WARN) {
-                        "QUALITY inpainting: neural AOT model not loaded; QUALITY→FAST fallback enabled by user setting"
+                        "$mode inpainting: neural AOT model not loaded; classical fallback enabled by user setting"
                     }
                 } else {
                     throw IllegalStateException(
-                        "QUALITY inpainting unavailable (neural model not loaded); " +
-                            "set inpainting to FAST, load the AOT model, or enable the QUALITY→FAST fallback in Translation settings",
+                        "$mode inpainting unavailable (neural model not loaded); " +
+                            "set inpainting to FAST, load the AOT model, or enable the neural fallback in Translation settings",
                     )
                 }
             }
-            val effectiveMode = if (mode == InpaintingMode.QUALITY && inpainter.isInitialized()) {
-                InpaintingMode.QUALITY
-            } else {
-                InpaintingMode.FAST
-            }
+            val dispatch = mode.resolveDispatch(neuralAvailable)
             val cleaned = inpainter.inpaintRegions(
                 image = bitmap,
                 boxes = input.boxes,
                 labels = input.labels,
-                mode = effectiveMode,
+                dispatch = dispatch,
                 blocks = pageTranslation.blocks,
             )
             markReady(pageTranslation)
             cleaned
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             pageTranslation.inpaintStatus = StageStatus.FAILED
             // First terminal stage in the inpaint→render cascade owns the attempt
             // charge; downstream render path no-ops via attemptCharged (idempotent).
@@ -100,9 +95,14 @@ class PageInpaintingEngine(
         inpainter.close()
     }
 
-    private fun markReady(pageTranslation: PageTranslation) {
+    private fun markReady(pageTranslation: PageTranslation, degraded: Boolean = inpainter.lastRunDegraded) {
         pageTranslation.inpaintStatus = StageStatus.READY
         pageTranslation.errorMessage = null
+        pageTranslation.inpaintingModeUsed = if (degraded) {
+            mode.name + InpaintingMode.DEGRADED_SUFFIX
+        } else {
+            mode.stampName(neuralAvailable = inpainter.isInitialized())
+        }
         pageTranslation.updatedAt = System.currentTimeMillis()
     }
 }

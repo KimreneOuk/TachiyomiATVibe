@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.engines.translator.GeminiInputAccountingContract
 import eu.kanade.translation.engines.translator.OpenRouterInputAccountingContract
+import eu.kanade.translation.engines.translator.ProviderHttpResult
 import eu.kanade.translation.engines.translator.ProviderRequestGovernor
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
@@ -294,6 +295,7 @@ class BatchTelemetryTest {
             estimatedPromptTokens = 10,
             maxOutputTokens = 100,
             protocol = ContextualRequestProtocol.BATCH_V1,
+            pageIndexes = mapOf("page_1.jpg" to 0),
         )
     }
 
@@ -310,7 +312,7 @@ class BatchTelemetryTest {
         val fakeResponse = constructor.newInstance(200, null, openAiResponseBody)
 
         val governor = mockk<ProviderRequestGovernor>()
-        coEvery { governor.executeValue<Any>(any(), any()) } returns fakeResponse
+        coEvery { governor.executeWithUsage<Any>(any(), any()) } returns ProviderHttpResult(fakeResponse)
 
         val translator = OpenRouterTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -368,7 +370,7 @@ class BatchTelemetryTest {
         val fakeResponse = constructor.newInstance(200, null, geminiResponseBody)
 
         val governor = mockk<ProviderRequestGovernor>()
-        coEvery { governor.executeValue<Any>(any(), any()) } returns fakeResponse
+        coEvery { governor.executeWithUsage<Any>(any(), any()) } returns ProviderHttpResult(fakeResponse)
 
         val translator = GeminiTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -419,6 +421,7 @@ class BatchTelemetryTest {
             computeSourceFingerprintFn = { error("not expected") },
             batchExpectedFingerprintsFn = { _, _ -> error("not expected") },
             inpaintingModeFromPref = { error("not expected") },
+            inpaintingStampDecision = { error("not expected") },
             releaseBatchPageLease = { _, _ -> error("not expected") },
             persistPageWithOomRecovery = { _, _, _, _ -> error("not expected") },
             loadPersistedCleanedBitmap = { _, _, _, _ -> error("not expected") },

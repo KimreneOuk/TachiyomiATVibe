@@ -167,7 +167,7 @@ internal class CleanedPublication(
                             cleanedImageName = newName
                             cleanedImageContentHash = writtenHash
                             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                            inpaintingModeUsed = currentInpaintingMode().name
+                            inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingMode().name
                             inpaintFingerprint = pageTranslation.inpaintFingerprint
                             inpaintStatus = StageStatus.READY
                             originalImageFallback = false
@@ -208,7 +208,7 @@ internal class CleanedPublication(
                 pageTranslation.cleanedImageName = result.name
                 pageTranslation.cleanedImageContentHash = writtenImage?.contentSha256
                 pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
+                pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingMode().name
                 pageTranslation.inpaintStatus = StageStatus.READY
                 pageTranslation.originalImageFallback = false
                 pageTranslation.errorMessage = null
@@ -305,7 +305,7 @@ internal class CleanedPublication(
                 cleanedImageName = finalName
                 cleanedImageContentHash = null
                 inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                inpaintingModeUsed = currentInpaintingMode().name
+                inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingMode().name
                 inpaintFingerprint = pageTranslation.inpaintFingerprint
                 inpaintStatus = StageStatus.READY
                 originalImageFallback = false
@@ -330,7 +330,7 @@ internal class CleanedPublication(
         pageTranslation.cleanedImageName = finalName
         pageTranslation.cleanedImageContentHash = null
         pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-        pageTranslation.inpaintingModeUsed = currentInpaintingMode().name
+        pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingMode().name
         pageTranslation.inpaintStatus = StageStatus.READY
         pageTranslation.originalImageFallback = false
         pageTranslation.errorMessage = null

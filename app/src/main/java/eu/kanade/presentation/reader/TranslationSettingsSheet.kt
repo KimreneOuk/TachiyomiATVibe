@@ -475,6 +475,7 @@ private fun ColumnScope.InpaintSection(
 ) {
     val entries = mapOf(
         "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
+        "BALANCE" to stringResource(ATMR.strings.pref_inpainting_mode_balance),
         "FAST" to stringResource(ATMR.strings.pref_inpainting_mode_fast),
     ).toImmutableMap()
 

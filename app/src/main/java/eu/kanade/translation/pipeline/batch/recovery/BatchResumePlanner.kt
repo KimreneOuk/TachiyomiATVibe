@@ -1,7 +1,8 @@
 package eu.kanade.translation.pipeline.batch.recovery
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.InpaintStampDecision
+import eu.kanade.translation.engines.inpainting.stampNeedsReinpaint
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
@@ -47,7 +48,7 @@ internal class BatchResumePlanner(
     private val sourceFingerprints: Map<String, String>,
     private val expectedBatchFingerprints: BatchExpectedFingerprints,
     val contextFrontier: BatchContextFrontier,
-    private val inpaintingModeFromPref: () -> InpaintingMode,
+    private val inpaintingStampDecision: () -> InpaintStampDecision,
 ) {
 
     var rollingContext = contextFrontier.rollingContext
@@ -251,8 +252,8 @@ internal class BatchResumePlanner(
         }
         // Null inpaintingModeUsed = legacy page persisted before this field; treat
         // as a match so existing chapters are not mass re-translated on first open.
-        val desiredMode = inpaintingModeFromPref().name
-        val inpaintModeMatches = page?.inpaintingModeUsed == null || page.inpaintingModeUsed == desiredMode
+        val stampDecision = inpaintingStampDecision()
+        val inpaintModeMatches = !stampDecision.stampNeedsReinpaint(page?.inpaintingModeUsed)
         val decision = BatchResumeGateDecider.decide(
             page,
             cleanedFileValid = true,
@@ -282,7 +283,7 @@ internal class BatchResumePlanner(
         if (!inpaintModeMatches) {
             logcat(LogPriority.INFO) {
                 "TachiyomiAT resume re-inpainting for mode change: pageKey=${page?.sourceFileName} " +
-                    "was=${page?.inpaintingModeUsed} now=$desiredMode"
+                    "was=${page?.inpaintingModeUsed} now=${stampDecision.mode.name}"
             }
         }
         return when (decision) {

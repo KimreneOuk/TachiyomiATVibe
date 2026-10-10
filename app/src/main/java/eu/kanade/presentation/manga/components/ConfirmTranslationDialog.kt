@@ -163,6 +163,7 @@ private fun SettingRow(label: String, value: String) {
 @Composable
 private fun inpaintingModeLabel(rawMode: String): String = when (rawMode.uppercase()) {
     "QUALITY" -> stringResource(ATMR.strings.pref_inpainting_mode_quality)
+    "BALANCE" -> stringResource(ATMR.strings.pref_inpainting_mode_balance)
     "FAST" -> stringResource(ATMR.strings.pref_inpainting_mode_fast)
     else -> rawMode
 }

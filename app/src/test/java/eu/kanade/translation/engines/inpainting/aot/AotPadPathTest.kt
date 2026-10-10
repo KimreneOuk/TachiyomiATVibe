@@ -52,6 +52,30 @@ class AotPadPathTest {
     }
 
     @Test
+    fun `replicate padding extends border pixels outward with the crop centered`() {
+        val size = 4
+        val source = IntArray(size * size) { it }
+        val padded = IntArray(AotPadPath.SIZE * AotPadPath.SIZE)
+
+        AotPadPath.padSquareReplicateInto(source, size, padded)
+        val offset = AotPadPath.centeredOffset(size)
+
+        padded[0] shouldBe source[0]
+        padded[AotPadPath.SIZE - 1] shouldBe source[size - 1]
+        padded[(AotPadPath.SIZE - 1) * AotPadPath.SIZE] shouldBe source[(size - 1) * size]
+        padded[AotPadPath.SIZE * AotPadPath.SIZE - 1] shouldBe source[size * size - 1]
+
+        for (y in 0 until size) {
+            for (x in 0 until size) {
+                padded[(offset + y) * AotPadPath.SIZE + offset + x] shouldBe source[y * size + x]
+            }
+        }
+
+        padded[(offset - 1) * AotPadPath.SIZE + offset] shouldBe source[0]
+        padded[offset * AotPadPath.SIZE + (offset - 1)] shouldBe source[0]
+    }
+
+    @Test
     fun `crop back recovers every supported square exactly`() {
         for (sourceSize in SUPPORTED_SIDES) {
             val source = IntArray(sourceSize * sourceSize) { index ->

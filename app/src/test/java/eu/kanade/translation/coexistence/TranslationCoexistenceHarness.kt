@@ -617,6 +617,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 computeSourceFingerprintFn = { streamFn -> PageDecode.computeSourceFingerprint(streamFn) },
                 batchExpectedFingerprintsFn = expectedFingerprints,
                 inpaintingModeFromPref = { engineLane.inpaintingModeFromPref() },
+                inpaintingStampDecision = { engineLane.inpaintingStampDecision() },
                 releaseBatchPageLease = { batchStore, pageKey ->
                     batchStore.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
                 },

@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.engines.inpainting.InpaintStampDecision
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
@@ -66,6 +67,7 @@ class BatchTerminalExitTest {
             computeSourceFingerprintFn = { error("fingerprint not expected on this exit") },
             batchExpectedFingerprintsFn = { _, _ -> error("fingerprints not expected on this exit") },
             inpaintingModeFromPref = { error("inpainting mode not expected on this exit") },
+            inpaintingStampDecision = { error("inpainting stamp not expected on this exit") },
             releaseBatchPageLease = { _, _ -> error("lease release not expected on this exit") },
             persistPageWithOomRecovery = { _, _, _, _ -> error("persist not expected on this exit") },
             loadPersistedCleanedBitmap = { _, _, _, _ -> error("bitmap load not expected on this exit") },
@@ -150,6 +152,7 @@ class BatchTerminalExitTest {
             },
             batchExpectedFingerprintsFn = { _, _ -> BatchExpectedFingerprints() },
             inpaintingModeFromPref = { InpaintingMode.FAST },
+            inpaintingStampDecision = { InpaintStampDecision(InpaintingMode.FAST, neuralAvailable = null) },
             releaseBatchPageLease = { _, _ -> },
             persistPageWithOomRecovery = { _, _, _, _ -> error("page persistence not expected") },
             loadPersistedCleanedBitmap = { _, _, _, _ -> error("bitmap load not expected") },

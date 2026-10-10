@@ -37,6 +37,52 @@ internal object AotBoxGeometry {
         return intArrayOf(x1, y1, x1 + side, y1 + side)
     }
 
+    /**
+     * Splits a half-open bbox into windows no larger than [tile], with [overlap]
+     * pixels of shared context. Small bounds remain one exact tile.
+     */
+    internal fun tileBounds(
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        tile: Int = 448,
+        overlap: Int = 64,
+    ): List<IntArray> {
+        require(tile > 0 && overlap >= 0 && tile > overlap) {
+            "tile=$tile must be positive and exceed non-negative overlap=$overlap"
+        }
+        require(x2 > x1 && y2 > y1) { "bounds must have positive area: [$x1,$y1,$x2,$y2]" }
+        if (x2.toLong() - x1 <= tile && y2.toLong() - y1 <= tile) {
+            return listOf(intArrayOf(x1, y1, x2, y2))
+        }
+
+        val xWindows = axisWindows(x1, x2, tile, overlap)
+        val yWindows = axisWindows(y1, y2, tile, overlap)
+        val result = ArrayList<IntArray>(xWindows.size * yWindows.size)
+        for (xWindow in xWindows) {
+            for (yWindow in yWindows) {
+                result.add(intArrayOf(xWindow[0], yWindow[0], xWindow[1], yWindow[1]))
+            }
+        }
+        return result
+    }
+
+    private fun axisWindows(lo: Int, hi: Int, tile: Int, overlap: Int): List<IntArray> {
+        if (hi.toLong() - lo <= tile) return listOf(intArrayOf(lo, hi))
+        val step = tile - overlap
+        val starts = ArrayList<Int>()
+        var start = lo
+        while (hi.toLong() - start > tile) {
+            starts.add(start)
+            start += step
+        }
+        starts.add(start)
+        return starts.map { windowStart ->
+            intArrayOf(windowStart, min(hi.toLong(), windowStart.toLong() + tile).toInt())
+        }
+    }
+
     internal fun findParentBubble(textBox: IntArray, bubbleBoxes: List<IntArray>): IntArray? {
         val cx = (textBox[0] + textBox[2]) / 2.0
         val cy = (textBox[1] + textBox[3]) / 2.0

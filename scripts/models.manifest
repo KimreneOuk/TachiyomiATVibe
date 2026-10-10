@@ -29,13 +29,15 @@
         "source_filename": "aot.onnx",
         "source_size_bytes": 23068213,
         "source_sha256": "ffd39ed8e2a275869d3b49180d030f0d8b8b9c2c20ed0e099ecd207201f0eada"
-      }
+      },
+      "provenance": "manga-tuned AOT-GAN trained by zyddnys for manga-image-translator; jit-traced re-upload ogkalu/aot-inpainting@42ffc84f (MIT, unchanged since 2025-10-16); aot-512.onnx derived locally by scripts/converters/convert_aot_512.py (static-shape fold of aot.onnx)"
     },
     {
       "path": "inpainting/aot.onnx",
       "size_bytes": 23068213,
       "sha256": "ffd39ed8e2a275869d3b49180d030f0d8b8b9c2c20ed0e099ecd207201f0eada",
-      "source_url": "https://huggingface.co/ogkalu/aot-inpainting/resolve/42ffc84ff1bd46dd95f1c5a41e83ee7e98f39189/aot.onnx"
+      "source_url": "https://huggingface.co/ogkalu/aot-inpainting/resolve/42ffc84ff1bd46dd95f1c5a41e83ee7e98f39189/aot.onnx",
+      "provenance": "manga-tuned AOT-GAN trained by zyddnys for manga-image-translator; jit-traced re-upload ogkalu/aot-inpainting@42ffc84f (MIT, unchanged since 2025-10-16)"
     },
     {
       "path": "ocr/decoder_init.onnx",

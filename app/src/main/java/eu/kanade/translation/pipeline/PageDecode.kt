@@ -158,6 +158,9 @@ internal object PageDecode {
                 currentOcrModel.name,
                 fromLang.name,
             ),
+            // Configuration identity only: degradation/recovery is handled by the
+            // inpaintingModeUsed stamp predicate (see InpaintStampDecision), not here.
+            // Folding the degraded suffix in would re-inpaint degraded pages every run.
             inpaint = StageFingerprints.configuration(
                 ArtifactStage.INPAINT,
                 currentInpaintingMode.name,

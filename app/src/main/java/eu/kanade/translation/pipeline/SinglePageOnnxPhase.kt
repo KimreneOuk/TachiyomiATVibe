@@ -12,7 +12,8 @@ import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
-import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.InpaintStampDecision
+import eu.kanade.translation.engines.inpainting.stampNeedsReinpaint
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.vision.ocr.RoiPageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
@@ -84,7 +85,7 @@ internal class SinglePageOnnxPhase(
 
     private val currentInpaintingMode get() = engines.currentInpaintingMode
 
-    private fun inpaintingModeFromPref(): InpaintingMode = engines.inpaintingModeFromPref()
+    private fun inpaintingStampDecision(): InpaintStampDecision = engines.inpaintingStampDecision()
 
     private suspend fun ensureEnginesBuiltFor(
         fromLang: TextRecognizerLanguage,
@@ -280,8 +281,8 @@ internal class SinglePageOnnxPhase(
         var needsHttpRender = false
         try {
             val resumeTranslation = store.state.value[pageKey]?.toDraft()?.copyForResume()
-            val desiredModeName = inpaintingModeFromPref().name
-            val modeMatches = resumeTranslation?.inpaintingModeUsed == null || resumeTranslation.inpaintingModeUsed == desiredModeName
+            val stampDecision = inpaintingStampDecision()
+            val modeMatches = !stampDecision.stampNeedsReinpaint(resumeTranslation?.inpaintingModeUsed)
             val adjustedResume = if (resumeTranslation != null && !modeMatches && resumeTranslation.isCleanedImageReady) {
                 resumeTranslation.copy(
                     inpaintStatus = StageStatus.PENDING,
@@ -863,7 +864,9 @@ internal class SinglePageOnnxPhase(
                     s
                 }
                 pageTranslation.cleanedBitmap = scaledCleaned
-                pageTranslation.inpaintingModeUsed = currentInpaintingMode.name
+                if (pageTranslation.inpaintingModeUsed == null) {
+                    pageTranslation.inpaintingModeUsed = currentInpaintingMode.name
+                }
                 pageTranslation.inpaintStatus = StageStatus.READY
                 pageTranslation.errorMessage = null
             }

@@ -126,8 +126,9 @@ object SettingsTranslationScreen : SearchableSettings {
     ): Preference.PreferenceGroup {
         val inpaintMode by translationPreferences.translationInpaintingMode().collectAsState()
         val modes = mapOf(
-            "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
             "FAST" to stringResource(ATMR.strings.pref_inpainting_mode_fast),
+            "BALANCE" to stringResource(ATMR.strings.pref_inpainting_mode_balance),
+            "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
         )
         return Preference.PreferenceGroup(
             title = stringResource(ATMR.strings.pref_inpainting_mode),
@@ -139,9 +140,9 @@ object SettingsTranslationScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     pref = translationPreferences.translationInpaintQualityFallback(),
-                    title = "QUALITY → FAST fallback",
-                    subtitle = "Use FAST inpainting when the QUALITY neural model is unavailable",
-                    enabled = inpaintMode == "QUALITY",
+                    title = "Neural → classical fallback",
+                    subtitle = "Use classical inpainting when the AOT model is unavailable (Balance/Quality)",
+                    enabled = inpaintMode == "BALANCE" || inpaintMode == "QUALITY",
                 ),
             ),
         )

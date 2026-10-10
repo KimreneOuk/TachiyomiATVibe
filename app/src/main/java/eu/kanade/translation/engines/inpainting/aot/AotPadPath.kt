@@ -54,6 +54,32 @@ internal object AotPadPath {
         }
     }
 
+    /**
+     * Pads [sourceSize]² pixels into [destination] centered, extending the
+     * crop's border pixels outward (clamp-to-edge). Only the centered source
+     * square is decoded back from the model output.
+     */
+    fun padSquareReplicateInto(source: IntArray, sourceSize: Int, destination: IntArray) {
+        val sourcePixelCount = checkedPixelCount(sourceSize)
+        require(source.size >= sourcePixelCount) {
+            "source length=${source.size} is smaller than ${sourceSize}x$sourceSize"
+        }
+        require(destination.size >= PADDED_PIXEL_COUNT) {
+            "destination length=${destination.size} is smaller than ${SIZE}x$SIZE"
+        }
+
+        val offset = centeredOffset(sourceSize)
+        val last = sourceSize - 1
+        for (y in 0 until SIZE) {
+            val sourceY = (y - offset).coerceIn(0, last)
+            val sourceRow = sourceY * sourceSize
+            val destinationRow = y * SIZE
+            for (x in 0 until SIZE) {
+                destination[destinationRow + x] = source[sourceRow + (x - offset).coerceIn(0, last)]
+            }
+        }
+    }
+
     fun cropSquare(padded: IntArray, sourceSize: Int): IntArray {
         val source = IntArray(checkedPixelCount(sourceSize))
         cropSquareInto(padded, sourceSize, source)

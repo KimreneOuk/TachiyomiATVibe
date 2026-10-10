@@ -2,9 +2,8 @@ package eu.kanade.translation.pipeline
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
-import eu.kanade.translation.diagnostics.TelemetryTrace
+import eu.kanade.translation.engines.inpainting.InpaintStampDecision
 import eu.kanade.translation.engines.inpainting.InpaintingMode
-import eu.kanade.translation.engines.runtime.onnx.wireLabel
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.TranslationEngineBuilder
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
@@ -338,11 +337,14 @@ internal class EngineLane(
         }
     }
 
-    internal fun inpaintingModeFromPref(): InpaintingMode {
-        return when (translationPreferences.translationInpaintingMode().get()) {
-            "FAST" -> InpaintingMode.FAST
-            else -> InpaintingMode.QUALITY
-        }
+    internal fun inpaintingModeFromPref(): InpaintingMode =
+        InpaintingMode.fromPref(translationPreferences.translationInpaintingMode().get())
+
+    /** Neural availability is unknown until the recognition engine is built. */
+    internal fun inpaintingStampDecision(): InpaintStampDecision {
+        val mode = inpaintingModeFromPref()
+        val neuralReady = (recognitionEngine as? RoiPageRecognitionEngine)?.neuralInpaintAvailable()
+        return InpaintStampDecision(mode, neuralReady)
     }
 
     private fun createRecognitionEngine(
@@ -498,10 +500,13 @@ internal class EngineLane(
             desiredInpaintingMode != currentInpaintingMode ||
             desiredReadingOrder != currentReadingOrder ||
             liveVisionGpu != currentVisionGpu ||
-            (selectedOcrModel == OcrModel.PADDLEOCR_V6_SMALL && (
-                livePaddleProvider != currentPaddleOcrProvider ||
-                livePaddleBatch != currentPaddleOcrBatch
-            ))
+            (
+                selectedOcrModel == OcrModel.PADDLEOCR_V6_SMALL &&
+                    (
+                        livePaddleProvider != currentPaddleOcrProvider ||
+                            livePaddleBatch != currentPaddleOcrBatch
+                        )
+                )
         if (shouldRebuildRecognition) {
             recognitionEngine.close()
             currentFromLang = fromLang

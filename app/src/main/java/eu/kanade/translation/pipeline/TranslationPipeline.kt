@@ -12,6 +12,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.engines.inpainting.InpaintStampDecision
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.NativeStallState
@@ -360,6 +361,8 @@ class TranslationPipeline private constructor(
     private val currentTranslatorSignature get() = engines.currentTranslatorSignature
 
     private fun inpaintingModeFromPref(): InpaintingMode = engines.inpaintingModeFromPref()
+
+    private fun inpaintingStampDecision(): InpaintStampDecision = engines.inpaintingStampDecision()
 
     fun closeEngines() {
         engines.closeEngines()
@@ -1220,6 +1223,7 @@ class TranslationPipeline private constructor(
         computeSourceFingerprintFn = this::computeSourceFingerprint,
         batchExpectedFingerprintsFn = this::batchExpectedFingerprints,
         inpaintingModeFromPref = this::inpaintingModeFromPref,
+        inpaintingStampDecision = this::inpaintingStampDecision,
         releaseBatchPageLease = this::releaseBatchPageLease,
         persistPageWithOomRecovery = this::persistPageWithOomRecovery,
         loadPersistedCleanedBitmap = this::loadPersistedCleanedBitmap,
