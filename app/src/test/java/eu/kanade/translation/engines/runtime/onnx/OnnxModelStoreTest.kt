@@ -19,6 +19,14 @@ class OnnxModelStoreTest {
     lateinit var tempDir: File
 
     @Test
+    fun `LaMa Manga model file resolves to installed model name`() {
+        val context = mockk<Context>()
+        every { context.noBackupFilesDir } returns File(tempDir, "no-backup")
+
+        OnnxModelStore(context).getLamaMangaModelFile().name shouldBe "lama-manga.onnx"
+    }
+
+    @Test
     fun `validly structured cached model with wrong bytes is recopied`() {
         val noBackupDir = File(tempDir, "no-backup").apply { mkdirs() }
         val assetBytes = validOnnxBytes()

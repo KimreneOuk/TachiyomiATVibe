@@ -20,6 +20,13 @@
       }
     },
     {
+      "path": "inpainting/lama-manga.onnx",
+      "size_bytes": 59809275,
+      "sha256": "502ce98fbd8d030501040d4505daea0616003266f4eb82b1d27fd4fca5b55f4a",
+      "source_url": "https://huggingface.co/Liiesl/lama-manga-onnx-quant/resolve/51d07e18caf9b1258585d3706fec8986ccbb8cfb/lama-manga_int8.onnx",
+      "license": "Apache-2.0"
+    },
+    {
       "path": "inpainting/aot-512.onnx",
       "size_bytes": 22854564,
       "sha256": "b1d0e7c50f95910cf1ea58fac646699a97ce2efadf7e2c57af3785bf0ea4f9eb",

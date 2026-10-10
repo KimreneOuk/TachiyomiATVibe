@@ -30,6 +30,8 @@ data class ModelPaths(
      * YOLO11-seg manga bubble segmenter model (`manga_bubble_segmenter_int8.onnx`).
      */
     val bubbleSegmenterModel: File?,
+    /** Optional LaMa Manga model; nullable when its asset is not bundled. */
+    val lamaMangaModel: File? = null,
 )
 
 data class PaddleOcrV6SmallPaths(
@@ -108,6 +110,13 @@ class OnnxModelStore(private val context: Context) {
             null
         }
 
+        val lamaMangaFile = try {
+            copyIfNeeded(dir, "lama-manga.onnx", "models/inpainting/lama-manga.onnx")
+        } catch (_: Exception) {
+            logcat(LogPriority.WARN) { "LaMa Manga inpainting model not found in assets, skipping" }
+            null
+        }
+
         // Panel detector is best-effort context (mirrors inpaint copy): a missing
         // asset or failed copy leaves it null so panel assignment is skipped, not crashed.
         val panelDetectorFile = try {
@@ -132,10 +141,13 @@ class OnnxModelStore(private val context: Context) {
             ocrVocab = vocabFile,
             inpaintModel = inpaintFile,
             inpaint512Model = inpaint512File,
+            lamaMangaModel = lamaMangaFile,
             panelDetectorModel = panelDetectorFile,
             bubbleSegmenterModel = bubbleSegmenterFile,
         )
     }
+
+    fun getLamaMangaModelFile(): File = File(modelsDir, "lama-manga.onnx")
 
     fun paddleOcrV6SmallAvailable(): Boolean {
         val dir = File(modelsDir, "paddle-v6-small")
