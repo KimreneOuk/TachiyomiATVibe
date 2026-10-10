@@ -4,9 +4,13 @@ import java.nio.FloatBuffer
 import kotlin.math.roundToInt
 
 /** Pure tensor preparation and output restoration for the fixed 512 AOT model. */
-internal object AotFixedTensorContract {
+internal object AotFixedTensorContract : NeuralInpaintModelContract {
     private const val SIZE = AotPadPath.SIZE
     private const val PIXELS = SIZE * SIZE
+
+    override val modelId: String = "aot-512"
+    override val isSingleInputTensor: Boolean = false
+    override val inputTensorName: String = "image"
 
     fun imageShape(): LongArray = longArrayOf(1, 3, SIZE.toLong(), SIZE.toLong())
 
