@@ -486,6 +486,7 @@ private fun ColumnScope.InpaintSection(
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
     onTranslationInpaintingHardwareOverrideChange: (InpaintingHardwareOverride) -> Unit,
 ) {
+    val lamaCpuOnly = neuralModel != NeuralInpaintModel.AOT_GAN
     val entries = mapOf(
         "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
         "BALANCE" to stringResource(ATMR.strings.pref_inpainting_mode_balance),
@@ -525,6 +526,7 @@ private fun ColumnScope.InpaintSection(
                 FilterChip(
                     selected = hardwareOverride == option,
                     onClick = { onTranslationInpaintingHardwareOverrideChange(option) },
+                    enabled = !lamaCpuOnly || option == InpaintingHardwareOverride.CPU,
                     label = {
                         Text(
                             text = stringResource(
@@ -541,7 +543,13 @@ private fun ColumnScope.InpaintSection(
             }
         }
         Text(
-            text = stringResource(ATMR.strings.pref_inpainting_hardware_override_summary),
+            text = stringResource(
+                if (lamaCpuOnly) {
+                    ATMR.strings.pref_inpainting_hardware_lama_cpu_only
+                } else {
+                    ATMR.strings.pref_inpainting_hardware_override_summary
+                },
+            ),
             style = MaterialTheme.typography.bodySmall,
         )
     }

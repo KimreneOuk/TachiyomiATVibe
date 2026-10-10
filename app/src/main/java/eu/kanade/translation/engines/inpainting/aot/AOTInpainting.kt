@@ -16,9 +16,9 @@ import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
 import eu.kanade.translation.engines.inpainting.bubble.BubbleOpenCvInpainter
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
 import eu.kanade.translation.engines.inpainting.resolveDispatch
+import eu.kanade.translation.engines.inpainting.resolveInpaintingHardwareRoute
 import eu.kanade.translation.engines.inpainting.runWithInpaintingProviderRecovery
 import eu.kanade.translation.engines.inpainting.toAotBackend
-import eu.kanade.translation.engines.inpainting.toHardwareRoute
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.DeviceCapability
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
@@ -167,10 +167,18 @@ class AOTInpainting(
         if (lamaSelection != null) {
             lamaModelFile = lamaSelection.modelFile
             lamaModelRouteTag = lamaSelection.routeTag
+            val routeResolution = resolveInpaintingHardwareRoute(neuralModel, hardwareOverride)
+            if (routeResolution.blockedReason != null) {
+                logcat(LogPriority.WARN) {
+                    "[inpaint] route=${lamaSelection.routeTag} accelerator=blocked " +
+                        "reason=${routeResolution.blockedReason} selectedHardware=$hardwareOverride " +
+                        "fallback=CPU_XNNPACK model=$neuralModel"
+                }
+            }
             lamaSession = initializeLamaSession(
                 modelFile = lamaSelection.modelFile,
                 routeTag = lamaSelection.routeTag,
-                requestedHardwareRoute = hardwareOverride.toHardwareRoute(),
+                requestedHardwareRoute = routeResolution.route,
             )
             logcat(LogPriority.INFO) {
                 "[inpaint] init model=$neuralModel session=${lamaSession != null} " +
@@ -283,6 +291,23 @@ class AOTInpainting(
         val modelId = ModelRoutingEngine.resolveModelId(modelFile.absolutePath)
         if (!ModelRoutingEngine.isAcceleratorAttemptAllowed(modelId, route)) {
             logcat(LogPriority.INFO) { "[inpaint] route=$routeLabel model=$modelId is marked UNSUPPORTED; skipping" }
+            return null
+        }
+
+        val memory = EngineMemoryBudget.nnapiMemorySnapshot()
+        val memoryDecision = QnnSessionMemoryPrecheck.decide(
+            modelSizeBytes = modelFile.length(),
+            availableHeadroomBytes = memory.systemHeadroomBytes,
+            lowMemory = memory.lowMemory,
+        )
+        if (!memoryDecision.allowed) {
+            logcat(LogPriority.WARN) {
+                "[inpaint] route=$routeLabel init=skipped reason=memory_precheck_${memoryDecision.reason} " +
+                    "model=$modelId modelBytes=${modelFile.length()} " +
+                    "systemHeadroom=${memoryDecision.availableHeadroomBytes?.div(1024L * 1024L)}MiB " +
+                    "requiredHeadroom=${memoryDecision.requiredHeadroomBytes / (1024L * 1024L)}MiB " +
+                    "lowMemory=${memory.lowMemory}"
+            }
             return null
         }
 

@@ -89,6 +89,7 @@
     <string name="pref_inpainting_neural_model_aot_gan">AOT-GAN (Legacy)</string>
     <string name="pref_inpainting_hardware_override">Inpainting hardware (Experimental)</string>
     <string name="pref_inpainting_hardware_override_summary">Temporary for this reader session. CPU is the default; unsupported GPU or NPU routes fall back to CPU.</string>
+    <string name="pref_inpainting_hardware_lama_cpu_only">LaMa models use CPU/XNNPACK for stability. Your GPU/NPU choice is preserved and applies again when AOT-GAN is selected.</string>
     <string name="pref_inpainting_hardware_cpu">CPU</string>
     <string name="pref_inpainting_hardware_gpu">GPU</string>
     <string name="pref_inpainting_hardware_npu">NPU</string>
