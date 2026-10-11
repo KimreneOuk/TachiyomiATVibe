@@ -91,13 +91,20 @@ class PageInpaintingEngine(
             val cleaned = if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU && mode != InpaintingMode.FAST) {
                 val lama = litertInpainter
                 if (lama != null && lama.isAvailable()) {
-                    lama.inpaintRegions(
+                    // LiteRT fills Paddle-refined free-text groups only. Speech
+                    // bubbles keep their mask-selected smooth diffusion in every
+                    // mode — all-region neural tiling hallucinates chromatic
+                    // noise inside white bubble interiors.
+                    inpainter.freeTextNeuralFill = { image, groupBoxes -> lama.inpaintFreeText(image, groupBoxes) }
+                    inpainter.inpaintRegions(
                         image = bitmap,
                         boxes = input.boxes,
                         labels = input.labels,
+                        dispatch = mode.resolveDispatch(neuralAvailable = true),
                         blocks = pageTranslation.blocks,
                     )
                 } else {
+                    inpainter.freeTextNeuralFill = null
                     val dispatch = mode.resolveDispatch(neuralAvailable)
                     inpainter.inpaintRegions(
                         image = bitmap,
@@ -108,6 +115,7 @@ class PageInpaintingEngine(
                     )
                 }
             } else {
+                inpainter.freeTextNeuralFill = null
                 val dispatch = mode.resolveDispatch(neuralAvailable)
                 inpainter.inpaintRegions(
                     image = bitmap,

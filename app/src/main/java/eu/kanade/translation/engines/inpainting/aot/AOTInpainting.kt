@@ -8,14 +8,15 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
 import android.os.Build
+import eu.kanade.translation.engines.inpainting.FreeTextRoute
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.RegionBackend
 import eu.kanade.translation.engines.inpainting.RegionDispatch
 import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
-import eu.kanade.translation.engines.inpainting.bubble.BubbleOpenCvInpainter
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
 import eu.kanade.translation.engines.inpainting.resolveDispatch
+import eu.kanade.translation.engines.inpainting.resolveFreeTextRoute
 import eu.kanade.translation.engines.inpainting.resolveInpaintingHardwareRoute
 import eu.kanade.translation.engines.inpainting.runWithInpaintingProviderRecovery
 import eu.kanade.translation.engines.inpainting.toAotBackend
@@ -34,6 +35,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 import java.nio.FloatBuffer
+import kotlinx.coroutines.CancellationException
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -58,8 +60,6 @@ class AOTInpainting(
         private const val REPORT_FREE_TEXT_PAD = 1
         private const val REPORT_FREE_TEXT_DILATE = 2
         private const val REPORT_AOT_CONTEXT = 512
-        private const val REPORT_BUBBLE_TILE_SIZE = 448
-        private const val REPORT_BUBBLE_TILE_OVERLAP = 64
         private const val REPORT_FREE_TEXT_FEATHER = 3
         private const val REPORT_BUBBLE_SMOOTH_PASSES = 12
         private const val REPORT_INPAINT_CONTEXT = 64
@@ -126,6 +126,14 @@ class AOTInpainting(
     private var lamaModelRouteTag: String? = null
     private val nnapiHealth = NnapiHealthMonitor()
     var paddleDetector: eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine? = null
+
+    /**
+     * Optional external neural fill for Paddle-refined free-text groups (the
+     * LiteRT Manga LaMa engine). Bubbles never route here — they stay on the
+     * smooth diffusion path — and a null return falls back to the classical
+     * free-text path.
+     */
+    var freeTextNeuralFill: ((image: Bitmap, groupBoxes: List<IntArray>) -> Bitmap?)? = null
 
     /**
      * Route tag of the most recently accepted neural candidate
@@ -629,17 +637,37 @@ class AOTInpainting(
             }
         }
 
-        result = inpaintReportBubbles(result, bubbleTextBoxes, blocks, dispatch)
+        result = inpaintReportBubbles(result, bubbleTextBoxes, blocks)
 
+        val dispatchNeuralFreeText = dispatch.freeText == RegionBackend.AOT_NEURAL
         for (group in freeTextGroups) {
             if (group.isEmpty()) continue
-            if (dispatch.freeText == RegionBackend.AOT_NEURAL && isInitialized()) {
-                result = inpaintReportFreeTextNeural(result, group)
-            } else {
-                result = inpaintReportFreeTextFast(
+            when (resolveFreeTextRoute(
+                dispatchNeural = dispatchNeuralFreeText,
+                delegateAvailable = freeTextNeuralFill != null,
+                onnxInitialized = isInitialized(),
+            )) {
+                FreeTextRoute.NEURAL_DELEGATE -> {
+                    val delegate = requireNotNull(freeTextNeuralFill)
+                    val filled = try {
+                        delegate(result, group)
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        logcat(LogPriority.WARN, e) { "[inpaint] free-text neural delegate failed; classical fallback" }
+                        null
+                    }
+                    if (filled != null) {
+                        result = filled
+                        lastAcceptedRoute = "free_text_delegate"
+                    } else {
+                        result = inpaintReportFreeTextFast(result, group, reason = "neural_delegate_failed")
+                    }
+                }
+                FreeTextRoute.NEURAL_ONNX -> result = inpaintReportFreeTextNeural(result, group)
+                FreeTextRoute.CLASSICAL -> result = inpaintReportFreeTextFast(
                     result,
                     group,
-                    reason = if (dispatch.freeText != RegionBackend.AOT_NEURAL) "fast_mode" else "no_neural_session",
+                    reason = if (!dispatchNeuralFreeText) "fast_mode" else "no_neural_session",
                 )
             }
         }
@@ -714,7 +742,6 @@ class AOTInpainting(
         image: Bitmap,
         boxes: List<IntArray>,
         blocks: List<eu.kanade.translation.model.TranslationBlock>?,
-        dispatch: RegionDispatch,
     ): Bitmap {
         if (boxes.isEmpty() && (blocks == null || blocks.none { it.segmentationMask != null })) return image
         val w = image.width
@@ -762,94 +789,11 @@ class AOTInpainting(
 
         if (mask.none { it != 0.toByte() }) return image
 
-        if (dispatch.bubble == RegionBackend.OPENCV_NS) {
-            val clusters = BubbleOpenCvInpainter.componentClusters(mask, w, h)
-            if (bubbleNsMemoryGateTripped(clusters)) {
-                inpaintBubbleMedian(image, mask, w, h)
-                lastBubbleRoute = "median_fill_memgate"
-                lastRunDegraded = true
-                return image
-            }
-
-            val started = System.nanoTime()
-            val backend = BubbleOpenCvInpainter.inpaintClusters(image, mask, clusters, w, h)
-            lastBubbleRoute = backend.routeLabel
-            if (backend == OpenCvInpaintEngine.Backend.PUSH_PULL_EMERGENCY) lastRunDegraded = true
-            logcat(LogPriority.INFO) {
-                "[inpaint] bubble_route=${backend.routeLabel} clusters=${clusters.size} " +
-                    "dispatch=$dispatch totalMs=${(System.nanoTime() - started) / 1_000_000.0}"
-            }
-            return image
-        }
-
-        if (dispatch.bubble == RegionBackend.AOT_NEURAL) {
-            val clusters = BubbleOpenCvInpainter.componentClusters(mask, w, h)
-            var anyNeuralFailure = false
-            val maxCropSide = minOf(AotPadPath.SIZE, w, h)
-            val tileSide = minOf(REPORT_BUBBLE_TILE_SIZE, maxCropSide)
-            val tileOverlap = minOf(REPORT_BUBBLE_TILE_OVERLAP, tileSide - 1).coerceAtLeast(0)
-
-            for (cluster in clusters) {
-                val tiles = AotBoxGeometry.tileBounds(
-                    cluster[0],
-                    cluster[1],
-                    cluster[2],
-                    cluster[3],
-                    tile = tileSide,
-                    overlap = tileOverlap,
-                )
-                for (tile in tiles) {
-                    val tileWidth = tile[2] - tile[0]
-                    val tileHeight = tile[3] - tile[1]
-                    val side = (maxOf(tileWidth, tileHeight) + 2 * REPORT_INPAINT_CONTEXT)
-                        .coerceAtMost(maxCropSide)
-                    val cropX = (tile[0] - (side - tileWidth) / 2).coerceIn(0, w - side)
-                    val cropY = (tile[1] - (side - tileHeight) / 2).coerceIn(0, h - side)
-                    val crop = intArrayOf(cropX, cropY, cropX + side, cropY + side)
-                    val localMask = cropMask(mask, w, h, crop, side, tile)
-                    if (localMask.none { it != 0.toByte() }) continue
-
-                    val candidate = neuralFillSquare(
-                        image = image,
-                        localMaskBytes = localMask,
-                        crop = crop,
-                        side = side,
-                        logTag = "bubble",
-                    )
-                    if (candidate == null) {
-                        anyNeuralFailure = true
-                        continue
-                    }
-                    compositeNeuralTile(image, candidate, localMask, crop, side)
-                }
-            }
-
-            if (anyNeuralFailure) {
-                val catchupBackend = if (bubbleNsMemoryGateTripped(clusters)) {
-                    inpaintBubbleMedian(image, mask, w, h)
-                    null
-                } else {
-                    BubbleOpenCvInpainter.inpaintClusters(image, mask, clusters, w, h)
-                }
-                lastRunDegraded = true
-                lastBubbleRoute = if (catchupBackend == OpenCvInpaintEngine.Backend.PUSH_PULL_EMERGENCY) {
-                    "aot_neural_ns_catchup_push_pull_emergency"
-                } else if (catchupBackend == null) {
-                    "aot_neural_median_memgate_catchup"
-                } else {
-                    "aot_neural_ns_catchup"
-                }
-                logcat(LogPriority.WARN) {
-                    "[inpaint] bubble_route=$lastBubbleRoute clusters=${clusters.size} dispatch=$dispatch"
-                }
-            } else {
-                lastBubbleRoute = "aot_neural"
-            }
-            return image
-        }
-
+        // Clean smooth diffusion only: neural tiling hallucinates chromatic
+        // noise inside white bubble interiors and OpenCV NS smudges them, so
+        // bubbles take this validated fill in every mode.
         inpaintBubbleMedian(image, mask, w, h)
-        lastBubbleRoute = "median_fill"
+        lastBubbleRoute = "smooth_diffusion"
         return image
     }
 
@@ -858,54 +802,6 @@ class AOTInpainting(
         image.getPixels(pixels, 0, width, 0, 0, width, height)
         AotReportBubbleFill.fillAndBlend(pixels, mask, width, height, REPORT_BUBBLE_SMOOTH_PASSES, FEATHER_RAMP_PX)
         image.setPixels(pixels, 0, width, 0, 0, width, height)
-    }
-
-    private fun bubbleNsMemoryGateTripped(clusters: List<IntArray>): Boolean {
-        val largestCropPixels = clusters.maxOfOrNull { cluster ->
-            (cluster[2] - cluster[0] + 2L * BubbleOpenCvInpainter.CROP_CONTEXT_PX) *
-                (cluster[3] - cluster[1] + 2L * BubbleOpenCvInpainter.CROP_CONTEXT_PX)
-        } ?: 0L
-        val availableHeap = EngineMemoryBudget.heapSnapshot().availableHeapBytes
-        val tripped = largestCropPixels * 4L * Int.SIZE_BYTES > availableHeap / 4L
-        if (tripped) {
-            logcat(LogPriority.WARN) {
-                "[inpaint] bubble ns memory gate tripped (largestCrop=$largestCropPixels px, " +
-                    "heapAvailable=${availableHeap / (1L shl 20)}MiB); using median fill"
-            }
-        }
-        return tripped
-    }
-
-    private fun cropMask(
-        fullMask: ByteArray,
-        pageWidth: Int,
-        pageHeight: Int,
-        crop: IntArray,
-        side: Int,
-        tile: IntArray,
-    ): ByteArray {
-        require(fullMask.size.toLong() == pageWidth.toLong() * pageHeight)
-        require(crop.size >= 4 && crop[2] - crop[0] == side && crop[3] - crop[1] == side)
-        require(crop[0] >= 0 && crop[1] >= 0 && crop[2] <= pageWidth && crop[3] <= pageHeight)
-        require(tile.size >= 4)
-
-        val localMask = ByteArray(side * side)
-        val startX = maxOf(crop[0], tile[0])
-        val startY = maxOf(crop[1], tile[1])
-        val endX = minOf(crop[2], tile[2])
-        val endY = minOf(crop[3], tile[3])
-        if (startX >= endX || startY >= endY) return localMask
-        for (y in startY until endY) {
-            val sourceOffset = y * pageWidth + startX
-            val destinationOffset = (y - crop[1]) * side + startX - crop[0]
-            fullMask.copyInto(
-                destination = localMask,
-                destinationOffset = destinationOffset,
-                startIndex = sourceOffset,
-                endIndex = sourceOffset + endX - startX,
-            )
-        }
-        return localMask
     }
 
     private fun compositeNeuralTile(
@@ -1331,6 +1227,9 @@ class AOTInpainting(
             }
             val grayscale = sampleCount > 0 && totalChroma / sampleCount < 15
             val paddedPixels = getImgPixels()
+            // LaMa was validated against clamp-to-edge borders: replicate
+            // padding is intentionally isolated to this model (AOT-GAN uses
+            // ring-median background padding instead).
             AotPadPath.padSquareReplicateInto(sourcePixels, side, paddedPixels)
             val localMaskPixels = IntArray(side * side) { index ->
                 if (localMaskBytes[index] != 0.toByte()) 0xFFFFFFFF.toInt() else 0
@@ -1491,8 +1390,22 @@ class AOTInpainting(
         page.getPixels(sourcePixels, 0, side, crop[0], crop[1], side, side)
         val maskPixels = IntArray(side * side)
         mask.getPixels(maskPixels, 0, side, 0, 0, side, side)
+        // Ring-median background for AOT-GAN (< 512 crops): replicate clamp
+        // smears black border strokes into the receptive field and surfaces as
+        // yellow/chromatic noise. Replicate padding stays isolated to LaMa.
+        val cropMask = ByteArray(side * side)
+        for (i in cropMask.indices) {
+            if (AotPixelOps.maskValue(maskPixels[i]) > 127) cropMask[i] = 1
+        }
+        val background = PushPullGradient.localRingMedian(
+            sourcePixels,
+            side,
+            side,
+            cropMask,
+            PushPullGradient.DEFAULT_RING,
+        )
         val paddedPixels = getImgPixels()
-        AotPadPath.padSquareReplicateInto(sourcePixels, side, paddedPixels)
+        AotPadPath.padSquareInto(sourcePixels, side, background, paddedPixels)
         val paddedMask = getMaskPixels()
         AotPadPath.padSquareInto(maskPixels, side, 0, paddedMask)
 

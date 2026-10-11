@@ -4,7 +4,15 @@ import tachiyomi.domain.translation.NeuralInpaintModel
 
 /** Explicit region-class × backend table: bubbles and free text can evolve independently. */
 enum class RegionBackend {
-    /** OpenCV Navier–Stokes, crop-scoped — bubbles. */
+    /**
+     * AotReportBubbleFill smooth diffusion over the selected bubble mask — the
+     * clean fill speech bubbles use in every mode. Bubbles must never route to
+     * neural tiling (chromatic hallucination inside white interiors) or OpenCV
+     * NS (blurry smudge patches).
+     */
+    SMOOTH_DIFFUSION,
+
+    /** OpenCV Navier–Stokes, crop-scoped — never selected for bubbles. */
     OPENCV_NS,
 
     /** OpenCV Telea fast-marching — classical free text. */
@@ -92,17 +100,51 @@ fun InpaintStampDecision.stampNeedsReinpaint(stored: String?): Boolean =
         neuralAvailable = neuralAvailable,
     )
 
-/** Resolve the per-class dispatch once per run from mode + session reality. */
+/**
+ * Resolve the per-class dispatch once per run from mode + session reality.
+ *
+ * Bubbles are mode-independent by design: every mode feeds the selected bubble
+ * mask (eroded segmentation mask, dynamic pill fallback) into the clean smooth
+ * diffusion fill. Only free text changes with the mode.
+ */
 fun InpaintingMode.resolveDispatch(neuralAvailable: Boolean): RegionDispatch = when (this) {
-    InpaintingMode.FAST -> RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.OPENCV_TELEA)
+    InpaintingMode.FAST -> RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
     InpaintingMode.BALANCE -> if (neuralAvailable) {
-        RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.AOT_NEURAL)
+        RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL)
     } else {
-        RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.OPENCV_TELEA)
+        RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
     }
     InpaintingMode.QUALITY -> if (neuralAvailable) {
-        RegionDispatch(RegionBackend.AOT_NEURAL, RegionBackend.AOT_NEURAL)
+        RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL)
     } else {
-        RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.OPENCV_TELEA)
+        RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
     }
+}
+
+/** Where one free-text group is erased. */
+enum class FreeTextRoute {
+    /** External neural delegate (e.g. the LiteRT Manga LaMa engine). */
+    NEURAL_DELEGATE,
+
+    /** This inpainter's own ONNX neural session ladder. */
+    NEURAL_ONNX,
+
+    /** Classical fast path (Telea/push-pull). */
+    CLASSICAL,
+}
+
+/**
+ * Free-text routing is decided once per group: a neural dispatch prefers the
+ * external delegate when present, else the ONNX ladder when initialized, and
+ * otherwise (or for FAST) falls to the classical path. Paddle-refined line
+ * boxes are fed identically in every mode — only the backend differs.
+ */
+fun resolveFreeTextRoute(
+    dispatchNeural: Boolean,
+    delegateAvailable: Boolean,
+    onnxInitialized: Boolean,
+): FreeTextRoute = when {
+    dispatchNeural && delegateAvailable -> FreeTextRoute.NEURAL_DELEGATE
+    dispatchNeural && onnxInitialized -> FreeTextRoute.NEURAL_ONNX
+    else -> FreeTextRoute.CLASSICAL
 }

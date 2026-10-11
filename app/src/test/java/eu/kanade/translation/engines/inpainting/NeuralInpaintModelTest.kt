@@ -9,13 +9,13 @@ import tachiyomi.domain.translation.TranslationPreferences
 class NeuralInpaintModelTest {
 
     @Test
-    fun `default neural model is LaMa Manga`() {
-        NeuralInpaintModel.DEFAULT shouldBe NeuralInpaintModel.LAMA_MANGA
+    fun `default neural model is Manga LaMa LiteRT GPU`() {
+        NeuralInpaintModel.DEFAULT shouldBe NeuralInpaintModel.LAMA_LITERT_GPU
     }
 
     @Test
     fun `unknown model values fall back to default and known values parse case insensitively`() {
-        (NeuralInpaintModel.fromPrefOrNull("INVALID") ?: NeuralInpaintModel.DEFAULT) shouldBe NeuralInpaintModel.LAMA_MANGA
+        (NeuralInpaintModel.fromPrefOrNull("INVALID") ?: NeuralInpaintModel.DEFAULT) shouldBe NeuralInpaintModel.LAMA_LITERT_GPU
         NeuralInpaintModel.fromPrefOrNull("aot_gan") shouldBe NeuralInpaintModel.AOT_GAN
     }
 
@@ -32,10 +32,10 @@ class NeuralInpaintModelTest {
     }
 
     @Test
-    fun `neural model preference defaults to LaMa Manga`() {
+    fun `neural model preference defaults to Manga LaMa LiteRT GPU`() {
         val preferences = TranslationPreferences(InMemoryPreferenceStore())
 
-        preferences.translationInpaintingNeuralModel().get() shouldBe NeuralInpaintModel.LAMA_MANGA
+        preferences.translationInpaintingNeuralModel().get() shouldBe NeuralInpaintModel.LAMA_LITERT_GPU
     }
 
     @Test

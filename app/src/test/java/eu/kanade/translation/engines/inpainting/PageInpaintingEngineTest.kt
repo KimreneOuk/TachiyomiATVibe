@@ -2,13 +2,16 @@ package eu.kanade.translation.engines.inpainting
 
 import android.graphics.Bitmap
 import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
+import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.model.Detection
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import io.kotest.matchers.shouldBe
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.runs
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import org.junit.jupiter.api.Test
@@ -35,6 +38,7 @@ class PageInpaintingEngineTest {
     fun `textless page with no erase regions completes without invoking backend`() {
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
         every { inpainter.lastRunDegraded } returns false
         val page = PageTranslation()
         page.errorMessage = "previous failure"
@@ -50,6 +54,7 @@ class PageInpaintingEngineTest {
     fun `backend failure on a textless masked page is not reported as success`() {
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
         every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } throws
             IllegalStateException("cleanup failed")
         val page = PageTranslation()
@@ -65,6 +70,7 @@ class PageInpaintingEngineTest {
     fun `BALANCE with no neural session fails the page unless fallback pref is enabled`() {
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
         val page = PageTranslation()
         page.inpaintMaskBoxes = listOf(InpaintMaskBox(10, 20, 40, 60, 2))
 
@@ -88,6 +94,7 @@ class PageInpaintingEngineTest {
     fun `fallback pref is read live per inpaint call`() {
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
         every { inpainter.lastRunDegraded } returns false
         every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns mockk()
         val page1 = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
@@ -106,21 +113,118 @@ class PageInpaintingEngineTest {
     fun `engine passes a dispatch resolved from mode and session reality`() {
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns true
+        every { inpainter.freeTextNeuralFill = any() } just runs
         every { inpainter.lastRunDegraded } returns false
         every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns mockk()
         val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 0)) }
 
-        PageInpaintingEngine(InpaintingMode.BALANCE, inpainter).inpaint(bitmap(), page)
+        PageInpaintingEngine(
+            InpaintingMode.BALANCE,
+            inpainter,
+            neuralModel = tachiyomi.domain.translation.NeuralInpaintModel.AOT_GAN,
+        ).inpaint(bitmap(), page)
 
         verify {
             inpainter.inpaintRegions(
                 any(),
                 any(),
                 any(),
-                RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.AOT_NEURAL),
+                RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL),
                 any(),
             )
         }
+    }
+
+    @Test
+    fun `LiteRT model hands free text to the litert delegate and keeps bubbles classical`() {
+        val inpainter = mockk<AOTInpainting>()
+        val litert = mockk<LiteRTMangaInpaintingEngine>()
+        every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
+        every { inpainter.lastRunDegraded } returns false
+        every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns mockk()
+        every { litert.isAvailable() } returns true
+        val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
+
+        PageInpaintingEngine(
+            InpaintingMode.BALANCE,
+            inpainter,
+            litertInpainter = litert,
+        ).inpaint(bitmap(), page)
+
+        verify(exactly = 0) { litert.inpaintRegions(any(), any(), any(), any()) }
+        verify {
+            inpainter.inpaintRegions(
+                any(),
+                any(),
+                any(),
+                InpaintingMode.BALANCE.resolveDispatch(neuralAvailable = true),
+                any(),
+            )
+        }
+        verify {
+            inpainter.freeTextNeuralFill =
+                any<((Bitmap, List<IntArray>) -> Bitmap?)>()
+        }
+    }
+
+    @Test
+    fun `LiteRT model with unavailable interpreter falls back to the classical dispatch`() {
+        val inpainter = mockk<AOTInpainting>()
+        val litert = mockk<LiteRTMangaInpaintingEngine>()
+        every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
+        every { inpainter.lastRunDegraded } returns false
+        every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns mockk()
+        every { litert.isAvailable() } returns false
+        val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
+
+        PageInpaintingEngine(
+            InpaintingMode.QUALITY,
+            inpainter,
+            litertInpainter = litert,
+            qualityFallbackPref = { true },
+        ).inpaint(bitmap(), page)
+
+        verify {
+            inpainter.inpaintRegions(
+                any(),
+                any(),
+                any(),
+                InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = false),
+                any(),
+            )
+        }
+        verify { inpainter.freeTextNeuralFill = null }
+    }
+
+    @Test
+    fun `FAST mode never engages the LiteRT delegate`() {
+        val inpainter = mockk<AOTInpainting>()
+        val litert = mockk<LiteRTMangaInpaintingEngine>()
+        every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
+        every { inpainter.lastRunDegraded } returns false
+        every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns mockk()
+        every { litert.isAvailable() } returns true
+        val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
+
+        PageInpaintingEngine(
+            InpaintingMode.FAST,
+            inpainter,
+            litertInpainter = litert,
+        ).inpaint(bitmap(), page)
+
+        verify {
+            inpainter.inpaintRegions(
+                any(),
+                any(),
+                any(),
+                InpaintingMode.FAST.resolveDispatch(neuralAvailable = false),
+                any(),
+            )
+        }
+        verify { inpainter.freeTextNeuralFill = null }
     }
 
     @Test
@@ -128,16 +232,25 @@ class PageInpaintingEngineTest {
         val inpainter = mockk<AOTInpainting>()
         val cleaned = mockk<Bitmap>()
         every { inpainter.isInitialized() } returns true
+        every { inpainter.freeTextNeuralFill = any() } just runs
         every { inpainter.lastRunDegraded } returns false
         every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns cleaned
         val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
 
-        PageInpaintingEngine(InpaintingMode.BALANCE, inpainter).inpaint(bitmap(), page) shouldBe cleaned
+        PageInpaintingEngine(
+            InpaintingMode.BALANCE,
+            inpainter,
+            neuralModel = tachiyomi.domain.translation.NeuralInpaintModel.AOT_GAN,
+        ).inpaint(bitmap(), page) shouldBe cleaned
         page.inpaintingModeUsed shouldBe "BALANCE:AOT"
 
         every { inpainter.lastRunDegraded } returns true
         val degradedPage = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
-        PageInpaintingEngine(InpaintingMode.BALANCE, inpainter).inpaint(bitmap(), degradedPage) shouldBe cleaned
+        PageInpaintingEngine(
+            InpaintingMode.BALANCE,
+            inpainter,
+            neuralModel = tachiyomi.domain.translation.NeuralInpaintModel.AOT_GAN,
+        ).inpaint(bitmap(), degradedPage) shouldBe cleaned
         degradedPage.inpaintingModeUsed shouldBe "BALANCE:AOT_DEGRADED"
 
         every { inpainter.lastRunDegraded } returns false
@@ -154,6 +267,7 @@ class PageInpaintingEngineTest {
     fun `cancellation is rethrown and is not recorded as an inpainting failure`() {
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
         every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } throws CancellationException("cancelled")
         val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
 
@@ -173,6 +287,7 @@ class PageInpaintingEngineTest {
         val cleaned = mockk<Bitmap>()
         val inpainter = mockk<AOTInpainting>()
         every { inpainter.isInitialized() } returns false
+        every { inpainter.freeTextNeuralFill = any() } just runs
         every { inpainter.lastRunDegraded } returns false
         every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns cleaned
 

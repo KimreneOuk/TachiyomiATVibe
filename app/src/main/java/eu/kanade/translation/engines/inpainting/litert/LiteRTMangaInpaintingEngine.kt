@@ -232,11 +232,40 @@ class LiteRTMangaInpaintingEngine(
             return image
         }
 
+        val result = image.copy(Bitmap.Config.ARGB_8888, true)
+        fillPatchesInPlace(result, boxes, interp)
+        return result
+    }
+
+    /**
+     * Neural fill for Paddle-refined free-text line boxes, mutating [image] in
+     * place. Speech bubbles never route here — the dispatch keeps them on the
+     * smooth diffusion path — so every box in [boxes] is free text.
+     *
+     * Returns the mutated [image], or null when the interpreter is unavailable
+     * (the caller falls back to its classical free-text path).
+     */
+    fun inpaintFreeText(
+        image: Bitmap,
+        groupBoxes: List<IntArray>,
+    ): Bitmap? {
+        if (groupBoxes.isEmpty()) return image
+        ensureInitialized()
+        val interp = interpreter ?: return null
+        fillPatchesInPlace(image, groupBoxes, interp)
+        return image
+    }
+
+    /** Page dims cached per fill for the benchmark log. */
+    private fun fillPatchesInPlace(
+        image: Bitmap,
+        boxes: List<IntArray>,
+        interp: Interpreter,
+    ) {
         val pageStart = System.currentTimeMillis()
         var totalInferMs = 0L
         var patchCount = 0
 
-        val result = image.copy(Bitmap.Config.ARGB_8888, true)
         val pageW = image.width
         val pageH = image.height
 
@@ -252,9 +281,9 @@ class LiteRTMangaInpaintingEngine(
             val side = min(MODEL_INPUT_SIZE, max(cropW, cropH))
             if (side <= 0) continue
 
-            // Read sub-rectangle from result bitmap
+            // Read sub-rectangle from the image being filled
             val subPixels = IntArray(cropW * cropH)
-            result.getPixels(subPixels, 0, cropW, cropRect.left, cropRect.top, cropW, cropH)
+            image.getPixels(subPixels, 0, cropW, cropRect.left, cropRect.top, cropW, cropH)
 
             // Center cropW x cropH into a square side x side with replicate border clamp
             val sourceSquare = IntArray(side * side)
@@ -350,7 +379,7 @@ class LiteRTMangaInpaintingEngine(
             val blendedSquare = IntArray(side * side)
             AotPixelOps.compositeInto(sourceSquare, decodedSquare, alphaField, blendedSquare)
 
-            // 5. Write unpadded cropW x cropH pixels back to result bitmap
+            // 5. Write unpadded cropW x cropH pixels back to the image bitmap
             val finalCropPixels = IntArray(cropW * cropH)
             for (y in 0 until cropH) {
                 System.arraycopy(
@@ -361,7 +390,7 @@ class LiteRTMangaInpaintingEngine(
                     cropW,
                 )
             }
-            result.setPixels(finalCropPixels, 0, cropW, cropRect.left, cropRect.top, cropW, cropH)
+            image.setPixels(finalCropPixels, 0, cropW, cropRect.left, cropRect.top, cropW, cropH)
         }
 
         val totalPageElapsed = System.currentTimeMillis() - pageStart
@@ -370,8 +399,6 @@ class LiteRTMangaInpaintingEngine(
                 "Patches=$patchCount | PureInferMs=${totalInferMs}ms | TotalPageMs=${totalPageElapsed}ms | " +
                 "PageSize=${pageW}x$pageH"
         }
-
-        return result
     }
 
     private data class InpaintPatch(

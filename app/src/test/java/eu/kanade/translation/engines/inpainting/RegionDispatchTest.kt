@@ -8,19 +8,19 @@ class RegionDispatchTest {
     @Test
     fun `mode table maps the three modes to their spec backends`() {
         InpaintingMode.FAST.resolveDispatch(neuralAvailable = true) shouldBe
-            RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.OPENCV_TELEA)
+            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
         InpaintingMode.FAST.resolveDispatch(neuralAvailable = false) shouldBe
-            RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.OPENCV_TELEA)
+            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
 
         InpaintingMode.BALANCE.resolveDispatch(neuralAvailable = true) shouldBe
-            RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.AOT_NEURAL)
+            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL)
         InpaintingMode.BALANCE.resolveDispatch(neuralAvailable = false) shouldBe
-            RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.OPENCV_TELEA)
+            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
 
         InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = true) shouldBe
-            RegionDispatch(RegionBackend.AOT_NEURAL, RegionBackend.AOT_NEURAL)
+            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL)
         InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = false) shouldBe
-            RegionDispatch(RegionBackend.OPENCV_NS, RegionBackend.OPENCV_TELEA)
+            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
     }
 
     @Test
@@ -32,9 +32,25 @@ class RegionDispatchTest {
     }
 
     @Test
-    fun `QUALITY dispatches bubbles to AOT only when sessions exist`() {
-        InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = true).bubble shouldBe RegionBackend.AOT_NEURAL
-        InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = false).bubble shouldBe RegionBackend.OPENCV_NS
+    fun `all modes keep speech bubbles on clean smooth diffusion`() {
+        for (mode in InpaintingMode.entries) {
+            mode.resolveDispatch(neuralAvailable = true).bubble shouldBe RegionBackend.SMOOTH_DIFFUSION
+            mode.resolveDispatch(neuralAvailable = false).bubble shouldBe RegionBackend.SMOOTH_DIFFUSION
+        }
+    }
+
+    @Test
+    fun `free text route prefers the delegate, then onnx, then classical`() {
+        resolveFreeTextRoute(dispatchNeural = true, delegateAvailable = true, onnxInitialized = false) shouldBe
+            FreeTextRoute.NEURAL_DELEGATE
+        resolveFreeTextRoute(dispatchNeural = true, delegateAvailable = true, onnxInitialized = true) shouldBe
+            FreeTextRoute.NEURAL_DELEGATE
+        resolveFreeTextRoute(dispatchNeural = true, delegateAvailable = false, onnxInitialized = true) shouldBe
+            FreeTextRoute.NEURAL_ONNX
+        resolveFreeTextRoute(dispatchNeural = true, delegateAvailable = false, onnxInitialized = false) shouldBe
+            FreeTextRoute.CLASSICAL
+        resolveFreeTextRoute(dispatchNeural = false, delegateAvailable = true, onnxInitialized = true) shouldBe
+            FreeTextRoute.CLASSICAL
     }
 
     @Test
