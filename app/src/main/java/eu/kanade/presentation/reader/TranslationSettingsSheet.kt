@@ -515,44 +515,71 @@ private fun ColumnScope.InpaintSection(
             value = neuralModel,
             onValueChange = onTranslationInpaintingNeuralModelChange,
         )
-        Text(
-            text = stringResource(ATMR.strings.pref_inpainting_hardware_override),
-            style = MaterialTheme.typography.labelLarge,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
-        ) {
-            InpaintingHardwareOverride.entries.forEach { option ->
+
+        if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU) {
+            Text(
+                text = stringResource(ATMR.strings.pref_inpainting_hardware_override),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+            ) {
                 FilterChip(
-                    selected = hardwareOverride == option,
-                    onClick = { onTranslationInpaintingHardwareOverrideChange(option) },
-                    enabled = !lamaCpuOnly || option == InpaintingHardwareOverride.CPU,
+                    selected = true,
+                    onClick = {},
+                    enabled = true,
                     label = {
-                        Text(
-                            text = stringResource(
-                                when (option) {
-                                    InpaintingHardwareOverride.CPU -> ATMR.strings.pref_inpainting_hardware_cpu
-                                    InpaintingHardwareOverride.GPU -> ATMR.strings.pref_inpainting_hardware_gpu
-                                    InpaintingHardwareOverride.NPU -> ATMR.strings.pref_inpainting_hardware_npu
-                                },
-                            ),
-                        )
+                        Text(text = "GPU (LiteRT OpenCL/Vulkan)")
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
+            Text(
+                text = "Runs with hardware GPU acceleration via LiteRT, with seamless automatic fallback to CPU XNNPACK if unsupported.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        } else {
+            Text(
+                text = stringResource(ATMR.strings.pref_inpainting_hardware_override),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+            ) {
+                InpaintingHardwareOverride.entries.forEach { option ->
+                    FilterChip(
+                        selected = hardwareOverride == option,
+                        onClick = { onTranslationInpaintingHardwareOverrideChange(option) },
+                        enabled = !lamaCpuOnly || option == InpaintingHardwareOverride.CPU,
+                        label = {
+                            Text(
+                                text = stringResource(
+                                    when (option) {
+                                        InpaintingHardwareOverride.CPU -> ATMR.strings.pref_inpainting_hardware_cpu
+                                        InpaintingHardwareOverride.GPU -> ATMR.strings.pref_inpainting_hardware_gpu
+                                        InpaintingHardwareOverride.NPU -> ATMR.strings.pref_inpainting_hardware_npu
+                                    },
+                                ),
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            Text(
+                text = stringResource(
+                    if (lamaCpuOnly) {
+                        ATMR.strings.pref_inpainting_hardware_lama_cpu_only
+                    } else {
+                        ATMR.strings.pref_inpainting_hardware_override_summary
+                    },
+                ),
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
-        Text(
-            text = stringResource(
-                if (lamaCpuOnly) {
-                    ATMR.strings.pref_inpainting_hardware_lama_cpu_only
-                } else {
-                    ATMR.strings.pref_inpainting_hardware_override_summary
-                },
-            ),
-            style = MaterialTheme.typography.bodySmall,
-        )
     }
 }
 
