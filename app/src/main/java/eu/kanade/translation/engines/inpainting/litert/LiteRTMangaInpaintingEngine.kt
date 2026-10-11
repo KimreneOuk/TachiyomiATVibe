@@ -46,13 +46,28 @@ class LiteRTMangaInpaintingEngine(
     private var backendName: String = "UNINITIALIZED"
 
     // Reusable direct native buffers to eliminate per-inference heap allocation
-    private val inputBuffer: ByteBuffer = ByteBuffer.allocateDirect(1 * MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 4 * Float.SIZE_BYTES)
+    // Dual-input signature (standard for manga_lama_fused_fp16):
+    // Input 0: Image [1, 512, 512, 3] NHWC Float32 (3,145,728 bytes)
+    private val imageBuffer: ByteBuffer = ByteBuffer.allocateDirect(1 * MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 3 * Float.SIZE_BYTES)
         .order(ByteOrder.nativeOrder())
+    // Input 1: Mask [1, 512, 512, 1] NHWC Float32 (1,048,576 bytes)
+    private val maskBuffer: ByteBuffer = ByteBuffer.allocateDirect(1 * MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 1 * Float.SIZE_BYTES)
+        .order(ByteOrder.nativeOrder())
+    // Fallback single-input buffer for legacy 4-channel models [1, 512, 512, 4] (4,194,304 bytes)
+    private val singleInputBuffer: ByteBuffer = ByteBuffer.allocateDirect(1 * MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 4 * Float.SIZE_BYTES)
+        .order(ByteOrder.nativeOrder())
+
     private val outputBuffer: ByteBuffer = ByteBuffer.allocateDirect(1 * MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 3 * Float.SIZE_BYTES)
         .order(ByteOrder.nativeOrder())
 
-    private val inputFloatBuffer: FloatBuffer = inputBuffer.asFloatBuffer()
+    private val imageFloatBuffer: FloatBuffer = imageBuffer.asFloatBuffer()
+    private val maskFloatBuffer: FloatBuffer = maskBuffer.asFloatBuffer()
+    private val singleInputFloatBuffer: FloatBuffer = singleInputBuffer.asFloatBuffer()
     private val outputFloatBuffer: FloatBuffer = outputBuffer.asFloatBuffer()
+
+    private var imageInputIndex: Int = 0
+    private var maskInputIndex: Int = 1
+    private var isDualInput: Boolean = true
 
     // Pooled scratch arrays for 1:1 replicate padding
     private val paddedSourcePixels = IntArray(MODEL_INPUT_SIZE * MODEL_INPUT_SIZE)
@@ -151,9 +166,23 @@ class LiteRTMangaInpaintingEngine(
             }
 
             interpreter = createdInterpreter
+            if (createdInterpreter != null) {
+                isDualInput = createdInterpreter.inputTensorCount >= 2
+                if (isDualInput) {
+                    imageInputIndex = try {
+                        val idx = createdInterpreter.getInputIndex("serving_default_input_image:0")
+                        if (idx >= 0) idx else 0
+                    } catch (_: Throwable) { 0 }
+                    maskInputIndex = try {
+                        val idx = createdInterpreter.getInputIndex("serving_default_input_mask:0")
+                        if (idx >= 0) idx else 1
+                    } catch (_: Throwable) { 1 }
+                }
+            }
+
             val elapsed = System.currentTimeMillis() - startInit
             logcat(LogPriority.INFO) {
-                "[InpaintBenchmark] [LiteRTInpaint] Ready in ${elapsed}ms | Backend: $backendName | Model: ${modelFile.name}"
+                "[InpaintBenchmark] [LiteRTInpaint] Ready in ${elapsed}ms | Backend: $backendName | Model: ${modelFile.name} | Inputs=${createdInterpreter?.inputTensorCount ?: 0}"
             }
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e) { "[LiteRTInpaint] Initialization failed completely" }
@@ -323,38 +352,87 @@ class LiteRTMangaInpaintingEngine(
             AotPadPath.padSquareReplicateInto(sourceSquare, side, paddedSourcePixels)
             AotPadPath.padSquareInto(localMaskPixels, side, 0, paddedMaskPixels)
 
-            // Pack into FloatBuffer input [1, 512, 512, 4] NHWC
-            inputBuffer.rewind()
-            inputFloatBuffer.rewind()
+            if (isDualInput) {
+                // Pack into dual input buffers: image [1, 512, 512, 3] and mask [1, 512, 512, 1]
+                imageBuffer.rewind()
+                imageBuffer.position(0)
+                imageFloatBuffer.rewind()
 
-            for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) {
-                val p = paddedSourcePixels[i]
-                val isMask = if ((paddedMaskPixels[i] and 0xFF) > 127) 1.0f else 0.0f
-                val keep = 1.0f - isMask
+                maskBuffer.rewind()
+                maskBuffer.position(0)
+                maskFloatBuffer.rewind()
 
-                val r = ((p shr 16) and 0xFF) / 255.0f * keep
-                val g = ((p shr 8) and 0xFF) / 255.0f * keep
-                val b = (p and 0xFF) / 255.0f * keep
+                for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) {
+                    val p = paddedSourcePixels[i]
+                    val isMask = if ((paddedMaskPixels[i] and 0xFF) > 127) 1.0f else 0.0f
+                    val keep = 1.0f - isMask
 
-                inputFloatBuffer.put(r)
-                inputFloatBuffer.put(g)
-                inputFloatBuffer.put(b)
-                inputFloatBuffer.put(isMask)
+                    val r = ((p shr 16) and 0xFF) / 255.0f * keep
+                    val g = ((p shr 8) and 0xFF) / 255.0f * keep
+                    val b = (p and 0xFF) / 255.0f * keep
+
+                    imageFloatBuffer.put(r)
+                    imageFloatBuffer.put(g)
+                    imageFloatBuffer.put(b)
+                    maskFloatBuffer.put(isMask)
+                }
+
+                imageBuffer.rewind()
+                imageBuffer.position(0)
+                maskBuffer.rewind()
+                maskBuffer.position(0)
+                outputBuffer.rewind()
+                outputBuffer.position(0)
+
+                // 2. Pure neural inference
+                val inferStart = System.currentTimeMillis()
+                synchronized(this) {
+                    val inputCount = max(imageInputIndex, maskInputIndex) + 1
+                    val inputs = arrayOfNulls<Any>(inputCount)
+                    inputs[imageInputIndex] = imageBuffer
+                    inputs[maskInputIndex] = maskBuffer
+                    val outputs = mapOf(0 to outputBuffer)
+                    @Suppress("UNCHECKED_CAST")
+                    interp.runForMultipleInputsOutputs(inputs as Array<Any>, outputs)
+                }
+                val inferElapsed = System.currentTimeMillis() - inferStart
+                totalInferMs += inferElapsed
+                patchCount++
+            } else {
+                // Legacy fallback: single 4-channel input [1, 512, 512, 4]
+                singleInputBuffer.rewind()
+                singleInputBuffer.position(0)
+                singleInputFloatBuffer.rewind()
+
+                for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) {
+                    val p = paddedSourcePixels[i]
+                    val isMask = if ((paddedMaskPixels[i] and 0xFF) > 127) 1.0f else 0.0f
+                    val keep = 1.0f - isMask
+
+                    val r = ((p shr 16) and 0xFF) / 255.0f * keep
+                    val g = ((p shr 8) and 0xFF) / 255.0f * keep
+                    val b = (p and 0xFF) / 255.0f * keep
+
+                    singleInputFloatBuffer.put(r)
+                    singleInputFloatBuffer.put(g)
+                    singleInputFloatBuffer.put(b)
+                    singleInputFloatBuffer.put(isMask)
+                }
+
+                singleInputBuffer.rewind()
+                singleInputBuffer.position(0)
+                outputBuffer.rewind()
+                outputBuffer.position(0)
+
+                // 2. Pure neural inference
+                val inferStart = System.currentTimeMillis()
+                synchronized(this) {
+                    interp.run(singleInputBuffer, outputBuffer)
+                }
+                val inferElapsed = System.currentTimeMillis() - inferStart
+                totalInferMs += inferElapsed
+                patchCount++
             }
-
-            inputBuffer.rewind()
-            inputBuffer.position(0)
-            outputBuffer.rewind()
-            outputBuffer.position(0)
-
-            // 2. Pure neural inference
-            val inferStart = System.currentTimeMillis()
-            synchronized(this) {
-                interp.run(inputBuffer, outputBuffer)
-            }
-            val inferElapsed = System.currentTimeMillis() - inferStart
-            totalInferMs += inferElapsed
-            patchCount++
 
             // 3. Unpack output tensor [1, 512, 512, 3] NHWC
             outputFloatBuffer.rewind()
