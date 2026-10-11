@@ -148,8 +148,12 @@ def extract_and_fuse(onnx_path: str = "audit/models/lama-manga.onnx"):
             ffc.conv_g2g.conv1.bias.data.copy_(torch.from_numpy(b_g2g_conv1))
 
             w_fu_conv, b_fu_conv = get_conv_wb(f"{conv_prefix}/ffc/convg2g/fu/conv_layer/Conv")
-            ffc.conv_g2g.fu.conv_layer.weight.data.copy_(torch.from_numpy(w_fu_conv))
-            ffc.conv_g2g.fu.conv_layer.bias.data.copy_(torch.from_numpy(b_fu_conv))
+            # Permute from interleaved [r0, i0, r1, i1, ...] to concatenated [r0...r191, i0...i191]
+            perm = [2 * c for c in range(192)] + [2 * c + 1 for c in range(192)]
+            w_fu_conv_perm = w_fu_conv[perm, :, :, :][:, perm, :, :]
+            b_fu_conv_perm = b_fu_conv[perm]
+            ffc.conv_g2g.fu.conv_layer.weight.data.copy_(torch.from_numpy(w_fu_conv_perm))
+            ffc.conv_g2g.fu.conv_layer.bias.data.copy_(torch.from_numpy(b_fu_conv_perm))
 
     print(f"Fused {fused_count} bottleneck BN points (72 expected).")
 

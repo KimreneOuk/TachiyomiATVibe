@@ -70,8 +70,11 @@ def precompute_fourier_matrices(n: int = 64):
 
 class StaticFourierUnit(nn.Module):
     """
-    Fast Fourier Unit with precomputed static matrix multiplications.
-    Completely eliminates runtime trigonometric evaluations and einsums.
+    Fast Fourier Unit with precomputed static matrix multiplications optimized
+    for Qualcomm Snapdragon Adreno GPU (OpenCL) and Hexagon NPU (QNN).
+    - Eliminates 5D tensors (torch.stack) in favor of strictly 4D channel concatenation.
+    - Replaces 4D BatchMatMul with native nn.Linear (FULLY_CONNECTED) projections.
+    - Zero strided gather/slice operations.
     """
     def __init__(self, in_channels: int = 192, spatial_size: int = 64):
         super().__init__()
@@ -79,16 +82,27 @@ class StaticFourierUnit(nn.Module):
         self.spatial_size = spatial_size
         self.num_freq = spatial_size // 2 + 1  # 33
 
-        # Register precomputed constant DFT matrices as buffers
         Cw, Sw, Fh_c, Fh_s, Ainv, Binv = precompute_fourier_matrices(spatial_size)
-        self.register_buffer("Cw", Cw)
-        self.register_buffer("Sw", Sw)
-        self.register_buffer("Fh_c", Fh_c)
-        self.register_buffer("Fh_s", Fh_s)
-        self.register_buffer("Ainv", Ainv)
-        self.register_buffer("Binv", Binv)
 
-        # 1x1 Conv processing stacked real & imaginary frequency representations
+        # 1D Row RFFT projections
+        self.fc_cw = nn.Linear(spatial_size, self.num_freq, bias=False)
+        self.fc_cw.weight.data = Cw.t().contiguous()
+        self.fc_sw = nn.Linear(spatial_size, self.num_freq, bias=False)
+        self.fc_sw.weight.data = Sw.t().contiguous()
+
+        # 1D Column CFFT projections
+        self.fc_fh_c = nn.Linear(spatial_size, spatial_size, bias=False)
+        self.fc_fh_c.weight.data = Fh_c.contiguous()
+        self.fc_fh_s = nn.Linear(spatial_size, spatial_size, bias=False)
+        self.fc_fh_s.weight.data = Fh_s.contiguous()
+
+        # 1D Row IRFFT reconstruction projections
+        self.fc_ainv = nn.Linear(self.num_freq, spatial_size, bias=False)
+        self.fc_ainv.weight.data = Ainv.t().contiguous()
+        self.fc_binv = nn.Linear(self.num_freq, spatial_size, bias=False)
+        self.fc_binv.weight.data = Binv.t().contiguous()
+
+        # 1x1 Conv processing concatenated [real, imag] frequency representations
         self.conv_layer = nn.Conv2d(
             in_channels * 2,
             in_channels * 2,
@@ -103,40 +117,35 @@ class StaticFourierUnit(nn.Module):
         Input x: [B, C, 64, 64]
         Output:  [B, C, 64, 64]
         """
-        B, C, H, W = x.shape
-
         # 1. Forward 1D RFFT along width axis (dim 3)
-        # x @ Cw -> [B, C, 64, 33], x @ Sw -> [B, C, 64, 33]
-        r_w = torch.matmul(x, self.Cw)
-        i_w = -torch.matmul(x, self.Sw)
+        r_w = self.fc_cw(x)
+        i_w = -self.fc_sw(x)
 
-        # 2. Forward 1D CFFT along height axis (dim 2)
-        # (Fh_c - j Fh_s) @ (r_w + j i_w)
-        r_2d = torch.matmul(self.Fh_c, r_w) + torch.matmul(self.Fh_s, i_w)
-        i_2d = torch.matmul(self.Fh_c, i_w) - torch.matmul(self.Fh_s, r_w)
+        # 2. Forward 1D CFFT along height axis (dim 2) via permuted Linear
+        rw_t = r_w.permute(0, 1, 3, 2)
+        iw_t = i_w.permute(0, 1, 3, 2)
+        r_2d = (self.fc_fh_c(rw_t) + self.fc_fh_s(iw_t)).permute(0, 1, 3, 2)
+        i_2d = (self.fc_fh_c(iw_t) - self.fc_fh_s(rw_t)).permute(0, 1, 3, 2)
 
-        # 3. Interleave real and imaginary channels: [B, 2*C, 64, 33]
-        # Channels: [r0, i0, r1, i1, ...]
-        ffted = torch.stack([r_2d, i_2d], dim=2).flatten(1, 2)
+        # 3. Concatenate real & imaginary channels (strictly 4D: [B, 2*C, 64, 33])
+        ffted = torch.cat([r_2d, i_2d], dim=1)
 
         # 4. Complex frequency convolution & activation
         ffted = self.relu(self.conv_layer(ffted))
 
-        # 5. Unpack real and imaginary channels
-        ffted = ffted.view(B, C, 2, H, self.num_freq)
-        r_conv = ffted[:, :, 0]
-        i_conv = ffted[:, :, 1]
+        # 5. Split channels back into real & imaginary
+        r_conv, i_conv = torch.chunk(ffted, 2, dim=1)
 
-        # 6. Inverse 1D CFFT along height axis (dim 2)
-        # (Fh_c + j Fh_s) @ (r_conv + j i_conv)
-        r_h = torch.matmul(self.Fh_c, r_conv) - torch.matmul(self.Fh_s, i_conv)
-        i_h = torch.matmul(self.Fh_c, i_conv) + torch.matmul(self.Fh_s, r_conv)
+        # 6. Inverse 1D CFFT along height axis
+        r_conv_t = r_conv.permute(0, 1, 3, 2)
+        i_conv_t = i_conv.permute(0, 1, 3, 2)
+        r_h = (self.fc_fh_c(r_conv_t) - self.fc_fh_s(i_conv_t)).permute(0, 1, 3, 2)
+        i_h = (self.fc_fh_c(i_conv_t) + self.fc_fh_s(r_conv_t)).permute(0, 1, 3, 2)
 
-        # 7. Inverse 1D IRFFT along width axis (dim 3)
-        # r_h @ Ainv - i_h @ Binv -> [B, C, 64, 64]
-        x_rec = torch.matmul(r_h, self.Ainv) - torch.matmul(i_h, self.Binv)
-
+        # 7. Inverse 1D IRFFT along width axis
+        x_rec = self.fc_ainv(r_h) - self.fc_binv(i_h)
         return x_rec
+
 
 
 class FFCSpectralBlock(nn.Module):

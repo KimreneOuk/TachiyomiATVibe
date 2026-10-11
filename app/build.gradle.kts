@@ -57,7 +57,7 @@ android {
     }
 
     androidResources {
-        noCompress += listOf("tflite")
+        noCompress += listOf("tflite", "gz")
     }
 
     signingConfigs {
