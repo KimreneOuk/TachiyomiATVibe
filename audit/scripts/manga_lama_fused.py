@@ -3,12 +3,12 @@
 Manga LaMa Fused PyTorch Architecture for Google LiteRT Mobile GPU Deployment.
 
 Key Structural Innovations:
-1. StaticFourierUnit:
-   - Eliminates runtime Einsum, Range, Cos, Sin, and dynamic Slices.
-   - Decomposes 2D Real-to-Complex FFT (64x64) into static 1D real matrix multiplications:
+1. StaticFourierUnit (1x1 Conv2D):
+   - Eliminates runtime Einsum, Range, Cos, Sin, dynamic Slices, and BatchMatMul.
+   - Decomposes 2D Real-to-Complex FFT (64x64) into static 1D 1x1 Conv2D projections:
      X_freq = (Fh_c - j Fh_s) @ (X @ Cw - j X @ Sw)
-   - Inverse 2D Complex-to-Real FFT using precomputed Ainv, Binv and Fh_c, Fh_s matrices.
-   - 100% compatible with Google LiteRT BATCH_MATMUL & CONV_2D GPU delegate operations.
+   - Inverse 2D Complex-to-Real FFT using precomputed Ainv, Binv and Fh_c, Fh_s 1x1 Convs.
+   - 100% compatible with Google LiteRT OpenCL GPU delegate (zero BATCH_MATMUL fallback).
 
 2. Conv-BatchNorm Folding:
    - Fuses all 75 BatchNorm points into preceding Conv2d and ConvTranspose2d weights/biases.
@@ -16,7 +16,7 @@ Key Structural Innovations:
    - Zero BatchNorm layers remaining in the graph.
 
 3. Static Input Signature:
-   - Accepts tensor shaped [B, 4, 512, 512] (Masked R, G, B, Binary Mask).
+   - Accepts either single tensor [B, 4, 512, 512] or dual tensors image [B, 3, 512, 512] + mask [B, 1, 512, 512].
    - Bottleneck fixed permanently to 64x64 resolution.
 """
 
@@ -70,10 +70,10 @@ def precompute_fourier_matrices(n: int = 64):
 
 class StaticFourierUnit(nn.Module):
     """
-    Fast Fourier Unit with precomputed static matrix multiplications optimized
+    Fast Fourier Unit with 1x1 Conv2D projections optimized
     for Qualcomm Snapdragon Adreno GPU (OpenCL) and Hexagon NPU (QNN).
     - Eliminates 5D tensors (torch.stack) in favor of strictly 4D channel concatenation.
-    - Replaces 4D BatchMatMul with native nn.Linear (FULLY_CONNECTED) projections.
+    - Replaces 4D BatchMatMul / Linear with 1x1 CONV_2D operations (100% Adreno GPU delegate support).
     - Zero strided gather/slice operations.
     """
     def __init__(self, in_channels: int = 192, spatial_size: int = 64):
@@ -84,23 +84,26 @@ class StaticFourierUnit(nn.Module):
 
         Cw, Sw, Fh_c, Fh_s, Ainv, Binv = precompute_fourier_matrices(spatial_size)
 
-        # 1D Row RFFT projections
-        self.fc_cw = nn.Linear(spatial_size, self.num_freq, bias=False)
-        self.fc_cw.weight.data = Cw.t().contiguous()
-        self.fc_sw = nn.Linear(spatial_size, self.num_freq, bias=False)
-        self.fc_sw.weight.data = Sw.t().contiguous()
+        # 1D Row RFFT projections via 1x1 Conv
+        # Input channel will be spatial_size (W=64), output channel will be num_freq (33)
+        self.conv_cw = nn.Conv2d(spatial_size, self.num_freq, kernel_size=1, bias=False)
+        self.conv_cw.weight.data = Cw.t().contiguous().unsqueeze(-1).unsqueeze(-1)
+        self.conv_sw = nn.Conv2d(spatial_size, self.num_freq, kernel_size=1, bias=False)
+        self.conv_sw.weight.data = (-Sw.t()).contiguous().unsqueeze(-1).unsqueeze(-1)
 
-        # 1D Column CFFT projections
-        self.fc_fh_c = nn.Linear(spatial_size, spatial_size, bias=False)
-        self.fc_fh_c.weight.data = Fh_c.contiguous()
-        self.fc_fh_s = nn.Linear(spatial_size, spatial_size, bias=False)
-        self.fc_fh_s.weight.data = Fh_s.contiguous()
+        # 1D Column CFFT projections via 1x1 Conv
+        # Input channel will be spatial_size (H=64), output channel will be spatial_size (H=64)
+        self.conv_fh_c = nn.Conv2d(spatial_size, spatial_size, kernel_size=1, bias=False)
+        self.conv_fh_c.weight.data = Fh_c.contiguous().unsqueeze(-1).unsqueeze(-1)
+        self.conv_fh_s = nn.Conv2d(spatial_size, spatial_size, kernel_size=1, bias=False)
+        self.conv_fh_s.weight.data = Fh_s.contiguous().unsqueeze(-1).unsqueeze(-1)
 
-        # 1D Row IRFFT reconstruction projections
-        self.fc_ainv = nn.Linear(self.num_freq, spatial_size, bias=False)
-        self.fc_ainv.weight.data = Ainv.t().contiguous()
-        self.fc_binv = nn.Linear(self.num_freq, spatial_size, bias=False)
-        self.fc_binv.weight.data = Binv.t().contiguous()
+        # 1D Row IRFFT reconstruction projections via 1x1 Conv
+        # Input channel will be num_freq (33), output channel will be spatial_size (W=64)
+        self.conv_ainv = nn.Conv2d(self.num_freq, spatial_size, kernel_size=1, bias=False)
+        self.conv_ainv.weight.data = Ainv.t().contiguous().unsqueeze(-1).unsqueeze(-1)
+        self.conv_binv = nn.Conv2d(self.num_freq, spatial_size, kernel_size=1, bias=False)
+        self.conv_binv.weight.data = Binv.t().contiguous().unsqueeze(-1).unsqueeze(-1)
 
         # 1x1 Conv processing concatenated [real, imag] frequency representations
         self.conv_layer = nn.Conv2d(
@@ -111,21 +114,43 @@ class StaticFourierUnit(nn.Module):
         )
         self.relu = nn.ReLU(inplace=True)
 
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                              missing_keys, unexpected_keys, error_msgs):
+        # Support loading checkpoints that contain Cw, Sw, etc. or fc_cw.weight
+        legacy_keys = [
+            'Cw', 'Sw', 'Fh_c', 'Fh_s', 'Ainv', 'Binv',
+            'fc_cw.weight', 'fc_sw.weight', 'fc_fh_c.weight',
+            'fc_fh_s.weight', 'fc_ainv.weight', 'fc_binv.weight'
+        ]
+        for lk in legacy_keys:
+            full_key = prefix + lk
+            if full_key in state_dict:
+                state_dict.pop(full_key)
+        for conv_name in ['conv_cw', 'conv_sw', 'conv_fh_c', 'conv_fh_s', 'conv_ainv', 'conv_binv']:
+            conv_w_key = prefix + f'{conv_name}.weight'
+            if conv_w_key not in state_dict:
+                state_dict[conv_w_key] = getattr(self, conv_name).weight.data
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict,
+                                      missing_keys, unexpected_keys, error_msgs)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass for Fourier transform, spectral convolution, and inverse transform.
         Input x: [B, C, 64, 64]
         Output:  [B, C, 64, 64]
         """
-        # 1. Forward 1D RFFT along width axis (dim 3)
-        r_w = self.fc_cw(x)
-        i_w = -self.fc_sw(x)
+        # 1. Forward 1D RFFT along width axis (dim 3) via 1x1 Conv
+        # Permute W to channel dim: [B, W=64, C, H=64]
+        x_w = x.permute(0, 3, 1, 2)
+        r_w = self.conv_cw(x_w).permute(0, 2, 3, 1)  # [B, C, H=64, W_freq=33]
+        i_w = self.conv_sw(x_w).permute(0, 2, 3, 1)  # [B, C, H=64, W_freq=33] (negation folded)
 
-        # 2. Forward 1D CFFT along height axis (dim 2) via permuted Linear
-        rw_t = r_w.permute(0, 1, 3, 2)
-        iw_t = i_w.permute(0, 1, 3, 2)
-        r_2d = (self.fc_fh_c(rw_t) + self.fc_fh_s(iw_t)).permute(0, 1, 3, 2)
-        i_2d = (self.fc_fh_c(iw_t) - self.fc_fh_s(rw_t)).permute(0, 1, 3, 2)
+        # 2. Forward 1D CFFT along height axis (dim 2) via 1x1 Conv
+        # Permute H to channel dim: [B, H=64, C, W_freq=33]
+        rw_h = r_w.permute(0, 2, 1, 3)
+        iw_h = i_w.permute(0, 2, 1, 3)
+        r_2d = (self.conv_fh_c(rw_h) + self.conv_fh_s(iw_h)).permute(0, 2, 1, 3)  # [B, C, H=64, W_freq=33]
+        i_2d = (self.conv_fh_c(iw_h) - self.conv_fh_s(rw_h)).permute(0, 2, 1, 3)
 
         # 3. Concatenate real & imaginary channels (strictly 4D: [B, 2*C, 64, 33])
         ffted = torch.cat([r_2d, i_2d], dim=1)
@@ -136,16 +161,18 @@ class StaticFourierUnit(nn.Module):
         # 5. Split channels back into real & imaginary
         r_conv, i_conv = torch.chunk(ffted, 2, dim=1)
 
-        # 6. Inverse 1D CFFT along height axis
-        r_conv_t = r_conv.permute(0, 1, 3, 2)
-        i_conv_t = i_conv.permute(0, 1, 3, 2)
-        r_h = (self.fc_fh_c(r_conv_t) - self.fc_fh_s(i_conv_t)).permute(0, 1, 3, 2)
-        i_h = (self.fc_fh_c(i_conv_t) + self.fc_fh_s(r_conv_t)).permute(0, 1, 3, 2)
+        # 6. Inverse 1D CFFT along height axis (dim 2) via 1x1 Conv
+        r_conv_h = r_conv.permute(0, 2, 1, 3)
+        i_conv_h = i_conv.permute(0, 2, 1, 3)
+        r_h = (self.conv_fh_c(r_conv_h) - self.conv_fh_s(i_conv_h)).permute(0, 2, 1, 3)  # [B, C, H=64, W_freq=33]
+        i_h = (self.conv_fh_c(i_conv_h) + self.conv_fh_s(r_conv_h)).permute(0, 2, 1, 3)
 
-        # 7. Inverse 1D IRFFT along width axis
-        x_rec = self.fc_ainv(r_h) - self.fc_binv(i_h)
+        # 7. Inverse 1D IRFFT along width axis (dim 3) via 1x1 Conv
+        # Permute W_freq to channel dim: [B, W_freq=33, C, H=64]
+        r_h_w = r_h.permute(0, 3, 1, 2)
+        i_h_w = i_h.permute(0, 3, 1, 2)
+        x_rec = (self.conv_ainv(r_h_w) - self.conv_binv(i_h_w)).permute(0, 2, 3, 1)  # [B, C, H=64, W=64]
         return x_rec
-
 
 
 class FFCSpectralBlock(nn.Module):
@@ -249,9 +276,9 @@ class FusedFFCResNetBlock(nn.Module):
 class MangaLaMaFused(nn.Module):
     """
     Full Manga LaMa architecture reconstructed in PyTorch with:
-    - Precomputed StaticFourierUnit (zero Einsum/Cos/Sin/Range/dynamic Slices).
+    - Precomputed StaticFourierUnit via 1x1 Conv2D (zero Einsum/Cos/Sin/Range/BatchMatMul ops).
     - Complete Conv-BatchNorm folding (zero BatchNorm layers).
-    - Fixed 512x512 resolution and [1, 4, 512, 512] input contract.
+    - Fixed 512x512 resolution and dual [1, 3, 512, 512] + [1, 1, 512, 512] input contract.
     """
     def __init__(self, num_blocks: int = 18):
         super().__init__()
@@ -321,12 +348,17 @@ class MangaLaMaFused(nn.Module):
         self.out_conv = nn.Conv2d(64, 3, kernel_size=7, stride=1, padding=0, bias=True)
         self.out_act = nn.Sigmoid()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         """
         Forward inference pass.
-        Input x: [B, 4, 512, 512] (Channels 0-2: Masked RGB, Channel 3: Binary Mask)
-        Output:  [B, 3, 512, 512] (RGB values strictly in [0.0, 1.0])
+        Supports either:
+        - Single tensor x: [B, 4, 512, 512] (Channels 0-2: Masked RGB, Channel 3: Binary Mask)
+        - Dual tensors: image [B, 3, 512, 512] and mask [B, 1, 512, 512]
+        Output: [B, 3, 512, 512] (RGB values strictly in [0.0, 1.0])
         """
+        if mask is not None:
+            x = torch.cat([x, mask], dim=1)
+
         # 1. Encoder Downsampling
         h = self.enc_act0(self.enc_conv0(self.enc_pad0(x)))
         h = self.enc_act1(self.enc_conv1(self.enc_pad1(h)))
@@ -368,6 +400,13 @@ if __name__ == "__main__":
     dummy_input = torch.randn(1, 4, 512, 512)
     with torch.no_grad():
         out = model(dummy_input)
-    print(f"Output shape: {out.shape}, min: {out.min():.4f}, max: {out.max():.4f}")
+    print(f"Output shape (single input): {out.shape}, min: {out.min():.4f}, max: {out.max():.4f}")
     assert out.shape == (1, 3, 512, 512), f"Unexpected output shape: {out.shape}"
-    print("MangaLaMaFused instantiation test passed!")
+
+    dummy_img = torch.randn(1, 3, 512, 512)
+    dummy_mask = torch.randn(1, 1, 512, 512)
+    with torch.no_grad():
+        out_dual = model(dummy_img, dummy_mask)
+    print(f"Output shape (dual input): {out_dual.shape}, min: {out_dual.min():.4f}, max: {out_dual.max():.4f}")
+    assert out_dual.shape == (1, 3, 512, 512), f"Unexpected output shape: {out_dual.shape}"
+    print("MangaLaMaFused instantiation and dual-input test passed!")
