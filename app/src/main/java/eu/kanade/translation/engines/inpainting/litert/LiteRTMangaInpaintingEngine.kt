@@ -80,31 +80,32 @@ class LiteRTMangaInpaintingEngine(
 
             val compatList = CompatibilityList()
             var createdInterpreter: Interpreter? = null
+            var delegate: GpuDelegate? = null
 
-            // 1. Attempt Hardware GPU delegate if supported by hardware
-            if (compatList.isDelegateSupportedOnThisDevice) {
-                var delegate: GpuDelegate? = null
-                try {
-                    val gpuOptions = compatList.bestOptionsForThisDevice
-                    delegate = GpuDelegate(gpuOptions)
-                    val gpuInterpOptions = Interpreter.Options().apply {
-                        addDelegate(delegate)
-                    }
-                    createdInterpreter = Interpreter(modelFile, gpuInterpOptions)
-                    gpuDelegate = delegate
-                    isGpuAccelerated = true
-                    backendName = "GPU (Adreno/Mali OpenCL/Vulkan)"
-                    logcat(LogPriority.INFO) { "[LiteRTInpaint] Hardware GPU delegate initialized successfully" }
-                } catch (e: Throwable) {
-                    logcat(LogPriority.WARN, e) { "[LiteRTInpaint] GPU delegate init failed; falling back to CPU XNNPACK" }
-                    try {
-                        delegate?.close()
-                    } catch (_: Throwable) {}
-                    gpuDelegate = null
-                    createdInterpreter = null
+            // 1. Attempt Hardware GPU delegate directly (OpenCL/Vulkan on Adreno/Mali)
+            try {
+                val gpuOptions = try {
+                    compatList.bestOptionsForThisDevice
+                } catch (_: Throwable) {
+                    GpuDelegate.Options()
                 }
-            } else {
-                logcat(LogPriority.INFO) { "[LiteRTInpaint] Device reports GPU delegate unsupported; using CPU XNNPACK" }
+                val gpu = GpuDelegate(gpuOptions)
+                delegate = gpu
+                val gpuInterpOptions = Interpreter.Options().apply {
+                    addDelegate(gpu)
+                }
+                createdInterpreter = Interpreter(modelFile, gpuInterpOptions)
+                gpuDelegate = gpu
+                isGpuAccelerated = true
+                backendName = "GPU (Adreno/Mali OpenCL/Vulkan)"
+                logcat(LogPriority.INFO) { "[LiteRTInpaint] Hardware GPU delegate initialized successfully" }
+            } catch (e: Throwable) {
+                logcat(LogPriority.WARN, e) { "[LiteRTInpaint] GPU delegate init failed; falling back to CPU XNNPACK" }
+                try {
+                    delegate?.close()
+                } catch (_: Throwable) {}
+                gpuDelegate = null
+                createdInterpreter = null
             }
 
             // 2. Guaranteed fallback to multi-threaded CPU XNNPACK
