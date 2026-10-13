@@ -20,52 +20,16 @@
       }
     },
     {
-      "path": "inpainting/lama-manga.onnx",
-      "size_bytes": 59809275,
-      "sha256": "502ce98fbd8d030501040d4505daea0616003266f4eb82b1d27fd4fca5b55f4a",
-      "source_url": "https://huggingface.co/Liiesl/lama-manga-onnx-quant/resolve/51d07e18caf9b1258585d3706fec8986ccbb8cfb/lama-manga_int8.onnx",
-      "license": "Apache-2.0"
+      "path": "inpainting/manga_lama_fused_fp16.tflite",
+      "size_bytes": 102324796,
+      "sha256": "cb37f4edc40f7df953f6f599a2dbb467fc1654d99b4fc42758be1cac0252365f",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/inpainting-fp16-v1/manga_lama_fused_fp16.tflite"
     },
     {
-      "path": "inpainting/lama-manga-fp16.onnx",
-      "size_bytes": 108818588,
-      "sha256": "043946afd8c66db5680a76266a4fd5269149a7a91f6d45357b63fb429e340e1e",
-      "source_url": "https://huggingface.co/Liiesl/lama-manga-onnx-quant/resolve/51d07e18caf9b1258585d3706fec8986ccbb8cfb/lama-manga_fp16.onnx",
-      "license": "Apache-2.0"
-    },
-    {
-      "path": "inpainting/lama-512-int8.onnx",
-      "size_bytes": 62074990,
-      "sha256": "cab19978adc306622fe37ef60d4a52103b99c98141d499c2a2366a7ed1255dbe",
-      "source_url": "https://huggingface.co/g-ronimo/lama/resolve/main/lama_512_int8.onnx",
-      "license": "Apache-2.0"
-    },
-    {
-      "path": "inpainting/lama-512-fp16.onnx",
-      "size_bytes": 106559381,
-      "sha256": "1fa042eaf30a6660b9190f0a1512d27bdceff90fab172af295303cdf2905e516",
-      "source_url": "https://huggingface.co/g-ronimo/lama/resolve/main/lama_512_fp16.onnx",
-      "license": "Apache-2.0"
-    },
-    {
-      "path": "inpainting/aot-512.onnx",
-      "size_bytes": 22854564,
-      "sha256": "b1d0e7c50f95910cf1ea58fac646699a97ce2efadf7e2c57af3785bf0ea4f9eb",
-      "source_url": "https://huggingface.co/ogkalu/aot-inpainting/resolve/42ffc84ff1bd46dd95f1c5a41e83ee7e98f39189/aot.onnx",
-      "convert": {
-        "script": "scripts/converters/convert_aot_512.py",
-        "source_filename": "aot.onnx",
-        "source_size_bytes": 23068213,
-        "source_sha256": "ffd39ed8e2a275869d3b49180d030f0d8b8b9c2c20ed0e099ecd207201f0eada"
-      },
-      "provenance": "manga-tuned AOT-GAN trained by zyddnys for manga-image-translator; jit-traced re-upload ogkalu/aot-inpainting@42ffc84f (MIT, unchanged since 2025-10-16); aot-512.onnx derived locally by scripts/converters/convert_aot_512.py (static-shape fold of aot.onnx)"
-    },
-    {
-      "path": "inpainting/aot.onnx",
-      "size_bytes": 23068213,
-      "sha256": "ffd39ed8e2a275869d3b49180d030f0d8b8b9c2c20ed0e099ecd207201f0eada",
-      "source_url": "https://huggingface.co/ogkalu/aot-inpainting/resolve/42ffc84ff1bd46dd95f1c5a41e83ee7e98f39189/aot.onnx",
-      "provenance": "manga-tuned AOT-GAN trained by zyddnys for manga-image-translator; jit-traced re-upload ogkalu/aot-inpainting@42ffc84f (MIT, unchanged since 2025-10-16)"
+      "path": "inpainting/aot_512_regen_gap_fp16.tflite",
+      "size_bytes": 11469264,
+      "sha256": "da17c1cb341d994d54ca5a88a02cf59ef129e2081bff879fa3136b391b2e0087",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/inpainting-fp16-v1/aot_512_regen_gap_fp16.tflite"
     },
     {
       "path": "ocr/decoder_init.onnx",
