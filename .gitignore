@@ -32,21 +32,28 @@ logs/
 .zcode/
 .agents/
 .superpowers/
+AGENT*.md
+AGENT_*.md
 
-# Inpaint debug viewer: local-only dev tool, not a build dependency
-tools/inpaint-debug-viewer/
-tools/downloader/output/
-# Downloaded raw manga test images (regenerable; very long path names)
-tools/*Rawkuma*/
+# Local development and scraping tools (not APK build dependencies)
+tools/
 __pycache__/
 *.pyc
+
+# Model and quality audits (not APK build dependencies)
+audit/
+
+# Local scratch databases and test segments
+*.tjr
+tachiyomi.db
+sites/
+test_page*.jpg
 
 # Regenerable debug/test outputs from overlay_lab (code is tracked, these are not)
 overlay_lab/debug_*.png
 
 # local agent-tool config containing credentials - never commit
 kilo.json
-
 
 # Local signing credentials and environment files
 .env
@@ -62,13 +69,10 @@ kilo.json
 *.aab
 /captures/
 
+# Local native libraries / benchmark payloads
+/app/src/main/jniLibs/
+
 # Runtime models are fetched from the models-v1 release; retain empty placeholders
 /app/src/main/assets/models/**
 !/app/src/main/assets/models/**/
 !/app/src/main/assets/models/**/.gitkeep
-!/app/src/main/assets/models/inpainting/manga_lama_fused_fp16.tflite.gz
-
-# Audit models and large profiler dumps (>100MB)
-/audit/models/*
-!/audit/models/.gitkeep
-/audit/reports/ort_profile_*.json
