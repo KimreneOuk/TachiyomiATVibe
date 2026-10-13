@@ -32,6 +32,12 @@ data class ModelPaths(
     val bubbleSegmenterModel: File?,
 )
 
+data class PaddleOcrV6LiteRtPaths(
+    val recognitionModelsByWidth: Map<Int, File>,
+    val dictionary: File,
+    val detectorModel: File,
+)
+
 data class PaddleOcrV6SmallPaths(
     val recognitionModel: File,
     val dictionary: File,
@@ -178,6 +184,38 @@ class OnnxModelStore(private val context: Context) {
      * (graceful fallback) — [paddleOcrV6DetAvailable] / [assetsAvailable] gate
      * whether the det engine is built.
      */
+    fun paddleOcrV6LiteRtAssetsAvailable(): Boolean {
+        return try {
+            val files = context.assets.list(PADDLE_LITERT_ASSET_DIR)?.toSet() ?: return false
+            PADDLE_LITERT_REQUIRED_ASSETS.all { it in files }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun ensurePaddleOcrV6LiteRt(): PaddleOcrV6LiteRtPaths {
+        val dir = File(modelsDir, "paddle-v6-small/litert").also { if (!it.exists()) it.mkdirs() }
+        val recognitionModels = PADDLE_LITERT_WIDTHS.associateWith { width ->
+            val name = "manga_rec_${width}_fp16.tflite"
+            copyIfNeeded(dir, name, "$PADDLE_LITERT_ASSET_DIR/$name")
+        }
+        val dictionaryName = "PP-OCRv6_small_rec.txt"
+        val detectorName = "manga_det_960_fp16.tflite"
+        return PaddleOcrV6LiteRtPaths(
+            recognitionModelsByWidth = recognitionModels,
+            dictionary = copyIfNeeded(
+                dir,
+                dictionaryName,
+                "$PADDLE_LITERT_ASSET_DIR/$dictionaryName",
+            ),
+            detectorModel = copyIfNeeded(
+                dir,
+                detectorName,
+                "$PADDLE_LITERT_ASSET_DIR/$detectorName",
+            ),
+        )
+    }
+
     fun paddleOcrV6DetAvailable(): Boolean {
         val dir = File(modelsDir, "paddle-v6-small/det")
         return File(dir, "inference.onnx").exists()
@@ -351,6 +389,11 @@ class OnnxModelStore(private val context: Context) {
     )
 
     private companion object {
+        const val PADDLE_LITERT_ASSET_DIR = "models/ocr/paddle-v6-small/litert"
+        val PADDLE_LITERT_WIDTHS = listOf(160, 320, 480, 640, 1600)
+        val PADDLE_LITERT_REQUIRED_ASSETS = PADDLE_LITERT_WIDTHS.map { "manga_rec_${it}_fp16.tflite" } +
+            listOf("manga_det_960_fp16.tflite", "PP-OCRv6_small_rec.txt")
+
         // Bundled-model generation label. Bump when shipping a new model
         // generation; the per-asset SHA-256 in ModelDeployment.computeStamp
         // already auto-detects byte-level changes to a cached file. This label

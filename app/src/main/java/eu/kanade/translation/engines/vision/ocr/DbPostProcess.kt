@@ -269,7 +269,7 @@ object DbPostProcess {
             for (m in merged) {
                 val (mCenterCross, mCrossSize, mGapSize) = when (axis) {
                     Axis.HORIZONTAL -> Triple((m.y1 + m.y2) / 2f, m.y2 - m.y1, m.y2 - m.y1)
-                    Axis.VERTICAL -> Triple((m.x1 + m.x2) / 2f, m.x2 - m.x1, m.y2 - m.y1)
+                    Axis.VERTICAL -> Triple((m.x1 + m.x2) / 2f, m.x2 - m.x1, min(m.x2 - m.x1, 40))
                 }
                 val sameLine = abs(centerCross - mCenterCross) <= sameLineFrac * min(crossSize, mCrossSize)
                 if (!sameLine) continue

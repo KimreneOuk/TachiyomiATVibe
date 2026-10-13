@@ -592,6 +592,10 @@ class LiteRTMangaInpaintingEngine(
 
         // 1. Cluster boxes into contextual evaluation patches (at most MODEL_INPUT_SIZE)
         val patches = clusterIntoPatches(boxes, pageW, pageH, MODEL_INPUT_SIZE, CONTEXT_PADDING)
+        logcat(LogPriority.INFO) {
+            "[LiteRTInpaint] inputBoxes=${boxes.size} boxes=" + boxes.joinToString { "[${it[0]},${it[1]},${it[2]},${it[3]}]" } +
+                " -> patches=${patches.size}: " + patches.joinToString { p -> "${p.cropRect} (contained=${p.containedBoxes.size})" }
+        }
 
         for (patch in patches) {
             val cropRect = patch.cropRect
@@ -695,6 +699,14 @@ class LiteRTMangaInpaintingEngine(
         for (box in boxes) {
             val bw = box[2] - box[0]
             val bh = box[3] - box[1]
+            if (bw > MAX_CLUSTER_BOX_SIZE && bh > MAX_CLUSTER_BOX_SIZE) {
+                // A box that is BOTH wider and taller than MAX_CLUSTER_BOX_SIZE is not a text line;
+                // tiling it into 2D grid of 448x448 tiles would mask out and erase massive artwork regions.
+                logcat(LogPriority.WARN) {
+                    "[LiteRTInpaint] Skipping 2D oversized non-text box [${box[0]},${box[1]},${box[2]},${box[3]}] (${bw}x$bh)"
+                }
+                continue
+            }
             if (bw > MAX_CLUSTER_BOX_SIZE || bh > MAX_CLUSTER_BOX_SIZE) {
                 inputBoxes.addAll(InpaintBoxGeometry.tileBounds(box[0], box[1], box[2], box[3], tile = MAX_CLUSTER_BOX_SIZE, overlap = 64))
             } else {

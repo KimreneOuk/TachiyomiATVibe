@@ -564,7 +564,7 @@ class NeuralInpaintingCoordinator(
             // Batch all free-text boxes across groups so LiteRT Manga LaMa clusters
             // nearby text into a single 512x512 patch and executes in one forward pass.
             val delegate = requireNotNull(freeTextNeuralFill)
-            val allBoxes = freeTextGroups.flatten()
+            val allBoxes = freeTextGroups.flatten().distinctBy { "${it[0]},${it[1]},${it[2]},${it[3]}" }
             if (allBoxes.isNotEmpty()) {
                 val filled = try {
                     delegate(result, allBoxes)
@@ -617,81 +617,64 @@ class NeuralInpaintingCoordinator(
         var paddleLineCount = 0
         var fallbackCount = 0
         for (det in detectorBoxes) {
+            val detW = det[2] - det[0]
+            val detH = det[3] - det[1]
+            // Skip giant candidate boxes: manga free text is never a massive 2D square
+            if (detW > 400 && detH > 400) {
+                logcat(LogPriority.WARN) {
+                    "[inpaint] skipping oversized 2D detector box: [${det[0]},${det[1]},${det[2]},${det[3]}] (${detW}x$detH)"
+                }
+                continue
+            }
             val cx1 = (det[0] - PADDLE_CROP_PAD).coerceIn(0, w)
             val cy1 = (det[1] - PADDLE_CROP_PAD).coerceIn(0, h)
             val cx2 = (det[2] + PADDLE_CROP_PAD).coerceIn(0, w)
             val cy2 = (det[3] + PADDLE_CROP_PAD).coerceIn(0, h)
-            if (cx2 <= cx1 || cy2 <= cy1) {
-                groups.add(listOf(det.copyOf()))
-                fallbackCount++
-                continue
-            }
+            if (cx2 <= cx1 || cy2 <= cy1) continue
+
             val crop = Bitmap.createBitmap(image, cx1, cy1, cx2 - cx1, cy2 - cy1)
             val lines = try {
                 paddleDetector.detectLines(crop, thresh = PADDLE_THRESH, boxThresh = PADDLE_BOX_THRESH, unclipRatio = PADDLE_UNCLIP_RATIO)
             } catch (e: Exception) {
-                logcat(LogPriority.WARN, e) { "[inpaint] report Paddle DET failed; using detector free-text box" }
+                logcat(LogPriority.WARN, e) { "[inpaint] report Paddle DET failed on crop" }
                 emptyList()
             } finally {
                 crop.recycle()
             }
-            if (lines.isEmpty()) {
-                groups.add(listOf(det.copyOf()))
-                fallbackCount++
-                continue
-            }
-            val group = ArrayList<IntArray>(lines.size)
-            for (line in lines) {
-                val b = line.bbox
-                if (b.size < 4) continue
-                val px1 = (cx1 + b[0]).coerceIn(0, w)
-                val py1 = (cy1 + b[1]).coerceIn(0, h)
-                val px2 = (cx1 + b[2]).coerceIn(0, w)
-                val py2 = (cy1 + b[3]).coerceIn(0, h)
-                if (px2 > px1 && py2 > py1) {
-                    group.add(intArrayOf(px1, py1, px2, py2))
-                    paddleLineCount++
+
+            if (lines.isNotEmpty()) {
+                val group = ArrayList<IntArray>(lines.size)
+                for (line in lines) {
+                    val b = line.bbox
+                    if (b.size < 4) continue
+                    val px1 = (cx1 + b[0]).coerceIn(0, w)
+                    val py1 = (cy1 + b[1]).coerceIn(0, h)
+                    val px2 = (cx1 + b[2]).coerceIn(0, w)
+                    val py2 = (cy1 + b[3]).coerceIn(0, h)
+                    if (px2 > px1 && py2 > py1) {
+                        group.add(intArrayOf(px1, py1, px2, py2))
+                        paddleLineCount++
+                    }
+                }
+                if (group.isNotEmpty()) {
+                    logcat(LogPriority.INFO) {
+                        "[inpaint] freeText refined det=[${det[0]},${det[1]},${det[2]},${det[3]}] into ${group.size} lines: " +
+                            group.joinToString { b -> "[${b[0]},${b[1]},${b[2]},${b[3]}]" }
+                    }
+                    groups.add(group)
+                    continue
                 }
             }
-            if (group.isEmpty()) {
+
+            // Fallback when Paddle detected no text lines in this crop:
+            // Only accept fallback if the candidate box is realistic text size
+            if (detW <= 300 && detH <= 300 && (detW.toLong() * detH.toLong() <= (w.toLong() * h.toLong() * 0.04).toLong())) {
                 groups.add(listOf(det.copyOf()))
                 fallbackCount++
             } else {
-                val detW = det[2] - det[0]
-                val detH = det[3] - det[1]
-                val unionMinX = group.minOf { it[0] }
-                val unionMinY = group.minOf { it[1] }
-                val unionMaxX = group.maxOf { it[2] }
-                val unionMaxY = group.maxOf { it[3] }
-                val unionW = unionMaxX - unionMinX
-                val unionH = unionMaxY - unionMinY
-
-                // Extend detected lines along the reading axis to span the text group cleanly,
-                // ensuring trailing characters are covered without creating artificial boundary pillars.
-                val isVertical = detH >= detW
-                val adjustedGroup = group.map { line ->
-                    val copy = line.copyOf()
-                    if (group.size == 1) {
-                        if (isVertical) {
-                            copy[1] = minOf(copy[1], det[1])
-                            copy[3] = maxOf(copy[3], det[3])
-                        } else {
-                            copy[0] = minOf(copy[0], det[0])
-                            copy[2] = maxOf(copy[2], det[2])
-                        }
-                    } else {
-                        val padReadingAxis = 6
-                        if (isVertical) {
-                            copy[1] = maxOf(det[1], copy[1] - padReadingAxis)
-                            copy[3] = minOf(det[3], copy[3] + padReadingAxis)
-                        } else {
-                            copy[0] = maxOf(det[0], copy[0] - padReadingAxis)
-                            copy[2] = minOf(det[2], copy[2] + padReadingAxis)
-                        }
-                    }
-                    copy
+                logcat(LogPriority.INFO) {
+                    "[inpaint] skipping oversized fallback detector box without Paddle text lines: [${det[0]}, ${det[1]}, ${det[2]}, ${det[3]}] (${detW}x$detH)"
                 }
-                groups.add(adjustedGroup)
             }
         }
         return RefinedFreeTextGroups(groups, paddleLineCount, fallbackCount)

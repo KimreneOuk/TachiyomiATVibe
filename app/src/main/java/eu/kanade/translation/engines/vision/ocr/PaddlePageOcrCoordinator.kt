@@ -1,6 +1,8 @@
 package eu.kanade.translation.engines.vision.ocr
 
 import android.graphics.Bitmap
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatch
@@ -211,6 +213,18 @@ internal class PaddlePageOcrCoordinator(
         val initialDispatcher = dispatcher(pageGeneration, policy)
         val states = ArrayList<RegionState>(detections.size)
         var fallbackDispatcher: PaddlePageOcrBatchDispatcher<Bitmap, Pair<String, Float>>? = null
+        val pageDetLines: List<TextLine> = if (paddleDet != null && detections.isNotEmpty()) {
+            try {
+                paddleDet.detectLines(bitmap)
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) {
+                    "[paddle_det] page-level detection failed; falling back to heuristic"
+                }
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
         try {
             detections.forEachIndexed { regionIndex, detection ->
                 check(!isClosed()) { "ONNX recognition engine closed during OCR geometry planning" }
@@ -218,6 +232,7 @@ internal class PaddlePageOcrCoordinator(
                     bitmap = bitmap,
                     regionIndex = regionIndex,
                     detection = detection,
+                    pageDetLines = pageDetLines,
                     paddleDet = paddleDet,
                     language = language,
                     isVerticalLanguage = isVerticalLanguage,
@@ -347,6 +362,7 @@ internal class PaddlePageOcrCoordinator(
         bitmap: Bitmap,
         regionIndex: Int,
         detection: Detection,
+        pageDetLines: List<TextLine>,
         paddleDet: PaddleOcrV6DetEngine?,
         language: TextRecognizerLanguage,
         isVerticalLanguage: Boolean,
@@ -357,28 +373,67 @@ internal class PaddlePageOcrCoordinator(
         val boxWidth = (bbox[2] - bbox[0]).toFloat()
         val boxHeight = (bbox[3] - bbox[1]).toFloat()
         val isVerticalBubble = isVerticalLanguage && (boxWidth <= boxHeight * 1.5f)
+
+        fun extractLinesForCrop(cropX0: Int, cropY0: Int, cropX1: Int, cropY1: Int): List<TextLine> {
+            if (pageDetLines.isEmpty()) return emptyList()
+            val cropW = (cropX1 - cropX0).coerceAtLeast(1)
+            val cropH = (cropY1 - cropY0).coerceAtLeast(1)
+            val matched = ArrayList<TextLine>()
+            for (line in pageDetLines) {
+                val lb = line.bbox
+                val centerX = (lb[0] + lb[2]) / 2
+                val centerY = (lb[1] + lb[3]) / 2
+                val inBounds = centerX in (bbox[0] - 4)..(bbox[2] + 4) && centerY in (bbox[1] - 4)..(bbox[3] + 4)
+                if (!inBounds) {
+                    val ix0 = maxOf(lb[0], bbox[0])
+                    val iy0 = maxOf(lb[1], bbox[1])
+                    val ix1 = minOf(lb[2], bbox[2])
+                    val iy1 = minOf(lb[3], bbox[3])
+                    val interArea = maxOf(0, ix1 - ix0) * maxOf(0, iy1 - iy0)
+                    val lineArea = (lb[2] - lb[0]) * (lb[3] - lb[1])
+                    if (lineArea <= 0 || interArea < lineArea * 0.4f) continue
+                }
+                val localX0 = (lb[0] - cropX0).coerceIn(0, cropW)
+                val localY0 = (lb[1] - cropY0).coerceIn(0, cropH)
+                val localX1 = (lb[2] - cropX0).coerceIn(0, cropW)
+                val localY1 = (lb[3] - cropY0).coerceIn(0, cropH)
+                if (localX1 > localX0 && localY1 > localY0) {
+                    matched.add(TextLine(intArrayOf(localX0, localY0, localX1, localY1), line.meanScore))
+                }
+            }
+            return matched
+        }
+
         val plan = if (isVerticalBubble) {
             val unpadded = VerticalLineOcr.cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
             try {
+                val lines = extractLinesForCrop(bbox[0], bbox[1], bbox[2], bbox[3])
                 VerticalLineOcr.planMultiLine(
                     crop = unpadded,
-                    paddleDet = null,
+                    paddleDet = if (lines.isEmpty()) null else paddleDet,
                     verticalFallback = true,
                     language = language,
                     isClosed = isClosed,
+                    preDetectedLines = lines,
                 )
             } finally {
                 unpadded.recycle()
             }
         } else {
-            val padded = VerticalLineOcr.cropBitmap(bitmap, bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad)
+            val cropX0 = bbox[0] - pad
+            val cropY0 = bbox[1] - pad
+            val cropX1 = bbox[2] + pad
+            val cropY1 = bbox[3] + pad
+            val padded = VerticalLineOcr.cropBitmap(bitmap, cropX0, cropY0, cropX1, cropY1)
             try {
+                val lines = extractLinesForCrop(cropX0, cropY0, cropX1, cropY1)
                 VerticalLineOcr.planMultiLine(
                     crop = padded,
-                    paddleDet = null,
+                    paddleDet = if (lines.isEmpty()) null else paddleDet,
                     verticalFallback = false,
                     language = language,
                     isClosed = isClosed,
+                    preDetectedLines = lines,
                 )
             } finally {
                 padded.recycle()

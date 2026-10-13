@@ -280,7 +280,7 @@ class RoiPageRecognitionEngine(
                     OcrModel.MANGAOCR -> MangaOcrEngine().also {
                         it.initialize(paths.ocrEncoder, paths.ocrDecoderInit, paths.ocrDecoderStep, paths.ocrVocab)
                     }
-                    OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also {
+                    OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also { engine ->
                         val paddlePaths = modelStore.ensurePaddleOcrV6Small()
                         val activation = PaddleOcrBatchActivationPolicy.currentFromPreferences(
                             preferences = Injekt.get<TranslationPreferences>(),
@@ -296,12 +296,80 @@ class RoiPageRecognitionEngine(
                         } else {
                             null
                         }
-                        it.initialize(
-                            paddlePaths.recognitionModel,
-                            paddlePaths.dictionary,
-                            providerResolution = paddleProvider,
-                            providerConfiguration = providerConfiguration,
-                        )
+
+                        var liteRtInitialized = false
+                        if (modelStore.paddleOcrV6LiteRtAssetsAvailable()) {
+                            var liteRtDetector: PaddleOcrV6DetEngine? = null
+                            try {
+                                val liteRtPaths = modelStore.ensurePaddleOcrV6LiteRt()
+                                engine.initializeLiteRt(
+                                    modelFilesByWidth = liteRtPaths.recognitionModelsByWidth,
+                                    dictionaryFile = liteRtPaths.dictionary,
+                                    preferGpu = true,
+                                    allowXnnpackFallback = true,
+                                    numThreads = 4,
+                                    fallbackInitializer = {
+                                        engine.initialize(
+                                            paddlePaths.recognitionModel,
+                                            paddlePaths.dictionary,
+                                            providerResolution = paddleProvider,
+                                            providerConfiguration = providerConfiguration,
+                                        )
+                                    },
+                                )
+                                liteRtDetector = PaddleOcrV6DetEngine().also {
+                                    it.initializeLiteRt(
+                                        modelFile = liteRtPaths.detectorModel,
+                                        preferGpu = true,
+                                        allowXnnpackFallback = true,
+                                        numThreads = 4,
+                                    )
+                                }
+                                paddleDet = liteRtDetector
+                                liteRtInitialized = true
+                                logcat(LogPriority.INFO) {
+                                    "LiteRT init: PaddleOCR v6 recognizer and detector configured " +
+                                        "(GPU preferred, CPU fallback enabled)"
+                                }
+                            } catch (e: Exception) {
+                                liteRtDetector?.close()
+                                paddleDet = null
+                                engine.close()
+                                logcat(LogPriority.WARN, e) {
+                                    "LiteRT PaddleOCR initialization failed; initializing ONNX recognizer/detector"
+                                }
+                            }
+                        }
+
+                        if (!liteRtInitialized) {
+                            engine.initialize(
+                                paddlePaths.recognitionModel,
+                                paddlePaths.dictionary,
+                                providerResolution = paddleProvider,
+                                providerConfiguration = providerConfiguration,
+                            )
+                            if (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable()) {
+                                try {
+                                    val detPaths = modelStore.ensurePaddleOcrV6Det()
+                                    paddleDet = PaddleOcrV6DetEngine().also {
+                                        it.initialize(
+                                            detPaths.detectionModel,
+                                            providerResolution = paddleProvider,
+                                        )
+                                    }
+                                    logcat(LogPriority.INFO) { "ONNX init: PaddleOCR det OK (replaces ink-gap heuristic)" }
+                                } catch (e: Exception) {
+                                    logcat(LogPriority.WARN, e) {
+                                        "ONNX init: PaddleOCR det failed; falling back to ink-gap heuristic"
+                                    }
+                                }
+                            } else {
+                                logcat(LogPriority.WARN) {
+                                    "ONNX init: PaddleOCR det asset missing; using ink-gap heuristic"
+                                }
+                            }
+                        }
+
                         paddleDynamicBatchPolicy = if (activation.dynamicPageBatch) {
                             val totalRamBytes = try {
                                 val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
@@ -310,43 +378,19 @@ class RoiPageRecognitionEngine(
                                 0L // unknown RAM -> most conservative tier
                             }
                             PaddleOcrDynamicPageBatchPolicy(
-                                dictionarySize = it.dictionarySize,
+                                dictionarySize = engine.dictionarySize,
                                 outputBudgetBytes = PaddleOcrDynamicPageBatchPolicy.defaultOutputBudgetBytesFor(totalRamBytes),
                             )
                         } else {
                             null
                         }
-                        // PaddleOCR rec reads horizontal lines; vertical
-                        // columns must be split first. The det model replaces the
-                        // ink-gap heuristic for that split (best-effort; falls back
-                        // to the heuristic if the det asset is missing).
-                        if (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable()) {
-                            try {
-                                val detPaths = modelStore.ensurePaddleOcrV6Det()
-                                paddleDet = PaddleOcrV6DetEngine().also {
-                                    it.initialize(
-                                        detPaths.detectionModel,
-                                        providerResolution = paddleProvider,
-                                    )
-                                }
-                                logcat(LogPriority.INFO) { "ONNX init: PaddleOCR det OK (replaces ink-gap heuristic)" }
-                            } catch (e: Exception) {
-                                logcat(LogPriority.WARN, e) {
-                                    "ONNX init: PaddleOCR det failed; falling back to ink-gap heuristic"
-                                }
-                            }
-                        } else {
-                            logcat(LogPriority.WARN) {
-                                "ONNX init: PaddleOCR det asset missing; using ink-gap heuristic"
-                            }
-                        }
-                        // The coordinator owns page-scoped leaf mapping and the
-                        // explicit recognizer-call serialization seam.
+
                         paddlePageOcrCoordinator = PaddlePageOcrCoordinator(
-                            engine = it,
+                            engine = engine,
                             validatedBatchSize = activation.activeBatchSize,
                             dynamicCeiling = ::paddleDynamicCeiling,
                         )
+                        engine
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
                 }
@@ -355,28 +399,45 @@ class RoiPageRecognitionEngine(
                 // model. Previously gated behind a removed experimental flag, so
                 // the default MANGAOCR path never got Paddle-driven masking. The
                 // PADDLEOCR_V6_SMALL branch above already built it for rec.
-                if (ocrModel != OcrModel.PADDLEOCR_V6_SMALL &&
-                    paddleDet == null &&
-                    (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable())
-                ) {
-                    try {
-                        val detPaths = modelStore.ensurePaddleOcrV6Det()
-                        paddleDet = PaddleOcrV6DetEngine().also {
-                            it.initialize(detPaths.detectionModel)
-                        }
-                        logcat(LogPriority.INFO) {
-                            "ONNX init: PaddleOCR det OK (free-text erase mask)"
-                        }
-                    } catch (e: Exception) {
-                        logcat(LogPriority.WARN, e) {
-                            "ONNX init: PaddleOCR det failed; free-text erase falls back to detector-v4 boxes"
+                if (ocrModel != OcrModel.PADDLEOCR_V6_SMALL && paddleDet == null) {
+                    if (modelStore.paddleOcrV6LiteRtAssetsAvailable()) {
+                        try {
+                            val liteRtPaths = modelStore.ensurePaddleOcrV6LiteRt()
+                            paddleDet = PaddleOcrV6DetEngine().also {
+                                it.initializeLiteRt(
+                                    modelFile = liteRtPaths.detectorModel,
+                                    preferGpu = true,
+                                    allowXnnpackFallback = true,
+                                    numThreads = 4,
+                                )
+                            }
+                            logcat(LogPriority.INFO) {
+                                "LiteRT init: PaddleOCR det OK (free-text erase mask for $ocrModel)"
+                            }
+                        } catch (e: Exception) {
+                            logcat(LogPriority.WARN, e) {
+                                "LiteRT init: PaddleOCR det failed for inpainter; checking ONNX"
+                            }
                         }
                     }
-                } else if (ocrModel != OcrModel.PADDLEOCR_V6_SMALL &&
-                    !(modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable())
-                ) {
-                    logcat(LogPriority.WARN) {
-                        "ONNX init: PaddleOCR det asset missing; free-text erase falls back to detector-v4 boxes"
+                    if (paddleDet == null && (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable())) {
+                        try {
+                            val detPaths = modelStore.ensurePaddleOcrV6Det()
+                            paddleDet = PaddleOcrV6DetEngine().also {
+                                it.initialize(detPaths.detectionModel)
+                            }
+                            logcat(LogPriority.INFO) {
+                                "ONNX init: PaddleOCR det OK (free-text erase mask)"
+                            }
+                        } catch (e: Exception) {
+                            logcat(LogPriority.WARN, e) {
+                                "ONNX init: PaddleOCR det failed; free-text erase falls back to detector-v4 boxes"
+                            }
+                        }
+                    } else if (paddleDet == null) {
+                        logcat(LogPriority.WARN) {
+                            "PaddleOCR det asset missing; free-text erase falls back to detector-v4 boxes"
+                        }
                     }
                 }
                 logcat(LogPriority.INFO) {

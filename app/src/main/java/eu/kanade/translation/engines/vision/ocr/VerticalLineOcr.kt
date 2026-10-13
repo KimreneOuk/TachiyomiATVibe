@@ -116,7 +116,11 @@ internal object VerticalLineOcr {
         verticalFallback: Boolean,
         language: TextRecognizerLanguage,
         isClosed: () -> Boolean,
+        preDetectedLines: List<TextLine>? = null,
     ): PaddleVerticalRecognitionPlan {
+        if (!preDetectedLines.isNullOrEmpty()) {
+            return planDetColumns(crop, preDetectedLines, language, prefersHorizontalText = true, isClosed)
+        }
         if (paddleDet != null) {
             val lines = try {
                 paddleDet.detectLines(crop, thresh = DbPostProcess.Defaults.THRESH, boxThresh = DbPostProcess.Defaults.BOX_THRESH)
