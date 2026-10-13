@@ -59,19 +59,19 @@
       "path": "ocr/paddle-v6-small/inference.onnx",
       "size_bytes": 10632516,
       "sha256": "bdb358216a4715494a7eab1932a2e10b340231320f846c21cb5d1f9df7c2df8c",
-      "source_url": "https://huggingface.co/Kellenok/PP-OCRv6_manga/resolve/main/rec/manga_rec_v0.2_fp16.onnx"
+      "source_url": "https://huggingface.co/Kellenok/PP-OCRv6_manga/resolve/8ee29e094b6aac77dd067c70805438782fa16ab0/rec/manga_rec_v0.2_fp16.onnx"
     },
     {
       "path": "ocr/paddle-v6-small/PP-OCRv6_small_rec.txt",
       "size_bytes": 74947,
       "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
-      "source_url": "https://huggingface.co/Kellenok/PP-OCRv6_manga/resolve/main/ppocrv6_dict.txt"
+      "source_url": "https://huggingface.co/Kellenok/PP-OCRv6_manga/resolve/8ee29e094b6aac77dd067c70805438782fa16ab0/ppocrv6_dict.txt"
     },
     {
       "path": "ocr/paddle-v6-small/det/inference.onnx",
       "size_bytes": 962358,
       "sha256": "8a76c2ccfc71ae68b2a812c00bf8ee917319cb737f7c6e035517c85074c779df",
-      "source_url": "https://huggingface.co/Kellenok/PP-OCRv6_manga/resolve/main/det/manga_det_v0.2_fp16.onnx"
+      "source_url": "https://huggingface.co/Kellenok/PP-OCRv6_manga/resolve/8ee29e094b6aac77dd067c70805438782fa16ab0/det/manga_det_v0.2_fp16.onnx"
     },
     {
       "path": "segmentation/manga109_bubble_int8.onnx",
@@ -84,6 +84,48 @@
         "source_size_bytes": 12003405,
         "source_sha256": "4028152940f7c910f40192f46ede3b3f6c7129e5c76849c324d3564f8ac50198"
       }
+    },
+    {
+      "path": "ocr/paddle-v6-small/litert/manga_det_960_fp16.tflite",
+      "size_bytes": 945516,
+      "sha256": "b724fe2e1a854620f1e685f0988264cbd1e4953281c55c78f58ae96d69888aff",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/paddle-ocr-litert-v1/manga_det_960_fp16.tflite"
+    },
+    {
+      "path": "ocr/paddle-v6-small/litert/manga_rec_1600_fp16.tflite",
+      "size_bytes": 10620216,
+      "sha256": "8200c7f97f0d63b321a29c737337b8a564540689e13f37bf041c983a7bc07e2d",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/paddle-ocr-litert-v1/manga_rec_1600_fp16.tflite"
+    },
+    {
+      "path": "ocr/paddle-v6-small/litert/manga_rec_160_fp16.tflite",
+      "size_bytes": 10619924,
+      "sha256": "31aa784492b265c6e887c41e37bfd0e4dba542184ab3498fbc61e587d8671bda",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/paddle-ocr-litert-v1/manga_rec_160_fp16.tflite"
+    },
+    {
+      "path": "ocr/paddle-v6-small/litert/manga_rec_320_fp16.tflite",
+      "size_bytes": 10620732,
+      "sha256": "38c845de888421b3a017e510e7ae23ca36a61c5642d3906a010e6cbbe2926add",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/paddle-ocr-litert-v1/manga_rec_320_fp16.tflite"
+    },
+    {
+      "path": "ocr/paddle-v6-small/litert/manga_rec_480_fp16.tflite",
+      "size_bytes": 10620120,
+      "sha256": "6ab850de89c4dd0865e728d8cb1974cfb08a712e21fa9d53fcea41d1bc48b0bb",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/paddle-ocr-litert-v1/manga_rec_480_fp16.tflite"
+    },
+    {
+      "path": "ocr/paddle-v6-small/litert/manga_rec_640_fp16.tflite",
+      "size_bytes": 10620684,
+      "sha256": "a2667f577bf9259f89acdf73fac552e92341ea655b5f767a1dae94dedfe8bc15",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/paddle-ocr-litert-v1/manga_rec_640_fp16.tflite"
+    },
+    {
+      "path": "ocr/paddle-v6-small/litert/PP-OCRv6_small_rec.txt",
+      "size_bytes": 74947,
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+      "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/paddle-ocr-litert-v1/PP-OCRv6_small_rec.txt"
     }
   ]
 }

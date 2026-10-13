@@ -1,8 +1,6 @@
 package eu.kanade.translation.engines.vision.ocr
 
 import android.graphics.Bitmap
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatch
@@ -19,6 +17,8 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.NativeVisionTelemetry
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import java.util.concurrent.CancellationException
 import kotlin.math.ceil
 

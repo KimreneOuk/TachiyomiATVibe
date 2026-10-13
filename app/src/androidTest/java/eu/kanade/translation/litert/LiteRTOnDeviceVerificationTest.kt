@@ -4,16 +4,13 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
-import logcat.LogPriority
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import tachiyomi.core.common.util.system.logcat
 
 @RunWith(AndroidJUnit4::class)
 class LiteRTOnDeviceVerificationTest {

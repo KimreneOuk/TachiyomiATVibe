@@ -36,8 +36,8 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isCleanedImageReady
-import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPageDisplayProjection

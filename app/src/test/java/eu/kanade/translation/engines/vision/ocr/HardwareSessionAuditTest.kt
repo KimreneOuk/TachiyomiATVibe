@@ -21,18 +21,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import tachiyomi.core.common.preference.InMemoryPreferenceStore
-import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
-import tachiyomi.domain.translation.StandardEngine
-import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.TranslationReadingOrder
 
@@ -369,10 +364,13 @@ class HardwareSessionAuditTest {
             private val defaultValue: T,
         ) : tachiyomi.core.common.preference.Preference<T> {
             override fun key(): String = key
+
             @Suppress("UNCHECKED_CAST")
             override fun get(): T = (map[key] as? T) ?: defaultValue
             override fun isSet(): Boolean = map.containsKey(key)
-            override fun delete() { map.remove(key) }
+            override fun delete() {
+                map.remove(key)
+            }
             override fun defaultValue(): T = defaultValue
             override fun changes(): kotlinx.coroutines.flow.Flow<T> = kotlinx.coroutines.flow.flow { emit(get()) }
             override fun stateIn(scope: CoroutineScope): kotlinx.coroutines.flow.StateFlow<T> =

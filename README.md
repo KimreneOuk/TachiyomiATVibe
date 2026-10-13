@@ -40,7 +40,7 @@ Android 8.0 (API 26) or newer is required. There are no prebuilt public releases
 2. Set **Translate From** and **Translate To**, then choose a **Translator type**. Select a standard engine or an AI provider and enter any required credentials or connection details.
 3. Open a chapter. Use the page's **Translate** action for a single page, the reader's translation controls for automatic translation while reading, or the chapter translation action for batch translation.
 
-The ONNX model assets are fetched and converted before the app is built, then packaged into the APK. The app copies these packaged assets into its private storage when needed; it does not fetch those assets on the first translation. ML Kit may separately download its language model the first time a language is used.
+The ONNX and LiteRT model assets are fetched and converted before the app is built, then packaged into the APK. The app copies these packaged assets into its private storage when needed; it does not fetch those assets on the first translation. ML Kit may separately download its language model the first time a language is used.
 
 ## Building from source
 
@@ -55,6 +55,10 @@ python3 scripts/fetch_models.py
 ```
 
 On Windows PowerShell, run `py -3 -m pip install -r scripts/converters/requirements.txt`, `py -3 scripts/fetch_models.py`, then `.\gradlew.bat :app:assembleStandardDebug`. The Standard debug APKs are written under `app/build/outputs/apk/standard/debug/`.
+
+The default model fetch includes the optimized PaddleOCR LiteRT recognizer buckets (160/320/480/640/1600), line detector and dictionary, plus AOT and Manga LaMa FP16. These binaries are downloaded with pinned sizes and SHA-256 hashes; no TensorFlow conversion is needed for them. To fetch only these three families into an already provisioned checkout, run `python3 scripts/fetch_models.py --group paddle aot lama` (or `py -3` on Windows). **Fresh builds require the full default fetch above.** The group command alone does not produce a complete runnable APK: OCR initialization also requires the baseline page detector, MangaOCR encoder/decoders, and vocabulary; full provisioning supplies these and the remaining vision models.
+
+PaddleOCR has a saved GPU/CPU (4 threads) device choice in Translation settings and a temporary Default/GPU/CPU override in the reader. The override clears on reader exit and does not change the saved choice.
 
 ## Development
 

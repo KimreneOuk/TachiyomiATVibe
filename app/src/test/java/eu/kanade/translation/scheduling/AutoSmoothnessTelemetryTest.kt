@@ -30,7 +30,8 @@ class AutoSmoothnessTelemetryTest {
         val waitMs = (readyTime - arrivalTime).toDouble()
 
         TelemetryTrace.log(
-            "auto", "arrival_wait_recorded",
+            "auto",
+            "arrival_wait_recorded",
             "pageIndex" to 3,
             "pageKey" to "003.jpg",
             "waitMs" to waitMs,

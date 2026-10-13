@@ -369,6 +369,10 @@ class TranslationPipeline private constructor(
         engines.setInpaintingHardwareOverride(override)
     }
 
+    internal fun setReaderPaddleOcrComputeDeviceOverride(device: tachiyomi.domain.translation.PaddleOcrComputeDevice?) {
+        engines.setReaderPaddleOcrComputeDeviceOverride(device)
+    }
+
     fun closeEngines() {
         engines.closeEngines()
     }

@@ -11,7 +11,6 @@ import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6RecTiming
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith

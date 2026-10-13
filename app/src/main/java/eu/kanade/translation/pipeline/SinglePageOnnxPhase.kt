@@ -92,7 +92,7 @@ internal class SinglePageOnnxPhase(
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
     ) {
-        engines.ensureEnginesBuiltFor(fromLang, toLang)
+        engines.ensureEnginesBuiltFor(fromLang, toLang, useReaderPaddleOverride = true)
     }
 
     @Volatile

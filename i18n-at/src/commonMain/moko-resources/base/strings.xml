@@ -22,8 +22,14 @@
     <string name="pref_group_setup">Translation Setup</string>
     <string name="pref_translate_from">Translate From</string>
     <string name="pref_ocr_model">OCR model</string>
-    <string name="pref_paddle_ocr_provider">PaddleOCR v6 provider</string>
-    <string name="pref_paddle_ocr_provider_summary">Temporary PaddleOCR-only experiment. CPU is the default. Changes apply when a new reader/translation session creates OCR sessions; restart the current session after changing. Failed GPU/NPU attempts are reported and explicitly labelled CPU.</string>
+    <string name="pref_paddle_ocr_device">PaddleOCR device</string>
+    <string name="pref_paddle_ocr_device_summary">Choose GPU or CPU for PaddleOCR recognition and line detection. Applies to the next OCR request. GPU falls back to CPU if unavailable.</string>
+    <string name="pref_paddle_ocr_device_gpu">GPU</string>
+    <string name="pref_paddle_ocr_device_cpu">CPU (4 threads)</string>
+    <string name="reader_paddle_ocr_device_summary">Temporary override for this reader. Applies to the next OCR request; already translated pages stay cached.</string>
+    <string name="reader_paddle_ocr_device_default">Default: %s</string>
+    <string name="pref_paddle_ocr_provider">PaddleOCR ONNX fallback provider</string>
+    <string name="pref_paddle_ocr_provider_summary">Experimental provider used when LiteRT is unavailable. CPU device selection always uses CPU; failed GPU/NPU attempts fall back to CPU.</string>
     <string name="pref_paddle_ocr_provider_cpu">CPU</string>
     <string name="pref_paddle_ocr_provider_gpu">Qualcomm GPU (QNN GPU)</string>
     <string name="pref_paddle_ocr_provider_htp">Qualcomm HTP/NPU (QNN HTP)</string>

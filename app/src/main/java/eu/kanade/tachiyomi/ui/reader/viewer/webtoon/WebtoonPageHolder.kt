@@ -22,7 +22,6 @@ import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
-import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,6 +41,7 @@ import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
+import java.util.Locale
 
 /**
  * Identity fence for callbacks that outlive a Webtoon holder bind. A recycled

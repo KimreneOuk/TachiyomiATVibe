@@ -1,10 +1,10 @@
 package eu.kanade.translation.engines.inpainting.aot
 
+import eu.kanade.translation.engines.inpainting.InpaintPadOps
+import eu.kanade.translation.engines.inpainting.InpaintPixelOps
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import java.nio.FloatBuffer
-import eu.kanade.translation.engines.inpainting.InpaintPadOps
-import eu.kanade.translation.engines.inpainting.InpaintPixelOps
 
 class AotFixedTensorContractTest {
 

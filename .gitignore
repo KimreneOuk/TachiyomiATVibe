@@ -72,7 +72,7 @@ kilo.json
 # Local native libraries / benchmark payloads
 /app/src/main/jniLibs/
 
-# Runtime models are fetched from the models-v1 release; retain empty placeholders
+# Runtime models are provisioned by scripts/models.manifest; retain empty placeholders
 /app/src/main/assets/models/**
 !/app/src/main/assets/models/**/
 !/app/src/main/assets/models/**/.gitkeep

@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.GeminiThinkingMode
 import tachiyomi.domain.translation.NeuralInpaintModel
+import tachiyomi.domain.translation.PaddleOcrComputeDevice
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
 import tachiyomi.domain.translation.StandardEngine
@@ -236,6 +237,15 @@ object SettingsTranslationScreen : SearchableSettings {
                         onValueChange = { ocrPref.set(it) },
                     )
                 },
+                Preference.PreferenceItem.ListPreference(
+                    pref = translationPreferences.paddleOcrComputeDevice(),
+                    title = stringResource(ATMR.strings.pref_paddle_ocr_device),
+                    subtitle = stringResource(ATMR.strings.pref_paddle_ocr_device_summary),
+                    entries = mapOf(
+                        PaddleOcrComputeDevice.GPU to stringResource(ATMR.strings.pref_paddle_ocr_device_gpu),
+                        PaddleOcrComputeDevice.CPU to stringResource(ATMR.strings.pref_paddle_ocr_device_cpu),
+                    ).toImmutableMap(),
+                ),
                 Preference.PreferenceItem.ListPreference(
                     pref = translationPreferences.paddleOcrExecutionProvider(),
                     title = stringResource(ATMR.strings.pref_paddle_ocr_provider),

@@ -33,6 +33,9 @@ enum class GeminiThinkingMode { DISABLED, AUTO, LOW }
  */
 enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
 
+/** LiteRT device for PaddleOCR recognition and line detection. */
+enum class PaddleOcrComputeDevice { GPU, CPU }
+
 /**
  * Temporary execution-provider experiment for the PaddleOCR v6 detector and
  * recognizer. This is intentionally separate from
@@ -147,6 +150,12 @@ class TranslationPreferences(
     fun paddleOcrExecutionProvider() = preferenceStore.getEnum(
         "translation_paddle_ocr_execution_provider",
         PaddleOcrExecutionProvider.CPU,
+    )
+
+    /** Saved default; the reader may override it for its lifetime without persisting. */
+    fun paddleOcrComputeDevice() = preferenceStore.getEnum(
+        "translation_paddle_ocr_compute_device",
+        PaddleOcrComputeDevice.GPU,
     )
 
     /**

@@ -54,6 +54,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
+import tachiyomi.domain.translation.PaddleOcrComputeDevice
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
@@ -67,6 +68,7 @@ class RoiPageRecognitionEngine(
     private val inpaintingMode: InpaintingMode = InpaintingMode.QUALITY,
     private val neuralInpaintModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
     private val inpaintingHardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
+    private val paddleOcrComputeDevice: PaddleOcrComputeDevice = PaddleOcrComputeDevice.GPU,
 ) : PageRecognitionEngine {
 
     private val modelStore = OnnxModelStore(context)
@@ -305,7 +307,7 @@ class RoiPageRecognitionEngine(
                                 engine.initializeLiteRt(
                                     modelFilesByWidth = liteRtPaths.recognitionModelsByWidth,
                                     dictionaryFile = liteRtPaths.dictionary,
-                                    preferGpu = true,
+                                    preferGpu = paddleOcrComputeDevice == PaddleOcrComputeDevice.GPU,
                                     allowXnnpackFallback = true,
                                     numThreads = 4,
                                     fallbackInitializer = {
@@ -320,7 +322,7 @@ class RoiPageRecognitionEngine(
                                 liteRtDetector = PaddleOcrV6DetEngine().also {
                                     it.initializeLiteRt(
                                         modelFile = liteRtPaths.detectorModel,
-                                        preferGpu = true,
+                                        preferGpu = paddleOcrComputeDevice == PaddleOcrComputeDevice.GPU,
                                         allowXnnpackFallback = true,
                                         numThreads = 4,
                                     )
@@ -329,7 +331,7 @@ class RoiPageRecognitionEngine(
                                 liteRtInitialized = true
                                 logcat(LogPriority.INFO) {
                                     "LiteRT init: PaddleOCR v6 recognizer and detector configured " +
-                                        "(GPU preferred, CPU fallback enabled)"
+                                        "(device=$paddleOcrComputeDevice, CPU threads=4, CPU fallback enabled)"
                                 }
                             } catch (e: Exception) {
                                 liteRtDetector?.close()
@@ -484,6 +486,9 @@ class RoiPageRecognitionEngine(
     }
 
     private fun resolvePaddleOcrProvider(): PaddleOcrProviderResolution {
+        if (paddleOcrComputeDevice == PaddleOcrComputeDevice.CPU) {
+            return PaddleOcrSessionFactory.resolve(PaddleOcrExecutionProvider.CPU)
+        }
         val requested = try {
             Injekt.get<TranslationPreferences>()
                 .paddleOcrExecutionProvider()

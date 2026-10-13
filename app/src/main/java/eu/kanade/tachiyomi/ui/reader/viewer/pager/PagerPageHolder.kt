@@ -19,7 +19,6 @@ import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
-import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,6 +40,7 @@ import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.Locale
 
 /**
  * View of the ViewPager that contains a page of a chapter.

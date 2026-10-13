@@ -2,14 +2,14 @@ package eu.kanade.translation.engines.vision.ocr
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
-import com.google.ai.edge.litert.Accelerator
-import com.google.ai.edge.litert.CompiledModel
-import com.google.ai.edge.litert.Environment
-import com.google.ai.edge.litert.TensorBuffer
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import com.google.ai.edge.litert.Accelerator
+import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.Environment
+import com.google.ai.edge.litert.TensorBuffer
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
@@ -72,7 +72,6 @@ class PaddleOcrV6DetEngine : Closeable {
     @Volatile
     var lastTiming: PaddleOcrV6DetTiming? = null
         private set
-
 
     /** Provider that actually serves this detector ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
     var executionProviderLabel: String = "uninitialized"
@@ -375,7 +374,9 @@ class PaddleOcrV6DetEngine : Closeable {
 
     private fun initializeLiteRtCpu(modelFile: File) {
         val env = checkNotNull(liteRtEnvironment) { "LiteRT Environment is not initialized" }
-        val options = CompiledModel.Options(Accelerator.CPU)
+        val options = CompiledModel.Options(Accelerator.CPU).apply {
+            cpuOptions = CompiledModel.CpuOptions(numThreads = liteRtNumThreads)
+        }
         val created = CompiledModel.create(modelFile.absolutePath, options, env)
         liteRtInputBuffer = created.createInputBuffers()[0]
         liteRtOutputBuffer = created.createOutputBuffers()[0]

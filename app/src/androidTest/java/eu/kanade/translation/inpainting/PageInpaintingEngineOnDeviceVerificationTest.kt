@@ -197,7 +197,8 @@ class PageInpaintingEngineOnDeviceVerificationTest {
         for (y in 0 until size) {
             for (x in 0 until size) {
                 mask[y * size + x] =
-                    (y in 96..159 && x in 40..215) || (x in 96..159 && y in 40..215)
+                    (y in 96..159 && x in 40..215) ||
+                    (x in 96..159 && y in 40..215)
             }
         }
         return mask

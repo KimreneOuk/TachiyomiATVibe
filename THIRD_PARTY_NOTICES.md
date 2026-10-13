@@ -1,8 +1,8 @@
 # Third-party asset notices
 
-This file records provenance for model weights fetched or generated into `app/src/main/assets/models/` at build time by [scripts/fetch_models.py](scripts/fetch_models.py), and for fonts bundled by the Android app. The source repository does not commit standalone model files or offer model-only downloads. Build jobs package the fetched or converted files into APK assets. The manifest pins the byte size and full SHA-256 of each model; hashes identify exact bytes but do not establish redistribution permission. See [docs/MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for upstream sources, conversion recipes, and license status. The root application license is in [LICENSE](LICENSE).
+This file records provenance for model weights fetched or generated into `app/src/main/assets/models/` at build time by [scripts/fetch_models.py](scripts/fetch_models.py), and for fonts bundled by the Android app. The source repository does not commit model files. Verified optimized PaddleOCR and inpainting binaries are distributed as GitHub release assets for build-time provisioning. Build jobs package the fetched or converted files into APK assets. The manifest pins the byte size and full SHA-256 of each model; hashes identify exact bytes but do not establish redistribution permission. See [docs/MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for upstream sources, conversion recipes, and license status. The root application license is in [LICENSE](LICENSE).
 
-The PP-OCRv6 recognition model, configuration, detector model, and character dictionary come from pinned PaddleOCR sources. PaddleOCR and the upstream PP-OCRv6 model cards declare Apache-2.0.
+The PP-OCRv6 manga-tuned ONNX models and dictionary come from Kellenok/PP-OCRv6_manga and are pinned by content hash. Optimized LiteRT derivatives retain the model interface and vocabulary; their graph changes and hashes are documented in [PaddleOCR model downloads](docs/PADDLE_OCR_MODEL_DOWNLOADS.md). PaddleOCR and the upstream PP-OCRv6 model cards declare Apache-2.0.
 
 | Asset file | SHA-256 | Provenance and license status |
 | --- | --- | --- |

@@ -1,6 +1,6 @@
 # Inpainting model downloads
 
-These two raw TFLite files are attached to the GitHub release tagged inpainting-fp16-v1. The URLs resolve for anonymous downloads after the draft release is published. The Android app does not download models at runtime: CI/build provisioning fetches these files, verifies their byte counts and SHA-256 digests, and packages them as assets.
+These two raw TFLite files are attached to the public GitHub release tagged inpainting-fp16-v1 and are available for anonymous download. The Android app does not download models at runtime: CI/build provisioning fetches these files, verifies their byte counts and SHA-256 digests, and packages them as assets.
 
 | Model | Release asset | Bytes | SHA-256 |
 | --- | --- | ---: | --- |

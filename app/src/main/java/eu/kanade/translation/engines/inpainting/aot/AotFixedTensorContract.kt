@@ -1,9 +1,9 @@
 package eu.kanade.translation.engines.inpainting.aot
 
-import java.nio.FloatBuffer
-import kotlin.math.roundToInt
 import eu.kanade.translation.engines.inpainting.InpaintPadOps
 import eu.kanade.translation.engines.inpainting.InpaintPixelOps
+import java.nio.FloatBuffer
+import kotlin.math.roundToInt
 
 /** Pure tensor preparation and output restoration for the fixed 512 AOT model. */
 internal object AotFixedTensorContract {

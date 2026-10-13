@@ -41,6 +41,7 @@ internal interface LiteRtTensorAdapter {
 /** Manga LaMa fused FP16: [0,1] RGB, pre-multiplied by (1-mask); output [0,1]. */
 internal class LamaLiteRtTensorAdapter : LiteRtTensorAdapter {
     override val modelAssetPath = "models/inpainting/manga_lama_fused_fp16.tflite"
+
     // SignatureDef (verified in the packaged flatbuffer): serving_default →
     // inputs input_image/input_mask, output output_0 (graph tensor
     // PartitionedCall:0).

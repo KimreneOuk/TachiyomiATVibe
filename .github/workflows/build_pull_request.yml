@@ -44,6 +44,9 @@ jobs:
       - name: Install model conversion dependencies
         run: python3 -m pip install --disable-pip-version-check -r scripts/converters/requirements.txt
 
+      - name: Test model provisioning manifest and family selection
+        run: python3 -m unittest discover -s scripts -p 'test_fetch_models.py'
+
       - name: Fetch and verify model assets
         run: python3 scripts/fetch_models.py
 

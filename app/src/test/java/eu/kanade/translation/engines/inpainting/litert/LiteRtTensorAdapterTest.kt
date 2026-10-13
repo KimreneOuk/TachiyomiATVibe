@@ -114,5 +114,4 @@ class LiteRtTensorAdapterTest {
         aot.outputNameCandidates.first() shouldBe "inpainted"
         aot.modelAssetPath.endsWith(".onnx") shouldBe false
     }
-
 }

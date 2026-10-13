@@ -3,6 +3,7 @@ package eu.kanade.presentation.reader
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,6 +48,7 @@ import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
+import tachiyomi.domain.translation.PaddleOcrComputeDevice
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.i18n.at.ATMR
@@ -76,6 +78,7 @@ fun TranslationSettingsSheet(
     onTranslateFromLanguageChange: (String) -> Unit,
     onTranslateToLanguageChange: (String) -> Unit,
     onOcrModelChange: (OcrModel) -> Unit,
+    onPaddleOcrComputeDeviceOverrideChange: (PaddleOcrComputeDevice?) -> Unit,
     onTranslationInpaintingModeChange: (String) -> Unit,
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
     onTranslationEngineCategoryChange: (TranslationEngineCategory) -> Unit,
@@ -129,6 +132,9 @@ fun TranslationSettingsSheet(
                 onTranslateToLanguageChange = onTranslateToLanguageChange,
                 onOcrModelChange = onOcrModelChange,
             )
+            if (state.ocrModel == OcrModel.PADDLEOCR_V6_SMALL) {
+                PaddleOcrDeviceSection(state, onPaddleOcrComputeDeviceOverrideChange)
+            }
             TextButton(
                 onClick = { showAdvanced = !showAdvanced },
                 modifier = Modifier.fillMaxWidth(),
@@ -160,6 +166,46 @@ fun TranslationSettingsSheet(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ColumnScope.PaddleOcrDeviceSection(
+    state: TranslationSettingsState,
+    onDeviceChange: (PaddleOcrComputeDevice?) -> Unit,
+) {
+    val gpuLabel = stringResource(ATMR.strings.pref_paddle_ocr_device_gpu)
+    val cpuLabel = stringResource(ATMR.strings.pref_paddle_ocr_device_cpu)
+    val defaultLabel = when (state.paddleOcrDefaultComputeDevice) {
+        PaddleOcrComputeDevice.GPU -> gpuLabel
+        PaddleOcrComputeDevice.CPU -> cpuLabel
+    }
+    TextPreferenceWidget(
+        title = stringResource(ATMR.strings.pref_paddle_ocr_device),
+        subtitle = stringResource(ATMR.strings.reader_paddle_ocr_device_summary),
+    )
+    FlowRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = MaterialTheme.padding.medium),
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+    ) {
+        FilterChip(
+            selected = state.paddleOcrComputeDeviceOverride == null,
+            onClick = { onDeviceChange(null) },
+            label = { Text(stringResource(ATMR.strings.reader_paddle_ocr_device_default, defaultLabel)) },
+        )
+        FilterChip(
+            selected = state.paddleOcrComputeDeviceOverride == PaddleOcrComputeDevice.GPU,
+            onClick = { onDeviceChange(PaddleOcrComputeDevice.GPU) },
+            label = { Text(gpuLabel) },
+        )
+        FilterChip(
+            selected = state.paddleOcrComputeDeviceOverride == PaddleOcrComputeDevice.CPU,
+            onClick = { onDeviceChange(PaddleOcrComputeDevice.CPU) },
+            label = { Text(cpuLabel) },
+        )
     }
 }
 
@@ -493,11 +539,11 @@ private fun ColumnScope.InpaintSection(
         onValueChange = onTranslationInpaintingModeChange,
     )
 
-        if (inpaintingMode == "BALANCE" || inpaintingMode == "QUALITY") {
-            val neuralModelEntries = mapOf(
-                NeuralInpaintModel.LAMA_LITERT_GPU to stringResource(ATMR.strings.pref_inpainting_mode_lama_gpu),
-                NeuralInpaintModel.AOT_GAN to stringResource(ATMR.strings.pref_inpainting_neural_model_aot_gan),
-            )
+    if (inpaintingMode == "BALANCE" || inpaintingMode == "QUALITY") {
+        val neuralModelEntries = mapOf(
+            NeuralInpaintModel.LAMA_LITERT_GPU to stringResource(ATMR.strings.pref_inpainting_mode_lama_gpu),
+            NeuralInpaintModel.AOT_GAN to stringResource(ATMR.strings.pref_inpainting_neural_model_aot_gan),
+        )
         EngineListRow(
             title = stringResource(ATMR.strings.pref_inpainting_neural_model),
             entries = neuralModelEntries,

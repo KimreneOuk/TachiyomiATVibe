@@ -26,6 +26,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
+import tachiyomi.domain.translation.PaddleOcrComputeDevice
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
 import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
 import tachiyomi.domain.translation.TranslationPreferences
@@ -65,6 +66,7 @@ internal class EngineLane(
         val translatorSignature: EngineSignature,
         val paddleOcrProvider: PaddleOcrExecutionProvider = PaddleOcrExecutionProvider.CPU,
         val paddleOcrBatch: PaddleOcrRecognitionBatch = PaddleOcrRecognitionBatch.B1,
+        val paddleOcrComputeDevice: PaddleOcrComputeDevice = PaddleOcrComputeDevice.GPU,
         val neuralInpaintModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
         val inpaintingHardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
     )
@@ -238,6 +240,13 @@ internal class EngineLane(
         private set
 
     @Volatile
+    internal var currentPaddleOcrComputeDevice: PaddleOcrComputeDevice = PaddleOcrComputeDevice.GPU
+        private set
+
+    @Volatile
+    private var readerPaddleOcrComputeDeviceOverride: PaddleOcrComputeDevice? = null
+
+    @Volatile
     internal var currentVisionGpu: Boolean = false
         private set
 
@@ -312,6 +321,7 @@ internal class EngineLane(
             currentTranslatorSignature = testState.translatorSignature
             currentPaddleOcrProvider = testState.paddleOcrProvider
             currentPaddleOcrBatch = testState.paddleOcrBatch
+            currentPaddleOcrComputeDevice = testState.paddleOcrComputeDevice
         } else {
             // fromPref/build THROW on invalid config (intended on the translate path). But this
             // object is constructed eagerly as a field initializer in TranslationManager, so an
@@ -330,6 +340,7 @@ internal class EngineLane(
                 currentReadingOrder = translationPreferences.translationReadingOrder().get()
                 currentPaddleOcrProvider = translationPreferences.paddleOcrExecutionProvider().get()
                 currentPaddleOcrBatch = translationPreferences.paddleOcrRecognitionBatch().get()
+                currentPaddleOcrComputeDevice = translationPreferences.paddleOcrComputeDevice().get()
                 recognitionEngine = createRecognitionEngine(
                     fromLang,
                     ocrModel,
@@ -385,6 +396,10 @@ internal class EngineLane(
         requestedInpaintingHardwareOverride = override
     }
 
+    internal fun setReaderPaddleOcrComputeDeviceOverride(device: PaddleOcrComputeDevice?) {
+        readerPaddleOcrComputeDeviceOverride = device
+    }
+
     /** Neural availability is unknown until the recognition engine is built. */
     internal fun inpaintingStampDecision(): InpaintStampDecision {
         val mode = inpaintingModeFromPref()
@@ -402,7 +417,15 @@ internal class EngineLane(
         if (testState != null) {
             return testState.recognitionEngine
         }
-        val onnx = RoiPageRecognitionEngine(context, lang, ocrModel, mode, neuralModel, hardwareOverride)
+        val onnx = RoiPageRecognitionEngine(
+            context,
+            lang,
+            ocrModel,
+            mode,
+            neuralModel,
+            hardwareOverride,
+            currentPaddleOcrComputeDevice,
+        )
         if (onnx.isAvailable) {
             logcat(LogPriority.INFO) { "Using ONNX recognition engine for $lang with OCR model $ocrModel" }
             return onnx
@@ -531,6 +554,7 @@ internal class EngineLane(
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
         runScopedOcrModel: OcrModel? = null,
+        useReaderPaddleOverride: Boolean = false,
     ) {
         val selectedOcrModel = runScopedOcrModel ?: OcrModelCatalog.selectedModel(translationPreferences, fromLang)
         val desiredInpaintingMode = inpaintingModeFromPref()
@@ -540,6 +564,9 @@ internal class EngineLane(
         val rebuildClosedEngines = enginesClosed
         val livePaddleProvider = translationPreferences.paddleOcrExecutionProvider().get()
         val livePaddleBatch = translationPreferences.paddleOcrRecognitionBatch().get()
+        val livePaddleComputeDevice = readerPaddleOcrComputeDeviceOverride
+            ?.takeIf { useReaderPaddleOverride }
+            ?: translationPreferences.paddleOcrComputeDevice().get()
         val liveVisionGpu = translationPreferences.translationVisionGpuAcceleration().get()
         // Include inpainting mode, reading order, paddle provider/batch, and vision GPU changes
         // so setting adjustments take effect immediately without restart.
@@ -560,7 +587,8 @@ internal class EngineLane(
                 selectedOcrModel == OcrModel.PADDLEOCR_V6_SMALL &&
                     (
                         livePaddleProvider != currentPaddleOcrProvider ||
-                            livePaddleBatch != currentPaddleOcrBatch
+                            livePaddleBatch != currentPaddleOcrBatch ||
+                            livePaddleComputeDevice != currentPaddleOcrComputeDevice
                         )
                 )
         if (shouldRebuildRecognition) {
@@ -573,6 +601,7 @@ internal class EngineLane(
             currentReadingOrder = desiredReadingOrder
             currentPaddleOcrProvider = livePaddleProvider
             currentPaddleOcrBatch = livePaddleBatch
+            currentPaddleOcrComputeDevice = livePaddleComputeDevice
             currentVisionGpu = liveVisionGpu
             recognitionEngine = createRecognitionEngine(
                 fromLang,

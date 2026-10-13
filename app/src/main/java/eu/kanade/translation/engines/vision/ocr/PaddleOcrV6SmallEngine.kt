@@ -2,14 +2,14 @@ package eu.kanade.translation.engines.vision.ocr
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
-import com.google.ai.edge.litert.Accelerator
-import com.google.ai.edge.litert.CompiledModel
-import com.google.ai.edge.litert.Environment
-import com.google.ai.edge.litert.TensorBuffer
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import com.google.ai.edge.litert.Accelerator
+import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.Environment
+import com.google.ai.edge.litert.TensorBuffer
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
@@ -58,7 +58,6 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     @Volatile
     var lastLiteRtTiming: PaddleOcrV6RecTiming? = null
         private set
-
 
     /** Optional upper bound used to trigger a large-batch latency downgrade. */
     var batchLatencyBudgetMs: Double? = null
@@ -193,7 +192,6 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
             throw e
         }
     }
-
 
     /** Opt-in LiteRT recognizer setup for the static NHWC FlatBuffers. */
     fun initializeLiteRt(
@@ -740,7 +738,9 @@ private class PaddleOcrV6LiteRtRunner(
     }
 
     private fun initializeCpu() {
-        val options = CompiledModel.Options(Accelerator.CPU)
+        val options = CompiledModel.Options(Accelerator.CPU).apply {
+            cpuOptions = CompiledModel.CpuOptions(numThreads = numThreads)
+        }
         val created = CompiledModel.create(modelFile.absolutePath, options, env)
         val inBuf = created.createInputBuffers()[0]
         val outBuf = created.createOutputBuffers()[0]

@@ -9,11 +9,16 @@ import android.graphics.Canvas
 import android.graphics.RectF
 import android.os.Build
 import eu.kanade.translation.engines.inpainting.FreeTextRoute
+import eu.kanade.translation.engines.inpainting.InpaintBoxGeometry
+import eu.kanade.translation.engines.inpainting.InpaintPadOps
+import eu.kanade.translation.engines.inpainting.InpaintPixelOps
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.PushPullGradient
 import eu.kanade.translation.engines.inpainting.RegionBackend
 import eu.kanade.translation.engines.inpainting.RegionDispatch
 import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
+import eu.kanade.translation.engines.inpainting.bubble.BubbleMedianDiffusionFill
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
 import eu.kanade.translation.engines.inpainting.resolveDispatch
 import eu.kanade.translation.engines.inpainting.resolveFreeTextRoute
@@ -24,6 +29,7 @@ import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.QnnContextCacheManager
+import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.NeuralInpaintModel
@@ -33,15 +39,9 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 import java.nio.FloatBuffer
-import kotlinx.coroutines.CancellationException
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import eu.kanade.translation.engines.inpainting.InpaintBoxGeometry
-import eu.kanade.translation.engines.inpainting.InpaintPadOps
-import eu.kanade.translation.engines.inpainting.InpaintPixelOps
-import eu.kanade.translation.engines.inpainting.PushPullGradient
-import eu.kanade.translation.engines.inpainting.bubble.BubbleMedianDiffusionFill
 
 /**
  * Model-agnostic neural inpainting coordinator. It owns the shared region
@@ -1310,7 +1310,6 @@ class NeuralInpaintingCoordinator(
             }
         }
     }
-
 
     private fun fixedBackendAttempt(
         backend: AotExecutionCoordinator.Backend,

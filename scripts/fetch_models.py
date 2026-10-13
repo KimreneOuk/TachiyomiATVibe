@@ -23,6 +23,11 @@ ASSET_DIRECTORY = PurePosixPath("app/src/main/assets/models")
 MANIFEST_PATH = Path(__file__).with_name("models.manifest")
 CHUNK_SIZE = 1024 * 1024
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+MODEL_GROUPS = {
+    "paddle": "ocr/paddle-v6-small/",
+    "aot": "inpainting/aot_512_regen_gap_fp16.tflite",
+    "lama": "inpainting/manga_lama_fused_fp16.tflite",
+}
 
 
 class FetchError(Exception):
@@ -113,6 +118,23 @@ def destination_for(root: Path, relative_path: str) -> Path:
     except ValueError as error:
         raise FetchError(f"model path escapes the assets directory: {relative_path}") from error
     return destination
+
+
+def select_models(files: list[dict[str, Any]], groups: list[str] | None) -> list[dict[str, Any]]:
+    """Select complete runtime families; the default still provisions all assets."""
+    if not groups:
+        return files
+    selected: set[str] = set()
+    for group in groups:
+        target = MODEL_GROUPS[group]
+        matches = [
+            entry for entry in files
+            if (entry["path"].startswith(target) if target.endswith("/") else entry["path"] == target)
+        ]
+        if not matches:
+            raise FetchError(f"manifest contains no models for group {group}")
+        selected.update(entry["path"] for entry in matches)
+    return [entry for entry in files if entry["path"] in selected]
 
 
 def digest_file(path: Path) -> tuple[int, str]:
@@ -290,6 +312,12 @@ def parse_arguments() -> argparse.Namespace:
         help="manifest file to read (default: scripts/models.manifest)",
     )
     parser.add_argument(
+        "--group",
+        nargs="+",
+        choices=sorted(MODEL_GROUPS),
+        help="provision only selected families: paddle (ONNX + optimized LiteRT), aot, lama",
+    )
+    parser.add_argument(
         "--clean",
         action="store_true",
         help="remove only files listed in the manifest from the selected project root",
@@ -300,7 +328,7 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     arguments = parse_arguments()
     try:
-        files = load_manifest(arguments.manifest)
+        files = select_models(load_manifest(arguments.manifest), arguments.group)
         root = arguments.root.resolve()
 
         if arguments.clean:

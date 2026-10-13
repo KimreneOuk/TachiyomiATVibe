@@ -112,6 +112,7 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
+import tachiyomi.domain.translation.PaddleOcrComputeDevice
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
@@ -187,6 +188,8 @@ class ReaderViewModel @JvmOverloads constructor(
 
     internal val aiModelFetchState = MutableStateFlow<AiModelListState>(AiModelListState.Idle)
 
+    private val paddleOcrComputeDeviceOverride = MutableStateFlow<PaddleOcrComputeDevice?>(null)
+
     val translationSettingsState: kotlinx.coroutines.flow.StateFlow<TranslationSettingsState> = combine(
         combine(
             combine(
@@ -232,7 +235,11 @@ class ReaderViewModel @JvmOverloads constructor(
                 AiSubPrefs(apiKey, baseUrl, model, recentRaw)
             }
         },
-    ) { part1, part2, ocrInfo, aiSubPrefs ->
+        combine(
+            translationPreferences.paddleOcrComputeDevice().changes(),
+            paddleOcrComputeDeviceOverride,
+        ) { defaultDevice, override -> defaultDevice to override },
+    ) { part1, part2, ocrInfo, aiSubPrefs, paddleDevice ->
         val (q1, q2) = part1
         val (q3, fetchState) = part2
         val (ocrModel, ocrModelEntries) = ocrInfo
@@ -251,6 +258,8 @@ class ReaderViewModel @JvmOverloads constructor(
             translationRecentLanguagesTo = recentLangsTo,
             ocrModel = ocrModel,
             ocrModelEntries = ocrModelEntries,
+            paddleOcrDefaultComputeDevice = paddleDevice.first,
+            paddleOcrComputeDeviceOverride = paddleDevice.second,
             inpaintingMode = q2.d.first,
             inpaintingNeuralModel = q2.d.second,
             engineCategory = q3.a,
@@ -547,6 +556,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
     init {
         translationManager.setInpaintingHardwareOverride(InpaintingHardwareOverride.CPU)
+        translationManager.setReaderPaddleOcrComputeDeviceOverride(null)
         // TachiyomiAT: Auto-translate is a per-session convenience, not a
         // persistent default. Force it off on reader entry so a chapter never
         // starts translating the instant the reader opens — the user must opt in
@@ -781,6 +791,7 @@ class ReaderViewModel @JvmOverloads constructor(
         translationController.isInTranslationWarmWindow(page)
 
     override fun onCleared() {
+        translationManager.setReaderPaddleOcrComputeDeviceOverride(null)
         // Invalidate reader-owned callbacks/resolvers before requesting joined teardown. The
         // manager's Deferred is owned by applicationScope, so this cleanup still runs after the
         // ViewModel scope has been cancelled and only then recycles ReaderPage/loaders.
@@ -1745,6 +1756,11 @@ class ReaderViewModel @JvmOverloads constructor(
     fun setOcrModel(model: OcrModel) =
         translationController.setOcrModel(model)
 
+    fun setPaddleOcrComputeDeviceOverride(device: PaddleOcrComputeDevice?) {
+        translationManager.setReaderPaddleOcrComputeDeviceOverride(device)
+        paddleOcrComputeDeviceOverride.value = device
+    }
+
     fun setTranslationInpaintingMode(mode: String) =
         translationController.setTranslationInpaintingMode(mode)
 
@@ -1832,6 +1848,8 @@ data class TranslationSettingsState(
     val translationRecentLanguagesTo: ImmutableList<String> = persistentListOf(),
     val ocrModel: OcrModel = OcrModel.MLKIT,
     val ocrModelEntries: ImmutableMap<OcrModel, String> = persistentMapOf(),
+    val paddleOcrDefaultComputeDevice: PaddleOcrComputeDevice = PaddleOcrComputeDevice.GPU,
+    val paddleOcrComputeDeviceOverride: PaddleOcrComputeDevice? = null,
     val inpaintingMode: String = "",
     val inpaintingNeuralModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
     val engineCategory: TranslationEngineCategory = TranslationEngineCategory.STANDARD,

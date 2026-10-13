@@ -622,6 +622,7 @@ class ReaderActivity : BaseActivity() {
                         onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
                         onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
                         onOcrModelChange = { viewModel.setOcrModel(it) },
+                        onPaddleOcrComputeDeviceOverrideChange = viewModel::setPaddleOcrComputeDeviceOverride,
                         onTranslationInpaintingModeChange = { viewModel.setTranslationInpaintingMode(it) },
                         onTranslationInpaintingNeuralModelChange = { viewModel.setTranslationInpaintingNeuralModel(it) },
                         onTranslationEngineCategoryChange = { viewModel.setTranslationEngineCategory(it) },

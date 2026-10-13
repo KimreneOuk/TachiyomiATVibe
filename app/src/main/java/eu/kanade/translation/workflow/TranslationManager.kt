@@ -802,6 +802,11 @@ class TranslationManager private constructor(
         pipeline.setInpaintingHardwareOverride(override)
     }
 
+    /** Applies only to reader OCR; chapter batches continue to use the saved default. */
+    fun setReaderPaddleOcrComputeDeviceOverride(device: tachiyomi.domain.translation.PaddleOcrComputeDevice?) {
+        pipeline.setReaderPaddleOcrComputeDeviceOverride(device)
+    }
+
     /**
      * Whether a chapter owns batch work under the requested activity policy.
      * PAUSED is included only when the caller is retaining reader-owned artifacts.
