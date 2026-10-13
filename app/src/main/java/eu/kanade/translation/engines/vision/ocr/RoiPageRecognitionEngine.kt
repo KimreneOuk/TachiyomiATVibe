@@ -214,13 +214,8 @@ class RoiPageRecognitionEngine(
     val isAvailable: Boolean
         get() = !initFailed && (initialized || modelStore.modelsAvailable() || modelStore.assetsAvailable())
 
-    /** True only after the inpainting model sessions are built and usable. */
-    fun neuralInpaintAvailable(): Boolean =
-        if (neuralInpaintModel == tachiyomi.domain.translation.NeuralInpaintModel.LAMA_LITERT_GPU) {
-            litertInpainting?.isAvailable() == true
-        } else {
-            inpainting?.isInitialized() == true
-        }
+    /** True only after the selected model's LiteRT GPU session is built and usable. */
+    fun neuralInpaintAvailable(): Boolean = litertInpainting?.isAvailable() == true
 
     /**
      * Warms up engine sessions outside the timed recognition region.
@@ -395,17 +390,17 @@ class RoiPageRecognitionEngine(
                 localInpainting.paddleDetector = paddleDet
                 var localLiteRT: LiteRTMangaInpaintingEngine? = null
                 if (inpaintingMode.initializesNeuralSessions) {
-                    if (neuralInpaintModel == NeuralInpaintModel.LAMA_LITERT_GPU) {
-                        logcat(LogPriority.INFO) { "LiteRT init: Preparing Manga LaMa LiteRT GPU engine" }
-                        localLiteRT = LiteRTMangaInpaintingEngine(context)
-                    } else {
-                        localInpainting.initialize(
-                            fixedModelFile = paths.inpaint512Model,
-                            dynamicModelFile = paths.inpaintModel,
-                        )
+                    // BOTH selectable neural models execute through the shared
+                    // LiteRT GPU runtime. AOT_GAN uses the optimized FP16
+                    // TFLite (aot-512-regen-gap) via its tensor adapter — the
+                    // legacy ONNX AOT ladder is no longer instantiated or
+                    // routed to for the selected model.
+                    logcat(LogPriority.INFO) {
+                        "LiteRT init: preparing $neuralInpaintModel via LiteRT GPU-first runtime"
                     }
+                    localLiteRT = LiteRTMangaInpaintingEngine(context, neuralModel = neuralInpaintModel)
                 } else {
-                    logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping neural session initialization" }
+                    logcat(LogPriority.INFO) { "LiteRT init: FAST inpainting mode; skipping neural session initialization" }
                 }
                 inpainting = localInpainting
                 litertInpainting = localLiteRT

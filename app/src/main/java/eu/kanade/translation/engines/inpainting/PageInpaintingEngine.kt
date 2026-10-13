@@ -43,11 +43,7 @@ class PageInpaintingEngine(
         return try {
             pageTranslation.inpaintStatus = StageStatus.RUNNING
             pageTranslation.updatedAt = System.currentTimeMillis()
-            val neuralAvailable = if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU) {
-                litertInpainter?.isAvailable() == true
-            } else {
-                inpainter.isInitialized()
-            }
+            val neuralAvailable = litertInpainter?.isAvailable() == true
             logcat(LogPriority.INFO) {
                 "Page inpainting input: boxes=${input.boxes.size} extraDetector=${input.extraDetectorCount} " +
                     "labels=${input.labels.groupingBy {
@@ -84,7 +80,13 @@ class PageInpaintingEngine(
                 }
             }
 
-            val cleaned = if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU && mode != InpaintingMode.FAST) {
+            // Both selectable neural models execute through the shared LiteRT
+            // GPU runtime in BALANCE/QUALITY: free-text line groups through
+            // freeTextNeuralFill, bubble segmentation-mask tiles through
+            // bubbleNeuralFill (LaMa fused FP16 / AOT 512 FP16 adapters).
+            // Bubble masks stay segmentation-only so speech bubble stroke
+            // borders are never erased to a rectangle.
+            val cleaned = if (mode != InpaintingMode.FAST) {
                 val lama = litertInpainter
                 if (lama != null && lama.isAvailable()) {
                     // LiteRT Manga LaMa GPU serves both region classes in
@@ -153,7 +155,7 @@ class PageInpaintingEngine(
         pageTranslation.errorMessage = null
         pageTranslation.inpaintingModeUsed = mode.stampName(
             neuralModel = neuralModel,
-            neuralAvailable = if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU) litertInpainter?.isAvailable() == true else inpainter.isInitialized(),
+            neuralAvailable = litertInpainter?.isAvailable() == true,
             degraded = degraded,
         )
         pageTranslation.updatedAt = System.currentTimeMillis()

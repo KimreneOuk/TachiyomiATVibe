@@ -17,22 +17,31 @@ import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
 import eu.kanade.translation.model.TranslationBlock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.NeuralInpaintModel
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Production Google AI Edge LiteRT inpainting engine executing the Manga LaMa
- * model through the accelerator-first CompiledModel Kotlin API.
+ * Production Google AI Edge LiteRT inpainting engine executing BOTH selectable
+ * neural models through ONE shared accelerator-first CompiledModel runtime:
+ *  - [NeuralInpaintModel.LAMA_LITERT_GPU] — Manga LaMa fused FP16;
+ *  - [NeuralInpaintModel.AOT_GAN] — optimized AOT 512 FP16 (aot-512-regen-gap).
+ * Model-specific tensor math lives in [LiteRtTensorAdapter] implementations;
+ * the GPU session, 1:1 pad/composite, and tight stroke masking are shared.
+ * The AOT model is GPU-required: if the GPU delegate fails to compile, the
+ * engine stays unavailable (no silent neural-CPU fallback, no NPU claims).
  *
  * Employs tight stroke masking (fixed pill mask) and ring-median background
  * context padding to eliminate screentone phase distortion and moiré artifacts.
  */
 class LiteRTMangaInpaintingEngine(
     private val context: Context,
-    private val modelAssetPath: String = "models/inpainting/manga_lama_fused_fp16.tflite",
+    private val neuralModel: NeuralInpaintModel = NeuralInpaintModel.LAMA_LITERT_GPU,
     private val enableExperimentalNpu: Boolean = false,
 ) : AutoCloseable {
+
+    private val adapter: LiteRtTensorAdapter = tensorAdapterFor(neuralModel)
 
     companion object {
         private const val MODEL_INPUT_SIZE = 512
@@ -50,17 +59,25 @@ class LiteRTMangaInpaintingEngine(
 
     private var model: CompiledModel? = null
     private var environment: Environment? = null
-    private var inputBuffers: List<TensorBuffer> = emptyList()
-    private var outputBuffers: List<TensorBuffer> = emptyList()
     private var backendName: String = "UNINITIALIZED"
 
-    // Reused input arrays feed the LiteRT TensorBuffers without allocating a new
-    // pixel tensor for every patch. The dual-input model uses NHWC RGB + mask.
+    // Inputs bind BY SIGNATURE NAME, never by buffer index. The AOT flatbuffer
+    // lists mask as subgraph input 0 and image as input 1, so index-ordered
+    // buffers would silently invert the tensors; every candidate name is
+    // validated against its exact float NHWC shape before use and the run()
+    // call passes name-keyed buffer maps. Any resolution failure fails closed.
+    private val signatureName: String = "serving_default"
+    private var resolvedImageInputName: String? = null
+    private var resolvedMaskInputName: String? = null
+    private var resolvedOutputName: String? = null
+    private var imageInputBuffer: TensorBuffer? = null
+    private var maskInputBuffer: TensorBuffer? = null
+    private var outputBuffer: TensorBuffer? = null
+
+    // Reused input arrays feed the LiteRT TensorBuffers without allocating a
+    // new pixel tensor for every patch (NHWC RGB + binary mask).
     private val imageInputValues = FloatArray(MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 3)
     private val maskInputValues = FloatArray(MODEL_INPUT_SIZE * MODEL_INPUT_SIZE)
-    // Compatibility path for older single-input RGBA model assets.
-    private val singleInputValues = FloatArray(MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 4)
-    private var isDualInput: Boolean = true
 
     // Pooled scratch arrays for 1:1 padding
     private val paddedSourcePixels = IntArray(MODEL_INPUT_SIZE * MODEL_INPUT_SIZE)
@@ -84,14 +101,15 @@ class LiteRTMangaInpaintingEngine(
             if (isInitialized) return
             val startInit = System.currentTimeMillis()
             try {
-                var modelFile = getOrExtractModelFile(context, modelAssetPath)
-                if (modelFile == null || !modelFile.exists() || modelFile.length() == 0L) {
-                    logcat(LogPriority.INFO) { "[LiteRTInpaint] Primary model $modelAssetPath missing; trying gz $FALLBACK_FP16_GZ" }
+                var modelFile = getOrExtractModelFile(context, adapter.modelAssetPath)
+                if (modelFile == null && neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU) {
+                    // LaMa-only historical fallback ladder (gz / dynamic int8).
+                    logcat(LogPriority.INFO) { "[LiteRTInpaint] Primary model ${adapter.modelAssetPath} missing; trying gz $FALLBACK_FP16_GZ" }
                     modelFile = getOrExtractModelFile(context, FALLBACK_FP16_GZ)
-                }
-                if (modelFile == null || !modelFile.exists() || modelFile.length() == 0L) {
-                    logcat(LogPriority.INFO) { "[LiteRTInpaint] Plain FP16 model missing; trying dynamic INT8 $FALLBACK_DYN_INT8" }
-                    modelFile = getOrExtractModelFile(context, FALLBACK_DYN_INT8)
+                    if (modelFile == null || !modelFile.exists() || modelFile.length() == 0L) {
+                        logcat(LogPriority.INFO) { "[LiteRTInpaint] Plain FP16 model missing; trying dynamic INT8 $FALLBACK_DYN_INT8" }
+                        modelFile = getOrExtractModelFile(context, FALLBACK_DYN_INT8)
+                    }
                 }
 
                 if (modelFile == null || !modelFile.exists() || modelFile.length() == 0L) {
@@ -127,18 +145,27 @@ class LiteRTMangaInpaintingEngine(
 
                 var compiled = false
 
-                // 1. Primary accelerator: Prioritize GPU with FP16 model (Adreno 750 OpenCL 222ms rock-solid baseline)
-                if (!enableExperimentalNpu && (Accelerator.GPU in availableAccelerators || availableAccelerators.isEmpty())) {
-                    logcat(LogPriority.INFO) {
-                        "[LiteRTInpaint] Prioritizing stable GPU accelerator (Adreno 750 OpenCL 222ms baseline)"
-                    }
+                // 1. GPU FIRST — always, for BOTH models, regardless of the
+                // experimental NPU opt-in. The selected FP16 artifact runs on
+                // the GPU delegate; nothing may displace this first attempt.
+                logcat(LogPriority.INFO) {
+                    "[LiteRTInpaint] GPU-first init: ${adapter.logLabel} (${adapter.modelAssetPath})"
+                }
+                if (Accelerator.GPU in availableAccelerators || availableAccelerators.isEmpty()) {
                     compiled = tryCreateCompiledModel(modelFile, Accelerator.GPU, env)
+                } else {
+                    logcat(LogPriority.WARN) { "[LiteRTInpaint] GPU accelerator not registered in LiteRT environment" }
                 }
 
-                // 2. Experimental Qualcomm NPU path (HTP V75 INT8 JIT compilation)
-                if (!compiled && Accelerator.NPU in availableAccelerators) {
+                // 2. Experimental Qualcomm NPU — separate opt-in, LaMa INT8
+                // only, attempted ONLY after GPU failed. Never for AOT; never
+                // displaces the GPU-first attempt above.
+                val npuAttempted = !compiled && enableExperimentalNpu &&
+                    neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU &&
+                    Accelerator.NPU in availableAccelerators
+                if (npuAttempted) {
                     logcat(LogPriority.INFO) {
-                        "[LiteRTInpaint] NPU accelerator registered; attempting NPU compilation with INT8 model"
+                        "[LiteRTInpaint] Experimental NPU opt-in after GPU failure; attempting NPU compilation with INT8 model"
                     }
                     val npuModelFile = getOrExtractModelFile(context, MODEL_INT8_PATH)
                         ?: getOrExtractModelFile(context, FALLBACK_INT8_GZ)
@@ -149,27 +176,21 @@ class LiteRTMangaInpaintingEngine(
                             "[LiteRTInpaint] INT8 model file not found for NPU; skipping NPU to avoid unaccelerated FP16 emulation"
                         }
                     }
-                } else if (!compiled) {
-                    logcat(LogPriority.INFO) {
-                        "[LiteRTInpaint] Accelerator.NPU not available in LiteRT runtime; targeting GPU"
-                    }
                 }
 
-                // 3. Fallback to GPU if NPU was attempted first and failed
-                if (!compiled) {
+                // 3. If the experimental NPU attempt failed, give GPU one
+                // final retry (the opt-in path may have perturbed state).
+                if (!compiled && npuAttempted) {
                     if (Accelerator.GPU in availableAccelerators || availableAccelerators.isEmpty()) {
-                        logcat(LogPriority.INFO) { "[LiteRTInpaint] Falling back to GPU accelerator" }
+                        logcat(LogPriority.INFO) { "[LiteRTInpaint] Final GPU retry after failed experimental NPU attempt" }
                         compiled = tryCreateCompiledModel(modelFile, Accelerator.GPU, env)
-                    } else {
-                        logcat(LogPriority.WARN) { "[LiteRTInpaint] GPU accelerator not registered in LiteRT environment" }
                     }
                 }
 
-                // 3. Last-resort fallback to CPU
-                if (!compiled) {
-                    logcat(LogPriority.INFO) { "[LiteRTInpaint] Accelerators unavailable; falling back to LiteRT CPU" }
-                    tryCreateCompiledModel(modelFile, Accelerator.CPU, env)
-                }
+                // NO neural CPU fallback: an unsupported GPU leaves the engine
+                // unavailable so callers take their honest unavailable/error or
+                // user-enabled CLASSICAL fallback with degraded status. CPU is
+                // never silently reported as an optimized accelerator.
 
                 if (model == null) {
                     env.close()
@@ -180,7 +201,8 @@ class LiteRTMangaInpaintingEngine(
 
                 val elapsed = System.currentTimeMillis() - startInit
                 logcat(LogPriority.INFO) {
-                    "[InpaintBenchmark] [LiteRTInpaint] Ready in ${elapsed}ms | Backend: $backendName | Inputs=${inputBuffers.size}"
+                    "[LiteRTInpaint] Ready in ${elapsed}ms | Backend: $backendName | " +
+                        "image='$resolvedImageInputName' mask='$resolvedMaskInputName' out='$resolvedOutputName'"
                 }
             } catch (e: Throwable) {
                 logcat(LogPriority.ERROR, e) { "[LiteRTInpaint] Initialization failed completely" }
@@ -191,15 +213,16 @@ class LiteRTMangaInpaintingEngine(
         }
     }
 
-    /** Builds the official CompiledModel and its reusable TensorBuffers. */
+    /** Builds the official CompiledModel and its reusable named TensorBuffers. */
     private fun tryCreateCompiledModel(
         modelFile: File,
         accelerator: Accelerator,
         env: Environment,
     ): Boolean {
         var createdModel: CompiledModel? = null
-        var createdInputs: List<TensorBuffer> = emptyList()
-        var createdOutputs: List<TensorBuffer> = emptyList()
+        var createdImageBuffer: TensorBuffer? = null
+        var createdMaskBuffer: TensorBuffer? = null
+        var createdOutputBuffer: TensorBuffer? = null
         try {
             val options = CompiledModel.Options(accelerator)
             if (accelerator == Accelerator.NPU) {
@@ -221,41 +244,63 @@ class LiteRTMangaInpaintingEngine(
                 options,
                 env,
             )
-            createdInputs = createdModel.createInputBuffers()
-            createdOutputs = createdModel.createOutputBuffers()
-            require(createdInputs.size in 1..2) {
-                "Expected one or two input tensors, got ${createdInputs.size}"
-            }
-            require(createdOutputs.isNotEmpty()) { "CompiledModel returned no output tensors" }
-            if (createdInputs.size == 2) {
-                requireInputTensor(
-                    createdModel,
-                    inputName = "input_image",
-                    expectedShape = listOf(1, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 3),
+
+            // Bind EVERY tensor by its validated SIGNATURE name — never by
+            // buffer index. The AOT flatbuffer lists mask as subgraph input 0
+            // and image as input 1, so index-ordered buffers would silently
+            // invert the tensors. Resolution validates float + exact NHWC
+            // shape per candidate and FAILS CLOSED when nothing matches.
+            val imageShape = listOf(1, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 3)
+            val maskShape = listOf(1, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 1)
+            val resolvedImage = LiteRtSignatureBinding.resolveName(
+                adapter.imageInputNameCandidates,
+                imageShape,
+            ) { name -> lookupInputTensor(createdModel, name) }
+                ?: throw IllegalStateException(
+                    "[LiteRTInpaint] ${adapter.logLabel}: no image input candidate " +
+                        "${adapter.imageInputNameCandidates} resolved as FLOAT $imageShape under signature '$signatureName'",
                 )
-                requireInputTensor(
-                    createdModel,
-                    inputName = "input_mask",
-                    expectedShape = listOf(1, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 1),
+            val resolvedMask = LiteRtSignatureBinding.resolveName(
+                adapter.maskInputNameCandidates,
+                maskShape,
+            ) { name -> lookupInputTensor(createdModel, name) }
+                ?: throw IllegalStateException(
+                    "[LiteRTInpaint] ${adapter.logLabel}: no mask input candidate " +
+                        "${adapter.maskInputNameCandidates} resolved as FLOAT $maskShape under signature '$signatureName'",
                 )
-            }
+            val resolvedOutput = LiteRtSignatureBinding.resolveName(
+                adapter.outputNameCandidates,
+                imageShape,
+            ) { name -> lookupOutputTensor(createdModel, name) }
+                ?: throw IllegalStateException(
+                    "[LiteRTInpaint] ${adapter.logLabel}: no output candidate " +
+                        "${adapter.outputNameCandidates} resolved as FLOAT $imageShape under signature '$signatureName'",
+                )
+            createdImageBuffer = createdModel.createInputBuffer(resolvedImage, signatureName)
+            createdMaskBuffer = createdModel.createInputBuffer(resolvedMask, signatureName)
+            createdOutputBuffer = createdModel.createOutputBuffer(resolvedOutput, signatureName)
 
             model = createdModel
-            inputBuffers = createdInputs
-            outputBuffers = createdOutputs
-            isDualInput = createdInputs.size == 2
+            imageInputBuffer = createdImageBuffer
+            maskInputBuffer = createdMaskBuffer
+            outputBuffer = createdOutputBuffer
+            resolvedImageInputName = resolvedImage
+            resolvedMaskInputName = resolvedMask
+            resolvedOutputName = resolvedOutput
             backendName = when (accelerator) {
                 Accelerator.NPU -> "NPU (LiteRT CompiledModel)"
                 Accelerator.GPU -> "GPU (LiteRT CompiledModel)"
                 else -> "CPU (LiteRT CompiledModel)"
             }
             logcat(LogPriority.INFO) {
-                "[LiteRTInpaint] $backendName initialized successfully on ${modelFile.name} with ${createdInputs.size} inputs"
+                "[LiteRTInpaint] $backendName initialized on ${modelFile.name}: " +
+                    "image='$resolvedImage' mask='$resolvedMask' out='$resolvedOutput' (${adapter.logLabel})"
             }
             return true
         } catch (e: Throwable) {
-            createdInputs.forEach { runCatching { it.close() } }
-            createdOutputs.forEach { runCatching { it.close() } }
+            createdImageBuffer?.let { runCatching { it.close() } }
+            createdMaskBuffer?.let { runCatching { it.close() } }
+            createdOutputBuffer?.let { runCatching { it.close() } }
             runCatching { createdModel?.close() }
             val acceleratorName = when (accelerator) {
                 Accelerator.NPU -> "NPU"
@@ -267,20 +312,31 @@ class LiteRTMangaInpaintingEngine(
         }
     }
 
-    /** Fails model setup early if the dual-input signature no longer matches the packer. */
-    private fun requireInputTensor(
-        model: CompiledModel,
-        inputName: String,
-        expectedShape: List<Int>,
-    ) {
-        val signature = "serving_default"
-        val tensorType = model.getInputTensorType(inputName, signature)
-        require(tensorType.elementType == TensorType.ElementType.FLOAT) {
-            "Expected float input '$inputName', got ${tensorType.elementType}"
+    /** Signature-level tensor metadata; null when the name is not resolvable. */
+    private fun lookupInputTensor(model: CompiledModel, name: String): LiteRtTensorInfo? {
+        return try {
+            val tensorType = model.getInputTensorType(name, signatureName)
+            LiteRtTensorInfo(
+                isFloat = tensorType.elementType == TensorType.ElementType.FLOAT,
+                dimensions = tensorType.layout?.dimensions,
+            )
+        } catch (t: Throwable) {
+            logcat(LogPriority.INFO) { "[LiteRTInpaint] Input candidate '$name' not resolvable: ${t.message}" }
+            null
         }
-        val layout = requireNotNull(tensorType.layout) { "Input '$inputName' has no tensor layout" }
-        require(layout.dimensions == expectedShape) {
-            "Expected input '$inputName' shape $expectedShape, got ${layout.dimensions}"
+    }
+
+    /** Signature-level output tensor metadata; null when the name is not resolvable. */
+    private fun lookupOutputTensor(model: CompiledModel, name: String): LiteRtTensorInfo? {
+        return try {
+            val tensorType = model.getOutputTensorType(name, signatureName)
+            LiteRtTensorInfo(
+                isFloat = tensorType.elementType == TensorType.ElementType.FLOAT,
+                dimensions = tensorType.layout?.dimensions,
+            )
+        } catch (t: Throwable) {
+            logcat(LogPriority.INFO) { "[LiteRTInpaint] Output candidate '$name' not resolvable: ${t.message}" }
+            null
         }
     }
 
@@ -301,7 +357,7 @@ class LiteRTMangaInpaintingEngine(
         val cachedTime = prefs.getLong(versionKey, -1L)
         val cachedSize = prefs.getLong(sizeKey, -1L)
 
-        if (targetFile.exists() && targetFile.length() > 30_000_000L && cachedTime == appUpdateTime &&
+        if (targetFile.exists() && targetFile.length() > 1_000_000L && cachedTime == appUpdateTime &&
             (cachedSize <= 0L || targetFile.length() == cachedSize)
         ) {
             return targetFile
@@ -447,39 +503,31 @@ class LiteRTMangaInpaintingEngine(
     @Synchronized
     private fun runPaddedModel(): FloatArray? {
         val activeModel = model ?: return null
-        if (isDualInput) {
-            // inputBuffers[0] is RGB [1, 512, 512, 3] NHWC; inputBuffers[1]
-            // is the binary mask [1, 512, 512, 1] NHWC.
-            var imageIndex = 0
-            for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) {
-                val p = paddedSourcePixels[i]
-                val isMask = if ((paddedMaskPixels[i] and 0xFF) > 127) 1.0f else 0.0f
-                val keep = 1.0f - isMask
+        val imageBuffer = imageInputBuffer ?: return null
+        val maskBuffer = maskInputBuffer ?: return null
+        val outBuffer = outputBuffer ?: return null
+        val imageName = resolvedImageInputName ?: return null
+        val maskName = resolvedMaskInputName ?: return null
+        val outName = resolvedOutputName ?: return null
 
-                imageInputValues[imageIndex++] = ((p shr 16) and 0xFF) / 255.0f * keep
-                imageInputValues[imageIndex++] = ((p shr 8) and 0xFF) / 255.0f * keep
-                imageInputValues[imageIndex++] = (p and 0xFF) / 255.0f * keep
-                maskInputValues[i] = isMask
-            }
-            inputBuffers[0].writeFloat(imageInputValues)
-            inputBuffers[1].writeFloat(maskInputValues)
-        } else {
-            // Legacy fallback: single 4-channel input [1, 512, 512, 4]
-            var inputIndex = 0
-            for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) {
-                val p = paddedSourcePixels[i]
-                val isMask = if ((paddedMaskPixels[i] and 0xFF) > 127) 1.0f else 0.0f
-                val keep = 1.0f - isMask
-
-                singleInputValues[inputIndex++] = ((p shr 16) and 0xFF) / 255.0f * keep
-                singleInputValues[inputIndex++] = ((p shr 8) and 0xFF) / 255.0f * keep
-                singleInputValues[inputIndex++] = (p and 0xFF) / 255.0f * keep
-                singleInputValues[inputIndex++] = isMask
-            }
-            inputBuffers[0].writeFloat(singleInputValues)
+        // Name-keyed run: the runtime resolves each buffer through the
+        // signature, so physical subgraph input order (mask-first for AOT)
+        // cannot invert the tensors. The per-model tensor contract ([adapter])
+        // owns the encode math.
+        var imageIndex = 0
+        for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) {
+            val isMask = if ((paddedMaskPixels[i] and 0xFF) > 127) 1.0f else 0.0f
+            adapter.encodePixel(paddedSourcePixels[i], isMask, imageInputValues, imageIndex, maskInputValues, i)
+            imageIndex += 3
         }
-        activeModel.run(inputBuffers, outputBuffers)
-        return outputBuffers[0].readFloat()
+        imageBuffer.writeFloat(imageInputValues)
+        maskBuffer.writeFloat(maskInputValues)
+        activeModel.run(
+            mapOf(imageName to imageBuffer, maskName to maskBuffer),
+            mapOf(outName to outBuffer),
+            signatureName,
+        )
+        return outBuffer.readFloat()
     }
 
     /**
@@ -489,17 +537,29 @@ class LiteRTMangaInpaintingEngine(
      * 1:1 (zero scaling blur) and copied so later patches cannot alias it.
      */
     private fun decodeOutputSquare(outputValues: FloatArray, sourceSide: Int): IntArray {
-        val isMonochrome = isMonochromeCrop(paddedSourcePixels, MODEL_INPUT_SIZE * MODEL_INPUT_SIZE)
+        // Adapter decodes its native output range (LaMa [0,1], AOT [-1,1])
+        // into 0..255 ARGB; the monochrome projection then runs on adapter
+        // output so the decision stays stable regardless of the crop side.
+        val adapterPixels = IntArray(MODEL_INPUT_SIZE * MODEL_INPUT_SIZE)
         for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) {
             val outputIndex = i * 3
-            val r = (outputValues[outputIndex].coerceIn(0.0f, 1.0f) * 255.0f).toInt()
-            val g = (outputValues[outputIndex + 1].coerceIn(0.0f, 1.0f) * 255.0f).toInt()
-            val b = (outputValues[outputIndex + 2].coerceIn(0.0f, 1.0f) * 255.0f).toInt()
+            adapterPixels[i] = adapter.decodePixel(
+                outputValues[outputIndex],
+                outputValues[outputIndex + 1],
+                outputValues[outputIndex + 2],
+            )
+        }
+        val isMonochrome = isMonochromeCrop(paddedSourcePixels, MODEL_INPUT_SIZE * MODEL_INPUT_SIZE)
+        for (i in 0 until MODEL_INPUT_SIZE * MODEL_INPUT_SIZE) {
+            val p = adapterPixels[i]
             if (isMonochrome) {
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
                 val lum = ((r * 299 + g * 587 + b * 114 + 500) / 1000).coerceIn(0, 255)
                 paddedOutputPixels[i] = (0xFF shl 24) or (lum shl 16) or (lum shl 8) or lum
             } else {
-                paddedOutputPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                paddedOutputPixels[i] = p
             }
         }
         return if (sourceSide == MODEL_INPUT_SIZE) {
@@ -610,7 +670,7 @@ class LiteRTMangaInpaintingEngine(
 
         val totalPageElapsed = System.currentTimeMillis() - pageStart
         logcat(LogPriority.INFO) {
-            "[InpaintBenchmark] Mode=LAMA_LITERT_COMPILED | Backend=$backendName | " +
+            "[InpaintBenchmark] Mode=${adapter.logLabel} (LiteRT CompiledModel) | Backend=$backendName | " +
                 "Patches=$patchCount | PureInferMs=${totalInferMs}ms | TotalPageMs=${totalPageElapsed}ms | " +
                 "PageSize=${pageW}x$pageH"
         }
@@ -714,10 +774,15 @@ class LiteRTMangaInpaintingEngine(
     }
 
     private fun closeRuntime() {
-        inputBuffers.forEach { runCatching { it.close() } }
-        outputBuffers.forEach { runCatching { it.close() } }
-        inputBuffers = emptyList()
-        outputBuffers = emptyList()
+        imageInputBuffer?.let { runCatching { it.close() } }
+        maskInputBuffer?.let { runCatching { it.close() } }
+        outputBuffer?.let { runCatching { it.close() } }
+        imageInputBuffer = null
+        maskInputBuffer = null
+        outputBuffer = null
+        resolvedImageInputName = null
+        resolvedMaskInputName = null
+        resolvedOutputName = null
         runCatching { model?.close() }
         model = null
         runCatching { environment?.close() }

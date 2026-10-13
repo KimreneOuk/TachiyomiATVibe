@@ -186,7 +186,6 @@ class ReaderViewModel @JvmOverloads constructor(
             )
 
     internal val aiModelFetchState = MutableStateFlow<AiModelListState>(AiModelListState.Idle)
-    private val inpaintingHardwareOverride = MutableStateFlow(InpaintingHardwareOverride.CPU)
 
     val translationSettingsState: kotlinx.coroutines.flow.StateFlow<TranslationSettingsState> = combine(
         combine(
@@ -233,8 +232,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 AiSubPrefs(apiKey, baseUrl, model, recentRaw)
             }
         },
-        inpaintingHardwareOverride,
-    ) { part1, part2, ocrInfo, aiSubPrefs, hardwareOverride ->
+    ) { part1, part2, ocrInfo, aiSubPrefs ->
         val (q1, q2) = part1
         val (q3, fetchState) = part2
         val (ocrModel, ocrModelEntries) = ocrInfo
@@ -255,7 +253,6 @@ class ReaderViewModel @JvmOverloads constructor(
             ocrModelEntries = ocrModelEntries,
             inpaintingMode = q2.d.first,
             inpaintingNeuralModel = q2.d.second,
-            inpaintingHardwareOverride = hardwareOverride,
             engineCategory = q3.a,
             standardEngine = q3.b,
             deeplApiKey = q3.c,
@@ -1754,11 +1751,6 @@ class ReaderViewModel @JvmOverloads constructor(
     fun setTranslationInpaintingNeuralModel(model: NeuralInpaintModel) =
         translationController.setTranslationInpaintingNeuralModel(model)
 
-    fun setTranslationInpaintingHardwareOverride(override: InpaintingHardwareOverride) {
-        inpaintingHardwareOverride.value = override
-        translationManager.setInpaintingHardwareOverride(override)
-    }
-
     fun setTranslationEngineCategory(category: TranslationEngineCategory) =
         translationController.setTranslationEngineCategory(category)
 
@@ -1842,7 +1834,6 @@ data class TranslationSettingsState(
     val ocrModelEntries: ImmutableMap<OcrModel, String> = persistentMapOf(),
     val inpaintingMode: String = "",
     val inpaintingNeuralModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
-    val inpaintingHardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
     val engineCategory: TranslationEngineCategory = TranslationEngineCategory.STANDARD,
     val standardEngine: StandardEngine = StandardEngine.GOOGLE,
     val deeplApiKey: String = "",

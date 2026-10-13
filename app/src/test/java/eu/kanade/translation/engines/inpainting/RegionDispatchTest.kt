@@ -68,19 +68,21 @@ class RegionDispatchTest {
     }
 
     @Test
-    fun `resume predicate reuses clean and legacy stamps`() {
+    fun `bare stamps predate model tags and force a re-inpaint`() {
         val decision = InpaintStampDecision(InpaintingMode.BALANCE, neuralAvailable = false)
         decision.stampNeedsReinpaint(stored = null) shouldBe false
-        decision.stampNeedsReinpaint(stored = "BALANCE") shouldBe false
+        // Bare "BALANCE" is a legacy ONNX-era stamp with no model tag: it no
+        // longer matches any selectable model route and must re-inpaint.
+        decision.stampNeedsReinpaint(stored = "BALANCE") shouldBe true
     }
 
     @Test
-    fun `degraded stamp upgrades only on positive neural recovery`() {
+    fun `bare degraded stamps are legacy and always re-inpaint`() {
         val degradedStored = "BALANCE_DEGRADED"
         InpaintStampDecision(InpaintingMode.BALANCE, neuralAvailable = null)
-            .stampNeedsReinpaint(degradedStored) shouldBe false
+            .stampNeedsReinpaint(degradedStored) shouldBe true
         InpaintStampDecision(InpaintingMode.BALANCE, neuralAvailable = false)
-            .stampNeedsReinpaint(degradedStored) shouldBe false
+            .stampNeedsReinpaint(degradedStored) shouldBe true
         InpaintStampDecision(InpaintingMode.BALANCE, neuralAvailable = true)
             .stampNeedsReinpaint(degradedStored) shouldBe true
     }
@@ -96,7 +98,7 @@ class RegionDispatchTest {
     }
 
     @Test
-    fun `stamp parser recognizes the LiteRT model tag`() {
+    fun `stamp parser recognizes the LiteRT model tags`() {
         InpaintStampDecision(InpaintingMode.BALANCE, neuralAvailable = null, neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU)
             .stampNeedsReinpaint("BALANCE:LAMA_LITERT") shouldBe false
         InpaintStampDecision(
@@ -109,6 +111,17 @@ class RegionDispatchTest {
             neuralAvailable = true,
             neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU,
         ).stampNeedsReinpaint("QUALITY:LAMA_LITERT_DEGRADED") shouldBe true
+        // Optimized AOT carries its own AOT_LITERT token (LiteRT GPU runtime).
+        InpaintStampDecision(
+            InpaintingMode.QUALITY,
+            neuralAvailable = null,
+            neuralModel = NeuralInpaintModel.AOT_GAN,
+        ).stampNeedsReinpaint("QUALITY:AOT_LITERT") shouldBe false
+        InpaintStampDecision(
+            InpaintingMode.BALANCE,
+            neuralAvailable = false,
+            neuralModel = NeuralInpaintModel.AOT_GAN,
+        ).stampNeedsReinpaint("BALANCE:AOT_LITERT_DEGRADED") shouldBe false
     }
 
     @Test
@@ -117,6 +130,12 @@ class RegionDispatchTest {
             .stampNeedsReinpaint("QUALITY:LAMA") shouldBe true
         InpaintStampDecision(InpaintingMode.QUALITY, neuralAvailable = null, neuralModel = NeuralInpaintModel.AOT_GAN)
             .stampNeedsReinpaint("QUALITY:LAMA512F") shouldBe true
+        // "AOT" is the retired ONNX-AOT runtime's token: cached pages stamped
+        // with it must re-inpaint under the optimized LiteRT AOT model.
+        InpaintStampDecision(InpaintingMode.QUALITY, neuralAvailable = null, neuralModel = NeuralInpaintModel.AOT_GAN)
+            .stampNeedsReinpaint("QUALITY:AOT") shouldBe true
+        InpaintStampDecision(InpaintingMode.BALANCE, neuralAvailable = true, neuralModel = NeuralInpaintModel.AOT_GAN)
+            .stampNeedsReinpaint("BALANCE:AOT_DEGRADED") shouldBe true
     }
 
     @Test

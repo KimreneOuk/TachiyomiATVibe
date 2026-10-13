@@ -46,9 +46,10 @@ import eu.kanade.translation.engines.inpainting.bubble.BubbleMedianDiffusionFill
 /**
  * Model-agnostic neural inpainting coordinator. It owns the shared region
  * routing (bubble text vs free text) and delegates model execution to the
- * selected [NeuralInpaintModel] runtime: the LiteRT Manga LaMa GPU engine via
- * the [freeTextNeuralFill] / [bubbleNeuralFill] delegates, or the model-specific
- * ONNX AOT-GAN EP ladder below.
+ * selected [NeuralInpaintModel] through the [freeTextNeuralFill] and
+ * [bubbleNeuralFill] delegates. Production neural-model execution is owned by
+ * the shared LiteRT GPU engine; this coordinator handles region routing and
+ * classical fallback behavior.
  */
 class NeuralInpaintingCoordinator(
     val performanceMode: String? = "burst",
@@ -137,21 +138,17 @@ class NeuralInpaintingCoordinator(
     var paddleDetector: eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine? = null
 
     /**
-     * Optional external neural fill for Paddle-refined free-text groups (the
-     * LiteRT Manga LaMa engine). Bubbles never route here â€” they use
-     * [bubbleNeuralFill] or the ONNX ladder â€” and a null return falls back to
-     * the classical free-text path.
+     * Optional LiteRT neural fill for Paddle-refined free-text groups. If it
+     * returns null, an explicitly initialized legacy ONNX session may be
+     * tried; without one, the group uses the classical free-text path.
      */
     var freeTextNeuralFill: ((image: Bitmap, groupBoxes: List<IntArray>) -> Bitmap?)? = null
 
     /**
-     * Optional external neural fill for one bubble stroke-mask tile (the
-     * LiteRT Manga LaMa engine). The mask is the bubble's text-line / eroded
-     * stroke mask localized to the square [crop] â€” never the whole bubble
-     * bounding box â€” so the bubble contour border is never erased. Returns the
-     * filled sideÃ—side candidate pixels, or null to let the ONNX ladder
-     * (AOT-GAN) try; when that also fails the caller falls back to the solid
-     * median blend.
+     * Optional LiteRT neural fill for one bubble stroke-mask tile. The mask is
+     * the bubble text-line / eroded stroke mask in the square crop, never the
+     * full bubble box. A null result lets an explicitly initialized legacy
+     * ONNX session try; when unavailable, the caller uses the solid median.
      */
     var bubbleNeuralFill: ((image: Bitmap, localMask: ByteArray, crop: IntArray, side: Int) -> IntArray?)? = null
 
@@ -824,9 +821,10 @@ class NeuralInpaintingCoordinator(
                     val localMask = cropMask(mask, w, h, crop, side, tile)
                     if (localMask.none { it != 0.toByte() }) continue
 
-                    // Prefer the external delegate (LiteRT Manga LaMa); a null
-                    // result lets the ONNX AOT-GAN ladder try. The mask is the
-                    // eroded segmentation crop â€” never the bubble bounding box.
+                    // Prefer the LiteRT delegate for the selected model. A null
+                    // result can use a legacy ONNX session only when one was
+                    // explicitly initialized. The mask is the eroded segmentation
+                    // crop, never the bubble bounding box.
                     val candidate = bubbleNeuralFill?.invoke(image, localMask, crop, side)
                         ?: neuralFillSquare(
                             image = image,

@@ -8,7 +8,7 @@ enum class InpaintingMode {
     QUALITY,
     ;
 
-    /** True when this mode asks the recognition engine to load AOT sessions. */
+    /** True when this mode asks the recognition engine to initialize the selected neural model's LiteRT session. */
     val initializesNeuralSessions: Boolean
         get() = this != FAST
 
@@ -40,7 +40,10 @@ fun InpaintingMode.stampName(
     }
     val modelTag = when (neuralModel) {
         NeuralInpaintModel.LAMA_LITERT_GPU -> "LAMA_LITERT"
-        NeuralInpaintModel.AOT_GAN -> "AOT"
+        // Optimized AOT (FP16 TFLite via the shared LiteRT GPU runtime) — a
+        // NEW token so legacy ONNX-AOT "AOT" cache stamps no longer match and
+        // those pages re-inpaint under the optimized model.
+        NeuralInpaintModel.AOT_GAN -> "AOT_LITERT"
     }
     val degradedTag = if (degraded || !neuralAvailable) InpaintingMode.DEGRADED_SUFFIX else ""
     return "$name:$modelTag$degradedTag"

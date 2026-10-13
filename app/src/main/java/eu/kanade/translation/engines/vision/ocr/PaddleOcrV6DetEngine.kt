@@ -130,6 +130,7 @@ class PaddleOcrV6DetEngine : Closeable {
         crop: Bitmap,
         thresh: Float = DbPostProcess.Defaults.THRESH,
         boxThresh: Float = DbPostProcess.Defaults.BOX_THRESH,
+        unclipRatio: Float = DbPostProcess.Defaults.UNCLIP_RATIO,
     ): List<TextLine> {
         val localSession = session ?: throw IllegalStateException("PaddleOCR v6 det not initialized")
         val w = crop.width
@@ -167,7 +168,7 @@ class PaddleOcrV6DetEngine : Closeable {
                 height = mapHeight,
                 threshold = thresh,
                 boxThreshold = boxThresh,
-                unclipRatio = DbPostProcess.Defaults.UNCLIP_RATIO,
+                unclipRatio = unclipRatio,
             )
             val cropLines = ArrayList<TextLine>(mapLines.size)
             for (ml in mapLines) {

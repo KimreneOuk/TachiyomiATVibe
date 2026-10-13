@@ -17,8 +17,7 @@ enum class RegionBackend {
 
     /**
      * Model-agnostic neural inpainting. The selected [NeuralInpaintModel]
-     * decides the runtime: the LiteRT Manga LaMa engine or the ONNX AOT-GAN
-     * EP ladder inside [eu.kanade.translation.engines.inpainting.aot.NeuralInpaintingCoordinator].
+     * selects the LiteRT tensor adapter used by the shared GPU runtime.
      */
     NEURAL,
 }
@@ -70,11 +69,22 @@ data class InpaintStampDecision(
             val modelWasDegraded = modelToken?.endsWith(InpaintingMode.DEGRADED_SUFFIX) == true
             val neuralModel = when (modelToken?.removeSuffix(InpaintingMode.DEGRADED_SUFFIX)) {
                 "LAMA_LITERT" -> NeuralInpaintModel.LAMA_LITERT_GPU
-                "AOT" -> NeuralInpaintModel.AOT_GAN
-                null -> NeuralInpaintModel.AOT_GAN
-                // Deprecated model tags (LAMA, LAMA16, LAMA512, LAMA512F) no
-                // longer parse: an unparseable stamp forces a fresh inpaint
-                // with the selected model instead of matching stale routes.
+                // Optimized AOT via the shared LiteRT GPU runtime (FP16 asset).
+                "AOT_LITERT" -> NeuralInpaintModel.AOT_GAN
+                // FAST stamps legitimately carry no model tag (classical run).
+                null -> if (mode == InpaintingMode.FAST) {
+                    NeuralInpaintModel.AOT_GAN
+                } else {
+                    // "AOT" and bare BALANCE/QUALITY tokens are legacy
+                    // ONNX-AOT results from the retired runtime; they no
+                    // longer parse, so those cached pages re-inpaint under
+                    // the optimized model instead of matching stale routes.
+                    return null
+                }
+                // Deprecated model tags (LAMA, LAMA16, LAMA512, LAMA512F,
+                // AOT) no longer parse: an unparseable stamp forces a fresh
+                // inpaint with the selected model instead of matching stale
+                // routes.
                 else -> return null
             }
             return ParsedStamp(

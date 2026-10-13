@@ -121,11 +121,14 @@ class PageInpaintingEngineTest {
         every { inpainter.bubbleNeuralFill = any() } just runs
         every { inpainter.lastRunDegraded } returns false
         every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns mockk()
+        val litert = mockk<LiteRTMangaInpaintingEngine>()
+        every { litert.isAvailable() } returns true
         val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 0)) }
 
         PageInpaintingEngine(
             InpaintingMode.BALANCE,
             inpainter,
+            litertInpainter = litert,
             neuralModel = tachiyomi.domain.translation.NeuralInpaintModel.AOT_GAN,
         ).inpaint(bitmap(), page)
 
@@ -282,27 +285,30 @@ class PageInpaintingEngineTest {
         every { inpainter.bubbleNeuralFill = any() } just runs
         every { inpainter.lastRunDegraded } returns false
         every { inpainter.inpaintRegions(any(), any(), any(), any(), any()) } returns cleaned
+        val litert = mockk<LiteRTMangaInpaintingEngine>()
+        every { litert.isAvailable() } returns true
         val page = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
 
         PageInpaintingEngine(
             InpaintingMode.BALANCE,
             inpainter,
+            litertInpainter = litert,
             neuralModel = tachiyomi.domain.translation.NeuralInpaintModel.AOT_GAN,
         ).inpaint(bitmap(), page) shouldBe cleaned
-        page.inpaintingModeUsed shouldBe "BALANCE:AOT"
+        // Optimized AOT carries the new AOT_LITERT token (LiteRT GPU runtime).
+        page.inpaintingModeUsed shouldBe "BALANCE:AOT_LITERT"
 
         every { inpainter.lastRunDegraded } returns true
         val degradedPage = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
         PageInpaintingEngine(
             InpaintingMode.BALANCE,
             inpainter,
+            litertInpainter = litert,
             neuralModel = tachiyomi.domain.translation.NeuralInpaintModel.AOT_GAN,
         ).inpaint(bitmap(), degradedPage) shouldBe cleaned
-        degradedPage.inpaintingModeUsed shouldBe "BALANCE:AOT_DEGRADED"
+        degradedPage.inpaintingModeUsed shouldBe "BALANCE:AOT_LITERT_DEGRADED"
 
         every { inpainter.lastRunDegraded } returns false
-        val litert = mockk<LiteRTMangaInpaintingEngine>()
-        every { litert.isAvailable() } returns true
         val litertPage = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
         PageInpaintingEngine(
             InpaintingMode.BALANCE,

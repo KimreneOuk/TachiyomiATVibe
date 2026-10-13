@@ -32,9 +32,30 @@ class InpaintStampDecisionTest {
         )
         assertFalse(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:AOT_LITERT",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.AOT_GAN,
+            ),
+        )
+    }
+
+    @Test
+    fun `legacy ONNX-AOT stamps invalidate under the optimized LiteRT AOT`() {
+        // "AOT" was produced by the retired ONNX runtime; the optimized FP16
+        // LiteRT AOT must re-inpaint those cached pages (fresh stamp token).
+        assertTrue(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = "QUALITY:AOT",
                 desiredMode = InpaintingMode.QUALITY,
                 desiredModel = NeuralInpaintModel.AOT_GAN,
+            ),
+        )
+        assertTrue(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "BALANCE:AOT_DEGRADED",
+                desiredMode = InpaintingMode.BALANCE,
+                desiredModel = NeuralInpaintModel.AOT_GAN,
+                neuralAvailable = true,
             ),
         )
     }
@@ -50,7 +71,7 @@ class InpaintStampDecisionTest {
         )
         assertTrue(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:AOT",
+                existingStamp = "QUALITY:AOT_LITERT",
                 desiredMode = InpaintingMode.QUALITY,
                 desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             ),
@@ -58,8 +79,8 @@ class InpaintStampDecisionTest {
     }
 
     @Test
-    fun `legacy neural stamps remain compatible with the incumbent AOT route`() {
-        assertFalse(
+    fun `bare legacy stamps predate model tags and invalidate for both models`() {
+        assertTrue(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = "QUALITY",
                 desiredMode = InpaintingMode.QUALITY,
@@ -76,23 +97,21 @@ class InpaintStampDecisionTest {
     }
 
     @Test
-    fun `legacy degraded stamp retries only after neural recovery`() {
-        assertFalse(
-            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY_DEGRADED",
-                desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.AOT_GAN,
-                neuralAvailable = false,
-            ),
-        )
-        assertTrue(
-            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY_DEGRADED",
-                desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.AOT_GAN,
-                neuralAvailable = true,
-            ),
-        )
+    fun `bare legacy degraded stamps always re-inpaint`() {
+        // "QUALITY_DEGRADED" is a bare ONNX-era stamp with no model tag: it no
+        // longer matches any selectable route regardless of availability.
+        eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+            existingStamp = "QUALITY_DEGRADED",
+            desiredMode = InpaintingMode.QUALITY,
+            desiredModel = NeuralInpaintModel.AOT_GAN,
+            neuralAvailable = false,
+        ) shouldBe true
+        eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+            existingStamp = "QUALITY_DEGRADED",
+            desiredMode = InpaintingMode.QUALITY,
+            desiredModel = NeuralInpaintModel.AOT_GAN,
+            neuralAvailable = true,
+        ) shouldBe true
     }
 
     @Test
@@ -116,12 +135,12 @@ class InpaintStampDecisionTest {
         InpaintingMode.BALANCE.stampName(
             neuralModel = NeuralInpaintModel.AOT_GAN,
             neuralAvailable = true,
-        ) shouldBe "BALANCE:AOT"
+        ) shouldBe "BALANCE:AOT_LITERT"
     }
 
     @Test
     fun `deprecated model tags no longer parse and force a re-inpaint`() {
-        listOf("LAMA", "LAMA16", "LAMA512", "LAMA512F").forEach { tag ->
+        listOf("LAMA", "LAMA16", "LAMA512", "LAMA512F", "AOT").forEach { tag ->
             assertTrue(
                 eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                     existingStamp = "QUALITY:$tag",
@@ -164,7 +183,7 @@ class InpaintStampDecisionTest {
             neuralModel = NeuralInpaintModel.AOT_GAN,
             neuralAvailable = false,
         )
-        stored shouldBe "QUALITY:AOT_DEGRADED"
+        stored shouldBe "QUALITY:AOT_LITERT_DEGRADED"
         assertFalse(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = stored,

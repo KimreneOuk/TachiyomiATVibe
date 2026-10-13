@@ -32,7 +32,6 @@ import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidge
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
-import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
 import eu.kanade.translation.engines.translator.providers.AiModelFetcher
@@ -79,7 +78,6 @@ fun TranslationSettingsSheet(
     onOcrModelChange: (OcrModel) -> Unit,
     onTranslationInpaintingModeChange: (String) -> Unit,
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
-    onTranslationInpaintingHardwareOverrideChange: (InpaintingHardwareOverride) -> Unit,
     onTranslationEngineCategoryChange: (TranslationEngineCategory) -> Unit,
     onTranslationStandardEngineChange: (StandardEngine) -> Unit,
     onTranslationDeeplApiKeyChange: (String) -> Unit,
@@ -146,10 +144,8 @@ fun TranslationSettingsSheet(
                 InpaintSection(
                     inpaintingMode = state.inpaintingMode,
                     neuralModel = state.inpaintingNeuralModel,
-                    hardwareOverride = state.inpaintingHardwareOverride,
                     onTranslationInpaintingModeChange = onTranslationInpaintingModeChange,
                     onTranslationInpaintingNeuralModelChange = onTranslationInpaintingNeuralModelChange,
-                    onTranslationInpaintingHardwareOverrideChange = onTranslationInpaintingHardwareOverrideChange,
                 )
                 EngineSection(
                     state = state,
@@ -481,10 +477,8 @@ private fun SearchableLanguageRow(
 private fun ColumnScope.InpaintSection(
     inpaintingMode: String,
     neuralModel: NeuralInpaintModel,
-    hardwareOverride: InpaintingHardwareOverride,
     onTranslationInpaintingModeChange: (String) -> Unit,
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
-    onTranslationInpaintingHardwareOverrideChange: (InpaintingHardwareOverride) -> Unit,
 ) {
     val entries = mapOf(
         "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
@@ -511,64 +505,32 @@ private fun ColumnScope.InpaintSection(
             onValueChange = onTranslationInpaintingNeuralModelChange,
         )
 
-        if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU) {
-            Text(
-                text = stringResource(ATMR.strings.pref_inpainting_hardware_override),
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Row(
+        // Honest accelerator display for BOTH neural models: the shared
+        // LiteRT runtime is GPU-first with no neural CPU/NPU fallback, so the
+        // old selectable CPU/GPU/NPU chips (ignored by the runtime) and the
+        // claimed CPU XNNPACK fallback were removed.
+        Text(
+            text = stringResource(ATMR.strings.pref_inpainting_hardware_override),
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+        ) {
+            FilterChip(
+                selected = true,
+                onClick = {},
+                enabled = false,
+                label = {
+                    Text(text = stringResource(ATMR.strings.pref_inpainting_hardware_gpu_fixed))
+                },
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
-            ) {
-                FilterChip(
-                    selected = true,
-                    onClick = {},
-                    enabled = true,
-                    label = {
-                        Text(text = "GPU (LiteRT OpenCL/Vulkan)")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Text(
-                text = "Runs with hardware GPU acceleration via LiteRT, with seamless automatic fallback to CPU XNNPACK if unsupported.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        } else {
-            Text(
-                text = stringResource(ATMR.strings.pref_inpainting_hardware_override),
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
-            ) {
-                InpaintingHardwareOverride.entries.forEach { option ->
-                    FilterChip(
-                        selected = hardwareOverride == option,
-                        onClick = { onTranslationInpaintingHardwareOverrideChange(option) },
-                        enabled = true,
-                        label = {
-                            Text(
-                                text = stringResource(
-                                    when (option) {
-                                        InpaintingHardwareOverride.CPU -> ATMR.strings.pref_inpainting_hardware_cpu
-                                        InpaintingHardwareOverride.GPU -> ATMR.strings.pref_inpainting_hardware_gpu
-                                        InpaintingHardwareOverride.NPU -> ATMR.strings.pref_inpainting_hardware_npu
-                                    },
-                                ),
-                            )
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-            Text(
-                text = stringResource(ATMR.strings.pref_inpainting_hardware_override_summary),
-                style = MaterialTheme.typography.bodySmall,
             )
         }
+        Text(
+            text = stringResource(ATMR.strings.pref_inpainting_hardware_override_summary),
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
