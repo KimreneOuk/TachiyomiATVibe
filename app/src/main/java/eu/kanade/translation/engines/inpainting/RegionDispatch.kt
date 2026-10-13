@@ -5,21 +5,22 @@ import tachiyomi.domain.translation.NeuralInpaintModel
 /** Explicit region-class × backend table: bubbles and free text can evolve independently. */
 enum class RegionBackend {
     /**
-     * AotReportBubbleFill smooth diffusion over the selected bubble mask — the
-     * clean fill speech bubbles use in every mode. Bubbles must never route to
-     * neural tiling (chromatic hallucination inside white interiors) or OpenCV
-     * NS (blurry smudge patches).
+     * Solid median diffusion fill with feathered edge blending
+     * ([eu.kanade.translation.engines.inpainting.bubble.BubbleMedianDiffusionFill])
+     * — the classical path for speech bubbles in FAST and BALANCE, and the
+     * fallback when QUALITY neural execution fails or the memory gate trips.
      */
     SMOOTH_DIFFUSION,
-
-    /** OpenCV Navier–Stokes, crop-scoped — never selected for bubbles. */
-    OPENCV_NS,
 
     /** OpenCV Telea fast-marching — classical free text. */
     OPENCV_TELEA,
 
-    /** AOT-GAN neural inference through the EP ladder. */
-    AOT_NEURAL,
+    /**
+     * Model-agnostic neural inpainting. The selected [NeuralInpaintModel]
+     * decides the runtime: the LiteRT Manga LaMa engine or the ONNX AOT-GAN
+     * EP ladder inside [eu.kanade.translation.engines.inpainting.aot.NeuralInpaintingCoordinator].
+     */
+    NEURAL,
 }
 
 data class RegionDispatch(
@@ -27,7 +28,7 @@ data class RegionDispatch(
     val freeText: RegionBackend,
 ) {
     val usesNeural: Boolean
-        get() = bubble == RegionBackend.AOT_NEURAL || freeText == RegionBackend.AOT_NEURAL
+        get() = bubble == RegionBackend.NEURAL || freeText == RegionBackend.NEURAL
 }
 
 /** Desired mode and observed neural availability for a resume decision. */
@@ -68,12 +69,12 @@ data class InpaintStampDecision(
             if (mode == InpaintingMode.FAST && modelToken != null) return null
             val modelWasDegraded = modelToken?.endsWith(InpaintingMode.DEGRADED_SUFFIX) == true
             val neuralModel = when (modelToken?.removeSuffix(InpaintingMode.DEGRADED_SUFFIX)) {
-                "LAMA" -> NeuralInpaintModel.LAMA_MANGA
-                "LAMA16" -> NeuralInpaintModel.LAMA_MANGA_FP16
-                "LAMA512" -> NeuralInpaintModel.LAMA_512_INT8
-                "LAMA512F" -> NeuralInpaintModel.LAMA_512_FP16
+                "LAMA_LITERT" -> NeuralInpaintModel.LAMA_LITERT_GPU
                 "AOT" -> NeuralInpaintModel.AOT_GAN
                 null -> NeuralInpaintModel.AOT_GAN
+                // Deprecated model tags (LAMA, LAMA16, LAMA512, LAMA512F) no
+                // longer parse: an unparseable stamp forces a fresh inpaint
+                // with the selected model instead of matching stale routes.
                 else -> return null
             }
             return ParsedStamp(
@@ -103,19 +104,21 @@ fun InpaintStampDecision.stampNeedsReinpaint(stored: String?): Boolean =
 /**
  * Resolve the per-class dispatch once per run from mode + session reality.
  *
- * Bubbles are mode-independent by design: every mode feeds the selected bubble
- * mask (eroded segmentation mask, dynamic pill fallback) into the clean smooth
- * diffusion fill. Only free text changes with the mode.
+ * Fast: classical everywhere — solid median fill for bubble text, OpenCV Telea
+ *   for free text.
+ * Balance: solid median fill for bubble text, neural (LiteRT Manga LaMa /
+ *   AOT-GAN) for free text.
+ * Quality: neural for both bubble text and free text.
  */
 fun InpaintingMode.resolveDispatch(neuralAvailable: Boolean): RegionDispatch = when (this) {
     InpaintingMode.FAST -> RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
     InpaintingMode.BALANCE -> if (neuralAvailable) {
-        RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL)
+        RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.NEURAL)
     } else {
         RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
     }
     InpaintingMode.QUALITY -> if (neuralAvailable) {
-        RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL)
+        RegionDispatch(RegionBackend.NEURAL, RegionBackend.NEURAL)
     } else {
         RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
     }

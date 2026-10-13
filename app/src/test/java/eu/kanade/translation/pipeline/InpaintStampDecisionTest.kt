@@ -16,7 +16,7 @@ class InpaintStampDecisionTest {
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = "QUALITY:AOT",
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA,
+                desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             ),
         )
     }
@@ -25,34 +25,34 @@ class InpaintStampDecisionTest {
     fun `matching neural model stamp is reusable`() {
         assertFalse(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA",
+                existingStamp = "QUALITY:LAMA_LITERT",
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA,
+                desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
+            ),
+        )
+        assertFalse(
+            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                existingStamp = "QUALITY:AOT",
+                desiredMode = InpaintingMode.QUALITY,
+                desiredModel = NeuralInpaintModel.AOT_GAN,
             ),
         )
     }
 
     @Test
-    fun `LaMa int8 and FP16 stamps invalidate each other`() {
+    fun `LiteRT and AOT stamps invalidate each other`() {
         assertTrue(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA",
+                existingStamp = "QUALITY:LAMA_LITERT",
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+                desiredModel = NeuralInpaintModel.AOT_GAN,
             ),
         )
         assertTrue(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA16",
+                existingStamp = "QUALITY:AOT",
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA,
-            ),
-        )
-        assertFalse(
-            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA16",
-                desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+                desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             ),
         )
     }
@@ -70,7 +70,7 @@ class InpaintStampDecisionTest {
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = "QUALITY",
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA,
+                desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             ),
         )
     }
@@ -99,7 +99,7 @@ class InpaintStampDecisionTest {
     fun `degraded route is invalidated when selected neural model changes`() {
         assertTrue(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA_DEGRADED",
+                existingStamp = "QUALITY:LAMA_LITERT_DEGRADED",
                 desiredMode = InpaintingMode.QUALITY,
                 desiredModel = NeuralInpaintModel.AOT_GAN,
                 neuralAvailable = false,
@@ -110,49 +110,41 @@ class InpaintStampDecisionTest {
     @Test
     fun `route stamps include selected model for neural modes`() {
         InpaintingMode.QUALITY.stampName(
-            neuralModel = NeuralInpaintModel.LAMA_MANGA,
+            neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             neuralAvailable = true,
-        ) shouldBe "QUALITY:LAMA"
+        ) shouldBe "QUALITY:LAMA_LITERT"
         InpaintingMode.BALANCE.stampName(
             neuralModel = NeuralInpaintModel.AOT_GAN,
             neuralAvailable = true,
         ) shouldBe "BALANCE:AOT"
-        InpaintingMode.QUALITY.stampName(
-            neuralModel = NeuralInpaintModel.LAMA_MANGA_FP16,
-            neuralAvailable = true,
-        ) shouldBe "QUALITY:LAMA16"
     }
 
     @Test
-    fun `legacy untagged stamps remain AOT-compatible with FP16 model selection`() {
-        assertTrue(
-            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY",
-                desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
-            ),
-        )
-        assertFalse(
-            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY",
-                desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.AOT_GAN,
-            ),
-        )
+    fun `deprecated model tags no longer parse and force a re-inpaint`() {
+        listOf("LAMA", "LAMA16", "LAMA512", "LAMA512F").forEach { tag ->
+            assertTrue(
+                eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
+                    existingStamp = "QUALITY:$tag",
+                    desiredMode = InpaintingMode.QUALITY,
+                    desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
+                ),
+                "stamp QUALITY:$tag must not match the LiteRT route",
+            )
+        }
     }
 
     @Test
     fun `degraded neural route keeps model tag and recovery semantics`() {
         val stored = InpaintingMode.QUALITY.stampName(
-            neuralModel = NeuralInpaintModel.LAMA_MANGA,
+            neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             neuralAvailable = false,
         )
-        stored shouldBe "QUALITY:LAMA_DEGRADED"
+        stored shouldBe "QUALITY:LAMA_LITERT_DEGRADED"
         assertFalse(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = stored,
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA,
+                desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
                 neuralAvailable = false,
             ),
         )
@@ -160,24 +152,24 @@ class InpaintStampDecisionTest {
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = stored,
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA,
+                desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
                 neuralAvailable = true,
             ),
         )
     }
 
     @Test
-    fun `degraded FP16 route keeps its model tag and recovery semantics`() {
+    fun `degraded AOT route keeps its model tag and recovery semantics`() {
         val stored = InpaintingMode.QUALITY.stampName(
-            neuralModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+            neuralModel = NeuralInpaintModel.AOT_GAN,
             neuralAvailable = false,
         )
-        stored shouldBe "QUALITY:LAMA16_DEGRADED"
+        stored shouldBe "QUALITY:AOT_DEGRADED"
         assertFalse(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = stored,
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+                desiredModel = NeuralInpaintModel.AOT_GAN,
                 neuralAvailable = false,
             ),
         )
@@ -185,42 +177,8 @@ class InpaintStampDecisionTest {
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
                 existingStamp = stored,
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_MANGA_FP16,
+                desiredModel = NeuralInpaintModel.AOT_GAN,
                 neuralAvailable = true,
-            ),
-        )
-    }
-
-    @Test
-    fun `LaMa 512 model stamps are distinct and invalidate each other`() {
-        InpaintingMode.QUALITY.stampName(
-            neuralModel = NeuralInpaintModel.LAMA_512_INT8,
-            neuralAvailable = true,
-        ) shouldBe "QUALITY:LAMA512"
-        InpaintingMode.QUALITY.stampName(
-            neuralModel = NeuralInpaintModel.LAMA_512_FP16,
-            neuralAvailable = true,
-        ) shouldBe "QUALITY:LAMA512F"
-
-        assertTrue(
-            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA512",
-                desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_512_FP16,
-            ),
-        )
-        assertTrue(
-            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA512F",
-                desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_512_INT8,
-            ),
-        )
-        assertFalse(
-            eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA512F",
-                desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_512_FP16,
             ),
         )
     }
@@ -228,14 +186,14 @@ class InpaintStampDecisionTest {
     @Test
     fun `hardware provider override is not part of the persisted inpainting stamp`() {
         InpaintingMode.QUALITY.stampName(
-            neuralModel = NeuralInpaintModel.LAMA_512_FP16,
+            neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             neuralAvailable = true,
-        ) shouldBe "QUALITY:LAMA512F"
+        ) shouldBe "QUALITY:LAMA_LITERT"
         assertFalse(
             eu.kanade.translation.engines.inpainting.InpaintStampDecision.stampNeedsReinpaint(
-                existingStamp = "QUALITY:LAMA512F",
+                existingStamp = "QUALITY:LAMA_LITERT",
                 desiredMode = InpaintingMode.QUALITY,
-                desiredModel = NeuralInpaintModel.LAMA_512_FP16,
+                desiredModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             ),
         )
     }

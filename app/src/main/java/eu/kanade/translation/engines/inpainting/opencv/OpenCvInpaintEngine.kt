@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.inpainting.opencv
 
 import android.graphics.Bitmap
-import eu.kanade.translation.engines.inpainting.aot.PushPullGradient
+import eu.kanade.translation.engines.inpainting.PushPullGradient
 import logcat.LogPriority
 import org.opencv.android.OpenCVLoader
 import org.opencv.core.CvType

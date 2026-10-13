@@ -1,9 +1,9 @@
-package eu.kanade.translation.engines.inpainting.aot
+package eu.kanade.translation.engines.inpainting
 
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-internal object AotPixelOps {
+internal object InpaintPixelOps {
 
     internal fun blendPixel(original: Int, inpainted: Int, alpha: Float): Int {
         val inv = 1.0f - alpha

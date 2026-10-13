@@ -13,7 +13,7 @@ import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.PageInpaintingEngine
 import eu.kanade.translation.engines.inpainting.PageInpaintingPlanner
-import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
+import eu.kanade.translation.engines.inpainting.aot.NeuralInpaintingCoordinator
 import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
@@ -111,7 +111,7 @@ class RoiPageRecognitionEngine(
      * `docs/superpowers/specs/2026-06-23-paddleocr-v6-det-onnx-integration-design.md`.
      */
     private var paddleDet: PaddleOcrV6DetEngine? = null
-    private var inpainting: AOTInpainting? = null
+    private var inpainting: NeuralInpaintingCoordinator? = null
     private var litertInpainting: LiteRTMangaInpaintingEngine? = null
     private var pageInpainter: PageInpaintingEngine? = null
 
@@ -388,7 +388,7 @@ class RoiPageRecognitionEngine(
                     "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), " +
                         "preparing inpainting (mode=$inpaintingMode model=$neuralInpaintModel)"
                 }
-                val localInpainting = AOTInpainting(
+                val localInpainting = NeuralInpaintingCoordinator(
                     neuralModel = neuralInpaintModel,
                     hardwareOverride = inpaintingHardwareOverride,
                 )
@@ -402,10 +402,6 @@ class RoiPageRecognitionEngine(
                         localInpainting.initialize(
                             fixedModelFile = paths.inpaint512Model,
                             dynamicModelFile = paths.inpaintModel,
-                            lamaMangaModelFile = paths.lamaMangaModel,
-                            lamaMangaFp16ModelFile = paths.lamaMangaFp16Model,
-                            lama512Int8ModelFile = paths.lama512Int8Model,
-                            lama512Fp16ModelFile = paths.lama512Fp16Model,
                         )
                     }
                 } else {
@@ -938,7 +934,7 @@ class RoiPageRecognitionEngine(
                 } else {
                     val activePageInpainter = pageInpainter ?: PageInpaintingEngine(
                         mode = inpaintingMode,
-                        inpainter = inpainting ?: AOTInpainting(
+                        inpainter = inpainting ?: NeuralInpaintingCoordinator(
                             neuralModel = neuralInpaintModel,
                             hardwareOverride = inpaintingHardwareOverride,
                         ),

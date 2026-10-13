@@ -3,6 +3,8 @@ package eu.kanade.translation.engines.inpainting.aot
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import java.nio.FloatBuffer
+import eu.kanade.translation.engines.inpainting.InpaintPadOps
+import eu.kanade.translation.engines.inpainting.InpaintPixelOps
 
 class AotFixedTensorContractTest {
 
@@ -15,8 +17,8 @@ class AotFixedTensorContractTest {
         val maskTensor = FloatBuffer.allocate(CHANNEL_PIXELS)
         val imageShape = AotFixedTensorContract.imageShape()
         val maskShape = AotFixedTensorContract.maskShape()
-        val imagePadded = AotPadPath.padSquare(source, sourceSize, BACKGROUND)
-        val maskPadded = AotPadPath.padSquare(sourceMask, sourceSize, 0)
+        val imagePadded = InpaintPadOps.padSquare(source, sourceSize, BACKGROUND)
+        val maskPadded = InpaintPadOps.padSquare(sourceMask, sourceSize, 0)
         val offset = AotFixedTensorContract.writeInputs(
             paddedImage = imagePadded,
             paddedMask = maskPadded,
@@ -40,7 +42,7 @@ class AotFixedTensorContractTest {
 
         fakeSession.seenImageShape shouldBe longArrayOf(1, 3, 512, 512).toList()
         fakeSession.seenMaskShape shouldBe longArrayOf(1, 1, 512, 512).toList()
-        fakeSession.seenImageRed shouldBe AotPixelOps.encodeFixedImageChannel(24)
+        fakeSession.seenImageRed shouldBe InpaintPixelOps.encodeFixedImageChannel(24)
         fakeSession.seenMaskedPixel shouldBe 1.0f
         restored.size shouldBe sourceSize * sourceSize
         restored.toList() shouldBe List(sourceSize * sourceSize) { argb(64, 128, 230) }
@@ -57,8 +59,8 @@ class AotFixedTensorContractTest {
         fun run(image: FakeTensor, mask: FakeTensor): FakeTensor {
             seenImageShape = image.shape.toList()
             seenMaskShape = mask.shape.toList()
-            val offset = AotPadPath.centeredOffset(sourceSize = 3)
-            val centerIndex = (offset + 1) * AotPadPath.SIZE + offset + 1
+            val offset = InpaintPadOps.centeredOffset(sourceSize = 3)
+            val centerIndex = (offset + 1) * InpaintPadOps.SIZE + offset + 1
             seenImageRed = image.values.get(centerIndex)
             seenMaskedPixel = mask.values.get(centerIndex)
             val output = FloatBuffer.allocate(CHANNEL_PIXELS * 3)
@@ -74,7 +76,7 @@ class AotFixedTensorContractTest {
     private fun argb(r: Int, g: Int, b: Int) = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 
     private companion object {
-        const val CHANNEL_PIXELS = AotPadPath.SIZE * AotPadPath.SIZE
+        const val CHANNEL_PIXELS = InpaintPadOps.SIZE * InpaintPadOps.SIZE
         val BACKGROUND = 0xFFB0A090.toInt()
     }
 }

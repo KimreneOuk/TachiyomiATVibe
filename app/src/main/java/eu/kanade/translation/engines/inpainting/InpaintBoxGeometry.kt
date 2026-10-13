@@ -1,10 +1,10 @@
-package eu.kanade.translation.engines.inpainting.aot
+package eu.kanade.translation.engines.inpainting
 
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-internal object AotBoxGeometry {
+internal object InpaintBoxGeometry {
 
     internal fun localizeBox(box: IntArray, originX: Int, originY: Int, width: Int, height: Int): IntArray? {
         val x1 = (box[0] - originX).coerceIn(0, width)
@@ -202,5 +202,97 @@ internal object AotBoxGeometry {
         }
 
         return clusters.map { it.boxes }
+    }
+
+    /** Default merge gap (px) when clustering mask components into bubbles. */
+    const val CLUSTER_GAP_PX = 64
+
+    /**
+     * Finds 4-connected mask components and merges their half-open bounds when
+     * both edge gaps are at most [gap]. The returned bounds are ordered top to
+     * bottom, then left to right.
+     */
+    internal fun componentClusters(
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        gap: Int = CLUSTER_GAP_PX,
+    ): List<IntArray> {
+        require(width > 0 && height > 0) { "mask dimensions must be positive: ${width}x$height" }
+        require(width.toLong() * height == mask.size.toLong()) {
+            "mask length=${mask.size} does not match ${width}x$height"
+        }
+        require(gap >= 0) { "gap must be non-negative: $gap" }
+
+        val visited = BooleanArray(mask.size)
+        val queue = IntArray(mask.size)
+        val boxes = ArrayList<IntArray>()
+        for (start in mask.indices) {
+            if (mask[start] == 0.toByte() || visited[start]) continue
+
+            var minX = width
+            var minY = height
+            var maxX = -1
+            var maxY = -1
+            var head = 0
+            var tail = 0
+            queue[tail++] = start
+            visited[start] = true
+            while (head < tail) {
+                val index = queue[head++]
+                val x = index % width
+                val y = index / width
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+
+                if (x > 0) enqueueIfMasked(index - 1, mask, visited, queue, tail).also { tail = it }
+                if (x + 1 < width) enqueueIfMasked(index + 1, mask, visited, queue, tail).also { tail = it }
+                if (y > 0) enqueueIfMasked(index - width, mask, visited, queue, tail).also { tail = it }
+                if (y + 1 < height) enqueueIfMasked(index + width, mask, visited, queue, tail).also { tail = it }
+            }
+            boxes.add(intArrayOf(minX, minY, maxX + 1, maxY + 1))
+        }
+
+        var merged = boxes
+        while (true) {
+            val combined = ArrayList<IntArray>(merged.size)
+            var didMerge = false
+            for (box in merged) {
+                val join = combined.firstOrNull { other ->
+                    edgeGap(box[0], box[2], other[0], other[2]) <= gap &&
+                        edgeGap(box[1], box[3], other[1], other[3]) <= gap
+                }
+                if (join == null) {
+                    combined.add(box)
+                } else {
+                    join[0] = min(join[0], box[0])
+                    join[1] = min(join[1], box[1])
+                    join[2] = max(join[2], box[2])
+                    join[3] = max(join[3], box[3])
+                    didMerge = true
+                }
+            }
+            merged = combined
+            if (!didMerge) {
+                return merged.sortedWith(compareBy<IntArray> { it[1] }.thenBy { it[0] })
+            }
+        }
+    }
+
+    private fun edgeGap(a1: Int, a2: Int, b1: Int, b2: Int): Int = max(a1 - b2, b1 - a2)
+
+    private fun enqueueIfMasked(
+        index: Int,
+        mask: ByteArray,
+        visited: BooleanArray,
+        queue: IntArray,
+        tail: Int,
+    ): Int {
+        if (mask[index] == 0.toByte() || visited[index]) return tail
+        visited[index] = true
+        queue[tail] = index
+        return tail + 1
     }
 }

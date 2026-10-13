@@ -16,7 +16,15 @@ class EngineLaneNeuralModelTest {
                 oldMode = InpaintingMode.QUALITY,
                 newMode = InpaintingMode.QUALITY,
                 oldModel = NeuralInpaintModel.AOT_GAN,
-                newModel = NeuralInpaintModel.LAMA_MANGA,
+                newModel = NeuralInpaintModel.LAMA_LITERT_GPU,
+            ),
+        )
+        assertTrue(
+            EngineLane.shouldRebuildRecognitionForInpainting(
+                oldMode = InpaintingMode.QUALITY,
+                newMode = InpaintingMode.QUALITY,
+                oldModel = NeuralInpaintModel.LAMA_LITERT_GPU,
+                newModel = NeuralInpaintModel.AOT_GAN,
             ),
         )
     }
@@ -27,8 +35,8 @@ class EngineLaneNeuralModelTest {
             EngineLane.shouldRebuildRecognitionForInpainting(
                 oldMode = InpaintingMode.BALANCE,
                 newMode = InpaintingMode.BALANCE,
-                oldModel = NeuralInpaintModel.LAMA_MANGA,
-                newModel = NeuralInpaintModel.LAMA_MANGA,
+                oldModel = NeuralInpaintModel.LAMA_LITERT_GPU,
+                newModel = NeuralInpaintModel.LAMA_LITERT_GPU,
             ),
         )
     }
@@ -39,8 +47,8 @@ class EngineLaneNeuralModelTest {
             EngineLane.shouldRebuildRecognitionForInpainting(
                 oldMode = InpaintingMode.QUALITY,
                 newMode = InpaintingMode.QUALITY,
-                oldModel = NeuralInpaintModel.LAMA_512_FP16,
-                newModel = NeuralInpaintModel.LAMA_512_FP16,
+                oldModel = NeuralInpaintModel.AOT_GAN,
+                newModel = NeuralInpaintModel.AOT_GAN,
                 oldHardwareOverride = InpaintingHardwareOverride.CPU,
                 newHardwareOverride = InpaintingHardwareOverride.NPU,
             ),
@@ -49,8 +57,8 @@ class EngineLaneNeuralModelTest {
             EngineLane.shouldRebuildRecognitionForInpainting(
                 oldMode = InpaintingMode.QUALITY,
                 newMode = InpaintingMode.QUALITY,
-                oldModel = NeuralInpaintModel.LAMA_512_FP16,
-                newModel = NeuralInpaintModel.LAMA_512_FP16,
+                oldModel = NeuralInpaintModel.AOT_GAN,
+                newModel = NeuralInpaintModel.AOT_GAN,
                 oldHardwareOverride = InpaintingHardwareOverride.NPU,
                 newHardwareOverride = InpaintingHardwareOverride.NPU,
             ),

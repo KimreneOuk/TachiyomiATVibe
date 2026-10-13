@@ -2,6 +2,7 @@ package eu.kanade.translation.engines.inpainting
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
+import tachiyomi.domain.translation.NeuralInpaintModel
 
 class RegionDispatchTest {
 
@@ -13,18 +14,33 @@ class RegionDispatchTest {
             RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
 
         InpaintingMode.BALANCE.resolveDispatch(neuralAvailable = true) shouldBe
-            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL)
+            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.NEURAL)
         InpaintingMode.BALANCE.resolveDispatch(neuralAvailable = false) shouldBe
             RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
 
         InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = true) shouldBe
-            RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.AOT_NEURAL)
+            RegionDispatch(RegionBackend.NEURAL, RegionBackend.NEURAL)
         InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = false) shouldBe
             RegionDispatch(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.OPENCV_TELEA)
     }
 
     @Test
-    fun `usesNeural is true only when some class dispatches AOT`() {
+    fun `classical bubbles always use the solid median fill and free text never does`() {
+        InpaintingMode.entries.forEach { mode ->
+            listOf(true, false).forEach { neuralAvailable ->
+                val dispatch = mode.resolveDispatch(neuralAvailable)
+                setOf(RegionBackend.SMOOTH_DIFFUSION, RegionBackend.NEURAL).contains(dispatch.bubble) shouldBe true
+                dispatch.freeText shouldBe if (dispatch.freeText == RegionBackend.NEURAL) {
+                    RegionBackend.NEURAL
+                } else {
+                    RegionBackend.OPENCV_TELEA
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `usesNeural is true only when some class dispatches neural`() {
         InpaintingMode.FAST.resolveDispatch(true).usesNeural shouldBe false
         InpaintingMode.BALANCE.resolveDispatch(true).usesNeural shouldBe true
         InpaintingMode.BALANCE.resolveDispatch(false).usesNeural shouldBe false
@@ -32,11 +48,9 @@ class RegionDispatchTest {
     }
 
     @Test
-    fun `all modes keep speech bubbles on clean smooth diffusion`() {
-        for (mode in InpaintingMode.entries) {
-            mode.resolveDispatch(neuralAvailable = true).bubble shouldBe RegionBackend.SMOOTH_DIFFUSION
-            mode.resolveDispatch(neuralAvailable = false).bubble shouldBe RegionBackend.SMOOTH_DIFFUSION
-        }
+    fun `QUALITY dispatches bubbles to neural only when sessions exist`() {
+        InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = true).bubble shouldBe RegionBackend.NEURAL
+        InpaintingMode.QUALITY.resolveDispatch(neuralAvailable = false).bubble shouldBe RegionBackend.SMOOTH_DIFFUSION
     }
 
     @Test
@@ -79,6 +93,30 @@ class RegionDispatchTest {
             .stampNeedsReinpaint("FAST_DEGRADED") shouldBe false
         InpaintStampDecision(InpaintingMode.BALANCE, neuralAvailable = false)
             .stampNeedsReinpaint("junk") shouldBe true
+    }
+
+    @Test
+    fun `stamp parser recognizes the LiteRT model tag`() {
+        InpaintStampDecision(InpaintingMode.BALANCE, neuralAvailable = null, neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU)
+            .stampNeedsReinpaint("BALANCE:LAMA_LITERT") shouldBe false
+        InpaintStampDecision(
+            InpaintingMode.QUALITY,
+            neuralAvailable = false,
+            neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU,
+        ).stampNeedsReinpaint("QUALITY:LAMA_LITERT_DEGRADED") shouldBe false
+        InpaintStampDecision(
+            InpaintingMode.QUALITY,
+            neuralAvailable = true,
+            neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU,
+        ).stampNeedsReinpaint("QUALITY:LAMA_LITERT_DEGRADED") shouldBe true
+    }
+
+    @Test
+    fun `deprecated model stamps no longer parse and force a re-inpaint`() {
+        InpaintStampDecision(InpaintingMode.QUALITY, neuralAvailable = null, neuralModel = NeuralInpaintModel.LAMA_LITERT_GPU)
+            .stampNeedsReinpaint("QUALITY:LAMA") shouldBe true
+        InpaintStampDecision(InpaintingMode.QUALITY, neuralAvailable = null, neuralModel = NeuralInpaintModel.AOT_GAN)
+            .stampNeedsReinpaint("QUALITY:LAMA512F") shouldBe true
     }
 
     @Test

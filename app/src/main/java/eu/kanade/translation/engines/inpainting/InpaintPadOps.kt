@@ -1,4 +1,4 @@
-package eu.kanade.translation.engines.inpainting.aot
+package eu.kanade.translation.engines.inpainting
 
 /**
  * Pixel-only math for the fixed-shape AOT path.
@@ -8,7 +8,7 @@ package eu.kanade.translation.engines.inpainting.aot
  * background. Keeping this independent from Bitmap/ORT makes the placement
  * contract testable without an Android device.
  */
-internal object AotPadPath {
+internal object InpaintPadOps {
 
     const val SIZE = 512
 

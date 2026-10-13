@@ -5,7 +5,7 @@ object AotOutputGuard {
     /**
      * Statistics over the masked-region pixels of an AOT inpaint candidate.
      * Computed once by [inspect]; [isSuspiciousUniformFill] applies the verdict
-     * via [classify], and the caller (AOTInpainting) logs the values so a neural
+     * via [classify], and the caller (NeuralInpaintingCoordinator) logs the values so a neural
      * failure mode is diagnosable from logcat without a rebuild.
      */
     data class GuardStats(

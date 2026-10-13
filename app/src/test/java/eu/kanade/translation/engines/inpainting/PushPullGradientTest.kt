@@ -1,4 +1,4 @@
-package eu.kanade.translation.engines.inpainting.aot
+package eu.kanade.translation.engines.inpainting
 
 import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.comparables.shouldBeLessThan

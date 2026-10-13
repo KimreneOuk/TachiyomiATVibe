@@ -21,7 +21,7 @@ object EngineMemoryBudget {
     // ORT model weights and execution arenas live in native/system memory, not the
     // managed heap. Keep these reserves separate from bitmap/tensor heap estimates.
     // AOT currently keeps the fixed and dynamic graphs alive independently.
-    internal const val AOT_NATIVE_RESERVE_PER_SESSION_BYTES = 96L * MIB
+    internal const val ONNX_NATIVE_RESERVE_PER_SESSION_BYTES = 96L * MIB
     internal const val AOT_INFERENCE_SYSTEM_RESERVE_BYTES = 64L * MIB
 
     data class HeapSnapshot(
@@ -110,7 +110,7 @@ object EngineMemoryBudget {
     }
 
     internal fun neuralNativeSystemReserveBytes(sessionCount: Int): Long {
-        return sessionCount.coerceAtLeast(0).toLong() * AOT_NATIVE_RESERVE_PER_SESSION_BYTES +
+        return sessionCount.coerceAtLeast(0).toLong() * ONNX_NATIVE_RESERVE_PER_SESSION_BYTES +
             if (sessionCount > 0) AOT_INFERENCE_SYSTEM_RESERVE_BYTES else 0L
     }
 

@@ -1,12 +1,19 @@
-package eu.kanade.translation.engines.inpainting.aot
-import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
+package eu.kanade.translation.engines.inpainting.bubble
 
-internal object AotReportBubbleFill {
+import eu.kanade.translation.engines.inpainting.InpaintPixelOps
+
+internal object BubbleMedianDiffusionFill {
+
+    /** Local ring margin (px) sampled around one component's bounding box. */
+    private const val RING_PX = 8
 
     /**
      * Single-source variant of the report bubble pass: fills [pixels] in place and
      * feathers the result against a copy of the pre-fill values, so callers read
      * the page bitmap once instead of twice.
+     *
+     * The feather is INWARD-only ([BubbleMaskBuilder.featherAlphaFieldInward]):
+     * every pixel outside [mask] stays pixel-identical.
      */
     internal fun fillAndBlend(
         pixels: IntArray,
@@ -18,13 +25,32 @@ internal object AotReportBubbleFill {
     ) {
         val original = pixels.copyOf()
         reportBubbleFill(pixels, mask, width, height, smoothPasses)
-        val alpha = BubbleMaskBuilder.featherAlphaField(mask, width, height, featherRampPx)
+        val alpha = BubbleMaskBuilder.featherAlphaFieldInward(mask, width, height, featherRampPx)
         for (i in pixels.indices) {
             val a = alpha[i]
-            if (a > 0.0f) pixels[i] = AotPixelOps.blendPixel(original[i], pixels[i], a)
+            if (a > 0.0f) pixels[i] = InpaintPixelOps.blendPixel(original[i], pixels[i], a)
         }
     }
 
+    /**
+     * Solid median diffusion fill for speech-bubble segmentation masks.
+     *
+     * Fill-color estimation is hybrid, evaluated PER COMPONENT:
+     *  - Paper-dominated interiors (the normal whole-balloon mask, where white
+     *    paper vastly outnumbers ink) keep the interior median sampled at
+     *    distance >= 2 from the component boundary.
+     *  - Ink-dominated interiors (tight glyph masks where the interior sample
+     *    IS the text ink, which previously collapsed to a black blob) sample
+     *    the UNMASKED ring inside the component's own local bounding box
+     *    expanded by [RING_PX]. Sampling excludes every masked pixel, so two
+     *    disconnected glyphs on different paper each get their own local
+     *    paper color — never one page-global estimate.
+     *
+     * Near-gray results snap to pure white/black. Limitation: when a
+     * component's local ring itself is dark (dense panels, heavy screentone
+     * right up to the bubble border), the ring estimate degrades with the
+     * data available; no fixture guarantees white in every case.
+     */
     internal fun reportBubbleFill(
         pixels: IntArray,
         mask: ByteArray,
@@ -137,29 +163,20 @@ internal object AotReportBubbleFill {
 
             val median: Int
             if (count > 0) {
-                val r = AotPixelOps.histogramMedian(histR, count)
-                val g = AotPixelOps.histogramMedian(histG, count)
-                val b = AotPixelOps.histogramMedian(histB, count)
+                val r = InpaintPixelOps.histogramMedian(histR, count)
+                val g = InpaintPixelOps.histogramMedian(histG, count)
+                val b = InpaintPixelOps.histogramMedian(histB, count)
 
-                // Snap near-gray to pure white/black to match bubble paper/ink.
-                val cmax = maxOf(r, g, b)
-                val cmin = minOf(r, g, b)
-                var fR = r
-                var fG = g
-                var fB = b
-                if (cmax - cmin < 30) {
-                    val luma = (cmax + cmin) / 2
-                    if (luma > 220) {
-                        fR = 255
-                        fG = 255
-                        fB = 255
-                    } else if (luma < 60) {
-                        fR = 0
-                        fG = 0
-                        fB = 0
-                    }
+                median = if (isInkDominated(r, g, b)) {
+                    // The interior sample IS the text ink (glyph-mask failure
+                    // mode): estimate this component's paper color from its
+                    // OWN local unmasked ring, excluding every masked pixel.
+                    componentRingPaper(pixels, mask, width, height, component)
+                } else {
+                    // Paper-dominated interior: keep the interior median and
+                    // snap near-gray to pure bubble paper/ink.
+                    snapNearGray((0xFF shl 24) or (r shl 16) or (g shl 8) or b)
                 }
-                median = (0xFF shl 24) or (fR shl 16) or (fG shl 8) or fB
             } else {
                 // Fallback to average of component if it's too small to erode
                 var sr = 0L
@@ -215,7 +232,7 @@ internal object AotReportBubbleFill {
                 val down = if (y < height - 1) idx + width else idx
                 val left = if (x > 0) idx - 1 else idx
                 val right = if (x < width - 1) idx + 1 else idx
-                scratch[i] = AotPixelOps.avg4(pixels[up], pixels[down], pixels[left], pixels[right])
+                scratch[i] = InpaintPixelOps.avg4(pixels[up], pixels[down], pixels[left], pixels[right])
             }
             for (i in component.indices) {
                 val idx = component[i]
@@ -224,5 +241,94 @@ internal object AotReportBubbleFill {
                 }
             }
         }
+    }
+
+    /**
+     * Median color of the UNMASKED pixels inside [component]'s own bounding
+     * box expanded by [RING_PX]. All masked pixels on the page are excluded
+     * from the sample, so neighboring components never pollute each other's
+     * paper estimate and disconnected glyphs keep independent colors.
+     */
+    private fun componentRingPaper(
+        pixels: IntArray,
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        component: List<Int>,
+    ): Int {
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = 0
+        var maxY = 0
+        for (idx in component) {
+            val x = idx % width
+            val y = idx / width
+            if (x < minX) minX = x
+            if (y < minY) minY = y
+            if (x > maxX) maxX = x
+            if (y > maxY) maxY = y
+        }
+        val x1 = (minX - RING_PX).coerceAtLeast(0)
+        val y1 = (minY - RING_PX).coerceAtLeast(0)
+        val x2 = (maxX + 1 + RING_PX).coerceAtMost(width)
+        val y2 = (maxY + 1 + RING_PX).coerceAtMost(height)
+        val histR = IntArray(256)
+        val histG = IntArray(256)
+        val histB = IntArray(256)
+        var count = 0
+        for (y in y1 until y2) {
+            val row = y * width
+            for (x in x1 until x2) {
+                val idx = row + x
+                if (mask[idx] != 0.toByte()) continue
+                val p = pixels[idx]
+                histR[(p shr 16) and 0xFF]++
+                histG[(p shr 8) and 0xFF]++
+                histB[p and 0xFF]++
+                count++
+            }
+        }
+        if (count == 0) return 0xFFFFFFFF.toInt()
+        val r = InpaintPixelOps.histogramMedian(histR, count)
+        val g = InpaintPixelOps.histogramMedian(histG, count)
+        val b = InpaintPixelOps.histogramMedian(histB, count)
+        return snapNearGray((0xFF shl 24) or (r shl 16) or (g shl 8) or b)
+    }
+
+    /**
+     * True when the interior sample is dominated by text ink: a near-gray
+     * median darker than the ink-snap threshold means the mask covered the
+     * strokes themselves, so the fill color must come from the outer paper
+     * ring instead.
+     */
+    private fun isInkDominated(r: Int, g: Int, b: Int): Boolean {
+        val cmax = maxOf(r, g, b)
+        val cmin = minOf(r, g, b)
+        return cmax - cmin < 30 && (cmax + cmin) / 2 < 60
+    }
+
+    /** Near-gray colors snap to pure bubble paper/ink; colored values pass through. */
+    private fun snapNearGray(argb: Int): Int {
+        val r = (argb shr 16) and 0xFF
+        val g = (argb shr 8) and 0xFF
+        val b = argb and 0xFF
+        val cmax = maxOf(r, g, b)
+        val cmin = minOf(r, g, b)
+        var fR = r
+        var fG = g
+        var fB = b
+        if (cmax - cmin < 30) {
+            val luma = (cmax + cmin) / 2
+            if (luma > 220) {
+                fR = 255
+                fG = 255
+                fB = 255
+            } else if (luma < 60) {
+                fR = 0
+                fG = 0
+                fB = 0
+            }
+        }
+        return (0xFF shl 24) or (fR shl 16) or (fG shl 8) or fB
     }
 }

@@ -261,9 +261,9 @@ object BubbleMaskBuilder {
 
     /**
      * distance-field feathered alpha (0..1) for [mask]. In-mask
-     * pixels are fully opaque (1.0); outside, alpha ramps down linearly from
-     * 1.0 at the edge to 0.0 at [rampWidth] px. The single soft-edge routine
-     * consumed by both the neural and classical inpaint paths.
+     * pixels are fully opaque (1.0); outside, alpha ramps down smoothly with
+     * C1 continuous smoothstep from 1.0 at the edge to 0.0 at [rampWidth] px.
+     * The single soft-edge routine consumed by both the neural and classical inpaint paths.
      */
     fun featherAlphaField(
         mask: ByteArray,
@@ -281,7 +281,100 @@ object BubbleMaskBuilder {
             alpha[i] = if (mask[i] != 0.toByte()) {
                 1.0f
             } else {
-                (1.0f - dist[i] / ramp).coerceIn(0.0f, 1.0f)
+                val t = (dist[i] / ramp).coerceIn(0.0f, 1.0f)
+                // Smoothstep falloff for C1 continuous blending: zero derivative at edges eliminates visible border seams
+                1.0f - (t * t * (3.0f - 2.0f * t))
+            }
+        }
+        return alpha
+    }
+
+    /**
+     * INWARD-only feathered alpha (0..1) for segmentation masks.
+     *
+     * Unlike [featherAlphaField], alpha is exactly 0.0 for EVERY pixel outside
+     * [mask] — the feather ramps up from the mask boundary toward its interior
+     * (0.0 at the edge pixel, 1.0 at [rampWidth] px inside, C1 smoothstep).
+     * This is the contract for bubble segmentation compositing: the blend may
+     * only ever touch pixels the supplied segmentation marks, never the
+     * surrounding paper or the hand-drawn bubble stroke.
+     */
+    fun featherAlphaFieldInward(
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        rampWidth: Int,
+    ): FloatArray {
+        val alpha = FloatArray(width * height)
+        val n = minOf(mask.size, width * height)
+        val hasAny = mask.any { it != 0.toByte() }
+        if (!hasAny) return alpha
+        val infValue = 1_000_000_000
+        val h = 3 // horizontal/vertical step weight (chamfer 3,4)
+        val d = 4 // diagonal step weight
+        val dist = IntArray(n) { infValue }
+        for (i in 0 until n) {
+            if (mask[i] == 0.toByte()) dist[i] = 0
+        }
+        // Two chamfer passes, seeded from every unmasked pixel: dist[i] is the
+        // distance from masked pixel i to the mask boundary (h = 1 px).
+        for (y in 0 until height) {
+            val row = y * width
+            for (x in 0 until width) {
+                val i = row + x
+                if (dist[i] == 0) continue
+                var best = dist[i]
+                if (x > 0) {
+                    val v = dist[i - 1]
+                    if (v < best - h) best = v + h
+                }
+                if (y > 0) {
+                    val v = dist[i - width]
+                    if (v < best - h) best = v + h
+                }
+                if (x > 0 && y > 0) {
+                    val v = dist[i - width - 1]
+                    if (v < best - d) best = v + d
+                }
+                if (x < width - 1 && y > 0) {
+                    val v = dist[i - width + 1]
+                    if (v < best - d) best = v + d
+                }
+                dist[i] = best
+            }
+        }
+        for (y in height - 1 downTo 0) {
+            val row = y * width
+            for (x in width - 1 downTo 0) {
+                val i = row + x
+                if (dist[i] == 0) continue
+                var best = dist[i]
+                if (x < width - 1) {
+                    val v = dist[i + 1]
+                    if (v < best - h) best = v + h
+                }
+                if (y < height - 1) {
+                    val v = dist[i + width]
+                    if (v < best - h) best = v + h
+                }
+                if (x < width - 1 && y < height - 1) {
+                    val v = dist[i + width + 1]
+                    if (v < best - d) best = v + d
+                }
+                if (x > 0 && y < height - 1) {
+                    val v = dist[i + width - 1]
+                    if (v < best - d) best = v + d
+                }
+                dist[i] = best
+            }
+        }
+        val ramp = max(2, rampWidth) * h.toFloat()
+        for (i in 0 until n) {
+            alpha[i] = if (mask[i] == 0.toByte()) {
+                0.0f
+            } else {
+                val t = ((dist[i] - h) / ramp).coerceIn(0.0f, 1.0f)
+                t * t * (3.0f - 2.0f * t)
             }
         }
         return alpha
@@ -303,58 +396,15 @@ object BubbleMaskBuilder {
     ): FloatArray = featherAlphaField(mask, width, height, featherRadius)
 
     /**
-     * DYNAMIC pill-shaped erase mask for bubble text boxes.
-     *
-     * Each box is padded by [pad] px, filled solid, then dilated with a disk SE
-     * so corners are rounded into a capsule (matching speech-bubble interiors).
-     * "Dynamic" = the dilation radius adapts to the box dimensions (small bubble
-     * → tighter pill, large → wider), keeping the rounded corner proportional.
-     * Used by the AOT report path over the full page canvas. Pure (no Android/ONNX).
-     *
-     * @param boxes `[x1, y1, x2, y2]` in canvas coords (page-space).
-     * @param width canvas width (px).
-     * @param height canvas height (px).
-     * @param pad px added per side before filling, clamped to the canvas.
-     */
-    fun buildDynamicPillMask(
-        boxes: List<IntArray>,
-        width: Int,
-        height: Int,
-        pad: Int,
-    ): ByteArray {
-        if (width <= 0 || height <= 0 || boxes.isEmpty()) return ByteArray(width * height)
-        // Start from the padded solid-rect union mask, then dilate each box
-        // with a disk radius proportional to its shorter side so rounding scales
-        // with the bubble. Clamp the radius so tiny boxes don't get an outsized
-        // pill and large boxes don't smear across the page.
-        val combined = buildRectMask(boxes, width, height, pad, dilateRadius = 0)
-        for (box in boxes) {
-            if (box.size < 4) continue
-            val bw = (box[2] - box[0]).coerceAtLeast(0)
-            val bh = (box[3] - box[1]).coerceAtLeast(0)
-            if (bw == 0 || bh == 0) continue
-            val shortSide = minOf(bw, bh)
-            // Disk radius ≈ 12% of the short side, clamped to [2, 16] — rounds
-            // corners into a capsule without bridging adjacent bubbles.
-            val radius = (shortSide / 8).coerceIn(2, 16)
-            // OR each box's dilated region into the running mask to preserve union semantics.
-            val singleBoxMask = buildRectMask(listOf(box), width, height, pad, dilateRadius = 0)
-            val dilated = dilateMaskDisk(singleBoxMask, width, height, radius)
-            for (i in combined.indices) {
-                if (dilated[i] != 0.toByte()) combined[i] = 1
-            }
-        }
-        return combined
-    }
-
-    /**
      * FIXED pill-shaped erase mask for free-text line boxes.
      *
-     * Unlike [buildDynamicPillMask], uses one fixed dilation radius for every
-     * box — appropriate for PaddleOCR text-line boxes, uniformly narrow strips
-     * where a proportional radius would over-round short lines. Used by the AOT
-     * report fast-path and 512-context neural crop on the crop-local canvas.
-     * Pure (no Android/ONNX).
+     * Uses one fixed dilation radius for every box — appropriate for PaddleOCR
+     * text-line boxes, uniformly narrow strips where a proportional radius
+     * would over-round short lines. Free text only: bubble erase masks are
+     * segmentation-only (a missing bubble segmentation preserves pixels
+     * instead of inventing a pill). Used by the free-text classical path and
+     * the 512-context neural crop on the crop-local canvas. Pure (no
+     * Android/ONNX).
      *
      * @param boxes `[x1, y1, x2, y2]` in canvas coords (crop-local).
      * @param width canvas width (px).

@@ -538,11 +538,25 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
     implementation(libs.mlkit.text.translate)
     implementation(libs.onnxruntime.android)
-    implementation(libs.tensorflow.lite)
-    implementation(libs.tensorflow.lite.gpu)
-    implementation(libs.tensorflow.lite.gpu.api)
+    implementation(libs.litert)
+    implementation(libs.litert.gpu)
     implementation(libs.jtokkit)
     implementation(libs.opencv)
+}
+
+// Temporary compatibility workaround until the project upgrades its Kotlin plugin to 2.4+:
+// LiteRT 2.3.0 publishes Kotlin 2.4 metadata while the app is built with Kotlin 2.2.20.
+// The CompiledModel methods consumed here use the stable JVM API surface.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions.freeCompilerArgs.add("-Xskip-metadata-version-check")
+}
+
+configurations.all {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "androidx.lifecycle") {
+            useVersion("2.8.7")
+        }
+    }
 }
 
 androidComponents {

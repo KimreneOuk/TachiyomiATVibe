@@ -1,4 +1,4 @@
-package eu.kanade.translation.engines.inpainting.aot
+package eu.kanade.translation.engines.inpainting
 
 import kotlin.math.floor
 import kotlin.math.max

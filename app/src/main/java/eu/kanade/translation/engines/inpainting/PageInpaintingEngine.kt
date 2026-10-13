@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.inpainting
 
 import android.graphics.Bitmap
-import eu.kanade.translation.engines.inpainting.aot.AOTInpainting
+import eu.kanade.translation.engines.inpainting.aot.NeuralInpaintingCoordinator
 import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.model.PageTranslation
@@ -17,7 +17,7 @@ import uy.kohesive.injekt.api.get
 
 class PageInpaintingEngine(
     private val mode: InpaintingMode,
-    private val inpainter: AOTInpainting = AOTInpainting(),
+    private val inpainter: NeuralInpaintingCoordinator = NeuralInpaintingCoordinator(),
     private val litertInpainter: LiteRTMangaInpaintingEngine? = null,
     private val qualityFallbackPref: () -> Boolean = {
         Injekt.get<TranslationPreferences>().translationInpaintQualityFallback().get()
@@ -26,10 +26,6 @@ class PageInpaintingEngine(
 ) {
     private val neuralModelDisplayName = when (neuralModel) {
         NeuralInpaintModel.LAMA_LITERT_GPU -> "Manga LaMa (LiteRT GPU)"
-        NeuralInpaintModel.LAMA_MANGA -> "LaMa Manga"
-        NeuralInpaintModel.LAMA_MANGA_FP16 -> "LaMa Manga FP16"
-        NeuralInpaintModel.LAMA_512_INT8 -> "LaMa 512 INT8"
-        NeuralInpaintModel.LAMA_512_FP16 -> "LaMa 512 FP16"
         NeuralInpaintModel.AOT_GAN -> "AOT-GAN"
     }
 
@@ -91,11 +87,16 @@ class PageInpaintingEngine(
             val cleaned = if (neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU && mode != InpaintingMode.FAST) {
                 val lama = litertInpainter
                 if (lama != null && lama.isAvailable()) {
-                    // LiteRT fills Paddle-refined free-text groups only. Speech
-                    // bubbles keep their mask-selected smooth diffusion in every
-                    // mode — all-region neural tiling hallucinates chromatic
-                    // noise inside white bubble interiors.
+                    // LiteRT Manga LaMa GPU serves both region classes in
+                    // BALANCE/QUALITY: free-text line groups through
+                    // freeTextNeuralFill, and QUALITY bubble segmentation-mask
+                    // tiles through bubbleNeuralFill. Bubble masks stay
+                    // segmentation-only so speech bubble stroke borders are
+                    // never erased to a rectangle.
                     inpainter.freeTextNeuralFill = { image, groupBoxes -> lama.inpaintFreeText(image, groupBoxes) }
+                    inpainter.bubbleNeuralFill = { image, localMask, crop, side ->
+                        lama.inpaintMaskedSquare(image, localMask, crop, side)
+                    }
                     inpainter.inpaintRegions(
                         image = bitmap,
                         boxes = input.boxes,
@@ -105,6 +106,7 @@ class PageInpaintingEngine(
                     )
                 } else {
                     inpainter.freeTextNeuralFill = null
+                    inpainter.bubbleNeuralFill = null
                     val dispatch = mode.resolveDispatch(neuralAvailable)
                     inpainter.inpaintRegions(
                         image = bitmap,
@@ -116,6 +118,7 @@ class PageInpaintingEngine(
                 }
             } else {
                 inpainter.freeTextNeuralFill = null
+                inpainter.bubbleNeuralFill = null
                 val dispatch = mode.resolveDispatch(neuralAvailable)
                 inpainter.inpaintRegions(
                     image = bitmap,

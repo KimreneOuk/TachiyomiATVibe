@@ -20,53 +20,6 @@ class OnnxModelStoreTest {
     lateinit var tempDir: File
 
     @Test
-    fun `LaMa Manga model file resolves to installed model name`() {
-        val context = mockk<Context>()
-        every { context.noBackupFilesDir } returns File(tempDir, "no-backup")
-
-        OnnxModelStore(context).getLamaMangaModelFile().name shouldBe "lama-manga.onnx"
-    }
-
-    @Test
-    fun `ensureModels copies the experimental LaMa Manga FP16 asset`() = runBlocking<Unit> {
-        val noBackupDir = File(tempDir, "no-backup").apply { mkdirs() }
-        val assetBytes = validOnnxBytes()
-        val context = mockk<Context>()
-        val assets = mockk<AssetManager>()
-        every { context.noBackupFilesDir } returns noBackupDir
-        every { context.assets } returns assets
-        every { assets.open(any()) } answers { ByteArrayInputStream(assetBytes) }
-
-        val modelStore = OnnxModelStore(context)
-        modelStore.getLamaMangaFp16ModelFile().name shouldBe "lama-manga-fp16.onnx"
-
-        val modelFile = modelStore.ensureModels().lamaMangaFp16Model
-        modelFile?.name shouldBe "lama-manga-fp16.onnx"
-        modelFile?.readBytes()?.contentEquals(assetBytes) shouldBe true
-    }
-
-    @Test
-    fun `ensureModels copies both LaMa 512 variants`() = runBlocking<Unit> {
-        val noBackupDir = File(tempDir, "no-backup").apply { mkdirs() }
-        val assetBytes = validOnnxBytes()
-        val context = mockk<Context>()
-        val assets = mockk<AssetManager>()
-        every { context.noBackupFilesDir } returns noBackupDir
-        every { context.assets } returns assets
-        every { assets.open(any()) } answers { ByteArrayInputStream(assetBytes) }
-
-        val modelStore = OnnxModelStore(context)
-        modelStore.getLama512Int8ModelFile().name shouldBe "lama-512-int8.onnx"
-        modelStore.getLama512Fp16ModelFile().name shouldBe "lama-512-fp16.onnx"
-
-        val paths = modelStore.ensureModels()
-        paths.lama512Int8Model?.name shouldBe "lama-512-int8.onnx"
-        paths.lama512Int8Model?.readBytes()?.contentEquals(assetBytes) shouldBe true
-        paths.lama512Fp16Model?.name shouldBe "lama-512-fp16.onnx"
-        paths.lama512Fp16Model?.readBytes()?.contentEquals(assetBytes) shouldBe true
-    }
-
-    @Test
     fun `validly structured cached model with wrong bytes is recopied`() {
         val noBackupDir = File(tempDir, "no-backup").apply { mkdirs() }
         val assetBytes = validOnnxBytes()

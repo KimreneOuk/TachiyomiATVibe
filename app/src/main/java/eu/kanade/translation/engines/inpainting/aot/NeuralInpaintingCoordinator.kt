@@ -17,8 +17,6 @@ import eu.kanade.translation.engines.inpainting.bubble.BubbleMaskBuilder
 import eu.kanade.translation.engines.inpainting.opencv.OpenCvInpaintEngine
 import eu.kanade.translation.engines.inpainting.resolveDispatch
 import eu.kanade.translation.engines.inpainting.resolveFreeTextRoute
-import eu.kanade.translation.engines.inpainting.resolveInpaintingHardwareRoute
-import eu.kanade.translation.engines.inpainting.runWithInpaintingProviderRecovery
 import eu.kanade.translation.engines.inpainting.toAotBackend
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.DeviceCapability
@@ -39,8 +37,20 @@ import kotlinx.coroutines.CancellationException
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import eu.kanade.translation.engines.inpainting.InpaintBoxGeometry
+import eu.kanade.translation.engines.inpainting.InpaintPadOps
+import eu.kanade.translation.engines.inpainting.InpaintPixelOps
+import eu.kanade.translation.engines.inpainting.PushPullGradient
+import eu.kanade.translation.engines.inpainting.bubble.BubbleMedianDiffusionFill
 
-class AOTInpainting(
+/**
+ * Model-agnostic neural inpainting coordinator. It owns the shared region
+ * routing (bubble text vs free text) and delegates model execution to the
+ * selected [NeuralInpaintModel] runtime: the LiteRT Manga LaMa GPU engine via
+ * the [freeTextNeuralFill] / [bubbleNeuralFill] delegates, or the model-specific
+ * ONNX AOT-GAN EP ladder below.
+ */
+class NeuralInpaintingCoordinator(
     val performanceMode: String? = "burst",
     val neuralModel: NeuralInpaintModel = NeuralInpaintModel.AOT_GAN,
     val hardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
@@ -54,21 +64,29 @@ class AOTInpainting(
         // the validated prototype; kept
         // internal (no settings surface).
         private const val PADDLE_CROP_PAD = 12
-        private const val PADDLE_THRESH = 0.18f
-        private const val PADDLE_BOX_THRESH = 0.34f
-        private const val MASK_PAD = 8
-        private const val REPORT_FREE_TEXT_PAD = 1
-        private const val REPORT_FREE_TEXT_DILATE = 2
+        private const val PADDLE_THRESH = 0.15f
+        private const val PADDLE_BOX_THRESH = 0.24f
+        private const val PADDLE_UNCLIP_RATIO = 1.6f
+        private const val REPORT_FREE_TEXT_PAD = 2
+        private const val REPORT_FREE_TEXT_DILATE = 3
         private const val REPORT_AOT_CONTEXT = 512
-        private const val REPORT_FREE_TEXT_FEATHER = 3
+        private const val REPORT_FREE_TEXT_FEATHER = 8
+        private const val REPORT_BUBBLE_TILE_SIZE = 448
+        private const val REPORT_BUBBLE_TILE_OVERLAP = 64
         private const val REPORT_BUBBLE_SMOOTH_PASSES = 12
         private const val REPORT_INPAINT_CONTEXT = 64
         internal const val BUBBLE_SEG_MASK_EROSION = 5
 
         // distance-field feather ramp (px) blending the neural
-        // output with the page. Replaces the earlier 2–6px box-blur cliff that
+        // output with the page. Replaces the earlier 2â€“6px box-blur cliff that
         // exposed the erase-box rectangle. See [BubbleMaskBuilder.featherAlphaField].
         private const val FEATHER_RAMP_PX = 12
+
+        // Worst-case heap bytes per pixel for one neural bubble tile (source
+        // crop, mask bytes, mask pixels, padded source/mask tensors, decoded
+        // candidate, alpha field, blend output). Used by
+        // [bubbleNeuralMemoryGateTripped] as a conservative upper bound.
+        private const val NEURAL_TILE_WORKING_BYTES_PER_PIXEL = 32L
     }
 
     private val scratchLock = Any()
@@ -82,10 +100,6 @@ class AOTInpainting(
     )
     private val maskInputPool = DirectBufferPool(
         bufferCapacityBytes = MAX_TOTAL_PIXELS * Float.SIZE_BYTES,
-        maxPoolSize = 2,
-    )
-    private val lamaInputPool = DirectBufferPool(
-        bufferCapacityBytes = 4 * AotPadPath.SIZE * AotPadPath.SIZE * Float.SIZE_BYTES,
         maxPoolSize = 2,
     )
 
@@ -119,21 +133,27 @@ class AOTInpainting(
     private var fixedQnnModelId: String? = null
     private var dynamicSession: OrtSession? = null
     private var dynamicSessionRoute = "dynamic_cpu"
-    private var lamaSession: OrtSession? = null
-    private var lamaSessionRoute = "lama_manga_cpu"
-    private var lamaSessionHardwareRoute = HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
-    private var lamaModelFile: File? = null
-    private var lamaModelRouteTag: String? = null
     private val nnapiHealth = NnapiHealthMonitor()
     var paddleDetector: eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine? = null
 
     /**
      * Optional external neural fill for Paddle-refined free-text groups (the
-     * LiteRT Manga LaMa engine). Bubbles never route here — they stay on the
-     * smooth diffusion path — and a null return falls back to the classical
-     * free-text path.
+     * LiteRT Manga LaMa engine). Bubbles never route here â€” they use
+     * [bubbleNeuralFill] or the ONNX ladder â€” and a null return falls back to
+     * the classical free-text path.
      */
     var freeTextNeuralFill: ((image: Bitmap, groupBoxes: List<IntArray>) -> Bitmap?)? = null
+
+    /**
+     * Optional external neural fill for one bubble stroke-mask tile (the
+     * LiteRT Manga LaMa engine). The mask is the bubble's text-line / eroded
+     * stroke mask localized to the square [crop] â€” never the whole bubble
+     * bounding box â€” so the bubble contour border is never erased. Returns the
+     * filled sideÃ—side candidate pixels, or null to let the ONNX ladder
+     * (AOT-GAN) try; when that also fails the caller falls back to the solid
+     * median blend.
+     */
+    var bubbleNeuralFill: ((image: Bitmap, localMask: ByteArray, crop: IntArray, side: Int) -> IntArray?)? = null
 
     /**
      * Route tag of the most recently accepted neural candidate
@@ -155,47 +175,13 @@ class AOTInpainting(
     var lastRunDegraded: Boolean = false
         private set
 
-    // Load only the selected neural model. The legacy AOT-GAN provenance is
-    // recorded in scripts/models.manifest; LaMa uses its own validated tensor contract.
+    // Load only the selected neural model's ONNX sessions. The AOT-GAN
+    // provenance is recorded in scripts/models.manifest; the LiteRT Manga LaMa
+    // model initializes inside its own engine and never reaches this path.
     fun initialize(
         fixedModelFile: File?,
         dynamicModelFile: File?,
-        lamaMangaModelFile: File? = null,
-        lamaMangaFp16ModelFile: File? = null,
-        lama512Int8ModelFile: File? = null,
-        lama512Fp16ModelFile: File? = null,
     ) {
-        val lamaSelection = selectLamaMangaModel(
-            neuralModel = neuralModel,
-            lamaMangaModelFile = lamaMangaModelFile,
-            lamaMangaFp16ModelFile = lamaMangaFp16ModelFile,
-            lama512Int8ModelFile = lama512Int8ModelFile,
-            lama512Fp16ModelFile = lama512Fp16ModelFile,
-        )
-        if (lamaSelection != null) {
-            lamaModelFile = lamaSelection.modelFile
-            lamaModelRouteTag = lamaSelection.routeTag
-            val routeResolution = resolveInpaintingHardwareRoute(neuralModel, hardwareOverride)
-            if (routeResolution.blockedReason != null) {
-                logcat(LogPriority.WARN) {
-                    "[inpaint] route=${lamaSelection.routeTag} accelerator=blocked " +
-                        "reason=${routeResolution.blockedReason} selectedHardware=$hardwareOverride " +
-                        "fallback=CPU_XNNPACK model=$neuralModel"
-                }
-            }
-            lamaSession = initializeLamaSession(
-                modelFile = lamaSelection.modelFile,
-                routeTag = lamaSelection.routeTag,
-                requestedHardwareRoute = routeResolution.route,
-            )
-            logcat(LogPriority.INFO) {
-                "[inpaint] init model=$neuralModel session=${lamaSession != null} " +
-                    "requestedHardware=$hardwareOverride route=$lamaSessionRoute " +
-                    DeviceCapability.describe()
-            }
-            return
-        }
-
         fixedSession = initializeSession(fixedModelFile, AotModelContract.Kind.FIXED_512, "fixed")
         dynamicSession = initializeSession(dynamicModelFile, AotModelContract.Kind.DYNAMIC, "dynamic")
         val selectedAccelerator = hardwareOverride.toAotBackend()
@@ -220,72 +206,6 @@ class AOTInpainting(
                 "dynamic=${dynamicSession != null} dynamicRoute=$dynamicSessionRoute " +
                 "requestedHardware=$hardwareOverride " +
                 DeviceCapability.describe()
-        }
-    }
-
-    private fun initializeLamaSession(
-        modelFile: File?,
-        routeTag: String,
-        requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute,
-    ): OrtSession? {
-        lamaSessionHardwareRoute = HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
-        if (modelFile == null || !modelFile.exists()) {
-            lamaSessionRoute = "${routeTag}_missing"
-            logcat(LogPriority.WARN) {
-                "[inpaint] route=$routeTag init=skipped reason=model_missing path=${modelFile?.absolutePath}"
-            }
-            return null
-        }
-        var provider = "cpu"
-        var created: OrtSession? = null
-        return try {
-            created = OnnxRuntimeProvider.createSessionWithFallback(
-                modelPath = modelFile.absolutePath,
-                useAccelerator = requestedHardwareRoute != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK,
-                useXnnpack = requestedHardwareRoute == HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK,
-                disableIntraOpSpinning = true,
-                providerSink = { registeredProvider -> provider = registeredProvider },
-                requestedHardwareRoute = requestedHardwareRoute,
-            )
-            val inputs = created.inputInfo
-            val input = inputs[LamaMangaTensorContract.inputTensorName]?.info as? ai.onnxruntime.TensorInfo
-            val output = created.outputInfo.values.singleOrNull()?.info as? ai.onnxruntime.TensorInfo
-            require(inputs.keys == setOf(LamaMangaTensorContract.inputTensorName)) {
-                "LaMa Manga input names changed: ${inputs.keys}"
-            }
-            require(input?.shape?.contentEquals(LamaMangaTensorContract.inputShape()) == true) {
-                "LaMa Manga input shape changed: ${input?.shape?.contentToString()}"
-            }
-            require(output?.shape?.contentEquals(LamaMangaTensorContract.outputShape()) == true) {
-                "LaMa Manga output shape changed: ${output?.shape?.contentToString()}"
-            }
-            lamaSessionRoute = "${routeTag}_$provider"
-            lamaSessionHardwareRoute = when (provider) {
-                "qnn_htp" -> HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP
-                "qnn_gpu" -> HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU
-                else -> HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
-            }
-            logcat(LogPriority.INFO) {
-                "[inpaint] route=$routeTag init=ok selectedHardware=$hardwareOverride " +
-                    "requestedRoute=$requestedHardwareRoute " +
-                    "provider=${provider.uppercase()} perfRoute=$lamaSessionRoute " +
-                    "model=${modelFile.name} input=${input?.shape?.contentToString()} " +
-                    "output=${output?.shape?.contentToString()}"
-            }
-            created
-        } catch (error: Throwable) {
-            try {
-                created?.close()
-            } catch (closeError: Throwable) {
-                error.addSuppressed(closeError)
-            }
-            lamaSessionRoute = "${routeTag}_$provider"
-            logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=$routeTag init=failed selectedHardware=$hardwareOverride " +
-                    "requestedRoute=$requestedHardwareRoute " +
-                    "provider=${provider.uppercase()} model=${modelFile.name}"
-            }
-            null
         }
     }
 
@@ -534,23 +454,19 @@ class AOTInpainting(
         )
     }
 
+    /**
+     * True when this coordinator's ONNX AOT-GAN sessions are usable. The
+     * LiteRT Manga LaMa model never initializes here â€” its availability is
+     * reported by the LiteRT engine and reaches this class through the
+     * [freeTextNeuralFill] / [bubbleNeuralFill] delegates.
+     */
     fun isInitialized(): Boolean = when (neuralModel) {
-        NeuralInpaintModel.LAMA_MANGA,
-        NeuralInpaintModel.LAMA_MANGA_FP16,
-        NeuralInpaintModel.LAMA_512_INT8,
-        NeuralInpaintModel.LAMA_512_FP16,
-        -> lamaSession != null
         NeuralInpaintModel.AOT_GAN ->
             fixedSession != null || dynamicSession != null || fixedQnnSession != null || fixedNnapiSession != null
         NeuralInpaintModel.LAMA_LITERT_GPU -> false
     }
 
     private fun neuralSessionCount(): Int = when (neuralModel) {
-        NeuralInpaintModel.LAMA_MANGA,
-        NeuralInpaintModel.LAMA_MANGA_FP16,
-        NeuralInpaintModel.LAMA_512_INT8,
-        NeuralInpaintModel.LAMA_512_FP16,
-        -> if (lamaSession != null) 1 else 0
         NeuralInpaintModel.AOT_GAN ->
             (if (fixedSession != null) 1 else 0) +
                 (if (fixedQnnSession != null) 1 else 0) +
@@ -600,8 +516,8 @@ class AOTInpainting(
         for (i in textBoxes.indices) {
             val box = textBoxes[i]
             val lbl = textLabels[i]
-            val parent = AotBoxGeometry.findParentBubble(box, bubbleBoxes)
-            if (parent != null || AotBoxGeometry.overlapsAnyBubble(box, bubbleBoxes)) {
+            val parent = InpaintBoxGeometry.findParentBubble(box, bubbleBoxes)
+            if (parent != null || InpaintBoxGeometry.overlapsAnyBubble(box, bubbleBoxes)) {
                 bubbleTextBoxes.add(box)
             } else if (lbl == 2) {
                 freeTextDetectorBoxes.add(box)
@@ -621,54 +537,66 @@ class AOTInpainting(
             freeTextDetectorBoxes.map { listOf(it.copyOf()) }
         }
 
-        val freeTextGroups = AotBoxGeometry.clusterFreeTextGroups(rawFreeTextGroups, REPORT_AOT_CONTEXT)
+        val freeTextGroups = InpaintBoxGeometry.clusterFreeTextGroups(rawFreeTextGroups, REPORT_AOT_CONTEXT)
 
         logcat(LogPriority.INFO) {
             "[inpaint] pipeline=investigation_report bubbleText=${bubbleTextBoxes.size} " +
                 "freeDets=${freeTextDetectorBoxes.size} rawGroups=${rawFreeTextGroups.size} clusteredGroups=${freeTextGroups.size} " +
                 "dispatch=$dispatch fixed=${fixedSess != null} qnn=${fixedQnnSession != null} nnapi=${fixedNnapiSession != null} " +
-                "dynamic=${dynamicSess != null} model=$neuralModel lama=${lamaSession != null}"
+                "dynamic=${dynamicSess != null} model=$neuralModel bubbleDelegate=${bubbleNeuralFill != null} " +
+                "freeTextDelegate=${freeTextNeuralFill != null}"
         }
         if (paddleDetector != null && freeTextDetectorBoxes.isNotEmpty()) {
             logcat(LogPriority.INFO) {
                 "[inpaint] report_paddle detectorText=${freeTextDetectorBoxes.size} paddleLines=$paddleLinesTotal " +
                     "fallback=$paddleFallback linePad=$REPORT_FREE_TEXT_PAD lineDilate=$REPORT_FREE_TEXT_DILATE " +
-                    "aotContext=$REPORT_AOT_CONTEXT thresh=$PADDLE_THRESH boxThresh=$PADDLE_BOX_THRESH cropPad=$PADDLE_CROP_PAD"
+                    "aotContext=$REPORT_AOT_CONTEXT thresh=$PADDLE_THRESH boxThresh=$PADDLE_BOX_THRESH unclip=$PADDLE_UNCLIP_RATIO cropPad=$PADDLE_CROP_PAD"
             }
         }
 
-        result = inpaintReportBubbles(result, bubbleTextBoxes, blocks)
+        result = inpaintReportBubbles(result, bubbleTextBoxes, blocks, dispatch)
 
-        val dispatchNeuralFreeText = dispatch.freeText == RegionBackend.AOT_NEURAL
-        for (group in freeTextGroups) {
-            if (group.isEmpty()) continue
-            when (resolveFreeTextRoute(
-                dispatchNeural = dispatchNeuralFreeText,
-                delegateAvailable = freeTextNeuralFill != null,
-                onnxInitialized = isInitialized(),
-            )) {
-                FreeTextRoute.NEURAL_DELEGATE -> {
-                    val delegate = requireNotNull(freeTextNeuralFill)
-                    val filled = try {
-                        delegate(result, group)
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        logcat(LogPriority.WARN, e) { "[inpaint] free-text neural delegate failed; classical fallback" }
-                        null
-                    }
-                    if (filled != null) {
-                        result = filled
-                        lastAcceptedRoute = "free_text_delegate"
-                    } else {
+        val dispatchNeuralFreeText = dispatch.freeText == RegionBackend.NEURAL
+        val freeTextRoute = resolveFreeTextRoute(
+            dispatchNeural = dispatchNeuralFreeText,
+            delegateAvailable = freeTextNeuralFill != null,
+            onnxInitialized = isInitialized(),
+        )
+
+        if (freeTextRoute == FreeTextRoute.NEURAL_DELEGATE) {
+            // Batch all free-text boxes across groups so LiteRT Manga LaMa clusters
+            // nearby text into a single 512x512 patch and executes in one forward pass.
+            val delegate = requireNotNull(freeTextNeuralFill)
+            val allBoxes = freeTextGroups.flatten()
+            if (allBoxes.isNotEmpty()) {
+                val filled = try {
+                    delegate(result, allBoxes)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    logcat(LogPriority.WARN, e) { "[inpaint] free-text neural delegate failed; classical fallback" }
+                    null
+                }
+                if (filled != null) {
+                    result = filled
+                    lastAcceptedRoute = "free_text_delegate"
+                } else {
+                    for (group in freeTextGroups) {
                         result = inpaintReportFreeTextFast(result, group, reason = "neural_delegate_failed")
                     }
                 }
-                FreeTextRoute.NEURAL_ONNX -> result = inpaintReportFreeTextNeural(result, group)
-                FreeTextRoute.CLASSICAL -> result = inpaintReportFreeTextFast(
-                    result,
-                    group,
-                    reason = if (!dispatchNeuralFreeText) "fast_mode" else "no_neural_session",
-                )
+            }
+        } else {
+            for (group in freeTextGroups) {
+                if (group.isEmpty()) continue
+                when (freeTextRoute) {
+                    FreeTextRoute.NEURAL_ONNX -> result = inpaintReportFreeTextNeural(result, group)
+                    FreeTextRoute.CLASSICAL -> result = inpaintReportFreeTextFast(
+                        result,
+                        group,
+                        reason = if (!dispatchNeuralFreeText) "fast_mode" else "no_neural_session",
+                    )
+                    else -> Unit
+                }
             }
         }
 
@@ -703,7 +631,7 @@ class AOTInpainting(
             }
             val crop = Bitmap.createBitmap(image, cx1, cy1, cx2 - cx1, cy2 - cy1)
             val lines = try {
-                paddleDetector.detectLines(crop, thresh = PADDLE_THRESH, boxThresh = PADDLE_BOX_THRESH)
+                paddleDetector.detectLines(crop, thresh = PADDLE_THRESH, boxThresh = PADDLE_BOX_THRESH, unclipRatio = PADDLE_UNCLIP_RATIO)
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) { "[inpaint] report Paddle DET failed; using detector free-text box" }
                 emptyList()
@@ -732,23 +660,78 @@ class AOTInpainting(
                 groups.add(listOf(det.copyOf()))
                 fallbackCount++
             } else {
-                groups.add(group)
+                val detW = det[2] - det[0]
+                val detH = det[3] - det[1]
+                val unionMinX = group.minOf { it[0] }
+                val unionMinY = group.minOf { it[1] }
+                val unionMaxX = group.maxOf { it[2] }
+                val unionMaxY = group.maxOf { it[3] }
+                val unionW = unionMaxX - unionMinX
+                val unionH = unionMaxY - unionMinY
+
+                // Extend detected lines along the reading axis to span the text group cleanly,
+                // ensuring trailing characters are covered without creating artificial boundary pillars.
+                val isVertical = detH >= detW
+                val adjustedGroup = group.map { line ->
+                    val copy = line.copyOf()
+                    if (group.size == 1) {
+                        if (isVertical) {
+                            copy[1] = minOf(copy[1], det[1])
+                            copy[3] = maxOf(copy[3], det[3])
+                        } else {
+                            copy[0] = minOf(copy[0], det[0])
+                            copy[2] = maxOf(copy[2], det[2])
+                        }
+                    } else {
+                        val padReadingAxis = 6
+                        if (isVertical) {
+                            copy[1] = maxOf(det[1], copy[1] - padReadingAxis)
+                            copy[3] = minOf(det[3], copy[3] + padReadingAxis)
+                        } else {
+                            copy[0] = maxOf(det[0], copy[0] - padReadingAxis)
+                            copy[2] = minOf(det[2], copy[2] + padReadingAxis)
+                        }
+                    }
+                    copy
+                }
+                groups.add(adjustedGroup)
             }
         }
         return RefinedFreeTextGroups(groups, paddleLineCount, fallbackCount)
     }
 
+    /**
+     * Bubble inpainting with segmentation-only masks.
+     *
+     * The erase mask is EXCLUSIVELY the union of the supplied segmentation
+     * masks ([eu.kanade.translation.model.TranslationBlock.segmentationMask],
+     * the YOLO11-seg whole-balloon interior), contour-eroded by
+     * [BUBBLE_SEG_MASK_EROSION] to protect the hand-drawn bubble stroke border.
+     * A supplied mask is passed unchanged in shape through crop / pad /
+     * composite â€” it is never replaced by a bounding-box or pill approximation.
+     *
+     * Text inside bubbles WITHOUT a supplied segmentation is preserved: the
+     * pixels stay untouched and the skip is surfaced via [lastBubbleRoute] and
+     * [lastRunDegraded] instead of inventing a rectangle/pill mask. Free text
+     * (detections outside every bubble) keeps its own line-mask batching.
+     *
+     * Erosion reduces the border risk but cannot guarantee contour
+     * preservation for imperfect, thin (< erosion radius), or jagged
+     * segmentations.
+     */
     private fun inpaintReportBubbles(
         image: Bitmap,
         boxes: List<IntArray>,
         blocks: List<eu.kanade.translation.model.TranslationBlock>?,
+        dispatch: RegionDispatch,
     ): Bitmap {
         if (boxes.isEmpty() && (blocks == null || blocks.none { it.segmentationMask != null })) return image
         val w = image.width
         val h = image.height
         val mask = ByteArray(w * h)
 
-        // 1. Rasterize segmentation masks from blocks that have one and apply edge erosion
+        // Rasterize the supplied segmentation masks and erode them within
+        // component bounds so the bubble contour stroke is never erased.
         val blocksWithSegMask = blocks?.filter { it.segmentationMask != null } ?: emptyList()
         if (blocksWithSegMask.isNotEmpty()) {
             val rawSegMask = ByteArray(w * h)
@@ -766,41 +749,198 @@ class AOTInpainting(
             }
         }
 
-        // 2. For all boxes that are NOT covered by an existing segmentation mask, build a dynamic pill mask
-        val remainingBoxes = if (blocksWithSegMask.isEmpty()) {
-            boxes
-        } else {
-            boxes.filter { box ->
-                blocksWithSegMask.none { block ->
-                    val seg = block.segmentationMask
-                    seg != null && seg.overlapPixels(box[0], box[1], box[2], box[3]) > 0
+        if (mask.none { it != 0.toByte() }) {
+            if (boxes.isNotEmpty()) {
+                // Bubble text existed without any supplied segmentation mask:
+                // preserve pixels (never invent a pill/rectangle) and surface
+                // the skip for the page stamp.
+                lastBubbleRoute = "skipped_no_segmentation"
+                lastRunDegraded = true
+                logcat(LogPriority.WARN) {
+                    "[inpaint] bubble_route=skipped_no_segmentation boxes=${boxes.size} " +
+                        "dispatch=$dispatch (no segmentation masks supplied; pixels preserved)"
                 }
             }
+            return image
         }
 
-        if (remainingBoxes.isNotEmpty()) {
-            val pillMask = BubbleMaskBuilder.buildDynamicPillMask(remainingBoxes, w, h, MASK_PAD)
-            for (i in mask.indices) {
-                if (pillMask[i] != 0.toByte()) {
-                    mask[i] = 1
+        // Mixed page: bubble text boxes whose area carries no segmentation
+        // coverage keep their pixels untouched and downgrade the page to
+        // degraded, so a partially-masked page is never reported as clean.
+        // [boxes] here are the bubble text boxes split by the caller.
+        var uncoveredBubbleBoxes = 0
+        for (box in boxes) {
+            val x1 = box[0].coerceIn(0, w)
+            val y1 = box[1].coerceIn(0, h)
+            val x2 = box[2].coerceIn(0, w)
+            val y2 = box[3].coerceIn(0, h)
+            var covered = false
+            outer@ for (y in y1 until y2) {
+                val rowOffset = y * w
+                for (x in x1 until x2) {
+                    if (mask[rowOffset + x] != 0.toByte()) {
+                        covered = true
+                        break@outer
+                    }
                 }
             }
+            if (!covered) uncoveredBubbleBoxes++
+        }
+        val partialMasks = uncoveredBubbleBoxes > 0
+
+        if (dispatch.bubble == RegionBackend.NEURAL) {
+            val clusters = InpaintBoxGeometry.componentClusters(mask, w, h)
+            if (bubbleNeuralMemoryGateTripped(clusters)) {
+                inpaintBubbleMedian(image, mask, w, h)
+                lastBubbleRoute = if (partialMasks) "neural_median_memgate_partial_masks" else "neural_median_memgate"
+                lastRunDegraded = true
+                logPartialMaskSkip(uncoveredBubbleBoxes)
+                return image
+            }
+
+            var anyNeuralFailure = false
+            var neuralTileCount = 0
+            val maxCropSide = minOf(InpaintPadOps.SIZE, w, h)
+            val tileSide = minOf(REPORT_BUBBLE_TILE_SIZE, maxCropSide)
+            val tileOverlap = minOf(REPORT_BUBBLE_TILE_OVERLAP, tileSide - 1).coerceAtLeast(0)
+
+            for (cluster in clusters) {
+                val tiles = InpaintBoxGeometry.tileBounds(
+                    cluster[0],
+                    cluster[1],
+                    cluster[2],
+                    cluster[3],
+                    tile = tileSide,
+                    overlap = tileOverlap,
+                )
+                for (tile in tiles) {
+                    val tileWidth = tile[2] - tile[0]
+                    val tileHeight = tile[3] - tile[1]
+                    val side = (maxOf(tileWidth, tileHeight) + 2 * REPORT_INPAINT_CONTEXT)
+                        .coerceAtMost(maxCropSide)
+                    val cropX = (tile[0] - (side - tileWidth) / 2).coerceIn(0, w - side)
+                    val cropY = (tile[1] - (side - tileHeight) / 2).coerceIn(0, h - side)
+                    val crop = intArrayOf(cropX, cropY, cropX + side, cropY + side)
+                    val localMask = cropMask(mask, w, h, crop, side, tile)
+                    if (localMask.none { it != 0.toByte() }) continue
+
+                    // Prefer the external delegate (LiteRT Manga LaMa); a null
+                    // result lets the ONNX AOT-GAN ladder try. The mask is the
+                    // eroded segmentation crop â€” never the bubble bounding box.
+                    val candidate = bubbleNeuralFill?.invoke(image, localMask, crop, side)
+                        ?: neuralFillSquare(
+                            image = image,
+                            localMaskBytes = localMask,
+                            crop = crop,
+                            side = side,
+                            logTag = "bubble",
+                        )
+                    if (candidate == null) {
+                        anyNeuralFailure = true
+                        continue
+                    }
+                    compositeNeuralTile(image, candidate, localMask, crop, side)
+                    neuralTileCount++
+                }
+            }
+
+            if (anyNeuralFailure) {
+                // Neural failed (delegate unavailable, session error, or
+                // memory gate): the specified fallback is the solid median
+                // blend â€” never an OpenCV NS catch-up.
+                inpaintBubbleMedian(image, mask, w, h)
+                lastRunDegraded = true
+                lastBubbleRoute = if (partialMasks) "neural_median_fallback_partial_masks" else "neural_median_fallback"
+                logcat(LogPriority.WARN) {
+                    "[inpaint] bubble_route=$lastBubbleRoute clusters=${clusters.size} " +
+                        "tiles=$neuralTileCount dispatch=$dispatch"
+                }
+            } else {
+                lastBubbleRoute = if (partialMasks) "neural_partial_masks" else "neural"
+                lastRunDegraded = lastRunDegraded || partialMasks
+                logcat(LogPriority.INFO) {
+                    "[inpaint] bubble_route=$lastBubbleRoute clusters=${clusters.size} tiles=$neuralTileCount dispatch=$dispatch"
+                }
+            }
+            logPartialMaskSkip(uncoveredBubbleBoxes)
+            return image
         }
 
-        if (mask.none { it != 0.toByte() }) return image
-
-        // Clean smooth diffusion only: neural tiling hallucinates chromatic
-        // noise inside white bubble interiors and OpenCV NS smudges them, so
-        // bubbles take this validated fill in every mode.
+        // Classical bubble path (FAST/BALANCE and the QUALITY fallback): solid
+        // median diffusion fill with feathered edge blending.
         inpaintBubbleMedian(image, mask, w, h)
-        lastBubbleRoute = "smooth_diffusion"
+        lastBubbleRoute = if (partialMasks) "median_fill_partial_masks" else "median_fill"
+        lastRunDegraded = lastRunDegraded || partialMasks
+        logPartialMaskSkip(uncoveredBubbleBoxes)
         return image
+    }
+
+    private fun logPartialMaskSkip(uncoveredBubbleBoxes: Int) {
+        if (uncoveredBubbleBoxes <= 0) return
+        logcat(LogPriority.WARN) {
+            "[inpaint] bubble_partial_masks=$uncoveredBubbleBoxes (no segmentation coverage; pixels preserved)"
+        }
+    }
+
+    /**
+     * Heap gate for the neural bubble path: the working set of one neural tile
+     * (â‰¤ [InpaintPadOps.SIZE]Â² pixels across the mask, source, padded tensors,
+     * decoded candidate, alpha field, and blend buffers) must fit a quarter of
+     * the available heap, otherwise the solid median blend runs instead of
+     * risking an OOM mid-fill.
+     */
+    private fun bubbleNeuralMemoryGateTripped(clusters: List<IntArray>): Boolean {
+        val maxTileSide = minOf(InpaintPadOps.SIZE, REPORT_BUBBLE_TILE_SIZE + 2 * REPORT_INPAINT_CONTEXT)
+        val tileWorkingBytes = maxTileSide.toLong() * maxTileSide * NEURAL_TILE_WORKING_BYTES_PER_PIXEL
+        val availableHeap = EngineMemoryBudget.heapSnapshot().availableHeapBytes
+        val tripped = tileWorkingBytes > availableHeap / 4L
+        if (tripped) {
+            val largestCluster = clusters.maxOfOrNull { (it[2] - it[0]) * (it[3] - it[1]) } ?: 0
+            logcat(LogPriority.WARN) {
+                "[inpaint] bubble neural memory gate tripped (tileWorkSet=" +
+                    "${tileWorkingBytes / (1L shl 20)}MiB largestClusterPx=$largestCluster " +
+                    "heapAvailable=${availableHeap / (1L shl 20)}MiB); using median fill"
+            }
+        }
+        return tripped
+    }
+
+    private fun cropMask(
+        fullMask: ByteArray,
+        pageWidth: Int,
+        pageHeight: Int,
+        crop: IntArray,
+        side: Int,
+        tile: IntArray,
+    ): ByteArray {
+        require(fullMask.size.toLong() == pageWidth.toLong() * pageHeight)
+        require(crop.size >= 4 && crop[2] - crop[0] == side && crop[3] - crop[1] == side)
+        require(crop[0] >= 0 && crop[1] >= 0 && crop[2] <= pageWidth && crop[3] <= pageHeight)
+        require(tile.size >= 4)
+
+        val localMask = ByteArray(side * side)
+        val startX = maxOf(crop[0], tile[0])
+        val startY = maxOf(crop[1], tile[1])
+        val endX = minOf(crop[2], tile[2])
+        val endY = minOf(crop[3], tile[3])
+        if (startX >= endX || startY >= endY) return localMask
+        for (y in startY until endY) {
+            val sourceOffset = y * pageWidth + startX
+            val destinationOffset = (y - crop[1]) * side + startX - crop[0]
+            fullMask.copyInto(
+                destination = localMask,
+                destinationOffset = destinationOffset,
+                startIndex = sourceOffset,
+                endIndex = sourceOffset + endX - startX,
+            )
+        }
+        return localMask
     }
 
     private fun inpaintBubbleMedian(image: Bitmap, mask: ByteArray, width: Int, height: Int) {
         val pixels = IntArray(width * height)
         image.getPixels(pixels, 0, width, 0, 0, width, height)
-        AotReportBubbleFill.fillAndBlend(pixels, mask, width, height, REPORT_BUBBLE_SMOOTH_PASSES, FEATHER_RAMP_PX)
+        BubbleMedianDiffusionFill.fillAndBlend(pixels, mask, width, height, REPORT_BUBBLE_SMOOTH_PASSES, FEATHER_RAMP_PX)
         image.setPixels(pixels, 0, width, 0, 0, width, height)
     }
 
@@ -813,13 +953,18 @@ class AOTInpainting(
     ) {
         val currentPixels = IntArray(side * side)
         image.getPixels(currentPixels, 0, side, crop[0], crop[1], side, side)
-        val alpha = BubbleMaskBuilder.featherAlphaField(
+        // INWARD-only feather: alpha is exactly 0 outside the eroded
+        // segmentation, so every pixel outside the supplied bubble
+        // segmentation (including the hand-drawn stroke border) stays
+        // pixel-identical. The blend ramps up inside the erosion margin,
+        // which is interior paper — never the stroke.
+        val alpha = BubbleMaskBuilder.featherAlphaFieldInward(
             mask = localMask,
             width = side,
             height = side,
-            rampWidth = REPORT_FREE_TEXT_FEATHER,
+            rampWidth = BUBBLE_SEG_MASK_EROSION,
         )
-        AotPixelOps.compositeInto(currentPixels, candidate, alpha, currentPixels)
+        InpaintPixelOps.compositeInto(currentPixels, candidate, alpha, currentPixels)
         image.setPixels(currentPixels, 0, side, crop[0], crop[1], side, side)
     }
 
@@ -927,11 +1072,11 @@ class AOTInpainting(
         boxes: List<IntArray>,
         reason: String = "neural_exhausted",
     ): Bitmap {
-        val bounds = AotBoxGeometry.paddedUnionBounds(boxes, image.width, image.height, REPORT_INPAINT_CONTEXT) ?: return image
+        val bounds = InpaintBoxGeometry.paddedUnionBounds(boxes, image.width, image.height, REPORT_INPAINT_CONTEXT) ?: return image
         val cropW = bounds[2] - bounds[0]
         val cropH = bounds[3] - bounds[1]
         if (cropW <= 0 || cropH <= 0) return image
-        val localBoxes = boxes.mapNotNull { AotBoxGeometry.localizeBox(it, bounds[0], bounds[1], cropW, cropH) }
+        val localBoxes = boxes.mapNotNull { InpaintBoxGeometry.localizeBox(it, bounds[0], bounds[1], cropW, cropH) }
         val mask = BubbleMaskBuilder.buildFixedPillMask(localBoxes, cropW, cropH, REPORT_FREE_TEXT_PAD, REPORT_FREE_TEXT_DILATE)
         if (mask.none { it != 0.toByte() }) return image
         val original = IntArray(cropW * cropH)
@@ -942,7 +1087,7 @@ class AOTInpainting(
             lastRunDegraded = true
         }
         val alpha = BubbleMaskBuilder.featherAlphaField(mask, cropW, cropH, REPORT_FREE_TEXT_FEATHER)
-        AotPixelOps.compositeInto(original, work, alpha, work)
+        InpaintPixelOps.compositeInto(original, work, alpha, work)
         image.setPixels(work, 0, cropW, bounds[0], bounds[1], cropW, cropH)
         logcat(LogPriority.INFO) {
             "[inpaint] route=${classicalBackend.routeLabel} reason=$reason crop=${cropW}x$cropH boxes=${boxes.size}"
@@ -951,11 +1096,11 @@ class AOTInpainting(
     }
 
     private fun inpaintReportFreeTextNeural(image: Bitmap, boxes: List<IntArray>): Bitmap {
-        val crop = AotBoxGeometry.centeredReportCrop(boxes, image.width, image.height, REPORT_AOT_CONTEXT)
+        val crop = InpaintBoxGeometry.centeredReportCrop(boxes, image.width, image.height, REPORT_AOT_CONTEXT)
             ?: return image
         val side = crop[2] - crop[0]
         if (side <= 0 || crop[3] - crop[1] != side) return image
-        val localBoxes = boxes.mapNotNull { AotBoxGeometry.localizeBox(it, crop[0], crop[1], side, side) }
+        val localBoxes = boxes.mapNotNull { InpaintBoxGeometry.localizeBox(it, crop[0], crop[1], side, side) }
         val maskBytes = BubbleMaskBuilder.buildFixedPillMask(localBoxes, side, side, REPORT_FREE_TEXT_PAD, REPORT_FREE_TEXT_DILATE)
         if (maskBytes.none { it != 0.toByte() }) return image
 
@@ -990,16 +1135,12 @@ class AOTInpainting(
         logExtra: String = "",
         onMemoryRejected: (String) -> Unit = {},
     ): IntArray? {
-        require(side in 1..AotPadPath.SIZE)
+        require(side in 1..InpaintPadOps.SIZE)
         require(crop.size >= 4 && crop[2] - crop[0] == side && crop[3] - crop[1] == side)
         require(localMaskBytes.size.toLong() == side.toLong() * side)
 
         val modelTag = when (neuralModel) {
             NeuralInpaintModel.LAMA_LITERT_GPU -> "lama_litert_gpu"
-            NeuralInpaintModel.LAMA_MANGA -> "lama_manga"
-            NeuralInpaintModel.LAMA_MANGA_FP16 -> "lama_manga_fp16"
-            NeuralInpaintModel.LAMA_512_INT8 -> "lama_512_int8"
-            NeuralInpaintModel.LAMA_512_FP16 -> "lama_512_fp16"
             NeuralInpaintModel.AOT_GAN -> "aot"
         }
         val memoryDecision = EngineMemoryBudget.neuralInpaintDecision(
@@ -1031,15 +1172,6 @@ class AOTInpainting(
                 "model=$neuralModel nativeSystemReserve=${memoryDecision.nativeSystemReserveBytes / (1024L * 1024L)}MiB " +
                 "sysHeadroom=${memoryDecision.systemHeadroomBytes?.div(1024L * 1024L)}MiB crop=${side}x$side $logExtra",
         )
-
-        if (
-            neuralModel == NeuralInpaintModel.LAMA_MANGA ||
-            neuralModel == NeuralInpaintModel.LAMA_MANGA_FP16 ||
-            neuralModel == NeuralInpaintModel.LAMA_512_INT8 ||
-            neuralModel == NeuralInpaintModel.LAMA_512_FP16
-        ) {
-            return runLamaMangaCandidate(image, localMaskBytes, crop, side, logTag)
-        }
 
         val maskBitmap = BitmapPool.getALPHA8(side, side)
         var prepared: PreparedFixedInput? = null
@@ -1198,135 +1330,6 @@ class AOTInpainting(
         }
     }
 
-    private fun runLamaMangaCandidate(
-        image: Bitmap,
-        localMaskBytes: ByteArray,
-        crop: IntArray,
-        side: Int,
-        logTag: String,
-    ): IntArray? {
-        val session = lamaSession ?: return null
-        var inputBuffer: FloatBuffer? = null
-        var inputTensor: OnnxTensor? = null
-        var results: OrtSession.Result? = null
-        val started = System.nanoTime()
-        return try {
-            val sourcePixels = IntArray(side * side)
-            image.getPixels(sourcePixels, 0, side, crop[0], crop[1], side, side)
-
-            var totalChroma = 0
-            val sampleStride = max(1, sourcePixels.size / 400)
-            var sampleCount = 0
-            for (index in sourcePixels.indices step sampleStride) {
-                val pixel = sourcePixels[index]
-                val red = pixel shr 16 and 0xFF
-                val green = pixel shr 8 and 0xFF
-                val blue = pixel and 0xFF
-                totalChroma += max(red, max(green, blue)) - min(red, min(green, blue))
-                sampleCount++
-            }
-            val grayscale = sampleCount > 0 && totalChroma / sampleCount < 15
-            val paddedPixels = getImgPixels()
-            // LaMa was validated against clamp-to-edge borders: replicate
-            // padding is intentionally isolated to this model (AOT-GAN uses
-            // ring-median background padding instead).
-            AotPadPath.padSquareReplicateInto(sourcePixels, side, paddedPixels)
-            val localMaskPixels = IntArray(side * side) { index ->
-                if (localMaskBytes[index] != 0.toByte()) 0xFFFFFFFF.toInt() else 0
-            }
-            val paddedMask = getMaskPixels()
-            AotPadPath.padSquareInto(localMaskPixels, side, 0, paddedMask)
-
-            val acquiredBuffer = lamaInputPool.acquire()
-            inputBuffer = acquiredBuffer
-            val offset = LamaMangaTensorContract.writeInput(
-                paddedImage = paddedPixels,
-                paddedMask = paddedMask,
-                sourceSize = side,
-                inputBuffer = acquiredBuffer,
-            )
-            val tensor = OnnxTensor.createTensor(
-                OnnxRuntimeProvider.environment,
-                acquiredBuffer,
-                LamaMangaTensorContract.inputShape(),
-            )
-            inputTensor = tensor
-            val input = mapOf(LamaMangaTensorContract.inputTensorName to tensor)
-            val modelPath = requireNotNull(lamaModelFile) { "LaMa model path was not retained" }.absolutePath
-            val modelId = ModelRoutingEngine.resolveModelId(modelPath)
-            val inferenceRoute = lamaSessionHardwareRoute
-            val inference = runWithInpaintingProviderRecovery(
-                route = inferenceRoute,
-                inference = { session.run(input) },
-                retryOnCpu = { providerError ->
-                    logcat(LogPriority.WARN, providerError) {
-                        "[inpaint] route=$lamaSessionRoute runtime_failed provider=${inferenceRoute.name} retry=cpu " +
-                            "model=$modelId"
-                    }
-                    if (lamaSession === session) {
-                        lamaSession = null
-                        try {
-                            session.close()
-                        } catch (closeError: Throwable) {
-                            providerError.addSuppressed(closeError)
-                            logcat(LogPriority.ERROR, closeError) {
-                                "[inpaint] route=$lamaSessionRoute failedSessionClose=failed"
-                            }
-                        }
-                    }
-                    val cpuSession = initializeLamaSession(
-                        modelFile = lamaModelFile,
-                        routeTag = requireNotNull(lamaModelRouteTag) { "LaMa route tag was not retained" },
-                        requestedHardwareRoute = HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK,
-                    ) ?: throw IllegalStateException("LaMa CPU fallback session initialization failed for $modelId")
-                    lamaSession = cpuSession
-                    cpuSession.run(input).also {
-                        logcat(LogPriority.INFO) {
-                            "[inpaint] route=$lamaSessionRoute runtime_fallback=cpu init=ok model=$modelId"
-                        }
-                    }
-                },
-                recordFailure = { error -> ModelRoutingEngine.recordFailure(modelId, inferenceRoute, error) },
-                recordSuccess = { ModelRoutingEngine.recordSuccessfulInference(modelId, inferenceRoute) },
-            )
-            results = inference
-            val outputTensor = inference[0] as? OnnxTensor
-                ?: throw IllegalStateException("LaMa Manga returned a non-tensor output")
-            val candidate = LamaMangaTensorContract.decodeOutput(
-                output = outputTensor.floatBuffer,
-                outputShape = outputTensor.info.shape,
-                sourceSize = side,
-                offset = offset,
-                grayscale = grayscale,
-            )
-            lastAcceptedRoute = lamaSessionRoute
-            logcat(LogPriority.INFO) {
-                "[inpaint] route=$lamaSessionRoute accepted totalMs=${elapsedMs(started)} " +
-                    "crop=${side}x$side tensor=512x512 offset=$offset,$offset model=$neuralModel " +
-                    "stage=$logTag outputDiagnostic=only"
-            }
-            candidate
-        } catch (oom: OutOfMemoryError) {
-            loggedFailure(lamaSessionRoute, "oom", crop, side, oom, started)
-            null
-        } catch (error: Throwable) {
-            loggedFailure(lamaSessionRoute, "exception", crop, side, error, started)
-            null
-        } finally {
-            try {
-                results?.close()
-            } catch (error: Throwable) {
-                logcat(LogPriority.WARN, error) { "[inpaint] route=$lamaSessionRoute outputClose=failed" }
-            }
-            try {
-                inputTensor?.close()
-            } catch (error: Throwable) {
-                logcat(LogPriority.WARN, error) { "[inpaint] route=$lamaSessionRoute inputClose=failed" }
-            } finally {
-                inputBuffer?.let(lamaInputPool::release)
-            }
-        }
-    }
 
     private fun fixedBackendAttempt(
         backend: AotExecutionCoordinator.Backend,
@@ -1385,7 +1388,7 @@ class AOTInpainting(
         crop: IntArray,
         side: Int,
     ): PreparedFixedInput {
-        require(side in 1..AotPadPath.SIZE)
+        require(side in 1..InpaintPadOps.SIZE)
         val sourcePixels = IntArray(side * side)
         page.getPixels(sourcePixels, 0, side, crop[0], crop[1], side, side)
         val maskPixels = IntArray(side * side)
@@ -1395,7 +1398,7 @@ class AOTInpainting(
         // yellow/chromatic noise. Replicate padding stays isolated to LaMa.
         val cropMask = ByteArray(side * side)
         for (i in cropMask.indices) {
-            if (AotPixelOps.maskValue(maskPixels[i]) > 127) cropMask[i] = 1
+            if (InpaintPixelOps.maskValue(maskPixels[i]) > 127) cropMask[i] = 1
         }
         val background = PushPullGradient.localRingMedian(
             sourcePixels,
@@ -1405,9 +1408,9 @@ class AOTInpainting(
             PushPullGradient.DEFAULT_RING,
         )
         val paddedPixels = getImgPixels()
-        AotPadPath.padSquareInto(sourcePixels, side, background, paddedPixels)
+        InpaintPadOps.padSquareInto(sourcePixels, side, background, paddedPixels)
         val paddedMask = getMaskPixels()
-        AotPadPath.padSquareInto(maskPixels, side, 0, paddedMask)
+        InpaintPadOps.padSquareInto(maskPixels, side, 0, paddedMask)
 
         var totalChroma = 0
         val sampleStride = max(1, sourcePixels.size / 400)
@@ -1663,15 +1666,15 @@ class AOTInpainting(
         val avgChroma = totalChroma / (cropPixelsOriginal.size / sampleStride)
         val isGrayscale = avgChroma < 15
 
-        require(!fixedShape || (cropWidth == cropHeight && cropWidth in 1..AotPadPath.SIZE)) {
-            "fixed AOT requires a square crop in 1..${AotPadPath.SIZE}, actual=${cropWidth}x$cropHeight"
+        require(!fixedShape || (cropWidth == cropHeight && cropWidth in 1..InpaintPadOps.SIZE)) {
+            "fixed AOT requires a square crop in 1..${InpaintPadOps.SIZE}, actual=${cropWidth}x$cropHeight"
         }
         val needsResize = !fixedShape && max(cropWidth, cropHeight) > MAX_INFERENCE_DIM
         val inferenceWidth: Int
         val inferenceHeight: Int
         if (fixedShape) {
-            inferenceWidth = AotPadPath.SIZE
-            inferenceHeight = AotPadPath.SIZE
+            inferenceWidth = InpaintPadOps.SIZE
+            inferenceHeight = InpaintPadOps.SIZE
         } else if (needsResize) {
             val scale = MAX_INFERENCE_DIM.toFloat() / max(cropWidth, cropHeight)
             val wScaled = max(8, (cropWidth * scale).toInt())
@@ -1684,7 +1687,7 @@ class AOTInpainting(
             inferenceWidth = cropWidth + padW
             inferenceHeight = cropHeight + padH
         }
-        val fixedOffset = if (fixedShape) AotPadPath.centeredOffset(cropWidth) else 0
+        val fixedOffset = if (fixedShape) InpaintPadOps.centeredOffset(cropWidth) else 0
 
         var imgInput: Bitmap? = null
         var maskInput: Bitmap? = null
@@ -1703,7 +1706,7 @@ class AOTInpainting(
                 val localMaskPixels = IntArray(cropWidth * cropHeight)
                 maskBitmap.getPixels(localMaskPixels, 0, cropWidth, 0, 0, cropWidth, cropHeight)
                 for (i in cropMask.indices) {
-                    if (AotPixelOps.maskValue(localMaskPixels[i]) > 127) cropMask[i] = 1
+                    if (InpaintPixelOps.maskValue(localMaskPixels[i]) > 127) cropMask[i] = 1
                 }
                 PushPullGradient.localRingMedian(cropPixelsOriginal, cropWidth, cropHeight, cropMask, PushPullGradient.DEFAULT_RING)
             } else {
@@ -1773,7 +1776,7 @@ class AOTInpainting(
                 var b = (px and 0xFF) / 127.5f - 1.0f
 
                 val maskPixel = maskPixels[i]
-                val maskVal = if (AotPixelOps.maskValue(maskPixel) > 127) 1.0f else 0.0f
+                val maskVal = if (InpaintPixelOps.maskValue(maskPixel) > 127) 1.0f else 0.0f
                 maskBuffer.put(0 * channelSize + i, maskVal)
 
                 r *= (1.0f - maskVal)
@@ -1920,7 +1923,7 @@ class AOTInpainting(
         // size buffers to the ACTUAL read region, not the pooled
         // MAX_TOTAL_PIXELS. width/height are unbounded CROP dims (cropMargin can
         // exceed MAX_INFERENCE_DIM); reading them into the pooled buffer overflows
-        // → ArrayIndexOutOfBoundsException that crashed inpaint on large text
+        // â†’ ArrayIndexOutOfBoundsException that crashed inpaint on large text
         // regions. Fall back to a transient allocation when the crop exceeds the pool cap.
         val readSize = safeW * safeH
         val inpaintedPixels = if (readSize <= MAX_TOTAL_PIXELS) getResultPixels() else IntArray(readSize)
@@ -1948,7 +1951,7 @@ class AOTInpainting(
     ): Bitmap {
         val result = BitmapPool.getARGB8888(width, height)
         // size buffers to the ACTUAL crop dims, not the pooled
-        // MAX_TOTAL_PIXELS — cropMargin can push the crop past the pool cap and
+        // MAX_TOTAL_PIXELS â€” cropMargin can push the crop past the pool cap and
         // overflow (the page-24 inpaint crash). Transient alloc above the cap.
         val blendSize = width * height
         val origPixels = if (blendSize <= MAX_TOTAL_PIXELS) getImgPixels() else IntArray(blendSize)
@@ -1959,7 +1962,7 @@ class AOTInpainting(
 
         // clamp the inpainted bitmap read to its actual size.
         // The unconditional normalization in inpaint() makes the inpainted
-        // bitmap cropW × cropH, but this clamp is a last-resort safety net.
+        // bitmap cropW Ã— cropH, but this clamp is a last-resort safety net.
         val inpW = min(width, inpainted.width)
         val inpH = min(height, inpainted.height)
         inpainted.getPixels(inpPixels, 0, inpW, 0, 0, inpW, inpH)
@@ -1987,7 +1990,7 @@ class AOTInpainting(
         // a smooth monotonic alpha ramp over FEATHER_RAMP_PX from the mask edge.
         val maskBytes = ByteArray(blendSize)
         for (i in 0 until blendSize) {
-            if (AotPixelOps.maskValue(maskPixels[i]) > 127) maskBytes[i] = 1
+            if (InpaintPixelOps.maskValue(maskPixels[i]) > 127) maskBytes[i] = 1
         }
         val alphaField = if (rampWidth <= 0) {
             FloatArray(blendSize) { idx -> if (maskBytes[idx] != 0.toByte()) 1.0f else 0.0f }
@@ -1999,7 +2002,7 @@ class AOTInpainting(
                 rampWidth = rampWidth,
             )
         }
-        AotPixelOps.compositeInto(origPixels, inpPixels, alphaField, origPixels)
+        InpaintPixelOps.compositeInto(origPixels, inpPixels, alphaField, origPixels)
         result.setPixels(origPixels, 0, width, 0, 0, width, height)
         return result
     }
@@ -2009,7 +2012,6 @@ class AOTInpainting(
         val nnapi = fixedNnapiSession
         val qnn = fixedQnnSession
         val dynamic = dynamicSession
-        val lama = lamaSession
         // Detach first so repeated/concurrent lifecycle teardown cannot close a
         // native handle twice. Each distinct session is still attempted when its
         // sibling close fails.
@@ -2019,21 +2021,14 @@ class AOTInpainting(
         fixedQnnBackend = null
         fixedQnnModelId = null
         dynamicSession = null
-        lamaSession = null
         AotSessionLifecycle.closeIndependently(fixed, dynamic, nnapi, qnn) { failure ->
             logcat(LogPriority.ERROR, failure.error) {
                 "[inpaint] route=${failure.route} close=failed"
             }
         }
-        try {
-            lama?.close()
-        } catch (error: Throwable) {
-            logcat(LogPriority.ERROR, error) { "[inpaint] route=$lamaSessionRoute close=failed" }
-        }
         clearScratch()
         imgInputPool.clear()
         maskInputPool.clear()
-        lamaInputPool.clear()
     }
 
     fun freeNativeSessions() {
@@ -2048,13 +2043,11 @@ class AOTInpainting(
     fun reclaimPooledMemory() {
         imgInputPool.clear()
         maskInputPool.clear()
-        lamaInputPool.clear()
     }
 
     fun forceReleaseNativeBuffers() {
         clearScratch()
         imgInputPool.clear()
         maskInputPool.clear()
-        lamaInputPool.clear()
     }
 }
