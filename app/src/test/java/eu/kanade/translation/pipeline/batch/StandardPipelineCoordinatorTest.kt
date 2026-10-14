@@ -18,6 +18,7 @@ import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
@@ -1121,5 +1122,135 @@ class StandardPipelineCoordinatorTest {
         // Store drain and artifact-engine retention sweep
         // so @TempDir's recursive delete cannot race them on Windows.
         store.closeAndFlush()
+    }
+
+    // ------------------------------------------------------------------
+    // Direct StandardLaneWorker.runPhase coverage of the X6 gap-terminal
+    // contract: at the drained translate tail, gaps or a missing corpus
+    // fingerprint must stop at TRANSLATE (PAUSED, finalizer untouched);
+    // only a present fingerprint with no gaps reaches the finalizer.
+    // The real worker runs with its real context over a real store; the
+    // typed transport is non-null (the CONFIGURATION gate must not fire)
+    // and completes the single page, so the drain reaches the tail.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `drained standard lane tail pauses on gaps or missing corpus fingerprint and finalizes only a full corpus`() = runTest {
+        val store = lazyStore()
+        try {
+            val frozen = ChapterProfileBatchCoordinator.frozenRunConfig(
+                sourceLang = "ja",
+                targetLang = "en",
+                ocrEngine = "FakeOcrEngine",
+                inpaintMode = "OFF",
+                providerKey = "standard:google",
+            )
+            val pages: List<PageKey> = listOf("p1" to 0)
+            val sourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") }
+            val artifact = artifactStore()
+
+            var finalizerCalls = 0
+            var finalizerCorpusFingerprint: String? = null
+            var finalizerTranslatedCounter: Int? = null
+
+            fun worker(publishedRecords: MutableList<ChapterRunRecord>): StandardLaneWorker =
+                StandardLaneWorker(
+                    StandardLaneWorkerContext(
+                        store = store,
+                        frozenConfig = frozen,
+                        effectiveSourcePairs = sourcePairs,
+                        standardTranslateOutcome = { ref ->
+                            TranslationCompletionOutcome.Completed(setOf(ref.pageKey))
+                        },
+                        overlapScheduler = null,
+                        renderJoin = null,
+                        publishRecord = { _, record ->
+                            publishedRecords += record
+                            null
+                        },
+                        record = { runId, state, _, _, counters, corpusFingerprint ->
+                            ChapterRunRecord(
+                                runId = runId,
+                                state = state,
+                                frozenConfig = frozen,
+                                frozenRunConfigFingerprint = "0".repeat(64),
+                                orderedSourceDigest = "0".repeat(64),
+                                analysisPolicyFingerprint = "0".repeat(64),
+                                envelopePolicyFingerprint = "0".repeat(64),
+                                ocrCorpusFingerprint = corpusFingerprint,
+                                phaseCounters = counters,
+                                createdAtEpochMs = 1L,
+                                updatedAtEpochMs = 1L,
+                            )
+                        },
+                        runFinalizeAndComplete = { _, _, _, corpusFingerprint, baseCounters ->
+                            finalizerCalls += 1
+                            finalizerCorpusFingerprint = corpusFingerprint
+                            finalizerTranslatedCounter =
+                                baseCounters[ChapterProfileBatchCoordinator.COUNTER_PAGES_TRANSLATED]
+                            BatchPass1Outcome(
+                                needsTranslation = emptyList(),
+                                status = BatchPass1Status.COMPLETED,
+                                reason = "finalizer-sentinel",
+                            )
+                        },
+                    ),
+                )
+
+            suspend fun drainedTailOutcome(
+                corpusFingerprint: String?,
+                hasGaps: Boolean,
+            ): BatchPass1Outcome {
+                val publishedRecords = mutableListOf<ChapterRunRecord>()
+                val outcome = worker(publishedRecords).runPhase(
+                    artifact = artifact,
+                    runId = "run-${corpusFingerprint ?: "null"}-gaps-$hasGaps",
+                    orderedPages = pages,
+                    corpusFingerprint = corpusFingerprint,
+                    baseCounters = emptyMap(),
+                    hasGaps = hasGaps,
+                )
+                // The drain reached the tail: the page was seam-completed and the
+                // drained TRANSLATE record (translated counter + stop) published.
+                publishedRecords.map { it.state } shouldContainExactly listOf(
+                    ChapterRunState.TRANSLATE,
+                    ChapterRunState.TRANSLATE,
+                )
+                publishedRecords.last().phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PAGES_TRANSLATED] shouldBe 1
+                publishedRecords.last().phaseCounters[ChapterProfileBatchCoordinator.COUNTER_STOP] shouldBe 1
+                return outcome
+            }
+
+            // Combination 1: no corpus fingerprint + gaps -> PAUSED.
+            val noFingerprintWithGaps = drainedTailOutcome(corpusFingerprint = null, hasGaps = true)
+            noFingerprintWithGaps.status shouldBe BatchPass1Status.PAUSED
+            noFingerprintWithGaps.reason shouldBe ChapterProfileBatchCoordinator.STOP_REASON
+            noFingerprintWithGaps.completedPageKeys shouldBe setOf("p1")
+
+            // Combination 2: fingerprint present + gaps -> PAUSED.
+            val fingerprintWithGaps = drainedTailOutcome(corpusFingerprint = "fp-partial", hasGaps = true)
+            fingerprintWithGaps.status shouldBe BatchPass1Status.PAUSED
+            fingerprintWithGaps.reason shouldBe ChapterProfileBatchCoordinator.STOP_REASON
+
+            // Combination 3: no corpus fingerprint + no gaps -> PAUSED.
+            val noFingerprintNoGaps = drainedTailOutcome(corpusFingerprint = null, hasGaps = false)
+            noFingerprintNoGaps.status shouldBe BatchPass1Status.PAUSED
+            noFingerprintNoGaps.reason shouldBe ChapterProfileBatchCoordinator.STOP_REASON
+
+            // The finalizer never ran for any incomplete combination.
+            finalizerCalls shouldBe 0
+
+            // Combination 4: full corpus (fingerprint present, no gaps) ->
+            // exactly one finalizer call carrying the fingerprint and the
+            // translated counter; its outcome IS the run outcome.
+            val fullCorpus = drainedTailOutcome(corpusFingerprint = "fp-full", hasGaps = false)
+            finalizerCalls shouldBe 1
+            finalizerCorpusFingerprint shouldBe "fp-full"
+            finalizerTranslatedCounter shouldBe 1
+            fullCorpus.status shouldBe BatchPass1Status.COMPLETED
+            fullCorpus.reason shouldBe "finalizer-sentinel"
+        } finally {
+            store.closeAndFlush()
+        }
     }
 }

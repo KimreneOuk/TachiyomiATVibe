@@ -2,11 +2,13 @@ package eu.kanade.translation.workflow
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
@@ -30,11 +32,14 @@ import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.security.MessageDigest
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.manga.model.Manga
 
 class ChapterTranslatorQueueRestoreTest {
 
@@ -231,5 +236,92 @@ class ChapterTranslatorQueueRestoreTest {
         // next explicit run resumes from this pointer; restore starts nothing.
         record.state shouldBe eu.kanade.translation.persistence.artifact.ChapterRunState.OCR_PLAN
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] shouldBe 1
+    }
+
+    // -------------------------------------------------------------------------
+    // Wave selection parity: selectChapterWave is the exact production body
+    // used by launchTranslatorJob, pinned on real Translation instances with
+    // shared/distinct source identities. The mirrors in
+    // BatchParallelWindowBudgetTest are replaced by these cases.
+    // -------------------------------------------------------------------------
+
+    private fun waveSource(): HttpSource = mockk(relaxed = true)
+
+    private fun waveEntry(
+        id: Long,
+        status: Translation.State,
+        source: HttpSource,
+    ): Translation = Translation(
+        source = source,
+        manga = Manga.create(),
+        chapter = Chapter.create().copy(id = id, name = "Chapter $id"),
+    ).apply { this.status = status }
+
+    @Test
+    fun `selectChapterWave admits only the first entry of a fresh queue`() {
+        val source = waveSource()
+        val queue = listOf(
+            waveEntry(1L, Translation.State.QUEUE, source),
+            waveEntry(2L, Translation.State.QUEUE, source),
+            waveEntry(3L, Translation.State.QUEUE, waveSource()),
+        )
+
+        selectChapterWave(queue).map { it.chapter.id } shouldBe listOf(1L)
+    }
+
+    @Test
+    fun `selectChapterWave pairs the active chapter with the next queued chapter of its source`() {
+        val source = waveSource()
+        val queue = listOf(
+            waveEntry(1L, Translation.State.TRANSLATING, source),
+            waveEntry(2L, Translation.State.QUEUE, source),
+            waveEntry(3L, Translation.State.QUEUE, source),
+        )
+
+        selectChapterWave(queue).map { it.chapter.id } shouldBe listOf(1L, 2L)
+    }
+
+    @Test
+    fun `selectChapterWave keeps only the active chapter when the next queued is from another source`() {
+        val queue = listOf(
+            waveEntry(1L, Translation.State.TRANSLATING, waveSource()),
+            waveEntry(2L, Translation.State.QUEUE, waveSource()),
+        )
+
+        selectChapterWave(queue).map { it.chapter.id } shouldBe listOf(1L)
+    }
+
+    @Test
+    fun `selectChapterWave keeps only the active chapter when no queued entries remain`() {
+        val queue = listOf(waveEntry(1L, Translation.State.TRANSLATING, waveSource()))
+
+        selectChapterWave(queue).map { it.chapter.id } shouldBe listOf(1L)
+    }
+
+    @Test
+    fun `selectChapterWave excludes terminal and non-participating statuses`() {
+        val source = waveSource()
+        val queue = listOf(
+            waveEntry(1L, Translation.State.TRANSLATED, source),
+            waveEntry(2L, Translation.State.ERROR, waveSource()),
+            waveEntry(3L, Translation.State.PAUSED, waveSource()),
+            waveEntry(4L, Translation.State.READY_WITH_WARNINGS, waveSource()),
+            waveEntry(5L, Translation.State.NOT_TRANSLATED, waveSource()),
+            waveEntry(6L, Translation.State.QUEUE, waveSource()),
+        )
+
+        selectChapterWave(queue).map { it.chapter.id } shouldBe listOf(6L)
+    }
+
+    @Test
+    fun `selectChapterWave admits at most one translating entry even with same-source queued work`() {
+        val source = waveSource()
+        val queue = listOf(
+            waveEntry(1L, Translation.State.TRANSLATING, source),
+            waveEntry(2L, Translation.State.TRANSLATING, source),
+            waveEntry(3L, Translation.State.QUEUE, source),
+        )
+
+        selectChapterWave(queue).map { it.chapter.id } shouldBe listOf(1L, 3L)
     }
 }
