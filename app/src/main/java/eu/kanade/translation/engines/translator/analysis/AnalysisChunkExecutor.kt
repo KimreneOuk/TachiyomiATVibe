@@ -1,7 +1,6 @@
 package eu.kanade.translation.engines.translator.analysis
 
 import eu.kanade.translation.engines.translator.AdmissionPriority
-import eu.kanade.translation.engines.translator.BatchProviderSublimit
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureKind
@@ -348,11 +347,3 @@ fun AnalysisEvidenceTexts.toRequestPages(
         )
     }
 }
-
-/** Refusal detector re-export for tests that assert the taxonomy split. */
-fun isStructuralAnalysisRefusal(text: String): Boolean =
-    TranslationResponseFaithfulness.isStructuralRefusal(text)
-
-/** Exposed for tests/diagnostics: the sublimit key derivation. */
-fun batchSublimitKeyFor(key: ProviderRequestKey): ProviderRequestKey =
-    BatchProviderSublimit.batchSublimitKey(key)

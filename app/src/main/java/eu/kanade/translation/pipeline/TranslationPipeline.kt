@@ -22,11 +22,9 @@ import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.engines.translator.withProviderRequestPriority
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
@@ -1261,29 +1259,6 @@ class TranslationPipeline private constructor(
         naturalPageIndexes: Map<String, Int> = emptyMap(),
     ): eu.kanade.translation.pipeline.batch.progress.ReconciliationResult? =
         batchChapterTranslator.translateBatch(manga, chapter, source, store, orderedStreams, tracker, naturalPageIndexes)
-
-    private suspend fun markBatchTranslationFailed(
-        store: ChapterTranslationStore,
-        pageKey: String,
-        pageTranslation: PageTranslation,
-        reason: String,
-        expectedPrecondition: ChapterTranslationStore.PatchPrecondition,
-    ): ChapterTranslationStore.PatchResult {
-        pageTranslation.translationStatus = StageStatus.FAILED
-        pageTranslation.errorMessage = reason
-        // Translate is typically the first terminal stage, so it owns the attempt charge.
-        // recordAttemptFailure is idempotent if a prior stage already failed.
-        pageTranslation.recordAttemptFailure()
-        return store.updatePageGuarded(pageKey, expectedPrecondition, "batch translation failure") {
-            (it ?: pageTranslation).apply {
-                translationStatus = StageStatus.FAILED
-                errorMessage = reason
-                attemptCount = pageTranslation.attemptCount
-                retryCount = pageTranslation.retryCount
-                updatedAt = System.currentTimeMillis()
-            }
-        }
-    }
 
     // EngineLane serializes engine rebuilds with native admission.
     private suspend fun ensureEnginesBuiltFor(
