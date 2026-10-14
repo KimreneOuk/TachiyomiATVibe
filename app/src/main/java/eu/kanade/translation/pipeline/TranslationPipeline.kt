@@ -39,8 +39,6 @@ import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.SinglePageHttpRenderPhase
 import eu.kanade.translation.pipeline.SinglePageOnnxPhase
-import eu.kanade.translation.pipeline.adaptive.AdaptiveKnobController
-import eu.kanade.translation.pipeline.adaptive.AdaptiveKnobSignalAdapter
 import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
 import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
 import eu.kanade.translation.pipeline.adaptive.DeviceStageNormalization
@@ -133,7 +131,6 @@ class TranslationPipeline private constructor(
     )
 
     override fun close() {
-        adaptiveKnobSignalAdapter.close()
         nativeRunScope.cancel()
     }
 
@@ -271,13 +268,9 @@ class TranslationPipeline private constructor(
     @Volatile
     var batchTrackerFactory: ((chapterId: Long, store: ChapterTranslationStore, orderedPageKeys: List<String>) -> TranslationBatchProgressTracker?)? = null
 
-    // E20a collects current signals but pins the applied output at one until E20b.
-    private val adaptiveKnobController = AdaptiveKnobController()
-    private val adaptiveKnobSignalAdapter = AdaptiveKnobSignalAdapter.forContext(context, adaptiveKnobController)
-
     @VisibleForTesting
     internal val devicePagePermitGate = testConstruction?.devicePagePermitGate
-        ?: DevicePagePermitGate(capacity = { adaptiveKnobController.appliedConcurrency })
+        ?: DevicePagePermitGate()
 
     // EngineLane owns engine construction and native-call drainage. Its short
     // drain grace is retried by epoch, and the drain runs off the main thread.

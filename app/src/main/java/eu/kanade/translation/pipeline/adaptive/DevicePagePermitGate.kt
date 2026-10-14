@@ -18,14 +18,14 @@ enum class DevicePermitPriority {
 /**
  * Cancellation-safe coroutine permit gate for device-active page work.
  *
- * This gate supports the future stage-aware protocol (release while a page is
- * parked on a remote provider, then reacquire before render). E20a wires it
- * only around the existing serialized native lane, so its floor capacity of
- * one preserves today's native concurrency. Provider/governor limits are not
- * inputs to this gate.
+ * This gate supports the stage-aware protocol (release while a page is
+ * parked on a remote provider, then reacquire before render) around the
+ * existing serialized native lane, so its floor capacity of one preserves
+ * today's native concurrency. Provider/governor limits are not inputs to
+ * this gate.
  */
 class DevicePagePermitGate(
-    private val capacity: () -> Int = { AdaptiveKnobController.DEFAULT_FLOOR },
+    private val capacity: () -> Int = { DEFAULT_CAPACITY },
     private val foregroundWaitCapMs: Long = DEFAULT_FOREGROUND_WAIT_CAP_MS,
 ) {
     private val lock = Mutex()
@@ -164,6 +164,9 @@ class DevicePagePermitGate(
     }
 
     companion object {
+        /** Fixed device-active page capacity of the serialized native lane. */
+        const val DEFAULT_CAPACITY = 1
+
         const val DEFAULT_FOREGROUND_WAIT_CAP_MS = 15_000L
     }
 }
