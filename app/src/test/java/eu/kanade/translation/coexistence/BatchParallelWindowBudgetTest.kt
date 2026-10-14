@@ -79,5 +79,4 @@ class BatchParallelWindowBudgetTest {
             CrossOriginBitmapBudget.activeCount shouldBe 0
         }
     }
-
 }

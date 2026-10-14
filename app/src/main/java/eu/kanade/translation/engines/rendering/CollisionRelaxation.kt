@@ -1,6 +1,5 @@
 package eu.kanade.translation.engines.rendering
 
-import eu.kanade.translation.model.TranslationBlockView
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max

@@ -36,10 +36,10 @@ import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import java.io.File
-import java.security.MessageDigest
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import java.io.File
+import java.security.MessageDigest
 
 class ChapterTranslatorQueueRestoreTest {
 
