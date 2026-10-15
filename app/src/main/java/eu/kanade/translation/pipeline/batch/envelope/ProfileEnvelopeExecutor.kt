@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch.envelope
 
+import eu.kanade.translation.context.BatchContextFrontier
 import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.context.ContextRequest
 import eu.kanade.translation.context.LaneCapability
@@ -50,7 +51,6 @@ import eu.kanade.translation.persistence.chapter.TranslationBlockPatch
 import eu.kanade.translation.persistence.chapter.TranslationStagePatch
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
-import eu.kanade.translation.pipeline.batch.BatchContextFrontier
 import eu.kanade.translation.pipeline.batch.BatchPageTraceRegistry
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
