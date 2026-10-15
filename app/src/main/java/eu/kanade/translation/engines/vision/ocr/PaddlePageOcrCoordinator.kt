@@ -1,6 +1,7 @@
 package eu.kanade.translation.engines.vision.ocr
 
 import android.graphics.Bitmap
+import eu.kanade.translation.diagnostics.NativeVisionTelemetry
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.engines.vision.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrBatch
@@ -14,7 +15,6 @@ import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrParentRegi
 import eu.kanade.translation.engines.vision.ocr.paddle.batch.PaddleOcrWidthBucket
 import eu.kanade.translation.model.Detection
 import eu.kanade.translation.model.TextRecognizerLanguage
-import eu.kanade.translation.pipeline.NativeVisionTelemetry
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority

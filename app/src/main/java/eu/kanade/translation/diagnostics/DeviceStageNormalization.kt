@@ -1,4 +1,4 @@
-package eu.kanade.translation.pipeline.adaptive
+package eu.kanade.translation.diagnostics
 
 import eu.kanade.translation.model.TranslationBlock
 import kotlin.math.abs

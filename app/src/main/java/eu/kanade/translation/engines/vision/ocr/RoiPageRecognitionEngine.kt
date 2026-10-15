@@ -2,6 +2,7 @@ package eu.kanade.translation.engines.vision.ocr
 
 import android.content.Context
 import android.graphics.Bitmap
+import eu.kanade.translation.diagnostics.DeviceStageNormalization
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationStageSpan
 import eu.kanade.translation.diagnostics.TranslationTrace
@@ -47,7 +48,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.adaptive.DeviceStageNormalization
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority

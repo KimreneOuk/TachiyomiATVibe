@@ -1,6 +1,5 @@
-package eu.kanade.translation.pipeline
+package eu.kanade.translation.diagnostics
 
-import eu.kanade.translation.diagnostics.TelemetryTrace
 import java.util.Locale
 
 /**

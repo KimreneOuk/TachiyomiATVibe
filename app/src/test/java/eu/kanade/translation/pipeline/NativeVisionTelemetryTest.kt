@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline
 
+import eu.kanade.translation.diagnostics.NativeVisionTelemetry
 import eu.kanade.translation.diagnostics.TelemetryTrace
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals

@@ -1,6 +1,7 @@
 package eu.kanade.translation.pipeline.adaptive
 
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
+import eu.kanade.translation.diagnostics.DeviceStageNormalization
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationStageSpan
 import eu.kanade.translation.diagnostics.TranslationTraceClock
