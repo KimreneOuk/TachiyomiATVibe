@@ -1,8 +1,8 @@
 package eu.kanade.translation.architecture
 
-import java.io.File
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.io.File
 
 /**
  * Package-boundary enforcement for the translation module: production code

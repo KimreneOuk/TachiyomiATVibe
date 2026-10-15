@@ -1061,19 +1061,16 @@ class TranslationManager private constructor(
      * a different chapter. Used after the UI confirms a [ChapterQueuePreflight.RunningConflict].
      * Cancels in-flight page jobs, durably clears transient queue pages
      * (preserving rendered/terminal artifacts), and drops the queue entry.
+     * Suspending: awaits each leg in order; callers must invoke from a coroutine.
      */
-    fun cancelRunningChapterForReplace(chapterId: Long) {
+    suspend fun cancelRunningChapterForReplace(chapterId: Long) {
         val chapter = queueState.value
             .firstOrNull { it.chapter.id == chapterId }
             ?.chapter
             ?: return
-        kotlinx.coroutines.runBlocking {
-            scheduler.cancelPageTranslations(chapterId)
-        }
+        scheduler.cancelPageTranslations(chapterId)
         activeStores.get(chapterId)?.let { store ->
-            kotlinx.coroutines.runBlocking {
-                store.clearTransientQueuePages("Replaced by another chapter's batch")
-            }
+            store.clearTransientQueuePages("Replaced by another chapter's batch")
         }
         removeFromTranslationQueue(chapter)
     }

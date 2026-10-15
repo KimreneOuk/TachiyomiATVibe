@@ -12,12 +12,15 @@ import eu.kanade.translation.scheduling.TranslationScheduler
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
@@ -281,6 +284,113 @@ class TranslationManagerDeleteResetOrderingTest {
                 "resetOcrData ordering changed: $events",
             )
         }
+
+    @Test
+    fun `cancelRunningChapterForReplace awaits cancel and clear before removing the queue entry`() = runTest {
+        val source = mockk<HttpSource>(relaxed = true)
+        val manga = mockk<Manga>(relaxed = true)
+        val chapter = mockk<Chapter>(relaxed = true)
+        every { chapter.id } returns 42L
+        val manager = newManager(
+            store = storeWithPage("p1"),
+            queue = MutableStateFlow(listOf(queuedTranslation(chapter, manga, source))),
+        )
+        val cancelStarted = CompletableDeferred<Unit>()
+        val cancelRelease = CompletableDeferred<Unit>()
+        val clearStarted = CompletableDeferred<Unit>()
+        val clearRelease = CompletableDeferred<Unit>()
+
+        @Suppress("UNCHECKED_CAST")
+        val scheduler = field(manager, "scheduler") as TranslationScheduler
+        coEvery { scheduler.cancelPageTranslations(any()) } coAnswers {
+            log("cancelPageTranslations")
+            cancelStarted.complete(Unit)
+            cancelRelease.await()
+        }
+        val store = (field(manager, "activeStores") as ActiveChapterStoreRegistry).get(42L)!!
+        coEvery { store.clearTransientQueuePages(any()) } coAnswers {
+            log("clearTransientQueuePages")
+            clearStarted.complete(Unit)
+            clearRelease.await()
+        }
+        events.clear()
+
+        val job = launch { manager.cancelRunningChapterForReplace(42L) }
+
+        cancelStarted.await()
+        assertTrue(
+            "clearTransientQueuePages" !in events && "removeFromQueue" !in events,
+            "replacement teardown must not begin while the cancellation is being awaited: $events",
+        )
+        cancelRelease.complete(Unit)
+        clearStarted.await()
+        assertTrue(
+            "removeFromQueue" !in events,
+            "queue removal must not begin while the transient-page clearing is being awaited: $events",
+        )
+        clearRelease.complete(Unit)
+        job.join()
+
+        assertTrue(
+            events == listOf(
+                "cancelPageTranslations",
+                "clearTransientQueuePages",
+                "removeFromQueue",
+            ),
+            "cancelRunningChapterForReplace ordering changed: $events",
+        )
+    }
+
+    @Test
+    fun `cancelRunningChapterForReplace returns without side effects for an absent queue entry`() = runTest {
+        val manager = newManager(
+            store = storeWithPage("p1"),
+            queue = MutableStateFlow(emptyList()),
+        )
+        events.clear()
+
+        manager.cancelRunningChapterForReplace(42L)
+
+        assertTrue(
+            events.isEmpty(),
+            "an absent chapter must hit no teardown path at all: $events",
+        )
+    }
+
+    @Test
+    fun `cancelRunningChapterForReplace without an active store still cancels then removes`() = runTest {
+        val source = mockk<HttpSource>(relaxed = true)
+        val manga = mockk<Manga>(relaxed = true)
+        val chapter = mockk<Chapter>(relaxed = true)
+        every { chapter.id } returns 42L
+        val manager = newManager(
+            store = storeWithPage("p1"),
+            queue = MutableStateFlow(listOf(queuedTranslation(chapter, manga, source))),
+        )
+        setField(manager, "activeStores", ActiveChapterStoreRegistry())
+        events.clear()
+
+        manager.cancelRunningChapterForReplace(42L)
+
+        assertTrue(
+            events == listOf("cancelPageTranslations", "removeFromQueue"),
+            "no-active-store replacement must cancel and remove without clearing: $events",
+        )
+    }
+
+    private fun field(target: Any, fieldName: String): Any {
+        var cls: Class<*>? = target.javaClass
+        while (cls != null) {
+            try {
+                val f = cls.getDeclaredField(fieldName)
+                f.isAccessible = true
+                return f.get(target)
+            } catch (_: NoSuchFieldException) {
+                cls = cls.superclass
+            }
+        }
+        throw NoSuchFieldException("Field $fieldName not found on ${target.javaClass}")
+    }
 
     private fun durableResolver(manager: TranslationManager): DurableChapterStatusResolver {
         val field = manager.javaClass.getDeclaredField("durableStatusResolver\$delegate")

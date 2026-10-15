@@ -501,11 +501,13 @@ object TranslationUiTruth {
     private fun rejected(rejection: SinglePageOutcome.Rejected): PageUiTruth =
         if (rejection.owner == PageWriteOrigin.BATCH) {
             BATCH_SESSION_SWITCH
-        } else when (rejection.kind) {
-            PageRejectionKind.PERSISTENCE_FAILED -> NOT_SAVED
-            PageRejectionKind.ALREADY_OWNED -> NOT_STARTED_ACTIVE_JOB
-            PageRejectionKind.SESSION_DENIED -> NOT_STARTED_SESSION_BUSY
-            PageRejectionKind.OTHER -> NOT_STARTED
+        } else {
+            when (rejection.kind) {
+                PageRejectionKind.PERSISTENCE_FAILED -> NOT_SAVED
+                PageRejectionKind.ALREADY_OWNED -> NOT_STARTED_ACTIVE_JOB
+                PageRejectionKind.SESSION_DENIED -> NOT_STARTED_SESSION_BUSY
+                PageRejectionKind.OTHER -> NOT_STARTED
+            }
         }
 
     // ------------------------------------------------------------------
