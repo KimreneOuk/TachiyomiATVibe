@@ -8,7 +8,9 @@ import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
+import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.hasRenderedResult
@@ -16,7 +18,6 @@ import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -316,7 +317,11 @@ class TranslationScheduler(
                 recordManualOutcome(
                     chapterId,
                     pageKey,
-                    SinglePageOutcome.Rejected(null, "reader session rejected: $rejectionReason"),
+                    SinglePageOutcome.Rejected(
+                        null,
+                        PageRejectionKind.SESSION_DENIED,
+                        "reader session rejected: $rejectionReason",
+                    ),
                 )
             }
             logcat(LogPriority.INFO) {

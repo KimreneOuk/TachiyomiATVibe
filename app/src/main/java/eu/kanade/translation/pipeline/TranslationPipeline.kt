@@ -21,8 +21,10 @@ import eu.kanade.translation.engines.translator.NativeStallState
 import eu.kanade.translation.engines.translator.NativeStallWatchdog
 import eu.kanade.translation.engines.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.engines.translator.withProviderRequestPriority
+import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
@@ -47,7 +49,6 @@ import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.pipeline.execution.PreparedPage
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
@@ -194,14 +195,6 @@ class TranslationPipeline private constructor(
         const val NATIVE_STALL_THRESHOLD_MS = ONNX_PHASE_TIMEOUT_MS
 
         const val UNKNOWN_SOURCE_FINGERPRINT = "source-fingerprint-unavailable"
-
-        /**
-         * Stable reason for the typed
-         * non-success outcome of a page whose translation could not be saved.
-         * The pure UI mapper selects the "Translation not saved — retry
-         * required" copy from this exact value, so it must not drift.
-         */
-        const val REASON_TRANSLATION_NOT_SAVED = "Translation could not be saved; retry required"
 
         /**
          * Truthful name for the
@@ -505,7 +498,11 @@ class TranslationPipeline private constructor(
             }
         }
         if (acquisition is LeaseAcquisition.Denied) {
-            return SinglePageOutcome.Rejected(acquisition.owner, acquisition.reason)
+            return SinglePageOutcome.Rejected(
+                acquisition.owner,
+                if (acquisition.owner != null) PageRejectionKind.ALREADY_OWNED else PageRejectionKind.OTHER,
+                acquisition.reason,
+            )
         }
         return withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
             runGrantedSinglePageBoundary(
@@ -560,7 +557,11 @@ class TranslationPipeline private constructor(
                     "TachiyomiAT native admission rejected: chapter=${chapter.name} " +
                         "pageKey=$pageKey reason=already in flight (residual)"
                 }
-                return SinglePageOutcome.Rejected(null, "page already translating")
+                return SinglePageOutcome.Rejected(
+                    null,
+                    PageRejectionKind.ALREADY_OWNED,
+                    "page already translating",
+                )
             }
             // Storage-tail deferral holder. The
             // ONNX phase enqueues its resume-path cleaned-image persistence,
@@ -620,7 +621,11 @@ class TranslationPipeline private constructor(
                         if (it == null) nativeQueueSpan?.end(TranslationTraceOutcome.PAUSE)
                     }
                 } catch (_: NativePageAlreadyInFlightException) {
-                    return SinglePageOutcome.Rejected(null, "page already translating")
+                    return SinglePageOutcome.Rejected(
+                        null,
+                        PageRejectionKind.ALREADY_OWNED,
+                        "page already translating",
+                    )
                 }
             } catch (t: Throwable) {
                 // Exception path: the boundary does not continue, so run any
@@ -730,7 +735,7 @@ class TranslationPipeline private constructor(
                 }
             is TranslationCompletionOutcome.Paused -> SinglePageOutcome.Paused(outcome.nextEligibleRetryAtEpochMs)
             is TranslationCompletionOutcome.PersistenceRejected ->
-                SinglePageOutcome.Rejected(null, REASON_TRANSLATION_NOT_SAVED)
+                SinglePageOutcome.Rejected(null, PageRejectionKind.PERSISTENCE_FAILED, outcome.reason)
             is TranslationCompletionOutcome.Failed -> SinglePageOutcome.Failed(pageKey, outcome.reason)
             is TranslationCompletionOutcome.Unexpected -> SinglePageOutcome.Failed(pageKey, outcome.reason)
             is TranslationCompletionOutcome.Completed -> SinglePageOutcome.Completed

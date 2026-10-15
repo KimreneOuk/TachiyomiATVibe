@@ -371,8 +371,8 @@ class AutoProviderCallDrainsNotCancelsTest {
             force: Boolean,
             stageListener: TranslationStageListener?,
             origin: eu.kanade.translation.persistence.chapter.PageWriteOrigin,
-        ): eu.kanade.translation.pipeline.execution.SinglePageOutcome =
-            eu.kanade.translation.pipeline.execution.SinglePageOutcome.Completed
+        ): eu.kanade.translation.model.SinglePageOutcome =
+            eu.kanade.translation.model.SinglePageOutcome.Completed
 
         private fun displayReady(pageKey: String, current: PageTranslation?): PageTranslation =
             (current ?: PageTranslation(sourceFileName = pageKey)).apply {

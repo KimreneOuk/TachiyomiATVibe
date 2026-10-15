@@ -5,8 +5,10 @@ import eu.kanade.translation.engines.translator.ProviderFailureException
 import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.TextTranslator
+import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
@@ -16,7 +18,6 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.toPrecondition
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -283,12 +284,13 @@ class P5HonestOutcomeTypingTest {
                     "(TranslationCompletionOutcome.PersistenceRejected from the HTTP phase) surfaced as " +
                     "$outcome — the boundary maps only TranslationCompletionOutcome.Paused and returns " +
                     "Completed for every other value. A page whose translation could not be saved " +
-                    "must be a visible typed non-success (Rejected with the stable not-saved reason), " +
+                    "must be a visible typed non-success (Rejected with " +
+                    "PageRejectionKind.PERSISTENCE_FAILED), " +
                     "never Completed.",
             )
         }
-        withClue("P5 condition C: the not-saved reason must be stable for the UI mapper") {
-            rejected.reason shouldBe "Translation could not be saved; retry required"
+        withClue("P5 condition C: the rejection must carry the typed persistence category") {
+            rejected.kind shouldBe PageRejectionKind.PERSISTENCE_FAILED
             rejected.owner shouldBe null
         }
 

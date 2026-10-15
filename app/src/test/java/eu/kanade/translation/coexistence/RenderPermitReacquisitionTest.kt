@@ -8,11 +8,11 @@ import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.diagnostics.TranslationTraceStageObserver
 import eu.kanade.translation.diagnostics.TranslationTraceStageObserverRegistry
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
 import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe

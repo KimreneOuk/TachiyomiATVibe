@@ -4,8 +4,9 @@ import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.PageRejectionKind
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.TranslationScheduler
@@ -237,7 +238,11 @@ class P5OutcomeProjectionTest {
     @Test
     fun `persistence rejection projects the not saved truth and never success`() {
         val truth = projectManual(
-            SinglePageOutcome.Rejected(null, "Translation could not be saved; retry required"),
+            SinglePageOutcome.Rejected(
+                null,
+                PageRejectionKind.PERSISTENCE_FAILED,
+                "Translation could not be saved; retry required",
+            ),
             // Even a committed-looking durable record must not turn this into
             // success copy: the CURRENT typed outcome is newer than the store.
             PageDisplayProjection(PageDisplayState.DISPLAY_READY, displayReady = true, processed = true),
@@ -254,17 +259,72 @@ class P5OutcomeProjectionTest {
     }
 
     @Test
-    fun `duplicate rejection projects not started with its reason`() {
+    fun `duplicate rejection projects fixed safe copy without diagnostic text`() {
         val truth = projectManual(
-            SinglePageOutcome.Rejected(null, "page already translating"),
+            SinglePageOutcome.Rejected(
+                null,
+                PageRejectionKind.ALREADY_OWNED,
+                "page already translating",
+            ),
             null,
         )
-        withClue("an admission rejection names its reason without retry actions") {
-            str(truth, "label") shouldBe "Translation not started — page already translating."
+        withClue("an admission rejection projects fixed safe copy without retry actions") {
+            str(truth, "label") shouldBe "Translation not started — a translation job is already active."
             word(truth, "severity") shouldBe "INFO"
             word(truth, "retryMode") shouldBe "NONE"
             names(truth, "actions") shouldBe setOf("DETAILS")
             flag(truth, "terminalSuccess") shouldBe false
+            str(truth, "contentDescription") shouldBe
+                "Translation was not started because a translation job is already active."
+        }
+    }
+
+    @Test
+    fun `same kind with divergent diagnostic detail projects identical truth`() {
+        val withDetail = projectManual(
+            SinglePageOutcome.Rejected(null, PageRejectionKind.ALREADY_OWNED, "internal lease token 7f3a"),
+            null,
+        )
+        val withoutDetail = projectManual(
+            SinglePageOutcome.Rejected(null, PageRejectionKind.ALREADY_OWNED, null),
+            null,
+        )
+        withClue("diagnostic detail is internal-only: UI truth depends on the category alone") {
+            str(withDetail, "label") shouldBe str(withoutDetail, "label")
+            str(withDetail, "contentDescription") shouldBe str(withoutDetail, "contentDescription")
+            word(withDetail, "severity") shouldBe word(withoutDetail, "severity")
+            word(withDetail, "retryMode") shouldBe word(withoutDetail, "retryMode")
+            names(withDetail, "actions") shouldBe names(withoutDetail, "actions")
+            str(withDetail, "label").contains("internal") shouldBe false
+            str(withDetail, "contentDescription").contains("7f3a") shouldBe false
+        }
+    }
+
+    @Test
+    fun `session denial and ownerless rejection project their fixed categories`() {
+        val session = projectManual(
+            SinglePageOutcome.Rejected(null, PageRejectionKind.SESSION_DENIED, "reader session rejected: BATCH_ACTIVE"),
+            null,
+        )
+        withClue("session denial uses fixed session copy, never interpolated detail") {
+            str(session, "label") shouldBe "Translation not started — the reader session is busy."
+            word(session, "severity") shouldBe "INFO"
+            names(session, "actions") shouldBe setOf("DETAILS")
+            str(session, "contentDescription") shouldBe
+                "Translation was not started because the reader session is busy."
+            str(session, "label").contains("BATCH_ACTIVE") shouldBe false
+        }
+        val other = projectManual(
+            SinglePageOutcome.Rejected(null, PageRejectionKind.OTHER, "unknown lease denial cause"),
+            null,
+        )
+        withClue("owner-less generic denial uses the generic fixed copy") {
+            str(other, "label") shouldBe "Translation not started."
+            word(other, "severity") shouldBe "INFO"
+            word(other, "retryMode") shouldBe "NONE"
+            names(other, "actions") shouldBe setOf("DETAILS")
+            str(other, "contentDescription") shouldBe "Translation was not started."
+            str(other, "label").contains("unknown") shouldBe false
         }
     }
 

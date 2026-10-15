@@ -123,8 +123,8 @@ class TranslationSessionCoordinatorTest {
         scheduler.translatePage(manga, chapter, source, "p0")
 
         scheduler.manualOutcomeFor(10L, "p0")
-            .shouldBeInstanceOf<eu.kanade.translation.pipeline.execution.SinglePageOutcome.Rejected>()
-            .reason shouldBe "reader session rejected: BATCH_ACTIVE"
+            .shouldBeInstanceOf<eu.kanade.translation.model.SinglePageOutcome.Rejected>()
+            .kind shouldBe eu.kanade.translation.model.PageRejectionKind.SESSION_DENIED
         scheduler.close()
     }
 }

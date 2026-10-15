@@ -2,6 +2,7 @@ package eu.kanade.translation.pipeline.execution
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.translator.ProviderFailure
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -111,40 +112,6 @@ interface TranslationExecutor {
         prepared: PreparedPage,
         stageListener: TranslationStageListener? = null,
     ): TranslationCompletionOutcome?
-}
-
-/**
- * A typed outcome of one single-page intent. It replaces
- * the previous silent `Unit` return so a denied lease can never again look like
- * a completed intent: the scheduler records the outcome and its
- * cancel path can tell "owned the page" from "only observed the owner".
- */
-sealed interface SinglePageOutcome {
-    /** The page intent was admitted and is queued in memory awaiting pipeline execution. */
-    data object Admitted : SinglePageOutcome
-
-    /** The executor ran the page itself (including resume-skip soft exits). */
-    data object Completed : SinglePageOutcome
-
-    /**
-     * The paid call was deferred by the provider
-     * request governor (window/foreground budget) instead of completing, so the
-     * intent neither failed nor finished. [nextEligibleRetryAtEpochMs] is the
-     * epoch ms after which a retry may be admitted, when the governor knows it.
-     */
-    data class Paused(val nextEligibleRetryAtEpochMs: Long? = null) : SinglePageOutcome
-
-    /** The native lane remained occupied beyond its result timer. */
-    data class Stalled(val pageKey: String, val stalledSinceEpochMs: Long) : SinglePageOutcome
-
-    /** The page attempt reached a typed terminal failure. */
-    data class Failed(val pageKey: String, val reason: String) : SinglePageOutcome
-
-    /** The page was owned by [owner]; the executor attached to the owner's terminal commit. */
-    data class Attached(val owner: PageWriteOrigin) : SinglePageOutcome
-
-    /** The intent could not run or attach (defunct store, unknown owner). */
-    data class Rejected(val owner: PageWriteOrigin?, val reason: String) : SinglePageOutcome
 }
 
 /**

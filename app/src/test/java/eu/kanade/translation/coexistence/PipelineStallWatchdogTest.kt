@@ -156,7 +156,8 @@ class PipelineStallWatchdogTest {
         }
         withClue("T917 D8 §2.2: residual same-page request is typed Rejected") {
             rejected.javaClass.simpleName shouldBe "Rejected"
-            rejected.javaClass.getMethod("getReason").invoke(rejected) shouldBe "page already translating"
+            rejected.javaClass.getMethod("getKind").invoke(rejected).toString() shouldBe "ALREADY_OWNED"
+            rejected.javaClass.getMethod("getDiagnosticDetail").invoke(rejected) shouldBe "page already translating"
         }
 
         // Native work is never killed: only the real exit (barrier release)

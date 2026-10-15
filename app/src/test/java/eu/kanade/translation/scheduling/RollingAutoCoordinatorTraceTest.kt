@@ -5,11 +5,11 @@ import eu.kanade.translation.diagnostics.TranslationTraceSink
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.PreparedPage
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent

@@ -5,14 +5,14 @@ import eu.kanade.translation.model.BatchHeroPhase
 import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.PageRejectionKind
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.scheduling.AutoSlotState
 import java.text.DateFormat
 import java.util.Date
@@ -501,18 +501,11 @@ object TranslationUiTruth {
     private fun rejected(rejection: SinglePageOutcome.Rejected): PageUiTruth =
         if (rejection.owner == PageWriteOrigin.BATCH) {
             BATCH_SESSION_SWITCH
-        } else if (rejection.reason == TranslationPipeline.REASON_TRANSLATION_NOT_SAVED) {
-            NOT_SAVED
-        } else {
-            PageUiTruth(
-                label = "Translation not started — ${rejection.reason}.",
-                severity = UiSeverity.INFO,
-                retryMode = UiRetryMode.NONE,
-                retryAtEpochMs = null,
-                actions = setOf(UiAction.DETAILS),
-                terminalSuccess = false,
-                contentDescription = "Translation was not started because ${rejection.reason}.",
-            )
+        } else when (rejection.kind) {
+            PageRejectionKind.PERSISTENCE_FAILED -> NOT_SAVED
+            PageRejectionKind.ALREADY_OWNED -> NOT_STARTED_ACTIVE_JOB
+            PageRejectionKind.SESSION_DENIED -> NOT_STARTED_SESSION_BUSY
+            PageRejectionKind.OTHER -> NOT_STARTED
         }
 
     // ------------------------------------------------------------------
@@ -589,6 +582,39 @@ object TranslationUiTruth {
         actions = setOf(UiAction.REVIEW, UiAction.DETAILS),
         terminalSuccess = false,
         contentDescription = "Batch translation is pausing before reader translation can start; confirm the switch.",
+    )
+
+    // Fixed, safe rejection copy. The typed category picks the truth; the
+    // outcome's diagnostic detail is internal-only and never interpolated
+    // into labels or accessibility text.
+    private val NOT_STARTED_ACTIVE_JOB = PageUiTruth(
+        label = "Translation not started — a translation job is already active.",
+        severity = UiSeverity.INFO,
+        retryMode = UiRetryMode.NONE,
+        retryAtEpochMs = null,
+        actions = setOf(UiAction.DETAILS),
+        terminalSuccess = false,
+        contentDescription = "Translation was not started because a translation job is already active.",
+    )
+
+    private val NOT_STARTED_SESSION_BUSY = PageUiTruth(
+        label = "Translation not started — the reader session is busy.",
+        severity = UiSeverity.INFO,
+        retryMode = UiRetryMode.NONE,
+        retryAtEpochMs = null,
+        actions = setOf(UiAction.DETAILS),
+        terminalSuccess = false,
+        contentDescription = "Translation was not started because the reader session is busy.",
+    )
+
+    private val NOT_STARTED = PageUiTruth(
+        label = "Translation not started.",
+        severity = UiSeverity.INFO,
+        retryMode = UiRetryMode.NONE,
+        retryAtEpochMs = null,
+        actions = setOf(UiAction.DETAILS),
+        terminalSuccess = false,
+        contentDescription = "Translation was not started.",
     )
 
     private val CANCELLED = PageUiTruth(

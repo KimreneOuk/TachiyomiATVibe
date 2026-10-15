@@ -408,6 +408,10 @@ countParitySuiteNames.forEach { suiteTaskName ->
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     if (name in countParitySuiteNames) finalizedBy("${name}CountParity")
+    systemProperty(
+        "translation.boundary.srcMainJava",
+        project.layout.projectDirectory.dir("src/main/java").asFile.absolutePath,
+    )
 }
 
 dependencies {

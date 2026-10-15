@@ -1,6 +1,6 @@
 package eu.kanade.translation.scheduling
 
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import io.kotest.matchers.shouldBe
 import io.mockk.mockk

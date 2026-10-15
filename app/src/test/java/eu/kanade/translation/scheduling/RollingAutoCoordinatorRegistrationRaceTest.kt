@@ -6,9 +6,9 @@ import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
 import eu.kanade.translation.diagnostics.TranslationTraceSink
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.execution.PreparedPage
-import eu.kanade.translation.pipeline.execution.SinglePageOutcome
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
