@@ -142,6 +142,9 @@ internal class StoreWriteDrainCoordinator(
 
     internal fun hasActiveChildren(): Boolean = drainScopeJob.children.any { it.isActive }
 
+    /** False once the drain scope closed; enqueued tasks could then never run. */
+    internal fun isDrainScopeActive(): Boolean = drainScopeJob.isActive
+
     /** Caller holds store.mutex; this handoff never acquires another state lock. */
     internal fun scheduleDrain() {
         if (store.isDefunct) return

@@ -7,11 +7,19 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.toDraft
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
@@ -246,12 +254,31 @@ class PreparedPageRuntimeBoundaryTest {
 
     @Test
     fun `lazy auto boundary flushes before eager cleaned bitmap recycle`() = runTest {
-        val store = newStore().also { it.enableLazyPersistence() }
+        // Targeted lazy-persistence store: the artifact file name satisfies
+        // the enqueue persistence-target guard and the pinned dispatcher
+        // keeps the scheduled drain on the test scheduler.
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val documents = AtomicChapterDocuments(io)
+        val layout = ChapterArtifactLayout("prepared-boundary")
+        val manifest = ChapterArtifactManifest(
+            chapterKey = layout.chapterKey,
+            pages = mapOf("p0" to PageArtifactRecord(pageKey = "p0")),
+        )
+        documents.publishJson(layout.manifestFileName, manifest) shouldBe true
+        val store = ChapterTranslationStore(
+            artifactParentResolver = null,
+            artifactFileName = "${layout.chapterKey}.json",
+            initialPages = mapOf("p0" to PageTranslation(sourceFileName = "p0")),
+            artifactStore = ChapterArtifactEngine(documents, layout),
+            initialArtifactManifest = manifest,
+            persistenceDispatcher = StandardTestDispatcher(testScheduler),
+        ).also { it.enableLazyPersistence() }
         store.updatePage("p0") {
             PageTranslation(sourceFileName = "p0", ocrStatus = StageStatus.RUNNING)
         }
         val events = mutableListOf<String>()
-        store.enqueueLazyPersistence(store.currentGeneration) {
+        val receipt = CompletableDeferred<Boolean>()
+        store.enqueueLazyPersistence(store.currentGeneration, receipt) {
             events += "flush"
             true
         }
@@ -277,5 +304,6 @@ class PreparedPageRuntimeBoundaryTest {
 
         events shouldBe listOf("flush", "recycle")
         ocrResult.cleanedBitmap shouldBe null
+        receipt.await() shouldBe true
     }
 }

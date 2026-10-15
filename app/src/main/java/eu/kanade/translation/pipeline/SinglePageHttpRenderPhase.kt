@@ -56,7 +56,9 @@ import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
@@ -278,6 +280,10 @@ internal class SinglePageHttpRenderPhase(
         var deferredCleanedBitmap: Bitmap? = ctx.pendingCleanedPublication?.let {
             pageTranslation.cleanedBitmap
         }
+        // Hoisted receipt handle: the outer finally must be able to gate every
+        // release of the queued bitmap (including failure/cancel unwinds that
+        // skip the in-try flush barrier) on the queued worker's actual exit.
+        var pendingCleanedPublication = ctx.pendingCleanedPublication
         val renderFailure = ProviderFailure(
             kind = ProviderFailureKind.PROTOCOL,
             retryability = ProviderFailureRetryability.RETRY_NOW,
@@ -659,7 +665,6 @@ internal class SinglePageHttpRenderPhase(
 
             coroutineContext.ensureActive()
 
-            var pendingCleanedPublication = ctx.pendingCleanedPublication
             if (ctx.inpaintJob != null) {
                 val cleaned = try {
                     ctx.inpaintJob.await()
@@ -930,11 +935,18 @@ internal class SinglePageHttpRenderPhase(
                     }
                 }
             } else {
+                // A queued lazy publication may still be encoding this bitmap
+                // on the store worker; join its receipt — completed by the
+                // store only after the worker physically exited — so this
+                // recycle never runs while the borrower still holds the
+                // bitmap (premature recycle guard).
+                withContext(NonCancellable) { pendingCleanedPublication?.join() }
                 pageTranslation.cleanedBitmap?.let {
                     try {
                         it.recycle()
                     } catch (_: Exception) {}
                 }
+                deferredCleanedBitmap = null
             }
             pageTranslation.cleanedBitmap = null
             pageTranslation.updatedAt = System.currentTimeMillis()
@@ -963,6 +975,12 @@ internal class SinglePageHttpRenderPhase(
                 } catch (t: Throwable) {
                     logcat(LogPriority.WARN, t) { "TachiyomiAT store flush failed: pageKey=$pageKey" }
                 } finally {
+                    // Local receipt join: the store completes the publication
+                    // receipt only after the queued image worker physically
+                    // exited. Awaiting it here keeps the recycle below
+                    // resource-safe even when the flush barrier threw or the
+                    // caller was cancelled.
+                    withContext(NonCancellable) { pendingCleanedPublication?.join() }
                     flushSpan.end()
                     deferredCleanedBitmap?.let {
                         try {
@@ -1046,7 +1064,14 @@ internal class SinglePageHttpRenderPhase(
                 governorSpanSettled = true
                 governorSpan?.end()
             }
-            if (deferredCleanedBitmap != null) {
+            // Local receipt join before ANY release of the queued bitmap: on
+            // failure/cancel unwind paths the in-try flush barrier was skipped,
+            // so this is the gate that waits for the queued lazy worker's
+            // actual exit (NonCancellable: real exit, no synthetic signal, no
+            // deadline). No-op when nothing was enrolled.
+            withContext(NonCancellable) { pendingCleanedPublication?.join() }
+            val recycledQueuedBitmap = deferredCleanedBitmap
+            if (recycledQueuedBitmap != null) {
                 val flushSpan = TranslationTrace.beginStage(
                     TranslationTraceStage.STORE_FLUSH,
                     lane = TranslationTraceLane.STORAGE,
@@ -1057,7 +1082,7 @@ internal class SinglePageHttpRenderPhase(
                     logcat(LogPriority.WARN, t) { "TachiyomiAT store flush failed: pageKey=$pageKey" }
                 } finally {
                     flushSpan.end()
-                    deferredCleanedBitmap?.let {
+                    recycledQueuedBitmap.let {
                         try {
                             it.recycle()
                         } catch (_: Exception) {}
@@ -1071,10 +1096,14 @@ internal class SinglePageHttpRenderPhase(
             }
             // Defensive recycle: a cancel/timeout can unwind here from before render, where
             // cleanedBitmap (the inpainted full-page bitmap, ~10–48 MB) was never recycled.
+            // If it is the same bitmap that was already recycled above as the queued
+            // publication's input, skip it — recycle by alias identity, never twice.
             pageTranslation.cleanedBitmap?.let {
-                try {
-                    it.recycle()
-                } catch (_: Exception) {}
+                if (it !== recycledQueuedBitmap) {
+                    try {
+                        it.recycle()
+                    } catch (_: Exception) {}
+                }
             }
             pageTranslation.cleanedBitmap = null
             chapter.id?.let { chapterId ->

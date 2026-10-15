@@ -21,9 +21,12 @@ import eu.kanade.translation.persistence.journal.ChapterJournalWriter
 import eu.kanade.translation.pipeline.toPrecondition
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -35,8 +38,14 @@ class ChapterTranslationStoreLazyPersistenceTest {
 
     private val layout = ChapterArtifactLayout("lazy-persistence")
 
+    /**
+     * Targeted lazy-persistence store: the artifact file name satisfies the
+     * enqueue persistence-target guard and the pinned dispatcher keeps the
+     * scheduled drain on the test scheduler (deterministic virtual time).
+     */
     private fun store(
         io: FakeChapterDocumentIo,
+        scheduler: TestCoroutineScheduler,
         pageKey: String = "p0.jpg",
     ): ChapterTranslationStore {
         val documents = AtomicChapterDocuments(io)
@@ -48,16 +57,18 @@ class ChapterTranslationStoreLazyPersistenceTest {
         val artifact = ChapterArtifactEngine(documents, layout)
         return ChapterTranslationStore(
             artifactParentResolver = null,
+            artifactFileName = "${layout.chapterKey}.json",
             initialPages = mapOf(pageKey to PageTranslation(sourceFileName = pageKey)),
             artifactStore = artifact,
             initialArtifactManifest = manifest,
+            persistenceDispatcher = StandardTestDispatcher(scheduler),
         ).also { it.enableLazyPersistence() }
     }
 
     @Test
     fun `live state is visible before lazy artifact publication`() = runTest {
         val io = FakeChapterDocumentIo().apply { fileBacked = true }
-        val store = store(io)
+        val store = store(io, testScheduler)
         val before = io.files.toMap()
 
         val result = store.updatePageGuarded(
@@ -95,7 +106,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
     @Test
     fun `transient stage remains live-only when the page is already registered`() = runTest {
         val io = FakeChapterDocumentIo().apply { fileBacked = true }
-        val store = store(io)
+        val store = store(io, testScheduler)
 
         store.updatePageGuarded(
             pageKey = "p0.jpg",
@@ -116,9 +127,10 @@ class ChapterTranslationStoreLazyPersistenceTest {
     @Test
     fun `generation change discards queued lazy task before it writes`() = runTest {
         val io = FakeChapterDocumentIo().apply { fileBacked = true }
-        val store = store(io)
+        val store = store(io, testScheduler)
         var ran = false
-        val handle = store.enqueueLazyPersistence(store.currentGeneration) {
+        val receipt = CompletableDeferred<Boolean>()
+        val handle = store.enqueueLazyPersistence(store.currentGeneration, receipt) {
             ran = true
             true
         }
@@ -127,35 +139,58 @@ class ChapterTranslationStoreLazyPersistenceTest {
         store.flush()
 
         handle.await() shouldBe false
+        receipt.await() shouldBe false
         ran shouldBe false
         io.writtenNames.none { it.contains("page") } shouldBe true
     }
 
     @Test
-    fun `defunct generation discards queued lazy task before it writes`() = runTest {
+    fun `defunct store fails the active worker and discards queued lazy tasks`() = runTest {
         val io = FakeChapterDocumentIo().apply { fileBacked = true }
-        val store = store(io)
-        var ran = false
-        val handle = store.enqueueLazyPersistence(store.currentGeneration) {
-            ran = true
+        val store = store(io, testScheduler)
+        var queuedRan = false
+        val workerStarted = CompletableDeferred<Unit>()
+        val releaseWorker = CompletableDeferred<Unit>()
+        val workerReceipt = CompletableDeferred<Boolean>()
+        val workerHandle = store.enqueueLazyPersistence(store.currentGeneration, workerReceipt) {
+            workerStarted.complete(Unit)
+            releaseWorker.await()
+            true
+        }
+        val queuedReceipt = CompletableDeferred<Boolean>()
+        val queuedHandle = store.enqueueLazyPersistence(store.currentGeneration, queuedReceipt) {
+            queuedRan = true
             true
         }
 
-        store.markDefunct()
-        store.flush()
+        workerStarted.await()
+        try {
+            store.markDefunct()
+        } finally {
+            // Whether or not markDefunct completed cleanly, the parked worker
+            // gate completes so no drain child is left suspended.
+            releaseWorker.complete(Unit)
+        }
 
-        handle.await() shouldBe false
-        ran shouldBe false
+        // The active worker is cancelled cooperatively (markDefunct joins
+        // within its bound, then cancels the drain) and its receipt reads
+        // false; the queued task never started and its receipt reads false.
+        workerHandle.await() shouldBe false
+        workerReceipt.await() shouldBe false
+        queuedHandle.await() shouldBe false
+        queuedReceipt.await() shouldBe false
+        queuedRan shouldBe false
         store.isDefunct shouldBe true
     }
 
     @Test
     fun `batch durability barrier waits for lazy worker completion`() = runTest {
         val io = FakeChapterDocumentIo().apply { fileBacked = true }
-        val store = store(io)
+        val store = store(io, testScheduler)
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
-        val handle = store.enqueueLazyPersistence(store.currentGeneration) {
+        val receipt = CompletableDeferred<Boolean>()
+        val handle = store.enqueueLazyPersistence(store.currentGeneration, receipt) {
             started.complete(Unit)
             release.await()
             true
@@ -166,19 +201,175 @@ class ChapterTranslationStoreLazyPersistenceTest {
             flushed = true
         }
 
-        started.await()
-        flushed shouldBe false
-        release.complete(Unit)
+        try {
+            started.await()
+            flushed shouldBe false
+            receipt.isActive shouldBe true
+        } finally {
+            // An assertion failure above must not strand the parked worker or
+            // the barrier child: completing the gate lets both drain children
+            // exit cleanly.
+            release.complete(Unit)
+        }
         barrier.join()
 
         flushed shouldBe true
         handle.await() shouldBe true
+        receipt.await() shouldBe true
+    }
+
+    @Test
+    fun `cancelling an awaiter blocked on the flush barrier leaves the receipt truthful after actual worker exit`() = runTest {
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val store = store(io, testScheduler)
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val receipt = CompletableDeferred<Boolean>()
+        store.enqueueLazyPersistence(store.currentGeneration, receipt) {
+            started.complete(Unit)
+            release.await()
+            true
+        }
+        // An awaiter of the flush barrier that is abandoned mid-wait: started
+        // only completes once the store-scoped drain owns the work and holds
+        // the flush mutex, so this awaiter deterministically dies AT the mutex
+        // (never owning the task) when cancelled.
+        started.await()
+        val abandonedAwaiter = launch {
+            try {
+                store.flush()
+            } catch (cancelled: CancellationException) {
+                // awaiting side gave up; nothing it can signal
+            }
+        }
+        runCurrent()
+
+        try {
+            abandonedAwaiter.cancel()
+            abandonedAwaiter.join()
+            receipt.isActive shouldBe true
+        } finally {
+            release.complete(Unit)
+        }
+
+        receipt.await() shouldBe true
+    }
+
+    @Test
+    fun `receipt completes false when the store has no persistence target`() = runTest {
+        val store = ChapterTranslationStore(
+            artifactParentResolver = null,
+            initialPages = mapOf("p0.jpg" to PageTranslation(sourceFileName = "p0.jpg")),
+        ).also { it.enableLazyPersistence() }
+        var ran = false
+        val receipt = CompletableDeferred<Boolean>()
+        val handle = store.enqueueLazyPersistence(store.currentGeneration, receipt) {
+            ran = true
+            true
+        }
+
+        handle.await() shouldBe false
+        receipt.await() shouldBe false
+        ran shouldBe false
+    }
+
+    @Test
+    fun `receipt completes false once the drain scope has closed`() = runTest {
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val store = store(io, testScheduler)
+        store.closeAndFlush()
+        var ran = false
+        val receipt = CompletableDeferred<Boolean>()
+        val handle = store.enqueueLazyPersistence(store.currentGeneration, receipt) {
+            ran = true
+            true
+        }
+
+        handle.await() shouldBe false
+        receipt.await() shouldBe false
+        ran shouldBe false
+    }
+
+    @Test
+    fun `enrolled receipt completion is store exclusive`() = runTest {
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val store = store(io, testScheduler)
+        val receipt = CompletableDeferred<Boolean>()
+        val handle = store.enqueueLazyPersistence(store.currentGeneration, receipt) { true }
+
+        store.flush()
+
+        // The store completed the receipt exactly once with the work result;
+        // any later completion attempt is a no-op (double-complete safety).
+        handle.await() shouldBe true
+        receipt.await() shouldBe true
+        receipt.complete(false) shouldBe false
+        receipt.await() shouldBe true
+    }
+
+    @Test
+    fun `caller cancelled while waiting for the store lock still gets its receipt completed`() = runTest {
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val store = store(io, testScheduler)
+        var ran = false
+        val receipt = CompletableDeferred<Boolean>()
+        store.mutex.withLock {
+            val caller = launch {
+                store.enqueueLazyPersistence(store.currentGeneration, receipt) {
+                    ran = true
+                    true
+                }
+            }
+            runCurrent()
+            caller.cancel()
+            caller.join()
+        }
+
+        receipt.await() shouldBe false
+        ran shouldBe false
+
+        store.flush()
+        ran shouldBe false
+    }
+
+    @Test
+    fun `caller cancellation after enrollment neither unqueues nor falsely signals the receipt`() = runTest {
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val store = store(io, testScheduler)
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val callerGate = CompletableDeferred<Unit>()
+        val receipt = CompletableDeferred<Boolean>()
+        val caller = launch {
+            store.enqueueLazyPersistence(store.currentGeneration, receipt) {
+                started.complete(Unit)
+                release.await()
+                true
+            }
+            callerGate.await()
+        }
+
+        try {
+            started.await()
+            caller.cancel()
+            caller.join()
+            receipt.isActive shouldBe true
+        } finally {
+            // The parked worker must never outlive a failed assertion: the
+            // gate completes so the drain child exits and the receipt reads
+            // its real exit value.
+            release.complete(Unit)
+        }
+
+        store.flush()
+
+        receipt.await() shouldBe true
     }
 
     @Test
     fun `failed lazy artifact flush leaves prior manifest authoritative`() = runTest {
         val io = FakeChapterDocumentIo().apply { fileBacked = true }
-        val store = store(io)
+        val store = store(io, testScheduler)
         io.failWrites = true
         store.updatePageGuarded(
             pageKey = "p0.jpg",
@@ -199,7 +390,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
     @Test
     fun `zero padded page keeps one candidate dependency across repeated lazy flushes`() = runTest {
         val io = FakeChapterDocumentIo().apply { fileBacked = true }
-        val store = store(io, pageKey = "001.jpg")
+        val store = store(io, testScheduler, pageKey = "001.jpg")
         val page = PageTranslation(
             sourceFileName = "001.jpg",
             blocks = mutableListOf(

@@ -1269,29 +1269,58 @@ class ChapterTranslationStore internal constructor(
      * Queues disk work behind the store's persistence worker.  The returned
      * handle is a durability result, not display admission: callers may render
      * from the live state immediately and await it at a terminal commit/barrier.
+     *
+     * Receipt handshake: [receipt] is the CALLER-HELD completion channel and
+     * the returned handle. The store completes it EXACTLY once, normally, and
+     * exclusively: `true` only after [work] physically returned, `false` when
+     * the task was rejected up front (defunct store, stale generation, no
+     * persistence target, closed drain scope), discarded before its turn,
+     * cancelled or failed mid-run — or when the caller did not stay enrollable
+     * up to the queue mutation (cancellation before the lock). A `false`
+     * before [work] ran means the work never started; a completion of either
+     * value after queueing means the work already exited, so a resource owner
+     * may treat it as borrower-exit proof. An enrolled caller must never
+     * complete the receipt itself — a fabricated completion would look like
+     * borrower exit to a resource owner. Callers enroll under
+     * [kotlinx.coroutines.NonCancellable]; once this function is entered the
+     * receipt always terminates.
      */
     internal suspend fun enqueueLazyPersistence(
         expectedGeneration: Long,
+        receipt: CompletableDeferred<Boolean>,
         work: suspend () -> Boolean,
     ): Deferred<Boolean> {
-        val result = CompletableDeferred<Boolean>()
-        mutex.withLock {
-            if (defunct || generation != expectedGeneration) {
-                result.complete(false)
-            } else {
-                writeDrain.pendingLazyTasks.addLast(
-                    LazyPersistenceTask(
-                        generation = expectedGeneration,
-                        work = work,
-                        result = result,
-                    ),
-                )
+        var queued = false
+        try {
+            mutex.withLock {
+                val rejected = defunct ||
+                    generation != expectedGeneration ||
+                    !hasArtifactPersistenceTarget() ||
+                    !writeDrain.isDrainScopeActive()
+                if (rejected) {
+                    receipt.complete(false)
+                } else {
+                    writeDrain.pendingLazyTasks.addLast(
+                        LazyPersistenceTask(
+                            generation = expectedGeneration,
+                            work = work,
+                            result = receipt,
+                        ),
+                    )
+                    queued = true
+                }
+                // Keep the drain-job handoff under the same mutex as the queue
+                // mutation so it shares the queue's single-writer boundary.
+                writeDrain.scheduleDrain()
             }
-            // Keep the drain-job handoff under the same mutex as the queue
-            // mutation so it shares the queue's single-writer boundary.
-            writeDrain.scheduleDrain()
+        } finally {
+            // Not queued (rejected above, or the caller was cancelled before
+            // acquiring the lock) means no borrower exists: complete the
+            // receipt false so no owner ever awaits a signal the store will
+            // never send.
+            if (!queued) receipt.complete(false)
         }
-        return result
+        return receipt
     }
 
     /** Caller holds [mutex]; the drain calls this only from mutex.withLock. */

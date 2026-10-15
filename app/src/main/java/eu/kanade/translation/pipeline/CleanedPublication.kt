@@ -16,8 +16,10 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.CleanedImagePublisher
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import logcat.LogPriority
@@ -343,85 +345,94 @@ internal class CleanedPublication(
         pageTranslation.originalImageFallback = false
         pageTranslation.errorMessage = null
         val generation = accepted.snapshot.generation
-        val completion: Deferred<Boolean> = store.enqueueLazyPersistence(generation) {
-            val companionDir = provider.getCompanionImageDir(
-                manga.title,
-                source,
-                chapter.name,
-                chapter.scanlator,
-            )
-            var writtenImage: CleanedImageWriteResult? = null
-            val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
-                override fun writeVerifiedVersionedFile(): String {
-                    check(companionDir != null) { "translation output folder is unavailable" }
-                    val written = writeVerifiedCleanedImage(
-                        directory = companionDir,
-                        pageKey = pageKey,
-                        bitmap = cleanedBitmap,
-                        name = finalName,
-                    )
-                    writtenImage = written
-                    return finalName
-                }
+        val receipt = CompletableDeferred<Boolean>()
+        // Narrow NonCancellable enrollment: queueing is an in-memory-fast
+        // transaction under the store mutex and must not be split from the
+        // receipt handoff by a concurrent cancellation. From here the receipt
+        // belongs to the store — it completes the receipt exactly once with a
+        // normal true/false (true only after the queued worker physically
+        // exited); this caller only awaits it at the existing recycle barrier.
+        val completion: Deferred<Boolean> = withContext(NonCancellable) {
+            store.enqueueLazyPersistence(generation, receipt) {
+                val companionDir = provider.getCompanionImageDir(
+                    manga.title,
+                    source,
+                    chapter.name,
+                    chapter.scanlator,
+                )
+                var writtenImage: CleanedImageWriteResult? = null
+                val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
+                    override fun writeVerifiedVersionedFile(): String {
+                        check(companionDir != null) { "translation output folder is unavailable" }
+                        val written = writeVerifiedCleanedImage(
+                            directory = companionDir,
+                            pageKey = pageKey,
+                            bitmap = cleanedBitmap,
+                            name = finalName,
+                        )
+                        writtenImage = written
+                        return finalName
+                    }
 
-                override fun delete(name: String): Boolean {
-                    val imageFile = companionDir?.findFile(name)
-                    val imageDeleted = imageFile == null || !imageFile.exists() || imageFile.delete()
-                    if (imageDeleted) companionDir?.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
-                    return imageDeleted
-                }
-            })
-            when (
-                val publication = publisher.publish(
-                    chapter = chapter.name,
-                    pageKey = pageKey,
-                    previousName = previousName,
-                    commit = {
-                        if (store.isLazyGenerationCurrent(generation)) {
-                            val hash = writtenImage?.contentSha256
-                            if (hash != null) {
-                                pageTranslation.cleanedImageContentHash = hash
-                                store.patchPage(
+                    override fun delete(name: String): Boolean {
+                        val imageFile = companionDir?.findFile(name)
+                        val imageDeleted = imageFile == null || !imageFile.exists() || imageFile.delete()
+                        if (imageDeleted) companionDir?.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
+                        return imageDeleted
+                    }
+                })
+                when (
+                    val publication = publisher.publish(
+                        chapter = chapter.name,
+                        pageKey = pageKey,
+                        previousName = previousName,
+                        commit = {
+                            if (store.isLazyGenerationCurrent(generation)) {
+                                val hash = writtenImage?.contentSha256
+                                if (hash != null) {
+                                    pageTranslation.cleanedImageContentHash = hash
+                                    store.patchPage(
+                                        pageKey = pageKey,
+                                        expected = store.snapshot(pageKey).toPrecondition(),
+                                        description = "record lazy cleaned image content hash",
+                                    ) { current ->
+                                        (current ?: pageTranslation).apply { cleanedImageContentHash = hash }
+                                    }
+                                }
+                                ChapterTranslationStore.PatchResult.Accepted(accepted.snapshot)
+                            } else {
+                                ChapterTranslationStore.PatchResult.Rejected("store generation changed")
+                            }
+                        },
+                        mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
+                        retirePrevious = { name, delete ->
+                            chapter.id?.let { stableChapterId ->
+                                streamRegistry.retireCleanedImage(
+                                    sourceId = source.id,
+                                    mangaId = manga.id,
+                                    chapterId = stableChapterId,
                                     pageKey = pageKey,
-                                    expected = store.snapshot(pageKey).toPrecondition(),
-                                    description = "record lazy cleaned image content hash",
-                                ) { current ->
-                                    (current ?: pageTranslation).apply { cleanedImageContentHash = hash }
+                                    imageName = name,
+                                ) {
+                                    if (store.mayDeleteCleanedImage(pageKey, name)) delete()
                                 }
                             }
-                            ChapterTranslationStore.PatchResult.Accepted(accepted.snapshot)
-                        } else {
-                            ChapterTranslationStore.PatchResult.Rejected("store generation changed")
-                        }
-                    },
-                    mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
-                    retirePrevious = { name, delete ->
-                        chapter.id?.let { stableChapterId ->
-                            streamRegistry.retireCleanedImage(
-                                sourceId = source.id,
-                                mangaId = manga.id,
-                                chapterId = stableChapterId,
-                                pageKey = pageKey,
-                                imageName = name,
-                            ) {
-                                if (store.mayDeleteCleanedImage(pageKey, name)) delete()
-                            }
-                        }
-                    },
-                )
-            ) {
-                is CleanedImagePublisher.Result.Published -> true
-                else -> {
-                    // A write failure must not leave the live page pointing at
-                    // a name that never reached storage. This guarded update
-                    // is itself memory-first and will be coalesced into the
-                    // next store drain.
-                    store.patchPage(
-                        pageKey = pageKey,
-                        expected = store.snapshot(pageKey).toPrecondition(),
-                        description = "record lazy cleaned publication failure",
-                    ) { current -> markOriginalImageFallback(current ?: pageTranslation) }
-                    false
+                        },
+                    )
+                ) {
+                    is CleanedImagePublisher.Result.Published -> true
+                    else -> {
+                        // A write failure must not leave the live page pointing at
+                        // a name that never reached storage. This guarded update
+                        // is itself memory-first and will be coalesced into the
+                        // next store drain.
+                        store.patchPage(
+                            pageKey = pageKey,
+                            expected = store.snapshot(pageKey).toPrecondition(),
+                            description = "record lazy cleaned publication failure",
+                        ) { current -> markOriginalImageFallback(current ?: pageTranslation) }
+                        false
+                    }
                 }
             }
         }
