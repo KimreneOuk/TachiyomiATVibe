@@ -4478,6 +4478,22 @@ class ChapterTranslationStore internal constructor(
         return name !in referencedCleanedImageNames()
     }
 
+    /**
+     * Point-in-time store authorization to physically delete a cleaned image
+     * name: the same predicate as [mayDeleteCleanedImage], evaluated under
+     * [mutex]. The mutex protects ONLY this decision — the caller performs
+     * the physical delete AFTER this returns, outside the store lock, so the
+     * delete can interleave with later mutations that make [name] reachable.
+     * An authorized delete is therefore safe only for names with INDEPENDENT
+     * never-accepted provenance (a fresh private versioned name whose single
+     * possible acceptance just returned Rejected); for any name whose
+     * acceptance history is uncertain the caller must retain it regardless of
+     * this answer.
+     */
+    suspend fun authorizeCleanedImageDeletion(pageKey: String, name: String): Boolean = mutex.withLock {
+        mayDeleteCleanedImage(pageKey, name)
+    }
+
     /** Protect a companion image still owned by a different page after page reset/deletion. */
     fun isCleanedImageReferencedByAnotherPage(pageKey: String, name: String): Boolean =
         pages.any { (owner, page) -> owner != pageKey && page.cleanedImageName == name } ||

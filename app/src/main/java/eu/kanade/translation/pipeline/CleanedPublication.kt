@@ -212,6 +212,11 @@ internal class CleanedPublication(
                         }
                     }
                 },
+                // Fresh private versioned name whose ONLY possible acceptance
+                // is this commit: a Rejected here IS never-accepted knowledge,
+                // so the store's mutex-held point-in-time authorization is the
+                // remaining condition for the outside-lock delete.
+                mayDeleteRejected = { name -> store.authorizeCleanedImageDeletion(pageKey, name) },
             )
         ) {
             is CleanedImagePublisher.Result.Published -> {
@@ -418,6 +423,13 @@ internal class CleanedPublication(
                                 }
                             }
                         },
+                        // Lazy provenance is NOT never-accepted: this worker
+                        // exists because an earlier publication already
+                        // accepted a live name, and this hash-patch Rejected
+                        // says nothing about that acceptance. Fail closed —
+                        // retain the file as uncollected debt even when the
+                        // store's point-in-time check would authorize.
+                        mayDeleteRejected = { _ -> false },
                     )
                 ) {
                     is CleanedImagePublisher.Result.Published -> true
