@@ -110,6 +110,7 @@ class TranslationSchedulerTraceTest {
             executor.awaitTranslateStarted()
             executor.releaseTranslate.complete(Unit)
             awaitCondition { scheduler.manualOutcomeFor(7L, "p0") != null }
+            awaitCondition { lines("schedule_end").isNotEmpty() }
         } finally {
             scheduler.close()
         }
@@ -152,7 +153,7 @@ class TranslationSchedulerTraceTest {
             val (manga, chapter, source) = mockSession()
             scheduler.translatePage(manga, chapter, source, "p0")
             executor.awaitTranslateStarted()
-            awaitCondition { lines("run_end").isNotEmpty() }
+            awaitCondition { lines("schedule_end").isNotEmpty() }
         } finally {
             scheduler.close()
         }
@@ -179,7 +180,7 @@ class TranslationSchedulerTraceTest {
         val (manga, chapter, source) = mockSession()
         scheduler.translatePage(manga, chapter, source, "p0")
         scheduler.close()
-        awaitCondition { lines("run_end").isNotEmpty() }
+        awaitCondition { lines("schedule_end").isNotEmpty() }
 
         val runEnds = lines("run_end")
         runEnds.size shouldBe 1

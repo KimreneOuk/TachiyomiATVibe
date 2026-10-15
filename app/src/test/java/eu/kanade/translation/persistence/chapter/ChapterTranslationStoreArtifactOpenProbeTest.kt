@@ -180,9 +180,9 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         )
 
     private fun readManifest(chapterName: String = "Chapter 1"): ChapterArtifactManifest =
-        Json.decodeFromStream<ChapterArtifactManifest>(
-            File(mangaDir, "$chapterName.manifest.json").inputStream(),
-        )
+        File(mangaDir, "$chapterName.manifest.json").inputStream().use { input ->
+            Json.decodeFromStream<ChapterArtifactManifest>(input)
+        }
 
     @Test
     fun `committed-only artifact fixture rehydrates with no legacy flat file`() {
