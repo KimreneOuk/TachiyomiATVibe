@@ -15,9 +15,11 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.util.ShortHash
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -171,18 +173,57 @@ internal class EngineLane(
         val holder = PermitHolder(pageKey)
         permitHolder = holder
         return try {
-            when (
-                val outcome = nativeRunQuarantine.run(
-                    chapter = chapterName,
-                    pageKey = pageKey,
-                    timeoutMs = timeoutMs,
-                    onTimeout = {
-                        onTimeout()
-                        onPageStuck()?.invoke(chapterId, pageKey)
-                    },
-                    block = block,
-                )
-            ) {
+            val outcome = nativeRunQuarantine.run(
+                chapter = chapterName,
+                pageKey = pageKey,
+                timeoutMs = timeoutMs,
+                onTimeout = { _ ->
+                    // Whole-chain adapter (plan §4): the timeout marker,
+                    // the onPageStuck getter, and the listener invoke are
+                    // each protected so NO callback failure can escape
+                    // into [NativeRunQuarantine.run] and bypass its
+                    // real-exit wait — a non-cancellation throw there
+                    // would release native admission while the timed-out
+                    // block is still running. The marker runs under
+                    // NonCancellable so a caller cancellation cannot abort
+                    // it half-done; a CancellationException raised BY a
+                    // callback still propagates (never suppressed) — the
+                    // quarantine then holds admission through the actual
+                    // block exit, so cancellation causes no early release
+                    // either. markerCompleted is logged truthfully.
+                    withContext(NonCancellable) {
+                        var markerCompleted = false
+                        try {
+                            onTimeout()
+                            markerCompleted = true
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            logcat(LogPriority.ERROR, failure) {
+                                "TachiyomiAT native timeout marker failed: " +
+                                    "chapter=$chapterName pageKey=$pageKey markerCompleted=false"
+                            }
+                        } finally {
+                            logcat(if (markerCompleted) LogPriority.INFO else LogPriority.WARN) {
+                                "TachiyomiAT native timeout callback chain: " +
+                                    "chapter=$chapterName pageKey=$pageKey markerCompleted=$markerCompleted"
+                            }
+                        }
+                        try {
+                            onPageStuck()?.invoke(chapterId, pageKey)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            logcat(LogPriority.ERROR, failure) {
+                                "TachiyomiAT onPageStuck listener failed: " +
+                                    "chapter=$chapterName pageKey=$pageKey"
+                            }
+                        }
+                    }
+                },
+                block = block,
+            )
+            when (outcome) {
                 is NativeRunQuarantine.Outcome.Accepted -> outcome.value
                 is NativeRunQuarantine.Outcome.TimedOut -> null
             }
