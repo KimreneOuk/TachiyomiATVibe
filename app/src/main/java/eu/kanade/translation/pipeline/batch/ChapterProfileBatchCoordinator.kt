@@ -224,7 +224,7 @@ internal class ChapterProfileBatchCoordinator(
     private val envelopePlannerPolicy: EnvelopePlannerPolicy? = null,
     private val pageTraceRegistry: BatchPageTraceRegistry? = null,
     /** Lazily observes current source bytes at checkpoint admission/reuse sites. */
-    private val freshSourceShaByPageKey: (String) -> String? = { null },
+    private val freshSourceShaByPageKey: suspend (String) -> String? = { null },
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -244,7 +244,7 @@ internal class ChapterProfileBatchCoordinator(
      * non-null malformed/placeholder observation is fail-closed; it cannot be
      * hidden by an older recorded digest.
      */
-    private fun admissionSourceSha(pageKey: String): String? {
+    private suspend fun admissionSourceSha(pageKey: String): String? {
         val fresh = freshSourceShaByPageKey(pageKey)
         if (fresh != null) return fresh.takeIf(String::isSha256Hex)
         val offered = sourceShaByPageKey[pageKey]
@@ -280,7 +280,7 @@ internal class ChapterProfileBatchCoordinator(
         get() = freshSourcePairsForRun ?: recordedIdentitySourcePairs
 
     /** Returns ordered current hashes only when every page has a valid observation. */
-    private fun freshSourcePairsForPages(orderedPages: List<PageKey>): List<Pair<String, String>>? {
+    private suspend fun freshSourcePairsForPages(orderedPages: List<PageKey>): List<Pair<String, String>>? {
         val observed = ArrayList<Pair<String, String>>(orderedPages.size)
         for ((pageKey, _) in orderedPages) {
             val sha = freshSourceShaByPageKey(pageKey)?.takeIf(String::isSha256Hex) ?: return null

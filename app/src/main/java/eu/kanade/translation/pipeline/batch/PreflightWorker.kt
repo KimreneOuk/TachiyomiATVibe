@@ -28,7 +28,7 @@ internal class PreflightWorkerContext(
     val nativeWorker: NativeLaneWorker,
     val frozenConfig: RunConfigSnapshot,
     val effectiveSourcePairs: () -> List<Pair<String, String>>,
-    val freshSourcePairsForPages: (List<PageKey>) -> List<Pair<String, String>>?,
+    val freshSourcePairsForPages: suspend (List<PageKey>) -> List<Pair<String, String>>?,
     val useFreshSourcePairsForRun: (List<Pair<String, String>>) -> Unit,
     val releaseBatchLease: suspend (String) -> Unit,
     val listener: BatchScheduleListener,
@@ -47,7 +47,7 @@ internal class PreflightWorkerContext(
         Map<String, Int>,
         String?,
     ) -> ChapterRunRecord,
-    val admissionSourceSha: (String) -> String?,
+    val admissionSourceSha: suspend (String) -> String?,
     val orientationOf: (ChapterTranslationStore.PageSnapshot) -> String?,
     val resumeFinalizeOrComplete: suspend (
         ChapterArtifactEngine,

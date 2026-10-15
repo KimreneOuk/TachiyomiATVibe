@@ -52,9 +52,10 @@ import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -420,7 +421,7 @@ internal class BatchChapterTranslator(
                     TranslationTraceStage.SOURCE_FINGERPRINT,
                     items = orderedStreams.size,
                 )
-                val sourceFingerprints: Map<String, String> = LazySourceFingerprints(orderedStreams.toMap(), computeSourceFingerprintFn)
+                val sourceFingerprints = SourceFingerprintCache(orderedStreams.toMap(), computeSourceFingerprintFn)
                 val recordedSourceShaByPageKey = store.artifactManifest?.sourceShaByPageKey.orEmpty()
 
                 // A previous process can die after download completion but before the
@@ -431,7 +432,7 @@ internal class BatchChapterTranslator(
                 if (hasLegacySourceKeys) {
                     val currentSourceShaByPageKey = orderedStreams.mapNotNull { (pageKey, _) ->
                         val sourceSha = try {
-                            sourceFingerprints[pageKey]?.takeIf(String::isSha256Hex)
+                            sourceFingerprints.get(pageKey)?.takeIf(String::isSha256Hex)
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
@@ -484,6 +485,16 @@ internal class BatchChapterTranslator(
                 )
 
                 // The planner and lane workers share the same context frontier.
+                // Evidence is resolved explicitly, only for ordered pages that
+                // have persisted store state, after the alias/rekey block and
+                // before the synchronous planner; a pristine chapter resolves
+                // nothing. Selection reads the store state at invocation time,
+                // so rekey outcomes are honored; stale persisted keys absent
+                // from current streams stay unresolved, keeping the planner's
+                // null-evidence baseline.
+                val persistedEvidence = sourceFingerprints.resolveAll(
+                    persistedEvidencePageKeys(store, orderedStreams),
+                )
                 val resumePlanner = BatchResumePlanner(
                     store = store,
                     provider = provider,
@@ -492,7 +503,7 @@ internal class BatchChapterTranslator(
                     chapter = chapter,
                     orderedStreams = orderedStreams,
                     isAi = isAi,
-                    sourceFingerprints = sourceFingerprints,
+                    sourceFingerprints = persistedEvidence,
                     expectedBatchFingerprints = expectedBatchFingerprints,
                     contextFrontier = contextFrontier,
                     inpaintingStampDecision = inpaintingStampDecision,
@@ -658,7 +669,7 @@ internal class BatchChapterTranslator(
                     fromLang = fromLang,
                     toLang = toLang,
                     orderedStreams = orderedStreams,
-                    freshSourceShaByPageKey = { pageKey -> sourceFingerprints[pageKey] },
+                    freshSourceShaByPageKey = { pageKey -> sourceFingerprints.get(pageKey) },
                     resolvedNaturalPageIndexes = resolvedNaturalPageIndexes,
                     requestedOutputTokens = requestedOutputTokens,
                     chunkProfile = chunkProfile,
@@ -719,6 +730,11 @@ internal class BatchChapterTranslator(
                         ref: OcrReadyPageRef,
                     ): TranslationCompletionOutcome {
                         val pageKey = ref.pageKey
+                        // The source observation resolves BEFORE the
+                        // TRANSLATION lease is acquired, so no disk I/O runs
+                        // under lease authority. The under-lease live terminal
+                        // recheck and all fence evidence below are unchanged.
+                        val observedSourceSha = sourceFingerprints.get(pageKey)
                         return when (
                             val acquisition = batchLaneWorkers.pageTraceRegistry.withLeaseWait(
                                 pageKey = pageKey,
@@ -755,7 +771,7 @@ internal class BatchChapterTranslator(
                                     liveUnderLease != null &&
                                     ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(
                                         liveUnderLease,
-                                        sourceFingerprints[pageKey],
+                                        observedSourceSha,
                                     )
                                 ) {
                                     logcat(LogPriority.INFO) {
@@ -840,7 +856,7 @@ internal class BatchChapterTranslator(
                                         .orEmpty(),
                                 ),
                                 orderedSourcePairs = runIdentitySourcePairs,
-                                freshSourceShaByPageKey = { pageKey -> sourceFingerprints[pageKey] },
+                                freshSourceShaByPageKey = { pageKey -> sourceFingerprints.get(pageKey) },
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                                 // AI translation requires contextual support.
                                 textTranslator = contextualTranslator,
@@ -887,7 +903,7 @@ internal class BatchChapterTranslator(
                                         .orEmpty(),
                                 ),
                                 orderedSourcePairs = runIdentitySourcePairs,
-                                freshSourceShaByPageKey = { pageKey -> sourceFingerprints[pageKey] },
+                                freshSourceShaByPageKey = { pageKey -> sourceFingerprints.get(pageKey) },
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                                 // The plain per-page standard translator rides
                                 // the WIDENED seam type; the envelope path's
@@ -1198,33 +1214,64 @@ internal class BatchChapterTranslator(
 }
 
 /**
- * M3: Computes and caches page source fingerprints on-demand rather than
- * blocking upfront on a whole-chapter parallel I/O barrier.
+ * Run-scoped serial suspending read-through cache for page source
+ * fingerprints, replacing the old runBlocking Map so a miss waits on a
+ * coroutine Mutex instead of blocking a JVM monitor. One instance per
+ * translateBatch run; never reused across rekey/source/config changes
+ * (the run creates a new one). The mutex deliberately serializes misses;
+ * waiting is cancellable and never parks a carrier thread. Computed null
+ * is cached as UNKNOWN for the run and stays fail-closed evidence rather
+ * than a valid fingerprint; unknown page keys return null without any
+ * I/O. Thrown errors and cancellation install nothing, leaving the key
+ * retryable; the caller's activity is re-checked after compute exits and
+ * before installation. Compute runs in the waiter's context and owns
+ * dispatcher hops and stream use/close (an in-flight blocking
+ * InputStream.read cannot be interrupted; cleanup follows the read's
+ * actual exit — the PageDecode read-loop checkpoint is a deferred slice).
  */
-internal class LazySourceFingerprints(
+internal class SourceFingerprintCache(
     private val streams: Map<String, () -> InputStream>,
-    private val computeFn: suspend (() -> InputStream) -> String?,
-) : Map<String, String> {
-    private val cache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val compute: suspend (() -> InputStream) -> String?,
+) {
+    private val mutex = Mutex()
+    private val resolved = HashMap<String, String>()
 
-    override val size: Int get() = streams.size
-    override val keys: Set<String> get() = streams.keys
-    override val values: Collection<String> get() = keys.mapNotNull { get(it) }
-    override val entries: Set<Map.Entry<String, String>>
-        get() = keys.map { key ->
-            java.util.AbstractMap.SimpleImmutableEntry(key, get(key) ?: UNKNOWN_SOURCE_FINGERPRINT)
-        }.toSet()
+    val keys: Set<String> get() = streams.keys
+    val size: Int get() = streams.size
 
-    override fun isEmpty(): Boolean = streams.isEmpty()
-    override fun containsKey(key: String): Boolean = streams.containsKey(key)
-    override fun containsValue(value: String): Boolean = values.contains(value)
+    suspend fun get(pageKey: String): String? = mutex.withLock {
+        val streamFn = streams[pageKey] ?: return@withLock null
+        resolved[pageKey]?.let { return@withLock it }
+        val computed = try {
+            compute(streamFn)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        }
+        currentCoroutineContext().ensureActive()
+        val value = computed ?: UNKNOWN_SOURCE_FINGERPRINT
+        resolved[pageKey] = value
+        value
+    }
 
-    override fun get(key: String): String? {
-        val streamFn = streams[key] ?: return null
-        return cache.computeIfAbsent(key) {
-            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-                computeFn(streamFn) ?: UNKNOWN_SOURCE_FINGERPRINT
-            }
+    suspend fun resolveAll(pageKeys: Collection<String>): Map<String, String> =
+        pageKeys.associateWith { get(it) ?: UNKNOWN_SOURCE_FINGERPRINT }
+}
+
+/**
+ * Selects the ordered page keys whose source-fingerprint evidence the
+ * synchronous resume planner needs: only pages that currently have persisted
+ * store state, in canonical orderedStreams order. Selection reads the CURRENT
+ * store state at invocation time, so a completed alias/rekey is honored and a
+ * pristine chapter selects nothing.
+ */
+internal fun persistedEvidencePageKeys(
+    store: ChapterTranslationStore,
+    orderedStreams: List<Pair<String, () -> InputStream>>,
+): List<String> {
+    val state = store.state.value
+    return buildList {
+        for ((pageKey, _) in orderedStreams) {
+            if (state.containsKey(pageKey)) add(pageKey)
         }
     }
 }

@@ -18,7 +18,7 @@ import tachiyomi.core.common.util.system.logcat
 internal class FinalizeWorkerContext(
     val store: ChapterTranslationStore,
     val frozenConfig: RunConfigSnapshot,
-    val freshSourcePairsForPages: (List<PageKey>) -> List<Pair<String, String>>?,
+    val freshSourcePairsForPages: suspend (List<PageKey>) -> List<Pair<String, String>>?,
     val overlapScheduler: OverlapScheduler?,
     val renderJoin: BatchRenderJoin?,
     val publishRecord: suspend (

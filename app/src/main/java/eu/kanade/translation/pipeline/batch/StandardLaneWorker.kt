@@ -41,7 +41,7 @@ internal class StandardLaneWorkerContext(
         String,
         Map<String, Int>,
     ) -> BatchPass1Outcome,
-    val freshSourceShaByPageKey: (String) -> String? = { null },
+    val freshSourceShaByPageKey: suspend (String) -> String? = { null },
 )
 
 internal class StandardLaneWorker(
@@ -59,7 +59,7 @@ internal class StandardLaneWorker(
         get() = context.overlapScheduler
     private val renderJoin: BatchRenderJoin?
         get() = context.renderJoin
-    private val freshSourceShaByPageKey: (String) -> String?
+    private val freshSourceShaByPageKey: suspend (String) -> String?
         get() = context.freshSourceShaByPageKey
 
     private suspend fun publishRecord(
@@ -104,7 +104,7 @@ internal class StandardLaneWorker(
     private fun orderedSourceDigest(pairs: List<Pair<String, String>>): String =
         ChapterProfileBatchCoordinator.orderedSourceDigest(pairs)
 
-    private fun standardPageTerminalAtTranslate(pageKey: String, page: PageTranslationView): Boolean =
+    private suspend fun standardPageTerminalAtTranslate(pageKey: String, page: PageTranslationView): Boolean =
         ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(
             page,
             freshSourceShaByPageKey(pageKey),

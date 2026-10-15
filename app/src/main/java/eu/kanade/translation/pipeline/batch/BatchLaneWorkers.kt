@@ -108,7 +108,7 @@ internal class BatchLaneWorkers(
     private val fromLang: TextRecognizerLanguage,
     private val toLang: TextTranslatorLanguage,
     private val orderedStreams: List<Pair<String, () -> InputStream>>,
-    private val freshSourceShaByPageKey: (String) -> String?,
+    private val freshSourceShaByPageKey: suspend (String) -> String?,
     private val resolvedNaturalPageIndexes: Map<String, Int>,
     private val requestedOutputTokens: Int,
     private val chunkProfile: TranslationContextChunkPlanner.Profile,
@@ -176,7 +176,7 @@ internal class BatchLaneWorkers(
     private fun plannedTranslationNeedsWork(pageKey: String): Boolean =
         resumePlanner.plannedTranslationNeedsWork(pageKey)
 
-    private fun currentSourceIdentityMatches(pageKey: String, page: PageTranslationView?): Boolean {
+    private suspend fun currentSourceIdentityMatches(pageKey: String, page: PageTranslationView?): Boolean {
         val observed = freshSourceShaByPageKey(pageKey)?.takeIf(String::isSha256Hex) ?: return false
         val recorded = page?.sourceFingerprint?.takeIf(String::isSha256Hex) ?: return false
         return recorded == observed
@@ -190,7 +190,7 @@ internal class BatchLaneWorkers(
      * historical ordered-context skip — a failed predecessor must continue to
      * strand its successors rather than let them translate with a context gap.
      */
-    private fun naturalOrderPredecessorTerminal(pageKey: String): Boolean {
+    private suspend fun naturalOrderPredecessorTerminal(pageKey: String): Boolean {
         val index = orderedStreams.indexOfFirst { it.first == pageKey }
         if (index <= 0) return true
         val predecessorKey = orderedStreams[index - 1].first
