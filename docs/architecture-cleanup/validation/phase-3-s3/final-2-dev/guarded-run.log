@@ -1,0 +1,302 @@
+Configuration on demand is an incubating feature.
+Type-safe project accessors is an incubating feature.
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:generateExternalPluginSpecBuilders UP-TO-DATE
+> Task :buildSrc:extractPrecompiledScriptPluginPlugins UP-TO-DATE
+> Task :buildSrc:compilePluginsBlocks UP-TO-DATE
+> Task :buildSrc:generatePrecompiledScriptPluginAccessors UP-TO-DATE
+> Task :buildSrc:generateScriptPluginAdapters UP-TO-DATE
+> Task :buildSrc:compileKotlin UP-TO-DATE
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:pluginDescriptors UP-TO-DATE
+> Task :buildSrc:processResources UP-TO-DATE
+> Task :buildSrc:classes UP-TO-DATE
+> Task :buildSrc:jar UP-TO-DATE
+
+> Configure project :app
+w: Deprecated Gradle Property 'kotlin.mpp.androidGradlePluginCompatibility.nowarn' Used
+The `kotlin.mpp.androidGradlePluginCompatibility.nowarn` deprecated property is used in your build.
+Solution: It is unsupported, please stop using it.
+
+
+> Task :domain:preBuild UP-TO-DATE
+> Task :core:archive:preBuild UP-TO-DATE
+> Task :data:preBuild UP-TO-DATE
+> Task :source-api:preBuild UP-TO-DATE
+> Task :core:common:preBuild UP-TO-DATE
+> Task :core-metadata:preBuild UP-TO-DATE
+> Task :presentation-core:preBuild UP-TO-DATE
+> Task :presentation-widget:preBuild UP-TO-DATE
+> Task :source-local:preBuild UP-TO-DATE
+> Task :data:preReleaseBuild UP-TO-DATE
+> Task :core-metadata:preReleaseBuild UP-TO-DATE
+> Task :presentation-widget:preReleaseBuild UP-TO-DATE
+> Task :source-api:preReleaseBuild UP-TO-DATE
+> Task :core:archive:preReleaseBuild UP-TO-DATE
+> Task :core:common:preReleaseBuild UP-TO-DATE
+> Task :domain:preReleaseBuild UP-TO-DATE
+> Task :data:generateReleaseResValues UP-TO-DATE
+> Task :core-metadata:generateReleaseResValues UP-TO-DATE
+> Task :presentation-widget:generateReleaseResValues UP-TO-DATE
+> Task :source-local:preReleaseBuild UP-TO-DATE
+> Task :source-api:generateReleaseResValues UP-TO-DATE
+> Task :presentation-core:preReleaseBuild UP-TO-DATE
+> Task :app:buildKotlinToolingMetadata UP-TO-DATE
+> Task :core:archive:generateReleaseResValues UP-TO-DATE
+> Task :domain:generateReleaseResValues UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :core:common:generateReleaseResValues UP-TO-DATE
+> Task :presentation-widget:generateReleaseResources UP-TO-DATE
+> Task :data:generateReleaseResources UP-TO-DATE
+> Task :i18n-at:generateMRcommonMain UP-TO-DATE
+> Task :i18n:generateMRcommonMain UP-TO-DATE
+> Task :core-metadata:generateReleaseResources UP-TO-DATE
+> Task :source-local:generateReleaseResValues UP-TO-DATE
+> Task :presentation-core:generateReleaseResValues UP-TO-DATE
+> Task :source-api:generateReleaseResources UP-TO-DATE
+> Task :core:archive:generateReleaseResources UP-TO-DATE
+> Task :core:common:generateReleaseResources UP-TO-DATE
+> Task :app:preStandardReleaseBuild UP-TO-DATE
+> Task :presentation-core:generateReleaseResources UP-TO-DATE
+> Task :source-local:generateReleaseResources UP-TO-DATE
+> Task :domain:generateReleaseResources UP-TO-DATE
+> Task :i18n:generateMRandroidMain UP-TO-DATE
+> Task :i18n-at:generateMRandroidMain UP-TO-DATE
+> Task :i18n:generateMRandroidRelease SKIPPED
+> Task :i18n-at:generateMRandroidRelease SKIPPED
+> Task :i18n:generateLocalesConfig UP-TO-DATE
+> Task :i18n-at:generateMRandroidDebug SKIPPED
+> Task :core-metadata:packageReleaseResources UP-TO-DATE
+> Task :i18n:generateMRandroidDebug SKIPPED
+> Task :presentation-widget:packageReleaseResources UP-TO-DATE
+> Task :core:archive:packageReleaseResources UP-TO-DATE
+> Task :presentation-core:packageReleaseResources UP-TO-DATE
+> Task :core:common:packageReleaseResources UP-TO-DATE
+> Task :data:packageReleaseResources UP-TO-DATE
+> Task :source-api:packageReleaseResources UP-TO-DATE
+> Task :source-local:packageReleaseResources UP-TO-DATE
+> Task :i18n-at:generateMRandroidInstrumentedTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidInstrumentedTestDebug SKIPPED
+> Task :i18n:generateMRandroidInstrumentedTest UP-TO-DATE
+> Task :i18n:generateMRandroidInstrumentedTestDebug SKIPPED
+> Task :i18n-at:generateMRcommonTest UP-TO-DATE
+> Task :i18n:generateMRcommonTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidUnitTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidUnitTestDebug SKIPPED
+> Task :i18n-at:generateMRandroidUnitTestRelease SKIPPED
+> Task :i18n-at:preBuild UP-TO-DATE
+> Task :i18n-at:preReleaseBuild UP-TO-DATE
+> Task :i18n:generateMRandroidUnitTest UP-TO-DATE
+> Task :i18n-at:generateReleaseResValues UP-TO-DATE
+> Task :i18n:generateMRandroidUnitTestDebug SKIPPED
+> Task :i18n:generateMRandroidUnitTestRelease SKIPPED
+> Task :i18n:preBuild UP-TO-DATE
+> Task :i18n:preReleaseBuild UP-TO-DATE
+> Task :i18n:generateReleaseResValues UP-TO-DATE
+> Task :i18n-at:generateReleaseResources UP-TO-DATE
+> Task :domain:writeReleaseAarMetadata UP-TO-DATE
+> Task :source-api:writeReleaseAarMetadata UP-TO-DATE
+> Task :i18n-at:packageReleaseResources UP-TO-DATE
+> Task :source-api:extractDeepLinksRelease UP-TO-DATE
+> Task :i18n:generateReleaseResources UP-TO-DATE
+> Task :domain:packageReleaseResources UP-TO-DATE
+> Task :source-api:processReleaseManifest UP-TO-DATE
+> Task :data:writeReleaseAarMetadata UP-TO-DATE
+> Task :domain:extractDeepLinksRelease UP-TO-DATE
+> Task :data:extractDeepLinksRelease UP-TO-DATE
+> Task :i18n:packageReleaseResources UP-TO-DATE
+> Task :domain:processReleaseManifest UP-TO-DATE
+> Task :data:processReleaseManifest UP-TO-DATE
+> Task :source-local:writeReleaseAarMetadata UP-TO-DATE
+> Task :source-local:extractDeepLinksRelease UP-TO-DATE
+> Task :source-local:processReleaseManifest UP-TO-DATE
+> Task :presentation-core:writeReleaseAarMetadata UP-TO-DATE
+> Task :presentation-core:extractDeepLinksRelease UP-TO-DATE
+> Task :presentation-core:processReleaseManifest UP-TO-DATE
+> Task :core:common:writeReleaseAarMetadata UP-TO-DATE
+> Task :core:common:extractDeepLinksRelease UP-TO-DATE
+> Task :core:common:processReleaseManifest UP-TO-DATE
+> Task :core:archive:writeReleaseAarMetadata UP-TO-DATE
+> Task :core:archive:extractDeepLinksRelease UP-TO-DATE
+> Task :core:archive:processReleaseManifest UP-TO-DATE
+> Task :presentation-widget:writeReleaseAarMetadata UP-TO-DATE
+> Task :presentation-widget:extractDeepLinksRelease UP-TO-DATE
+> Task :presentation-widget:processReleaseManifest UP-TO-DATE
+> Task :core-metadata:writeReleaseAarMetadata UP-TO-DATE
+> Task :core-metadata:extractDeepLinksRelease UP-TO-DATE
+> Task :core-metadata:processReleaseManifest UP-TO-DATE
+> Task :core:archive:parseReleaseLocalResources UP-TO-DATE
+> Task :presentation-core:parseReleaseLocalResources UP-TO-DATE
+> Task :core:common:parseReleaseLocalResources UP-TO-DATE
+> Task :presentation-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :source-local:parseReleaseLocalResources UP-TO-DATE
+> Task :core:common:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :data:parseReleaseLocalResources UP-TO-DATE
+> Task :domain:parseReleaseLocalResources UP-TO-DATE
+> Task :data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :domain:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :source-local:kmpPartiallyResolvedDependenciesChecker
+> Task :presentation-core:javaPreCompileRelease UP-TO-DATE
+> Task :source-local:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:common:javaPreCompileRelease UP-TO-DATE
+> Task :domain:javaPreCompileRelease UP-TO-DATE
+> Task :source-local:javaPreCompileRelease UP-TO-DATE
+> Task :i18n:writeReleaseAarMetadata UP-TO-DATE
+> Task :i18n:extractDeepLinksRelease UP-TO-DATE
+> Task :i18n:processReleaseManifest UP-TO-DATE
+> Task :i18n-at:writeReleaseAarMetadata UP-TO-DATE
+> Task :i18n-at:extractDeepLinksRelease UP-TO-DATE
+> Task :source-api:parseReleaseLocalResources UP-TO-DATE
+> Task :presentation-widget:parseReleaseLocalResources UP-TO-DATE
+> Task :core-metadata:parseReleaseLocalResources UP-TO-DATE
+> Task :presentation-widget:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core-metadata:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :source-api:kmpPartiallyResolvedDependenciesChecker
+> Task :source-api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :presentation-widget:javaPreCompileRelease UP-TO-DATE
+> Task :core-metadata:javaPreCompileRelease UP-TO-DATE
+> Task :i18n-at:processReleaseManifest UP-TO-DATE
+> Task :i18n:parseReleaseLocalResources UP-TO-DATE
+> Task :source-api:javaPreCompileRelease UP-TO-DATE
+> Task :i18n-at:parseReleaseLocalResources UP-TO-DATE
+> Task :core:archive:generateReleaseRFile UP-TO-DATE
+> Task :core:archive:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :data:generateReleaseDatabaseInterface UP-TO-DATE
+> Task :data:javaPreCompileRelease UP-TO-DATE
+> Task :i18n:generateReleaseRFile UP-TO-DATE
+> Task :i18n-at:generateReleaseRFile UP-TO-DATE
+> Task :i18n:kmpPartiallyResolvedDependenciesChecker
+> Task :i18n-at:kmpPartiallyResolvedDependenciesChecker
+> Task :i18n:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n-at:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:archive:compileReleaseKotlin UP-TO-DATE
+> Task :core:archive:javaPreCompileRelease UP-TO-DATE
+> Task :core:archive:compileReleaseJavaWithJavac NO-SOURCE
+> Task :core:archive:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :core:archive:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :i18n-at:compileReleaseKotlinAndroid UP-TO-DATE
+> Task :core:archive:processReleaseJavaRes UP-TO-DATE
+> Task :i18n-at:javaPreCompileRelease UP-TO-DATE
+> Task :i18n-at:compileReleaseJavaWithJavac NO-SOURCE
+> Task :i18n:compileReleaseKotlinAndroid UP-TO-DATE
+> Task :i18n-at:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :i18n:javaPreCompileRelease UP-TO-DATE
+> Task :i18n-at:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :i18n:compileReleaseJavaWithJavac NO-SOURCE
+> Task :i18n:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :i18n-at:processReleaseJavaRes UP-TO-DATE
+> Task :i18n:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :i18n:processReleaseJavaRes UP-TO-DATE
+> Task :core:common:generateReleaseRFile UP-TO-DATE
+> Task :core:common:compileReleaseKotlin UP-TO-DATE
+> Task :core:common:compileReleaseJavaWithJavac NO-SOURCE
+> Task :core:common:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :source-api:generateReleaseRFile UP-TO-DATE
+> Task :core:common:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :core:common:processReleaseJavaRes UP-TO-DATE
+> Task :core-metadata:generateReleaseRFile UP-TO-DATE
+> Task :source-api:compileReleaseKotlinAndroid UP-TO-DATE
+> Task :source-api:compileReleaseJavaWithJavac NO-SOURCE
+> Task :source-api:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :source-api:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :source-api:processReleaseJavaRes UP-TO-DATE
+> Task :domain:generateReleaseRFile UP-TO-DATE
+> Task :source-local:generateReleaseRFile UP-TO-DATE
+> Task :core-metadata:compileReleaseKotlin UP-TO-DATE
+> Task :core-metadata:compileReleaseJavaWithJavac NO-SOURCE
+> Task :core-metadata:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :data:generateReleaseRFile UP-TO-DATE
+> Task :core-metadata:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :core-metadata:processReleaseJavaRes UP-TO-DATE
+> Task :domain:compileReleaseKotlin UP-TO-DATE
+> Task :domain:compileReleaseJavaWithJavac NO-SOURCE
+> Task :domain:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :domain:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :domain:processReleaseJavaRes UP-TO-DATE
+> Task :data:compileReleaseKotlin UP-TO-DATE
+> Task :source-local:compileReleaseKotlinAndroid UP-TO-DATE
+> Task :data:compileReleaseJavaWithJavac NO-SOURCE
+> Task :source-local:compileReleaseJavaWithJavac NO-SOURCE
+> Task :data:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :source-local:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :data:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :source-local:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :data:processReleaseJavaRes UP-TO-DATE
+> Task :source-local:processReleaseJavaRes UP-TO-DATE
+> Task :presentation-core:generateReleaseRFile UP-TO-DATE
+> Task :presentation-core:compileReleaseKotlin UP-TO-DATE
+> Task :presentation-core:compileReleaseJavaWithJavac NO-SOURCE
+> Task :presentation-core:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :presentation-core:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :presentation-core:processReleaseJavaRes UP-TO-DATE
+> Task :app:dataBindingMergeDependencyArtifactsStandardRelease UP-TO-DATE
+> Task :app:generateStandardReleaseResValues UP-TO-DATE
+> Task :app:generateStandardReleaseResources UP-TO-DATE
+> Task :app:collectDependencies UP-TO-DATE
+> Task :app:prepareLibraryDefinitionsStandardRelease UP-TO-DATE
+> Task :app:prepareStandardReleaseShortcutXML UP-TO-DATE
+> Task :presentation-widget:generateReleaseRFile UP-TO-DATE
+> Task :app:mergeStandardReleaseResources UP-TO-DATE
+> Task :app:dataBindingGenBaseClassesStandardRelease UP-TO-DATE
+> Task :presentation-widget:compileReleaseKotlin UP-TO-DATE
+> Task :presentation-widget:compileReleaseJavaWithJavac NO-SOURCE
+> Task :presentation-widget:bundleLibCompileToJarRelease UP-TO-DATE
+> Task :app:generateStandardReleaseBuildConfig
+> Task :presentation-widget:bundleLibRuntimeToJarRelease UP-TO-DATE
+> Task :presentation-widget:processReleaseJavaRes UP-TO-DATE
+> Task :app:checkStandardReleaseAarMetadata UP-TO-DATE
+> Task :app:mapStandardReleaseSourceSetPaths UP-TO-DATE
+> Task :app:createStandardReleaseCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksStandardRelease UP-TO-DATE
+> Task :app:processStandardReleaseMainManifest UP-TO-DATE
+> Task :app:processStandardReleaseManifest UP-TO-DATE
+> Task :app:processStandardReleaseManifestForPackage UP-TO-DATE
+> Task :app:processStandardReleaseResources UP-TO-DATE
+> Task :app:javaPreCompileStandardRelease UP-TO-DATE
+> Task :app:preStandardReleaseUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileStandardReleaseUnitTest UP-TO-DATE
+
+> Task :app:compileStandardReleaseKotlin
+w: The feature plugin:androidx.compose.compiler.plugins.kotlin:featureFlag=OptimizeNonSkippingGroups is enabled by default and specifying this option explicitly is not necessary.
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:200:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:226:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+
+> Task :app:compileStandardReleaseJavaWithJavac
+> Task :app:processStandardReleaseJavaRes UP-TO-DATE
+> Task :app:bundleStandardReleaseClassesToCompileJar
+> Task :app:bundleStandardReleaseClassesToRuntimeJar
+
+> Task :app:compileStandardReleaseUnitTestKotlin
+w: The feature plugin:androidx.compose.compiler.plugins.kotlin:featureFlag=OptimizeNonSkippingGroups is enabled by default and specifying this option explicitly is not necessary.
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+
+> Task :app:compileStandardReleaseUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processStandardReleaseUnitTestJavaRes UP-TO-DATE
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+> Task :app:testStandardReleaseUnitTest
+
+> Task :app:testStandardReleaseUnitTestCountParity
+Test method inventory for testStandardReleaseUnitTest: declared=2280, quarantined=0, expected=2280.
+Skipping test count parity for filtered diagnostics: testStandardReleaseUnitTest
+
+[Incubating] Problems report is available at: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.12/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 24s
+196 actionable tasks: 12 executed, 184 up-to-date

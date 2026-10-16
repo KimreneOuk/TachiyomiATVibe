@@ -2,6 +2,7 @@ package eu.kanade.translation.pipeline
 
 import android.graphics.Bitmap
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.persistence.chapter.AttemptArtifactLease
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -56,6 +57,9 @@ internal class AttemptAuthority(
 ) {
     private val mutex = Mutex()
 
+    /** Binds this attempt's authority to its own lazy-drain artifact progressions. */
+    internal val artifactLease = AttemptArtifactLease(pageKey)
+
     /** Fenced identity for the next patch; mutated only under [mutex]. */
     @Volatile
     var precondition: ChapterTranslationStore.PatchPrecondition = initial
@@ -87,7 +91,7 @@ internal class AttemptAuthority(
         if (closed || callerJob?.isCancelled == true) {
             return@withLock rejectedClosed(description)
         }
-        when (val result = store.patchPage(pageKey, precondition, description, { current -> update(current ?: PageTranslation(sourceFileName = pageKey)) })) {
+        when (val result = store.patchPage(pageKey, precondition, description, artifactLease, { current -> update(current ?: PageTranslation(sourceFileName = pageKey)) })) {
             is ChapterTranslationStore.PatchResult.Accepted -> {
                 precondition = result.snapshot.toPrecondition()
                 result
@@ -119,7 +123,7 @@ internal class AttemptAuthority(
         }
         closed = true
         val result = withContext(NonCancellable) {
-            store.patchPage(pageKey, precondition, MARK_TIMEOUT_DESCRIPTION, { current -> update(current ?: PageTranslation(sourceFileName = pageKey)) })
+            store.patchPage(pageKey, precondition, MARK_TIMEOUT_DESCRIPTION, artifactLease, { current -> update(current ?: PageTranslation(sourceFileName = pageKey)) })
         }
         if (result is ChapterTranslationStore.PatchResult.Accepted) {
             // Same receipt advancement as write: the fenced precondition tracks
@@ -300,6 +304,27 @@ internal class CleanedOwner {
             openBorrows.first { it == 0 }
             slot?.bitmap?.recycle()
             slot = null
+        }
+    }
+}
+
+/**
+ * Single-slot exclusive custody holder for the source bitmap ($S$) across the boundary.
+ */
+internal class SourceBitmapCustody : AutoCloseable {
+    private val slot = java.util.concurrent.atomic.AtomicReference<Bitmap?>(null)
+
+    fun register(bitmap: Bitmap) {
+        check(slot.compareAndSet(null, bitmap)) { "source bitmap already registered in custody slot" }
+    }
+
+    /** Takes ownership out of the boundary slot at first guarded use inside the producing try/finally. */
+    fun take(): Bitmap? = slot.getAndSet(null)
+
+    /** Boundary cleanup: safely recycles only if the bitmap was never taken by a producer block. */
+    override fun close() {
+        slot.getAndSet(null)?.let { bitmap ->
+            try { bitmap.recycle() } catch (_: Exception) {}
         }
     }
 }

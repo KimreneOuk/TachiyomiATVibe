@@ -1,0 +1,19 @@
+Configuration on demand is an incubating feature.
+Type-safe project accessors is an incubating feature.
+
+FAILURE: Build failed with an exception.
+
+* Where:
+Initialization script 'C:\Users\ADMIN\AppData\Local\Temp\opencode\phase-3-s1\2026-10-15T20-08-45Z\std-tests\s1-runid-init.gradle' line: 6
+
+* What went wrong:
+A problem occurred evaluating initialization script.
+> s1-runid-init.gradle requires -Ptraycer.validation.runId=<uuid>
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 1s

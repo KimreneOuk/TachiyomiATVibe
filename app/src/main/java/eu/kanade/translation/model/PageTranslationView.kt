@@ -422,7 +422,7 @@ object PublishedPageTranslationSerializer : KSerializer<PublishedPageTranslation
         PublishedPageTranslation.fromDraft(PageTranslation.serializer().deserialize(decoder))
 }
 
-private fun BubbleMaskRle.immutableCopy(): BubbleMaskRle = copy(
+internal fun BubbleMaskRle.immutableCopy(): BubbleMaskRle = copy(
     bounds = immutableList(bounds),
     runs = immutableList(runs),
 )

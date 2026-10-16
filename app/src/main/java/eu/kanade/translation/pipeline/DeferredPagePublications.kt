@@ -3,7 +3,7 @@ package eu.kanade.translation.pipeline
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
- *  Storage-tail actions that must run
+ * Storage-tail actions that must run
  * OUTSIDE the native permit.
  *
  * The resume paths' cleaned-image persistence, their render tails, and the
@@ -52,4 +52,5 @@ internal class DeferredPagePublications {
             action()
         }
     }
+
 }

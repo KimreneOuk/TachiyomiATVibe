@@ -35,6 +35,7 @@ class CoexistenceBarrier {
     enum class BarrierPoint {
         NATIVE_ACQUIRE,
         NATIVE_RELEASE,
+        INPAINT,
         PROVIDER_START,
         PROVIDER_END,
         RENDER,

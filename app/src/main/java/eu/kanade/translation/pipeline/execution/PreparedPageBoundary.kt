@@ -7,6 +7,7 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.CleanedOwner
 import logcat.LogPriority
 import logcat.logcat
 
@@ -40,6 +41,7 @@ internal suspend fun publishPreparedPageFromOcr(
     expectedPageVersion: Long,
     expectedGeneration: Long,
     expectedLeaseToken: Long? = null,
+    owner: CleanedOwner? = null,
 ): PreparedPage {
     val prior = store.snapshot(pageKey)
     val merge = store.mergeOcr(
@@ -71,9 +73,13 @@ internal suspend fun publishPreparedPageFromOcr(
     if (store.isLazyPersistenceEnabled()) {
         store.flush()
     }
-    try {
-        ocrResult.cleanedBitmap?.recycle()
-    } catch (_: Exception) {}
+    if (owner != null) {
+        owner.release()
+    } else {
+        try {
+            ocrResult.cleanedBitmap?.recycle()
+        } catch (_: Exception) {}
+    }
     ocrResult.cleanedBitmap = null
 
     val snapshot = store.snapshot(pageKey)
@@ -98,15 +104,15 @@ internal suspend fun publishPreparedPageFromOcr(
  * rendered result (READY or SKIPPED) OR is genuinely textless (inpaint TEXTLESS,
  * or OCR READY with no detected blocks). Failed pages are never terminal —
  * [TranslationPipeline.prepareSinglePage] returns null for them so failure
- * cannot be mistaken for a prepared page.
+ * attribution and retries flow through the regular pipeline.
  */
 internal fun isPreparedPageTerminal(page: PageTranslationView): Boolean {
     val failed = page.ocrStatus == StageStatus.FAILED ||
         page.inpaintStatus == StageStatus.FAILED ||
-        page.translationStatus == StageStatus.FAILED
+        page.translationStatus == StageStatus.FAILED ||
+        page.renderStatus == StageStatus.FAILED
     if (failed) return false
-    val rendered = page.renderStatus == StageStatus.READY || page.renderStatus == StageStatus.SKIPPED
-    val textless = page.inpaintStatus == StageStatus.TEXTLESS ||
-        (page.blocks.isEmpty() && page.ocrStatus == StageStatus.READY)
-    return rendered || textless
+    return page.hasRenderedResult ||
+        page.isTextlessTerminal ||
+        (page.ocrStatus == StageStatus.READY && page.blocks.isEmpty())
 }

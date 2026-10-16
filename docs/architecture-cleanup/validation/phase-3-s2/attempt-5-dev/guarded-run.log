@@ -1,0 +1,327 @@
+Configuration on demand is an incubating feature.
+Type-safe project accessors is an incubating feature.
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:generateExternalPluginSpecBuilders UP-TO-DATE
+> Task :buildSrc:extractPrecompiledScriptPluginPlugins UP-TO-DATE
+> Task :buildSrc:compilePluginsBlocks UP-TO-DATE
+> Task :buildSrc:generatePrecompiledScriptPluginAccessors UP-TO-DATE
+> Task :buildSrc:generateScriptPluginAdapters UP-TO-DATE
+> Task :buildSrc:compileKotlin UP-TO-DATE
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:pluginDescriptors UP-TO-DATE
+> Task :buildSrc:processResources UP-TO-DATE
+> Task :buildSrc:classes UP-TO-DATE
+> Task :buildSrc:jar UP-TO-DATE
+
+> Configure project :app
+w: Deprecated Gradle Property 'kotlin.mpp.androidGradlePluginCompatibility.nowarn' Used
+The `kotlin.mpp.androidGradlePluginCompatibility.nowarn` deprecated property is used in your build.
+Solution: It is unsupported, please stop using it.
+
+
+> Task :presentation-core:preBuild UP-TO-DATE
+> Task :source-local:preBuild UP-TO-DATE
+> Task :data:preBuild UP-TO-DATE
+> Task :domain:preBuild UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core-metadata:preBuild UP-TO-DATE
+> Task :i18n:generateLocalesConfig UP-TO-DATE
+> Task :presentation-widget:preBuild UP-TO-DATE
+> Task :core:common:preBuild UP-TO-DATE
+> Task :data:preDebugBuild UP-TO-DATE
+> Task :presentation-widget:preDebugBuild UP-TO-DATE
+> Task :source-api:preBuild UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :core:archive:preBuild UP-TO-DATE
+> Task :app:preDevDebugBuild UP-TO-DATE
+> Task :source-local:preDebugBuild UP-TO-DATE
+> Task :core:common:preDebugBuild UP-TO-DATE
+> Task :core-metadata:preDebugBuild UP-TO-DATE
+> Task :presentation-core:preDebugBuild UP-TO-DATE
+> Task :source-api:preDebugBuild UP-TO-DATE
+> Task :data:generateDebugResValues UP-TO-DATE
+> Task :presentation-widget:generateDebugResValues UP-TO-DATE
+> Task :source-local:generateDebugResValues UP-TO-DATE
+> Task :i18n-at:generateMRcommonMain UP-TO-DATE
+> Task :source-api:generateDebugResValues UP-TO-DATE
+> Task :i18n-at:generateMRandroidDebug SKIPPED
+> Task :i18n:generateMRcommonMain UP-TO-DATE
+> Task :core-metadata:generateDebugResValues UP-TO-DATE
+> Task :source-local:generateDebugResources UP-TO-DATE
+> Task :data:generateDebugResources UP-TO-DATE
+> Task :presentation-core:generateDebugResValues UP-TO-DATE
+> Task :core:archive:preDebugBuild UP-TO-DATE
+> Task :source-api:generateDebugResources UP-TO-DATE
+> Task :domain:preDebugBuild UP-TO-DATE
+> Task :core-metadata:generateDebugResources UP-TO-DATE
+> Task :domain:generateDebugResValues UP-TO-DATE
+> Task :core:common:generateDebugResValues UP-TO-DATE
+> Task :presentation-core:generateDebugResources UP-TO-DATE
+> Task :domain:generateDebugResources UP-TO-DATE
+> Task :core:common:generateDebugResources UP-TO-DATE
+> Task :source-local:packageDebugResources UP-TO-DATE
+> Task :core:archive:generateDebugResValues UP-TO-DATE
+> Task :data:packageDebugResources UP-TO-DATE
+> Task :source-api:packageDebugResources UP-TO-DATE
+> Task :core:archive:generateDebugResources UP-TO-DATE
+> Task :core-metadata:packageDebugResources UP-TO-DATE
+> Task :presentation-core:packageDebugResources UP-TO-DATE
+> Task :i18n:generateMRandroidDebug SKIPPED
+> Task :presentation-widget:generateDebugResources UP-TO-DATE
+> Task :core:common:packageDebugResources UP-TO-DATE
+> Task :i18n-at:generateMRandroidInstrumentedTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidInstrumentedTestDebug SKIPPED
+> Task :core:archive:packageDebugResources UP-TO-DATE
+> Task :domain:packageDebugResources UP-TO-DATE
+> Task :i18n:generateMRandroidInstrumentedTest UP-TO-DATE
+> Task :presentation-widget:packageDebugResources UP-TO-DATE
+> Task :i18n:generateMRandroidInstrumentedTestDebug SKIPPED
+> Task :i18n-at:generateMRandroidMain UP-TO-DATE
+> Task :i18n:generateMRandroidMain UP-TO-DATE
+> Task :i18n-at:generateMRandroidRelease SKIPPED
+> Task :i18n:generateMRandroidRelease SKIPPED
+> Task :i18n-at:generateMRcommonTest UP-TO-DATE
+> Task :i18n:generateMRcommonTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidUnitTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidUnitTestDebug SKIPPED
+> Task :i18n-at:generateMRandroidUnitTestRelease SKIPPED
+> Task :i18n-at:preBuild UP-TO-DATE
+> Task :core-metadata:writeDebugAarMetadata UP-TO-DATE
+> Task :i18n-at:preDebugBuild UP-TO-DATE
+> Task :i18n-at:generateDebugResValues UP-TO-DATE
+> Task :core-metadata:extractDeepLinksDebug UP-TO-DATE
+> Task :domain:writeDebugAarMetadata UP-TO-DATE
+> Task :i18n-at:generateDebugResources UP-TO-DATE
+> Task :i18n:generateMRandroidUnitTest UP-TO-DATE
+> Task :core-metadata:processDebugManifest UP-TO-DATE
+> Task :domain:extractDeepLinksDebug UP-TO-DATE
+> Task :i18n:generateMRandroidUnitTestDebug SKIPPED
+> Task :i18n:generateMRandroidUnitTestRelease SKIPPED
+> Task :i18n:preBuild UP-TO-DATE
+> Task :core-metadata:compileDebugLibraryResources UP-TO-DATE
+> Task :i18n:preDebugBuild UP-TO-DATE
+> Task :i18n:generateDebugResValues UP-TO-DATE
+> Task :domain:processDebugManifest UP-TO-DATE
+> Task :i18n-at:packageDebugResources UP-TO-DATE
+> Task :presentation-core:writeDebugAarMetadata UP-TO-DATE
+> Task :i18n:generateDebugResources UP-TO-DATE
+> Task :presentation-core:extractDeepLinksDebug UP-TO-DATE
+> Task :presentation-core:processDebugManifest UP-TO-DATE
+> Task :i18n:packageDebugResources UP-TO-DATE
+> Task :source-local:writeDebugAarMetadata UP-TO-DATE
+> Task :presentation-core:compileDebugLibraryResources UP-TO-DATE
+> Task :source-local:extractDeepLinksDebug UP-TO-DATE
+> Task :i18n-at:writeDebugAarMetadata UP-TO-DATE
+> Task :data:writeDebugAarMetadata UP-TO-DATE
+> Task :source-local:processDebugManifest UP-TO-DATE
+> Task :i18n-at:extractDeepLinksDebug UP-TO-DATE
+> Task :core-metadata:parseDebugLocalResources UP-TO-DATE
+> Task :core-metadata:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :data:extractDeepLinksDebug UP-TO-DATE
+> Task :source-local:compileDebugLibraryResources UP-TO-DATE
+> Task :domain:parseDebugLocalResources UP-TO-DATE
+> Task :i18n-at:processDebugManifest UP-TO-DATE
+> Task :core-metadata:javaPreCompileDebug UP-TO-DATE
+> Task :domain:compileDebugLibraryResources UP-TO-DATE
+> Task :domain:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :data:processDebugManifest UP-TO-DATE
+> Task :i18n-at:compileDebugLibraryResources UP-TO-DATE
+> Task :domain:javaPreCompileDebug UP-TO-DATE
+> Task :data:compileDebugLibraryResources UP-TO-DATE
+> Task :presentation-widget:writeDebugAarMetadata UP-TO-DATE
+> Task :presentation-widget:extractDeepLinksDebug UP-TO-DATE
+> Task :presentation-widget:processDebugManifest UP-TO-DATE
+> Task :core:archive:writeDebugAarMetadata UP-TO-DATE
+> Task :presentation-widget:compileDebugLibraryResources UP-TO-DATE
+> Task :core:archive:extractDeepLinksDebug UP-TO-DATE
+> Task :core:archive:processDebugManifest UP-TO-DATE
+> Task :source-api:writeDebugAarMetadata UP-TO-DATE
+> Task :source-api:extractDeepLinksDebug UP-TO-DATE
+> Task :core:common:writeDebugAarMetadata UP-TO-DATE
+> Task :core:common:extractDeepLinksDebug UP-TO-DATE
+> Task :i18n-at:parseDebugLocalResources UP-TO-DATE
+> Task :source-local:parseDebugLocalResources UP-TO-DATE
+> Task :source-api:processDebugManifest UP-TO-DATE
+> Task :presentation-core:parseDebugLocalResources UP-TO-DATE
+> Task :presentation-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :source-local:kmpPartiallyResolvedDependenciesChecker
+> Task :source-local:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:common:processDebugManifest UP-TO-DATE
+> Task :data:parseDebugLocalResources UP-TO-DATE
+> Task :data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :source-local:javaPreCompileDebug UP-TO-DATE
+> Task :presentation-widget:parseDebugLocalResources UP-TO-DATE
+> Task :presentation-core:javaPreCompileDebug UP-TO-DATE
+> Task :presentation-widget:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:archive:parseDebugLocalResources UP-TO-DATE
+> Task :i18n:writeDebugAarMetadata UP-TO-DATE
+> Task :presentation-widget:javaPreCompileDebug UP-TO-DATE
+> Task :i18n:extractDeepLinksDebug UP-TO-DATE
+> Task :i18n:processDebugManifest UP-TO-DATE
+> Task :core:common:parseDebugLocalResources UP-TO-DATE
+> Task :core:common:compileDebugLibraryResources UP-TO-DATE
+> Task :core:common:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:common:javaPreCompileDebug UP-TO-DATE
+> Task :i18n:parseDebugLocalResources UP-TO-DATE
+> Task :source-api:parseDebugLocalResources UP-TO-DATE
+> Task :source-api:compileDebugLibraryResources UP-TO-DATE
+> Task :source-api:kmpPartiallyResolvedDependenciesChecker
+> Task :source-api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :source-api:javaPreCompileDebug UP-TO-DATE
+> Task :core:archive:generateDebugRFile UP-TO-DATE
+> Task :core:archive:compileDebugLibraryResources UP-TO-DATE
+> Task :core:archive:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n-at:generateDebugRFile UP-TO-DATE
+> Task :i18n:generateDebugRFile UP-TO-DATE
+> Task :i18n-at:kmpPartiallyResolvedDependenciesChecker
+> Task :i18n:compileDebugLibraryResources UP-TO-DATE
+> Task :i18n-at:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n:kmpPartiallyResolvedDependenciesChecker
+> Task :i18n:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :data:generateDebugDatabaseInterface UP-TO-DATE
+> Task :data:javaPreCompileDebug UP-TO-DATE
+> Task :core:archive:compileDebugKotlin UP-TO-DATE
+> Task :core:archive:javaPreCompileDebug UP-TO-DATE
+> Task :i18n:compileDebugKotlinAndroid UP-TO-DATE
+> Task :core:archive:compileDebugJavaWithJavac NO-SOURCE
+> Task :i18n-at:compileDebugKotlinAndroid UP-TO-DATE
+> Task :i18n:javaPreCompileDebug UP-TO-DATE
+> Task :core:archive:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :i18n-at:javaPreCompileDebug UP-TO-DATE
+> Task :core:archive:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :i18n:compileDebugJavaWithJavac NO-SOURCE
+> Task :i18n-at:compileDebugJavaWithJavac NO-SOURCE
+> Task :i18n:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :i18n-at:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :core:archive:processDebugJavaRes UP-TO-DATE
+> Task :i18n-at:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :i18n:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :i18n:processDebugJavaRes UP-TO-DATE
+> Task :i18n-at:processDebugJavaRes UP-TO-DATE
+> Task :core:common:generateDebugRFile UP-TO-DATE
+> Task :core:common:compileDebugKotlin UP-TO-DATE
+> Task :core:common:compileDebugJavaWithJavac NO-SOURCE
+> Task :source-api:generateDebugRFile UP-TO-DATE
+> Task :core:common:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :core:common:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :core:common:processDebugJavaRes UP-TO-DATE
+> Task :core-metadata:generateDebugRFile UP-TO-DATE
+> Task :source-api:compileDebugKotlinAndroid UP-TO-DATE
+> Task :source-api:compileDebugJavaWithJavac NO-SOURCE
+> Task :source-api:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :source-api:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :source-api:processDebugJavaRes UP-TO-DATE
+> Task :domain:generateDebugRFile UP-TO-DATE
+> Task :core-metadata:compileDebugKotlin UP-TO-DATE
+> Task :core-metadata:compileDebugJavaWithJavac NO-SOURCE
+> Task :core-metadata:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :core-metadata:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :core-metadata:processDebugJavaRes UP-TO-DATE
+> Task :data:generateDebugRFile UP-TO-DATE
+> Task :source-local:generateDebugRFile UP-TO-DATE
+> Task :domain:compileDebugKotlin UP-TO-DATE
+> Task :domain:compileDebugJavaWithJavac NO-SOURCE
+> Task :domain:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :domain:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :domain:processDebugJavaRes UP-TO-DATE
+> Task :source-local:compileDebugKotlinAndroid UP-TO-DATE
+> Task :data:compileDebugKotlin UP-TO-DATE
+> Task :source-local:compileDebugJavaWithJavac NO-SOURCE
+> Task :data:compileDebugJavaWithJavac NO-SOURCE
+> Task :source-local:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :data:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :source-local:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :data:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :source-local:processDebugJavaRes UP-TO-DATE
+> Task :data:processDebugJavaRes UP-TO-DATE
+> Task :presentation-core:generateDebugRFile UP-TO-DATE
+> Task :presentation-core:compileDebugKotlin UP-TO-DATE
+> Task :presentation-core:compileDebugJavaWithJavac NO-SOURCE
+> Task :presentation-core:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :app:dataBindingMergeDependencyArtifactsDevDebug UP-TO-DATE
+> Task :presentation-core:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :app:generateDevDebugResValues UP-TO-DATE
+> Task :app:generateDevDebugResources UP-TO-DATE
+> Task :presentation-core:processDebugJavaRes UP-TO-DATE
+> Task :app:prepareDevDebugShortcutXML UP-TO-DATE
+> Task :app:collectDependencies UP-TO-DATE
+> Task :app:prepareLibraryDefinitionsDevDebug UP-TO-DATE
+> Task :presentation-widget:generateDebugRFile UP-TO-DATE
+> Task :app:mergeDevDebugResources UP-TO-DATE
+> Task :app:dataBindingGenBaseClassesDevDebug UP-TO-DATE
+> Task :app:generateDevDebugBuildConfig
+> Task :presentation-widget:compileDebugKotlin UP-TO-DATE
+> Task :presentation-widget:compileDebugJavaWithJavac NO-SOURCE
+> Task :presentation-widget:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :presentation-widget:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :presentation-widget:processDebugJavaRes UP-TO-DATE
+> Task :app:checkDevDebugAarMetadata UP-TO-DATE
+> Task :app:mapDevDebugSourceSetPaths UP-TO-DATE
+> Task :app:createDevDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDevDebug UP-TO-DATE
+> Task :app:processDevDebugMainManifest FROM-CACHE
+> Task :app:processDevDebugManifest
+> Task :app:javaPreCompileDevDebug UP-TO-DATE
+> Task :app:preDevDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDevDebugUnitTest UP-TO-DATE
+> Task :app:processDevDebugManifestForPackage
+> Task :app:processDevDebugResources
+
+> Task :app:compileDevDebugKotlin
+w: The feature plugin:androidx.compose.compiler.plugins.kotlin:featureFlag=OptimizeNonSkippingGroups is enabled by default and specifying this option explicitly is not necessary.
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:200:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:226:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: The feature plugin:androidx.compose.compiler.plugins.kotlin:featureFlag=OptimizeNonSkippingGroups is enabled by default and specifying this option explicitly is not necessary.
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:200:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:226:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+
+> Task :app:compileDevDebugJavaWithJavac
+> Task :app:processDevDebugJavaRes UP-TO-DATE
+> Task :app:bundleDevDebugClassesToRuntimeJar
+> Task :app:bundleDevDebugClassesToCompileJar
+
+> Task :app:compileDevDebugUnitTestKotlin
+w: The feature plugin:androidx.compose.compiler.plugins.kotlin:featureFlag=OptimizeNonSkippingGroups is enabled by default and specifying this option explicitly is not necessary.
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModelCancelledBatchReconciliationTest.kt:403:62 Unchecked cast of 'Any!' to 'MutableMap<Any?, Any?>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModelMultiSelectBatchTest.kt:482:62 Unchecked cast of 'Any!' to 'MutableMap<Any?, Any?>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModelTranslationDrawerTest.kt:430:62 Unchecked cast of 'Any!' to 'MutableMap<Any?, Any?>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/coexistence/CancelledBatchRestartReuseTest.kt:78:42 Unchecked cast of 'Any!' to 'MutableStateFlow<List<Translation>>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/coexistence/PipelineStallWatchdogTest.kt:159:13 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'Any?'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/persistence/chapter/StoreWriteDrainLockOrderTest.kt:16:9 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/AdmissionTestFixture.kt:144:16 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/ChapterTranslatorBatchStartGuardTest.kt:204:24 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/TranslationManagerDeleteResetOrderingTest.kt:387:24 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/TranslationManagerStartupReconciliationTest.kt:288:69 Unchecked cast of 'Any?' to 'Set<Long>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/TranslationRequestGenerationFenceTest.kt:356:24 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+
+> Task :app:compileDevDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDevDebugUnitTestJavaRes UP-TO-DATE
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+> Task :app:testDevDebugUnitTest
+
+[Incubating] Problems report is available at: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.12/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 1m 25s
+205 actionable tasks: 15 executed, 1 from cache, 189 up-to-date

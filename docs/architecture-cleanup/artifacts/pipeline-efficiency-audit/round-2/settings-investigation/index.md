@@ -1,0 +1,98 @@
+---
+title: "Round 2 T5 — Translation settings inventory + removal map (Agent D)"
+kind: review
+comments: none
+---
+
+Agent D · branch `inpainting-modes-redesign` @ 4de121bf · READ-ONLY audit. FACT = verified by direct file read at cited line; INFERRED = derived from read-site analysis, flagged where used.
+
+# 1. Inventory
+
+## 1.1 Persisted preference keys (TranslationPreferences.kt, domain/src/main/java/tachiyomi/domain/translation)
+
+| Key / accessor | UI surface | Read sites (main) | Class | Verdict |
+| --- | --- | --- | --- | --- |
+| `translation_enabled` | Sheet toggles (TranslationSettingsSheet.kt:401-405) | ReaderViewModel | LOAD-BEARING | KEEP |
+| `translation_confirm_pretranslate` | SettingsTranslationScreen.kt:56-60 | MangaScreenModel.kt:965,1406,1414-1415; MangaScreen.kt:373 | LOAD-BEARING | KEEP |
+| `auto_translate`, `auto_translate_prefetch_count` | Sheet :409-421 (slider) | ReaderViewModel | LOAD-BEARING | KEEP |
+| `translate_language_from` / `_to`, `translation_recent_languages_*` | Screen :180-206,:277-300; Sheet :479-500 | EngineLane.kt:332-333 | LOAD-BEARING | KEEP |
+| `translation_font` | Screen :61-65 | rendering | LOAD-BEARING | KEEP |
+| `translation_ocr_model_<lang>` (OcrModelCatalog) | Screen :207-239; Sheet :487-492; ReaderTranslationController.kt:1115 | EngineLane.kt:556 (rebuild gate) | LOAD-BEARING — this IS the new model-driven control plane | KEEP |
+| `translation_inpainting_mode` | Screen :140-144; Sheet :529-540 | EngineLane.kt:390,559 | LOAD-BEARING | KEEP |
+| `translation_inpainting_neural_model` | Screen :148-153; Sheet :542-552 | EngineLane.kt:393,561 | LOAD-BEARING | KEEP |
+| `translation_inpaint_quality_fallback` | Screen :161-166 | pipeline | LOAD-BEARING | KEEP |
+| `translation_reading_order` | Screen :301-309 | EngineLane.kt:303,340,563 | LOAD-BEARING | KEEP |
+| **`translation_onnx_ep`** | **NO UI** | **ZERO readers** (defined only, TranslationPreferences.kt:140; its own doc says runtime ignores it) | DEAD | **REMOVE** |
+| **`translation_experimental_qnn`** | **NO UI** | **ZERO readers** (TranslationPreferences.kt:186; doc: kept only so old files deserialize) | DEAD | **REMOVE** |
+| **`translation_hardware_accelerator`** (AUTO/QUALCOMM_NPU/NNAPI/CPU_XNNPACK) | Screen :100-123 ("Hardware acceleration" group) | HardwareDiscoveryEngine.kt:219-252 (`discoverRoute`, the ONLY reader) → latched route still gates accelerator session options in `OnnxRuntimeProvider.createSessionWithFallback`/`createSessionOptionsWithRegistration` (OnnxRuntimeProvider.kt:301-311, :602-606) for vision sessions and the Paddle ONNX fallback | **LOAD-BEARING (legacy)** — live effects on retained fallback/vision routes; removal = explicit policy change | **REMOVE (phased)** |
+| **`translation_paddle_ocr_execution_provider`** (CPU/QNN_GPU/QNN_HTP) | Screen :249-260 | EngineLane.kt:341,565; RoiPageRecognitionEngine.kt:242-249 + :287-295 (batch-activation input, runs BEFORE the LiteRT decision) + :313-320,:347-352 (ONNX fallback session options) + :488-500 | **LOAD-BEARING (legacy)** — three live touch points (batch gating, ONNX fallback provider, probe side effects); see 2.3 | **REMOVE (phased)** |
+| `translation_paddle_ocr_compute_device` (GPU/CPU) — **NEW in 4de121bf** | Screen :240-248; Sheet :135-137,:172-210 chips | EngineLane.kt:243-247,343,399-400,567-569,604; ReaderViewModel.kt:191,239-241,559,794,1759-1762; RoiPageRecognitionEngine.kt:71,310,325,489-491 | NEW (model-driven LiteRT device) | KEEP |
+| `translation_paddle_ocr_recognition_batch` (B1/B2/B4/DYNAMIC) | Screen :261-271 | PaddleOcrBatchActivationPolicy.kt:16; EngineLane.kt:342,566; RoiPageRecognitionEngine.kt:287-295,375-388 | LOAD-BEARING | KEEP |
+| **`translation_vision_gpu_acceleration`** | Screen :272-276 (toggle, default OFF) | EngineLane.kt:570 (rebuild gate); RoiPageRecognitionEngine.kt:250-255 → `resolveVisionGpuRoute` → live QNN GPU/NNAPI session creation for the three vision models | **LOAD-BEARING (legacy)** — the only remaining real consumer of NNAPI/QNN probes; removal permanently pins vision models to CPU (no LiteRT replacements) | **INVESTIGATE** (see 2.4) |
+| `translation_engine_category` / standard / ai / keys / models / recents / temperature / output tokens / thinking mode | Screen :319-568; Sheet :583-726 | EngineLane.kt:293-303 | LOAD-BEARING | KEEP |
+| `translation_diagnostics` | none (debug aid) | EngineMemoryBudget.kt:197; RoiPageRecognitionEngine.kt:185; OcrDiagnostics.kt:29; ReaderViewModel.kt:553 | DIAGNOSTIC | KEEP |
+| `translation_batch_persisted_layout` | Screen :90-95 (debug-only) | PersistedLayoutRuntime.kt:51 | LOAD-BEARING | KEEP |
+| `translation_progress_sheet_advanced_view` | TranslationProgressSheet.kt:137,448 | same | LOAD-BEARING | KEEP |
+
+EngineLane `ensureEnginesBuiltFor` per-admission reads (EngineLane.kt:553-620, FACT): ocrModel(556), inpaintMode(559), neuralModel(561), readingOrder(563), paddleProvider(565), paddleBatch(566), paddleComputeDevice(567-569), visionGpu(570); translator-signature reads at 293-303 on rebuild. These are in-memory reads — not removal targets.
+
+## 1.2 Non-persisted session/runtime "settings"
+
+| Item | Sites | Class | Verdict |
+| --- | --- | --- | --- |
+| **`InpaintingHardwareOverride`** enum (CPU/GPU/NPU, session-only) | Set sites: ReaderViewModel.kt:558,810 — **both hardcode CPU** (FACT). Plumbing: TranslationManager.kt:801-802; TranslationPipeline.kt:368-369; EngineLane.kt:71,104-105,228-232,317-318,339,349,361,395-396,562,581-582,600,611. Sole behavioral consumer: `toAotBackend()` in `NeuralInpaintingCoordinator.initialize()` (NeuralInpaintingCoordinator.kt:57,184). **`initialize()` has NO production caller** — verified: only constructor sites RoiPageRecognitionEngine.kt:449,998; PageInpaintingEngine uses only `freeTextNeuralFill`/`bubbleNeuralFill`/`inpaintRegions`/`lastRunDegraded`/`close` (PageInpaintingEngine.kt:98-153). UI chips removed in 9d6567de; sheet now shows a disabled informational "GPU (LiteRT FP16)" chip (TranslationSettingsSheet.kt:554-579; strings :93-95). | DEAD | **REMOVE** |
+| **HardwareDiscoveryEngine** (device probe: emulator/SDK<29/ABI pre-flight :173-195; QNN HTP/GPU/NNAPI strict session probes :254-323; latch + circuit breaker :56-78; SoC/HTP-arch combos :325-331; DeviceCapability.kt whole file) | Global route consumers: OnnxRuntimeProvider.kt:301-311 (`createSessionWithFallback`), :602-606, trips at :661,:674,:687. Real callers passing routes/accelerator: vision models OnnxPageTextDetector.kt:53-58, OnnxPanelDetector.kt:71-76, OnnxBubbleSegmenter.kt:63-70 (route from `resolveVisionGpuRoute`, RoiPageRecognitionEngine.kt:255); Paddle ONNX fallback useAccelerator=true: PaddleOcrV6SmallEngine.kt:136-138, PaddleOcrV6DetEngine.kt:128-130 (reached when LiteRT assets missing/init throws, RoiPageRecognitionEngine.kt:346-373); dead inpaint: NeuralInpaintingCoordinator.kt:406. | **LOAD-BEARING legacy infra** (+ DIAGNOSTIC core) — live for vision/fallback routes | **REMOVE incrementally** (see 2.3/2.4); probes stay while those routes stay |
+| PaddleOcrSessionFactory + `PaddleOcrProviderOverride` + probeFailureCache | RoiPageRecognitionEngine.kt:242-249,287-295,296-299,313-320,347-352,488-500; benchmark PaddleBenchmarkRunner.kt:12,259,443-445 | ONNX fallback sessions + batch-activation input + uncached-success probe cost on every build (2.3) | REMOVE with provider pref (keep pure-CPU fallback); interim: defer/skip when LiteRT wins |
+| ModelRoutingEngine / TelemetryTrace / HardwareSessionAudit | ledger + traces; no production session-creation gate except OnnxRuntimeProvider.kt:311 | DIAGNOSTIC | keep (demote) |
+| AdaptiveKnobController | pipeline/adaptive/AdaptiveKnobController.kt — deliberately non-persistent, "no provider input" (file docs :31,50-55) | internal, not a setting | KEEP |
+
+# 2. Removal map
+
+## 2.1 DEAD keys — remove now, zero behavior change
+
+- `translation_onnx_ep` (TranslationPreferences.kt:140) and `translation_experimental_qnn` (:186). No read sites (FACT, repo-wide grep incl. non-KT: only a docs mention of vision flag, not these). Default-after-removal: none needed. Migration: none — stale XML values are inert. Tests: none reference them.
+
+## 2.2 InpaintingHardwareOverride chain — dead wiring
+
+Remove: enum + `toHardwareRoute`/`toAotBackend` (InpaintingHardwareOverride.kt:1-23); TranslationManager.kt:801-802; TranslationPipeline.kt:368-369; EngineLane override fields/params/gate-arms (:71,104-105,228-232,317-318,339,349,361,395-396,415,562,581-582,600,611); ReaderViewModel.kt:558,810; `NeuralInpaintingCoordinator.initialize()` + QNN/NNAPI session ladder (:129-137,178-207,209-279+,406) + `AotExecutionCoordinator`, `InpaintingProviderRecovery`, `QnnContextCacheManager` (only caller is NeuralInpaintingCoordinator — FACT), `AotModelContract`/`AotFixedTensorContract` IF further orphaned after removal (verify). Default-after: LiteRT-GPU-only neural inpainting — identical to current effective behavior (FACT: sessions never built). RoiPageRecognitionEngine.kt:70 param + :451 drop. Tests: InpaintingHardwareOverrideTest.kt (delete), InpaintingProviderRecoveryTest.kt, AotExecutionCoordinatorTest.kt (delete/trim). QNN HTP inpainting capability checks: not needed — no inpaint ONNX sessions are ever created.
+
+## 2.3 PaddleOCR ONNX provider pref — LOAD-BEARING legacy removal (NOT a no-op)
+
+Three live behavioral touch points in the current build (FACT):
+
+1. **Probe side effects on every engine build (cold-lag):** `resolvePaddleOcrProvider()` runs at RoiPageRecognitionEngine.kt:242-249 (+ :488-500) BEFORE the LiteRT asset check at :302. With device=GPU and a QNN provider persisted, strict QNN probe sessions (real native `createSession` on `QnnProbeModel`; up to 3 HTP combos, HardwareDiscoveryEngine.kt:254-281,:325-331) execute even when LiteRT then succeeds and the resolution is consumed only as an unused `fallbackInitializer` lambda (:313-320) and as batch-policy input. Successes are NOT cached — `PaddleOcrSessionFactory` caches failures only (PaddleOcrSessionFactory.kt:67,79-90) and `resolvePaddleOcrRoute` has no latch (HardwareDiscoveryEngine.kt:110-126) — so the cost repeats on cold start and on EVERY recognition rebuild (provider/batch/device/reading-order/vision changes, EngineLane.kt:565-591).
+**Interim quick win (bounds per orchestrator review):** split the cheap from the expensive — batch activation keeps receiving the same requestedProvider ENUM it gets today (no probe needed; `resolution.requested` is just the persisted value), while the expensive RESOLVED route (native probe + strict session options) is computed only when the ONNX fallback branch actually runs (:346-352). **Do NOT pass null** for requestedProvider: `PaddleOcrDevicePolicy.resolveActivation` treats null as "provider_not_selected" → emergency CPU B1 (PaddleOcrDevicePolicy.kt:55-57,:84-89). Qualification on "emergency CPU B1": `activeBatchSize` genuinely gates the coordinator/governor (RoiPageRecognitionEngine.kt:291-294 governor init/max, :390-394 coordinator validatedBatchSize), but `forceCpuB1EmergencyFallback` only produces a `PaddleOcrProviderOverride.cpuB1EmergencyFallback()` providerConfiguration for the ONNX fallback session (:296-300,:313-320,:347-352); LiteRT GPU selection stays driven by the compute-device pref (`preferGpu`, :310/:325) — a CPU providerTarget in the batch policy does NOT prove LiteRT switched to CPU. Note the debug provisional opt-in (`BuildConfig.DEBUG && requested != B1`, PaddleOcrBatchActivationPolicy.kt:57 → PaddleOcrDevicePolicy.kt:60-70) keeps the requested larger batch even for unconfirmed combinations, gated only by the thermal guard.
+2. **Batch-activation gating (LiteRT path included):** the resolution feeds `PaddleOcrBatchActivationPolicy.currentFromPreferences` (RoiPageRecognitionEngine.kt:287-295, also before the LiteRT branch) → `PaddleOcrDevicePolicy.resolveActivation` (PaddleOcrDevicePolicy.kt:44-71): for non-B1 tiers under staged batching, an unconfirmed provider/batch/width combination downgrades to emergency CPU B1 ("combination_not_confirmed"/"provider_not_selected"). The pref therefore shapes BATCH behavior even when no ONNX session is ever created.
+3. **ONNX fallback session provider:** when LiteRT init throws or assets are missing (:346-352), the provider decides QNN GPU/HTP vs CPU for real recognizer/detector sessions (PaddleOcrV6SmallEngine.kt:136-138, PaddleOcrV6DetEngine.kt:128-130).
+
+Removal scope: UI row SettingsTranslationScreen.kt:249-260 + strings (i18n-at strings.xml:31-35); reads EngineLane.kt:341,565 (lane state + rebuild gate); the three touch points above; then `PaddleOcrSessionFactory`/probeFailureCache, `resolvePaddleOcrRoute` (HardwareDiscoveryEngine.kt:110-126), `PaddleOcrProviderOverride` matrix, `QnnProbeModel`.
+
+**Default-after-removal is an explicit policy change, not zero behavior change:** pinning the fallback to CPU and dropping the batch-activation provider input silently downgrades persisted QNN_GPU/QNN_HTP users. That downgrade requires owner sign-off and a release note; options: (a) hard downgrade, documented; (b) keep honoring the stored value for one release with the row hidden; (c) map stored QNN values onto the new GPU/CPU device pref where semantics allow. No user acceptance may be inferred.
+
+Tests: PaddleOcrSessionFactoryTest.kt, PaddleOcrProviderOverrideTest.kt, PaddleOcrDetProviderSelectionTest.kt, PaddleOcrDevicePolicyTest.kt:146, HardwareSessionAuditTest.kt:186-295 (rewrite to compute-device only), HardwareDiscoveryEngineTest.kt:193-240. Benchmark: PaddleBenchmarkRunner.kt:259,443-445 must be updated/trimmed.
+
+## 2.4 Hardware accelerator pref + device probe
+
+`translation_hardware_accelerator` UI group (Screen :100-123, strings :96-97) + `discoverRoute` pref switch (HardwareDiscoveryEngine.kt:219-252). **Classification: LOAD-BEARING (legacy).** The latched route has live behavioral effects today: it decides accelerator vs CPU session options for (a) vision-GPU sessions when the experimental toggle is ON (RoiPageRecognitionEngine.kt:255 → OnnxPageTextDetector.kt:53-58 etc., OnnxRuntimeProvider.kt:301-311) and (b) Paddle ONNX fallback accelerator attempts (2.3). It is a removal candidate only because those routes are themselves conditional/legacy — not because it is inert.
+
+**Safe-removal analysis:** after 2.3 and the vision decision, `resolveRoute`/circuit-breaker latch lose their last production session effect → collapse HardwareDiscoveryEngine to: keep `DeviceCapability` (emulator/ABI/SoC facts; also used in diagnostic logs, e.g. NeuralInpaintingCoordinator.kt:205) + NNAPI/QNN probes ONLY if the vision experiment is retained. Backend probes therefore remain live and conditional on whichever of (vision route, ONNX fallback route) survives. **Vision toggle (`translation_vision_gpu_acceleration`) is the one genuine open decision:** removing it permanently pins PageTextDetector/BubbleSegmenter/PanelDetector ONNX sessions to CPU (they default to CPU today since toggle=false — INFERRED from default at TranslationPreferences.kt:175-178 and gate at :144). There are no LiteRT replacements for bubble segmenter / panel detector. Recommend: keep toggle one more round (debug-useful, default OFF) OR remove toggle AND hardcode CPU with intent to LiteRT-ize later. Docs: docs/paddle_ocr_performance_investigation_report.md:119 references the flag.
+
+## 2.5 Keep (explicitly)
+
+`translation_paddle_ocr_compute_device` + reader override (NEW, model-driven LiteRT control; tests EngineLanePaddleDeviceTest.kt), batch pref, OcrModelCatalog-driven OCR model per language, inpainting mode/model/fallback, diagnostics, reading order, engine group. Sheet's informational "GPU (LiteRT FP16)" chip (strings :93-95) may stay as honest display.
+
+# 3. Phased plan
+
+- **Phase 0 — dead keys** (2.1): delete 2 accessors. Verify: repo grep, `StandardDebug` unit compile+tests green. Risk: none.
+- **Phase 1 — dead inpaint override chain** (2.2): verify no behavior delta (already unreachable). Verify: inpainting unit tests, manual reader Balance/Quality run (neural fill + classical fallback).
+- **Phase 2 — UI hiding only** (2.3 UI + 2.4 UI): remove Settings rows/groups + strings. The prefs remain FULLY WIRED — EngineLane (:341,:565,:567-570), RoiPageRecognitionEngine (:242-249,:287-295,:488-500) and HardwareDiscoveryEngine (:219-252) keep reading them, probes keep running, and users who had set QNN values keep getting QNN behavior; only the control is hidden. Do not describe this phase as making anything inert. Verify: settings screen renders/search, backup-restore round-trip, no MissingMapping on enum read (keys still defined until Phase 3), behavior delta = none.
+- **Phase 3 — unwiring** (2.3 internal + 2.4): pin provider resolution to CPU per the 2.3 policy decision (explicit QNN→CPU downgrade, signed off + release-noted), delete probe factory/matrix/lane-provider state, collapse HardwareDiscoveryEngine per vision decision (probes survive only if a route survives), update benchmark runner + HardwareSessionAuditTest. This phase — not Phase 2 — is where probes stop running and where the 2.3 cold-lag disappears. Verify: full unit suite minus deleted tests; on-device smoke: QNN device + emulator (emulator pre-flight removal only matters if vision kept).
+- **Phase 4 — optional storage hygiene**: stale keys in existing installs are inert; no migration code required (defaults resolve on absence). Optional one-shot key purge if PreferenceStore offers it.
+
+Test-impact summary (delete/rewrite): HardwareDiscoveryEngineTest, PaddleOcrSessionFactoryTest, PaddleOcrProviderOverrideTest, PaddleOcrDetProviderSelectionTest, PaddleOcrDevicePolicyTest(:146), HardwareSessionAuditTest(:186-295), InpaintingHardwareOverrideTest, InpaintingProviderRecoveryTest, AotExecutionCoordinatorTest, QnnProbeModelTest, ModelRoutingEngineTest/OnnxRuntimeProviderProvenanceTest/BubbleSegmenterRecoveryPolicyTest (trim route-label assertions). Keep: EngineLanePaddleDeviceTest (NEW), all batch-policy and catalog tests.
+
+# 4. Corrections after orchestrator review (provenance)
+
+1. `translation_paddle_ocr_execution_provider` and `translation_hardware_accelerator` reclassified from "SUPERSEDED" to **LOAD-BEARING (legacy) removal candidates**: both still have live behavioral effects on the Paddle ONNX fallback path and the conditional vision-GPU route; removal is an explicit policy change. The QNN→CPU downgrade for persisted users requires owner sign-off and a release note — no silent downgrade is assumed.
+2. Phase 2 relabeled **UI hiding**: retained prefs stay fully read by EngineLane/ROI/HardwareDiscoveryEngine until Phase 3 unwires them; backend probes remain live and conditional on whichever of the vision/fallback routes is retained.
+3. New evidence — cold-lag ordering: `resolvePaddleOcrProvider()` executes (RoiPageRecognitionEngine.kt:242-249) BEFORE the LiteRT asset decision (:302), and successful probes are uncached (PaddleOcrSessionFactory.kt:67,79-90 caches failures only; no latch in `resolvePaddleOcrRoute`, HardwareDiscoveryEngine.kt:110-126), so with device=GPU + persisted QNN provider, strict native QNN probe sessions run on cold start and on every recognition rebuild even when LiteRT subsequently succeeds. The resolution also feeds batch-activation gating (PaddleOcrDevicePolicy.kt:44-71) in the LiteRT path. Interim fix refined per orchestrator review (2.3 point 1): keep requestedProvider ENUM input to batch activation unchanged; resolve the native route only in the ONNX fallback branch; never pass null (→ provider_not_selected → B1). Batch-policy "CPU" labels are governor/ONNX-fallback-scoped and do not imply LiteRT left the GPU.

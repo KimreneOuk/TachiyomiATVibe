@@ -1,0 +1,1622 @@
+{
+  "createdUtc": "2026-10-16T00:02:09.195546+00:00",
+  "epicId": "699de408-00ac-4fe5-a903-b541c23063cc",
+  "approvedBaseline": "ff21fd15",
+  "checkpointStatus": "WIP S5 ? known blockers; no S5 execution",
+  "artifacts": [
+    {
+      "path": "execution-policy/index.md",
+      "bytes": 5517,
+      "sha256": "9bcd16c2bd74e29c645bc6603ac33bbcf9f5ce40e0bc01b056fcc4b0225a0b13"
+    },
+    {
+      "path": "free-text-inpainting-fix/index.md",
+      "bytes": 6837,
+      "sha256": "c6e23b08932db5436f04996b929754678061c392e6bc9719b804130a0a06c1a8"
+    },
+    {
+      "path": "laptop-handoff/index.md",
+      "bytes": 3536,
+      "sha256": "68ccb719430b1bb3b96d6da29d40a8b78d8b3c3689bc37a91e0b41108a8a299d"
+    },
+    {
+      "path": "loading-performance-plan/architecture-audit-crosswalk/index.md",
+      "bytes": 9460,
+      "sha256": "af9bbbd9b9fa6b0b514241265d7b790bc23003ad68d8e2550152cfa46b915ff0"
+    },
+    {
+      "path": "loading-performance-plan/chapter-list/index.md",
+      "bytes": 18670,
+      "sha256": "2bd76c1b3b835225d9d2108dcb705fa5763dc8a04b0c4e537a3190393018c968"
+    },
+    {
+      "path": "loading-performance-plan/independent-review/index.md",
+      "bytes": 14109,
+      "sha256": "cb11e862bce1aa4815f6589865506aac9ad69eb94eb48d5dd506a712ec3fbd2d"
+    },
+    {
+      "path": "loading-performance-plan/index.md",
+      "bytes": 11795,
+      "sha256": "a78c1c3d13dda5ab5b9a769324da190ef0004a35acaa2b91073656650619e5e4"
+    },
+    {
+      "path": "loading-performance-plan/reader-entry/index.md",
+      "bytes": 16820,
+      "sha256": "6d8669194abbacedc9a4cbbda9be867104e4ef57cb2ae17e5aa3357235215b19"
+    },
+    {
+      "path": "loading-performance-plan/refresh-audit/index.md",
+      "bytes": 24234,
+      "sha256": "5f35dfd0936f91a1a2b2eb2af504d5a491ca3758aea6d0b3b981e94743ed4d54"
+    },
+    {
+      "path": "loading-performance-plan/refresh-audit/review/index.md",
+      "bytes": 15769,
+      "sha256": "cae0b92704b5f2239727bb13b7193610b413253c7d0cceb9afc6d2e1ecbaa1e6"
+    },
+    {
+      "path": "loading-performance-plan/validation-and-delivery/index.md",
+      "bytes": 15250,
+      "sha256": "6fad33d7208f529e21093c3973506def4568eaca2f9579a51693155f372a7457"
+    },
+    {
+      "path": "maintainability-refactor-plan/capabilities/index.md",
+      "bytes": 17718,
+      "sha256": "4e26a06ebfbbb8a82adb7795256d857f1a77a4b0ac17b7435799052dd9fe490c"
+    },
+    {
+      "path": "maintainability-refactor-plan/critique-response/index.md",
+      "bytes": 7034,
+      "sha256": "4b57c988f54093055ee45101c81738c02351a5a4007bbb2bd74cbf271a208c06"
+    },
+    {
+      "path": "maintainability-refactor-plan/implementation/index.md",
+      "bytes": 22101,
+      "sha256": "0d4733ed9a5128fde7417864a73b2eb026651fd45606274a98fbd4b9e89f5e82"
+    },
+    {
+      "path": "maintainability-refactor-plan/independent-review/index.md",
+      "bytes": 7103,
+      "sha256": "e0e87e7c3f684d54cfb06a5f192c8163bec226e6451c68d985bb53550f7204e0"
+    },
+    {
+      "path": "maintainability-refactor-plan/index.md",
+      "bytes": 14384,
+      "sha256": "e303e01f17a3373118f96423def7eb0e60cc78b00c72c84d4a6dc2a4fd65e755"
+    },
+    {
+      "path": "maintainability-refactor-plan/ownership/index.md",
+      "bytes": 20760,
+      "sha256": "9661246575b84f14aa4c2e0d56743e8f35ade734183fdf54b09adeed8c4b8297"
+    },
+    {
+      "path": "maintainability-refactor-plan/preflight-purge/dead-code/index.md",
+      "bytes": 14542,
+      "sha256": "23e7dc2d85a411609f6dac9418482c8765aa5b3b3a4e5d1786275eff7244e3de"
+    },
+    {
+      "path": "maintainability-refactor-plan/preflight-purge/index.md",
+      "bytes": 20081,
+      "sha256": "5d3d2a3ea5e8e377990c7c9d4fc8ca1064a360d906078e9da2b228e447f14dd3"
+    },
+    {
+      "path": "maintainability-refactor-plan/preflight-purge/ocr-native/index.md",
+      "bytes": 20303,
+      "sha256": "4dea088d113bd1ef94594a99233a79a55be27210f4249c1712314f6e32b28483"
+    },
+    {
+      "path": "maintainability-refactor-plan/preflight-purge/test-reliability/index.md",
+      "bytes": 24353,
+      "sha256": "8ac36d3efc62d2822c2fded0dd4a1bd1df1fb1d4ae086eeb8cc393b390970de7"
+    },
+    {
+      "path": "maintainability-refactor-plan/validation/index.md",
+      "bytes": 20474,
+      "sha256": "05c8f202227c3ce55c7ecc789e772ed2b651a61a71fda8322c6150c521d91cda"
+    },
+    {
+      "path": "maintainability-verification/cancellation-and-resources/index.md",
+      "bytes": 21453,
+      "sha256": "f91730b20fdaaee6993daa71a57bdf3d4b6346de569db940a4662d7af4ac4b40"
+    },
+    {
+      "path": "maintainability-verification/coupling-and-ownership/index.md",
+      "bytes": 21798,
+      "sha256": "a77bf0de04993a7837a0c3b98a2065b97540120a86830b3f4bacc32035837c00"
+    },
+    {
+      "path": "maintainability-verification/dependencies-and-outcomes/index.md",
+      "bytes": 21721,
+      "sha256": "4f60651b8c629a928d2f56ec073dc996feda64c1b6802fc6efe5c99c8ed90599"
+    },
+    {
+      "path": "maintainability-verification/index.md",
+      "bytes": 597,
+      "sha256": "9ce1201c297f4f58910bd673f0acc6dbf13f87ae86f4f1e359040ecb0e4f17d5"
+    },
+    {
+      "path": "orchestration-spec/index.md",
+      "bytes": 3096,
+      "sha256": "6b57fe40653de79dc1c0253306f05e3e6e5d31dd596dbbe02b80a1728a5eb28b"
+    },
+    {
+      "path": "paddle-model-portable-handoff/index.md",
+      "bytes": 2596,
+      "sha256": "9f559809ffe4b8d0e51259fbf02d37d115283671375dd480e9d805d7422280c1"
+    },
+    {
+      "path": "paddle-model-provisioning-review/index.md",
+      "bytes": 4552,
+      "sha256": "f840a2395c7b0bdedc6577d6614d8319cdcd521341838c26561bc830eceb0c60"
+    },
+    {
+      "path": "paddle-ocr-device-selection/index.md",
+      "bytes": 1585,
+      "sha256": "2a1b1ffd987b4e6025112eb5d3c9d6046cfff57d8c5c61f771467c7e7b5ecfd4"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/after-install.png",
+      "bytes": 801588,
+      "sha256": "c6e77f64f920060f2bd63dfb3f59412dc3ef5fd584dd4b538b0a510233f5791f"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/before-install.png",
+      "bytes": 161572,
+      "sha256": "9f3081c2ad5344fa0188f8c7e395036746cce479b79aeab27d4ed7cbd6d4fdd1"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/cpu-runtime.log",
+      "bytes": 5504,
+      "sha256": "fb2c6b4353fe5f0df281a6edbd01b6531377ff3592182f1616bb0b1168d81abf"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/current-reader.png",
+      "bytes": 1912385,
+      "sha256": "e387b8b25dc64ada049b7b32e93dd30d35882b9c72e9e2861e7936e10c258cfb"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/current-ui.xml",
+      "bytes": 7794,
+      "sha256": "26837563631b21dcbe08c77110e9bfd67f59190520d8b982a143e14bc0fd5f74"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/index.md",
+      "bytes": 3494,
+      "sha256": "26b61468aa66f3f393ae1ac5cdf19b2e91e1c6b2f8cc4bab2f758879071da68f"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/latest-runtime.log",
+      "bytes": 7511,
+      "sha256": "1abd2197496561be0d8d643f3871a851358e07f461efb1a0a2108c6b445f1cbf"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/manga-details.png",
+      "bytes": 2573899,
+      "sha256": "c2ce66463faa763ebeb1881e6743d333dd7602efd535e30d656022417191bcd7"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/reader-menu.png",
+      "bytes": 2142960,
+      "sha256": "c68923d53d3ba8283e4959a349c7262defa2794e94f373198063fab9da67c5a7"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/saved-device-dialog.png",
+      "bytes": 219841,
+      "sha256": "2ea9f5e0115aecc73f7af985e85ee67e926c275d54701310d8fcf05208678885"
+    },
+    {
+      "path": "paddle-ocr-device-selection/phone-validation/settings-current.png",
+      "bytes": 283930,
+      "sha256": "81e2d2d8393dc90009bfb0077abc3606df0fbc5e23eba3cebbd62470281469da"
+    },
+    {
+      "path": "paddle-ocr-device-selection/review/index.md",
+      "bytes": 6816,
+      "sha256": "cb2cf289bf43fca5bada6d694d592a351a7555256583d47e5b4eb3c26f4e77a0"
+    },
+    {
+      "path": "paddle-ocr-pipeline-architecture/index.md",
+      "bytes": 12815,
+      "sha256": "c279dd022fb96fc04f2a6af3350adf5eaa57c71a9e50ed6f087b0e56e7f5135a"
+    },
+    {
+      "path": "paddle-v6-runtime-optimization-report/index.md",
+      "bytes": 14980,
+      "sha256": "e8c86f86d5f8cec8a66e22c3f044f13f9409a0c4f721567f9c3c98ab85283db7"
+    },
+    {
+      "path": "phase-0-baseline/behavior-and-change-isolation/index.md",
+      "bytes": 28104,
+      "sha256": "4930d98cb9e4e88b7f613407d9a6cfb3b47a030b3bf8ba09dfec96cf1c379463"
+    },
+    {
+      "path": "phase-0-baseline/build-and-tests/failure-triage/index.md",
+      "bytes": 17339,
+      "sha256": "70816f614987ea9a8f630fb370c3c5e8f8f762626537e14b58afa9aae5bc6b38"
+    },
+    {
+      "path": "phase-0-baseline/build-and-tests/index.md",
+      "bytes": 14210,
+      "sha256": "1dcc33ff188779a42dbeb737064cd1b1c37d9e86251d3f28a8942f33bbab68e6"
+    },
+    {
+      "path": "phase-0-baseline/device-baseline/index.md",
+      "bytes": 5990,
+      "sha256": "0b870befdc23ce87f96a4d8f50b1d5b1cdbb4894c23d0eaed9019a23d1d143d1"
+    },
+    {
+      "path": "phase-0-baseline/index.md",
+      "bytes": 20616,
+      "sha256": "4d2aa78ef82af5f86afd66279a2dd5895089f80efda4b8fb1111858aba9dc269"
+    },
+    {
+      "path": "phase-0-baseline/provenance-assets/index.md",
+      "bytes": 4913,
+      "sha256": "fd4d2a1f070451f29f38f4009c68e938cc3a512491d78fe66472227797d35d9a"
+    },
+    {
+      "path": "phase-0-baseline/review-response/index.md",
+      "bytes": 6272,
+      "sha256": "0405d177726c63eefc42c037c57c5d0b18da66e28eb223aae738a5a7d8f631da"
+    },
+    {
+      "path": "phase-0-baseline/review/index.md",
+      "bytes": 32922,
+      "sha256": "f52725af41ca5dca145c0f92436f4e745dca87c690b7410d40b29cd541b316e5"
+    },
+    {
+      "path": "phase-0-baseline/store-contract-audit/index.md",
+      "bytes": 18230,
+      "sha256": "3c85c4a6674980ed711647a1dec54fb143bffa5933c98a540be1f6a66f32eacb"
+    },
+    {
+      "path": "phase-0-truth-audit/index.md",
+      "bytes": 18501,
+      "sha256": "6e4fa3142dca6d93b07c090da8106e6cdf8b9043d99bd24faa55ed6876fd6446"
+    },
+    {
+      "path": "phase-1-accuracy-baseline/index.md",
+      "bytes": 34895,
+      "sha256": "7d776627dc7049154ffff5eb9fb931536f7ccdc6eed79e1cb5f8b8d0340a7fc9"
+    },
+    {
+      "path": "phase-1-cleanup/adaptive-experiment/audit/index.md",
+      "bytes": 11677,
+      "sha256": "9e8dfda36402e7378ac29a1fb2f5036411dd9556e574629b5bd702873fc85893"
+    },
+    {
+      "path": "phase-1-cleanup/adaptive-experiment/index.md",
+      "bytes": 4697,
+      "sha256": "851aadc1bc1df2bca7822846584ed8ae0ce904cb70fa5447fef3665b689da478"
+    },
+    {
+      "path": "phase-1-cleanup/adaptive-experiment/retirement/index.md",
+      "bytes": 5927,
+      "sha256": "c7f0483707078f02691d677ba8e08d72a522238b9d7285e853b3a3a12af17869"
+    },
+    {
+      "path": "phase-1-cleanup/adaptive-experiment/retirement/results/index.md",
+      "bytes": 6538,
+      "sha256": "5fb6e78fc0858dc2aecf719e856c9906e92de89d5a60ff33e357c58a4f8fc1b4"
+    },
+    {
+      "path": "phase-1-cleanup/adaptive-experiment/retirement/review/index.md",
+      "bytes": 9263,
+      "sha256": "13c936e642847918d6f668e3e10cba0127f3ed1964056dbda7fa532f1833b485"
+    },
+    {
+      "path": "phase-1-cleanup/closure/index.md",
+      "bytes": 3979,
+      "sha256": "21e7c85bd68c3e92a1e3ae69a6cfba39163c0289c4e4d0004bd3af5c2ed1fba0"
+    },
+    {
+      "path": "phase-1-cleanup/consolidated-validation/fixture-finalization/index.md",
+      "bytes": 2806,
+      "sha256": "35f297df2a992a9e0dd93162cef9580b18a5ee2aba81985d08030faa54ecc0db"
+    },
+    {
+      "path": "phase-1-cleanup/consolidated-validation/fixture-finalization/results/index.md",
+      "bytes": 6979,
+      "sha256": "9bfa6101a995da54ef6cfb53229375896f6fc0a5790ac33b47a281bc29970be0"
+    },
+    {
+      "path": "phase-1-cleanup/consolidated-validation/fixture-finalization/review/index.md",
+      "bytes": 7988,
+      "sha256": "0db911e12f34cf2bab8a1d6191e62ce182207e89aceb01d0ffe377b4a1e1d228"
+    },
+    {
+      "path": "phase-1-cleanup/consolidated-validation/follow-up/index.md",
+      "bytes": 3924,
+      "sha256": "47e653efdb4a3dff47129c74968bc49ba47d9677d1ac25c391ec54827a4dacbd"
+    },
+    {
+      "path": "phase-1-cleanup/consolidated-validation/follow-up/results/index.md",
+      "bytes": 11869,
+      "sha256": "a6a68f9b356bd306b9d4500f3c7b80608a6c621ae85e53da3303e269bc4b02a3"
+    },
+    {
+      "path": "phase-1-cleanup/consolidated-validation/index.md",
+      "bytes": 4167,
+      "sha256": "3d0cd7991fb0ef90a5fbad70d37a2d97d5bf0a47f23a5e5c8c9f9cd668b10df3"
+    },
+    {
+      "path": "phase-1-cleanup/consolidated-validation/results/index.md",
+      "bytes": 11141,
+      "sha256": "7d07fbd543d65404cffb12f88966a3b3da6cf470028e9cfdff55acc1dcd1f655"
+    },
+    {
+      "path": "phase-1-cleanup/consolidated-validation/review/index.md",
+      "bytes": 6304,
+      "sha256": "9d579cbfbabf5b7931fb47294846ae437b0d5127bbf4781c8e7495bde43f0d94"
+    },
+    {
+      "path": "phase-1-cleanup/index.md",
+      "bytes": 5969,
+      "sha256": "d596029ae3e0ce7f14a6a4d3d6eeb1ce1745f68ee80ab35cddb4435b645bfdb5"
+    },
+    {
+      "path": "phase-1-cleanup/orphan-helpers/index.md",
+      "bytes": 5005,
+      "sha256": "f0ada82829691780d91d32195cc6806ebad3fbd86af9b1276e738966f60c51a0"
+    },
+    {
+      "path": "phase-1-cleanup/orphan-helpers/results/index.md",
+      "bytes": 11217,
+      "sha256": "33e3b1f56e91e3821680b91ab7bd3e1ad448e0a23a1cf136430e16924f2bd24d"
+    },
+    {
+      "path": "phase-1-cleanup/orphan-helpers/review/index.md",
+      "bytes": 7536,
+      "sha256": "3dc7846c76980a566cac13d5f2252a79b92c0f11638717ea8ea9797f09deb33a"
+    },
+    {
+      "path": "phase-1-cleanup/rendering-island/index.md",
+      "bytes": 5486,
+      "sha256": "5e66495cb6b3ca87e91be83cd468338ac95d2801818a85892d7c00b1c4c9e538"
+    },
+    {
+      "path": "phase-1-cleanup/rendering-island/results/index.md",
+      "bytes": 13016,
+      "sha256": "b1491851d9eb4eb82f29531d6a62d397135ac926ee8d1e0dd6135faa6cb0f519"
+    },
+    {
+      "path": "phase-1-cleanup/rendering-island/review/index.md",
+      "bytes": 6870,
+      "sha256": "76263506cf68436e184812d0dd60d58cd0ca35aeb85c49a70493f91ad93ac5a0"
+    },
+    {
+      "path": "phase-1-cleanup/test-repair/index.md",
+      "bytes": 4953,
+      "sha256": "58d484d2d15f662c72b8f3f76f5dd017688e5ddbf949f4e76289b4c49881e838"
+    },
+    {
+      "path": "phase-1-cleanup/test-repair/production-coverage/fixture-finalization/index.md",
+      "bytes": 1945,
+      "sha256": "f8b12fd7a205f8b66f9bcefd2d9c312492471c89d82ced6bd0b78921369df629"
+    },
+    {
+      "path": "phase-1-cleanup/test-repair/production-coverage/index.md",
+      "bytes": 6644,
+      "sha256": "a5c82dae702c98c637aee68d609c6428b0422a188cefffc748bfa30618a6340e"
+    },
+    {
+      "path": "phase-1-cleanup/test-repair/production-coverage/results/index.md",
+      "bytes": 10127,
+      "sha256": "195519b6868026ff9c164fbf752a72b170dfa8143140787ff88e4dd774bd2792"
+    },
+    {
+      "path": "phase-1-cleanup/test-repair/production-coverage/review/index.md",
+      "bytes": 7440,
+      "sha256": "052c1b33b340596e5ded19041e32acdb455d4c850eef056d4bea30782ca0924d"
+    },
+    {
+      "path": "phase-1-cleanup/test-repair/timestamp-assertion/index.md",
+      "bytes": 65,
+      "sha256": "41ceaeddc86dc6aa2a50d5e6a03d9987fbda3426b79fa1f3ce8cd851ecd7ec2e"
+    },
+    {
+      "path": "phase-1-cleanup/test-repair/timestamp-assertion/results/index.md",
+      "bytes": 6272,
+      "sha256": "2dcd30a3ee0bdf201f6db9b1e60c360e0836235c7a4ee94ce88dd4c4a679c79b"
+    },
+    {
+      "path": "phase-1-cleanup/test-repair/timestamp-assertion/review/index.md",
+      "bytes": 5049,
+      "sha256": "bfc4fcce177cd3e2fab1e0749cfeef36fac7081097edf4e4b5ca71f80cace151"
+    },
+    {
+      "path": "phase-2-contracts/closure/index.md",
+      "bytes": 4057,
+      "sha256": "dc07da376d45301490bd6ed2ddc34f6218206badb58ef5a28f959a7dca3220bc"
+    },
+    {
+      "path": "phase-2-contracts/index.md",
+      "bytes": 4882,
+      "sha256": "e2a25aca2f260012118563ba2c290944f98f933cbafa7c07cc7cc39ffe88acb1"
+    },
+    {
+      "path": "phase-2-contracts/preparation/context-and-replacement/index.md",
+      "bytes": 11872,
+      "sha256": "22a57e6530edfb18858c0ae185d4cbd7d40e4436e6a0df947fc3640e2554faac"
+    },
+    {
+      "path": "phase-2-contracts/preparation/index.md",
+      "bytes": 2163,
+      "sha256": "44f151c25e3347931cc9ee976ce78d1ea4d1283c7a2194888472b0c4fef978e9"
+    },
+    {
+      "path": "phase-2-contracts/preparation/source-fingerprints/index.md",
+      "bytes": 24471,
+      "sha256": "1fbd47f0cde51ebf35b3fe7a5a7e8c26c19a3f4657194ceced5fb7aca7eee386"
+    },
+    {
+      "path": "phase-2-contracts/tickets/chapter-replacement/finalization/index.md",
+      "bytes": 2266,
+      "sha256": "4d1c5e8a382fdff50e04173edde931efa4b25c9af53efd4acd9be8f6d19f422f"
+    },
+    {
+      "path": "phase-2-contracts/tickets/chapter-replacement/index.md",
+      "bytes": 2495,
+      "sha256": "468c9019308352c973cf6625c72cff0fd80698ba3a5803f5ec3005213378d2e3"
+    },
+    {
+      "path": "phase-2-contracts/tickets/chapter-replacement/results/index.md",
+      "bytes": 9815,
+      "sha256": "fe0498bc379381428acf6a7e8e4af92fec58f961cedba1c914ce7bff7269bc02"
+    },
+    {
+      "path": "phase-2-contracts/tickets/chapter-replacement/review/index.md",
+      "bytes": 8374,
+      "sha256": "cdb6b9cea8b1586b28639325df46a78d948d5631402095dd06880cbfe7f0fd87"
+    },
+    {
+      "path": "phase-2-contracts/tickets/context-frontier/index.md",
+      "bytes": 2446,
+      "sha256": "3355072c527b1c4440db55ae7b726a5b702535392a17f43e6df4eebe08e30827"
+    },
+    {
+      "path": "phase-2-contracts/tickets/context-frontier/results/index.md",
+      "bytes": 6399,
+      "sha256": "fd4561312e51e6cef5431fbe369ea3223c43fdc49696dfb424fe22c98a1a0167"
+    },
+    {
+      "path": "phase-2-contracts/tickets/context-frontier/review/index.md",
+      "bytes": 5344,
+      "sha256": "d3955108967ec37c4a654ff3da6566238473290aa50462e0a5ef23807c820663"
+    },
+    {
+      "path": "phase-2-contracts/tickets/diagnostic-ownership/index.md",
+      "bytes": 2851,
+      "sha256": "5627f923451d0547bc8701943f43b0f795f58c0f0e7b906013b58c073db64fa0"
+    },
+    {
+      "path": "phase-2-contracts/tickets/diagnostic-ownership/results/index.md",
+      "bytes": 6481,
+      "sha256": "7f27bf15ad2a22c093c441b32cc8fda7a7216e09c2a6ac0747526d1b00b54335"
+    },
+    {
+      "path": "phase-2-contracts/tickets/diagnostic-ownership/review/index.md",
+      "bytes": 4874,
+      "sha256": "89746e1c91c55c7d14bd14cb1108ab21311e5ecd7fb193301736d23707052ea2"
+    },
+    {
+      "path": "phase-2-contracts/tickets/index.md",
+      "bytes": 53,
+      "sha256": "1ef96f377b76b0af224d14f5014a99c6a3021d87d64bbb32b9735f4fa0eca227"
+    },
+    {
+      "path": "phase-2-contracts/tickets/source-fingerprints/index.md",
+      "bytes": 6257,
+      "sha256": "7df4eb8ae983abf255cb683557c7dd7a3054099e69e8c5f07f24e54fb7852f79"
+    },
+    {
+      "path": "phase-2-contracts/tickets/source-fingerprints/results/index.md",
+      "bytes": 15349,
+      "sha256": "43d721160cd8e08f0afd0b081fd291019a2563afa853be9e814d646c1f271b67"
+    },
+    {
+      "path": "phase-2-contracts/tickets/source-fingerprints/review/index.md",
+      "bytes": 9823,
+      "sha256": "21dee57d588c3fc858ac66ea6be6cc34ee21717921d1acd1bc6c64f1cad041af"
+    },
+    {
+      "path": "phase-2-contracts/tickets/source-fingerprints/revision/index.md",
+      "bytes": 2823,
+      "sha256": "6911921771cefdd60a2d4153dd34b0a62c214f7cee00ca99c6368cd0a9c5764b"
+    },
+    {
+      "path": "phase-2-contracts/tickets/typed-outcomes/finalization/index.md",
+      "bytes": 2074,
+      "sha256": "ab691fc08a1b6eee6d4cc72bf2e08f6c1c4c052d37fb611d73cd83613b7950b7"
+    },
+    {
+      "path": "phase-2-contracts/tickets/typed-outcomes/index.md",
+      "bytes": 5951,
+      "sha256": "c23546f94004fc89a7bd3b7d6ef6ed362f0cdb646a164cc01325f4e19f38a0d6"
+    },
+    {
+      "path": "phase-2-contracts/tickets/typed-outcomes/results/index.md",
+      "bytes": 15040,
+      "sha256": "53ee9bc032cd70d30fe68a836af9d2fe3da37e36c4900e3eddf3447bdbc584c6"
+    },
+    {
+      "path": "phase-2-contracts/tickets/typed-outcomes/review/index.md",
+      "bytes": 6299,
+      "sha256": "d172c3cd84bb4bbe27e4815a7ea64f5caa9e5a080853c44dd37bd90f724c253e"
+    },
+    {
+      "path": "phase-2-contracts/tickets/validation/index.md",
+      "bytes": 2583,
+      "sha256": "f00815424b7684bb348eb3d95a72517866ca8cbaa1fd6f43d5939f8c0b552e77"
+    },
+    {
+      "path": "phase-2-contracts/tickets/validation/results/index.md",
+      "bytes": 12270,
+      "sha256": "1708f253823c36ba6ccde0810e8262b6abd2d7b2d877f401873bee0f7c066b12"
+    },
+    {
+      "path": "phase-2-contracts/tickets/validation/review/index.md",
+      "bytes": 11062,
+      "sha256": "63eacd287f32415fc8895b3fdee2211661a3193eb45f1ec456958a7349df047b"
+    },
+    {
+      "path": "phase-2-instrumentation/index.md",
+      "bytes": 3822,
+      "sha256": "d3ebf8edb5984e180d769d220a59ded3f508e6e7ac7af468e47d44a8df6a128e"
+    },
+    {
+      "path": "phase-3-entry/index.md",
+      "bytes": 7090,
+      "sha256": "75ba4ff9db6f0f42e1c4a61dbdb6aa6bab543082d6fc4227c2d4bfc124338097"
+    },
+    {
+      "path": "phase-3-implementation/index.md",
+      "bytes": 10111,
+      "sha256": "00f3c9f1a19c12c16ea79281896b9e5d40496875ea25971e98a0ff09151dacd6"
+    },
+    {
+      "path": "phase-3-implementation/preparation/index.md",
+      "bytes": 57,
+      "sha256": "7d96260fa877c0b01ce3e889c9b4cd8abeb9c1338c40c1b1bdc07e13e1140cb7"
+    },
+    {
+      "path": "phase-3-implementation/preparation/overlap-source-audit/index.md",
+      "bytes": 17588,
+      "sha256": "810858dc86043edc5be578c4c64a815c04ea498ff8d85b6f5596bef74f7dd23b"
+    },
+    {
+      "path": "phase-3-implementation/tickets/consolidation/index.md",
+      "bytes": 1756,
+      "sha256": "1f1fbe4897267e07258db1ba31eeb5a2b1422ff9745ae35eaf9508cc10821e05"
+    },
+    {
+      "path": "phase-3-implementation/tickets/index.md",
+      "bytes": 53,
+      "sha256": "1ef96f377b76b0af224d14f5014a99c6a3021d87d64bbb32b9735f4fa0eca227"
+    },
+    {
+      "path": "phase-3-implementation/tickets/operation-types/index.md",
+      "bytes": 2546,
+      "sha256": "4e34f6ce57f9ee262e62d962abb8eb6fbdca1193f00dc8447ca3c73a841faf06"
+    },
+    {
+      "path": "phase-3-implementation/tickets/operation-types/results/index.md",
+      "bytes": 18738,
+      "sha256": "ecf6eeef964e9a1c7f198bdba0be2867cd55ef44869e44acecf2c13a9994b4e9"
+    },
+    {
+      "path": "phase-3-implementation/tickets/operation-types/review/index.md",
+      "bytes": 6251,
+      "sha256": "c0548818255096b5657300d7256b2cc613d4727f429f88cad2f9d5e052ce835d"
+    },
+    {
+      "path": "phase-3-implementation/tickets/owner-cutover/index.md",
+      "bytes": 4841,
+      "sha256": "fd977309351e116c03fecd91a2c3d5a7f20cf246ff02696a3a3ad94590d8d817"
+    },
+    {
+      "path": "phase-3-implementation/tickets/owner-cutover/preparation/index.md",
+      "bytes": 18040,
+      "sha256": "d276ba8ae43125144ff2f599659be4159830c47839a06ebeab54f0b6b2ab82d3"
+    },
+    {
+      "path": "phase-3-implementation/tickets/owner-cutover/preparation/review/coordinator/index.md",
+      "bytes": 5625,
+      "sha256": "b3374043b8fb88f6ee6c1f5de43d58fec6a2db735b1756238d21f4fbbc666295"
+    },
+    {
+      "path": "phase-3-implementation/tickets/owner-cutover/preparation/review/glm/index.md",
+      "bytes": 26724,
+      "sha256": "453a52e59285039e1a9978c37923a2e2c7681171a32893565be703c26b5b3761"
+    },
+    {
+      "path": "phase-3-implementation/tickets/owner-cutover/preparation/review/index.md",
+      "bytes": 8048,
+      "sha256": "d91179ab93280f0649f550cd145b5e5caee1e4fb99d0718c2c9e9af9bcf45e08"
+    },
+    {
+      "path": "phase-3-implementation/tickets/owner-cutover/review/coordinator/index.md",
+      "bytes": 11494,
+      "sha256": "cefa9c25672a0bd707dac2b81f44fe3a6ec92f731383fb854fda70a42866836a"
+    },
+    {
+      "path": "phase-3-implementation/tickets/owner-cutover/review/index.md",
+      "bytes": 16502,
+      "sha256": "818ba2a61bd57d709de9d2868e17baca330cbfad42a4761567f665d437c82249"
+    },
+    {
+      "path": "phase-3-implementation/tickets/owner-cutover/review/migration-recheck/index.md",
+      "bytes": 3460,
+      "sha256": "869d086b4390edfc46fe970b82e9b6e164e78964eacda84a90b1fc6d866db5f7"
+    },
+    {
+      "path": "phase-3-implementation/tickets/publication-policy/index.md",
+      "bytes": 2278,
+      "sha256": "38e73f9b1fe1c3a6c64250f4a3e77e368d288cdf214b4769a795a6dc0ad03bc4"
+    },
+    {
+      "path": "phase-3-implementation/tickets/publication-policy/results/index.md",
+      "bytes": 9299,
+      "sha256": "5ae2900ca94b16c96e76afea69592cb2eb846eca211565b3b28909f048fa8c84"
+    },
+    {
+      "path": "phase-3-implementation/tickets/publication-policy/review/index.md",
+      "bytes": 8891,
+      "sha256": "aadbad69ca87a6509797f88731dab23d8d2364f185805dc7c1aaeac9ae40a6cb"
+    },
+    {
+      "path": "phase-3-implementation/tickets/timeout-adapter/index.md",
+      "bytes": 2270,
+      "sha256": "5c46b2f531c5d572f3cabf25b14d854fd97ec813694202ec1da96a7167bb2c6b"
+    },
+    {
+      "path": "phase-3-implementation/tickets/timeout-adapter/results/index.md",
+      "bytes": 24310,
+      "sha256": "e960e9025d4ac4834a674c0f0b90f5463132e7973b854af091d04cff507ca7bb"
+    },
+    {
+      "path": "phase-3-implementation/tickets/timeout-adapter/review/index.md",
+      "bytes": 6634,
+      "sha256": "eed46d1c56e2bd7799cea429d60f501714213b2c4370be9a3fc8697768438393"
+    },
+    {
+      "path": "phase-3-implementation/tickets/writer-enrollment/index.md",
+      "bytes": 2357,
+      "sha256": "be729991aa9f380e621efad20125eec5f660e78f2db21f4dd6192abc46fb2244"
+    },
+    {
+      "path": "phase-3-implementation/tickets/writer-enrollment/results/index.md",
+      "bytes": 20153,
+      "sha256": "4513a85e58dab0e342d64e1c8acf8c3ba082d389e66341d52bda82945d3dce82"
+    },
+    {
+      "path": "phase-3-implementation/tickets/writer-enrollment/review/index.md",
+      "bytes": 7445,
+      "sha256": "411ec835deb48f843b900bcda9882cdabd243fb3eedfcf12f9ec49e7684206fb"
+    },
+    {
+      "path": "phase-3-implementation/validation-audit/index.md",
+      "bytes": 27758,
+      "sha256": "f9b9f35b21e9bf685e2b63ea9ca28a3accb690cf26519d017dc3f95add1089f3"
+    },
+    {
+      "path": "phase-3-litert-rec-migration/index.md",
+      "bytes": 13395,
+      "sha256": "33beb10ace6b78b14d0c03bb205cb0f13684c863c2d0ee2c16c89b097eb2017f"
+    },
+    {
+      "path": "phase-3-litert-rec-migration/review-litert-rec-seam/index.md",
+      "bytes": 8475,
+      "sha256": "ea60da52df4b664d6f2aada8a39e7d9e03279776cc8f212a8b57ffddd08ba47f"
+    },
+    {
+      "path": "phase-3-planning/entry-review/index.md",
+      "bytes": 14544,
+      "sha256": "fe6301f6003fb17964cf0501dfd84edbad5f765528c8f7c53e24f06df6d88366"
+    },
+    {
+      "path": "phase-3-planning/index.md",
+      "bytes": 12873,
+      "sha256": "72e98e97573106710beb3fc30de99ea022bac14b6c605727c568074dd3644fe7"
+    },
+    {
+      "path": "phase-3-planning/ownership-options-review/index.md",
+      "bytes": 21996,
+      "sha256": "e1483e43debcf439a587e445acc07b7c0ab3f0acc2abafbcc20603f491532a9c"
+    },
+    {
+      "path": "phase-3-planning/ownership-options/index.md",
+      "bytes": 20953,
+      "sha256": "34cdf8f7ff12081deb17859f85e054c083bc173304e3491d06642d0efed93deb"
+    },
+    {
+      "path": "phase-3-planning/plan-review/index.md",
+      "bytes": 10446,
+      "sha256": "382588ac2b0e944270f47c64a62b99473137517ef2e793808beb2f1b4174a82b"
+    },
+    {
+      "path": "phase-3-planning/plan/index.md",
+      "bytes": 32929,
+      "sha256": "28107e6b0918b123213366642934198a32c11231397c4d871b0d861116fddee0"
+    },
+    {
+      "path": "phase-4-litert-det-migration/index.md",
+      "bytes": 10039,
+      "sha256": "ac27e6eaa2db2c41359a2b98cfa28e7b86d6e4bc6c68018c77aa4048992d137e"
+    },
+    {
+      "path": "phase-4-litert-det-migration/review-phase4-phase2-seam/index.md",
+      "bytes": 11248,
+      "sha256": "861c6b2b858632304a8a0c93e07a6ba42e33a558b261c776db09360195b99132"
+    },
+    {
+      "path": "phase-5-on-device-telemetry-benchmarking/index.md",
+      "bytes": 3113,
+      "sha256": "588c1b6242aaf1ee69f12cee8c48666ccf3f574f7860d3ff1154e93c794a7129"
+    },
+    {
+      "path": "phase-6-gpu-monolithic-surgery/index.md",
+      "bytes": 9766,
+      "sha256": "9a70cc16eaa407276c6e250c22a5818eac32e1f5d9def6127a95a2edb16f3958"
+    },
+    {
+      "path": "phase-7-production-apk-wiring/index.md",
+      "bytes": 5950,
+      "sha256": "2de91b19c3f02096f7f49503ee2a35ba2807268f25fe30da233ca3520d820db0"
+    },
+    {
+      "path": "pipeline-efficiency-audit/evidence-register/index.md",
+      "bytes": 23552,
+      "sha256": "44dcbfd169c679e8ca28b79979118bfd168434568562d25a06ee07b56688444a"
+    },
+    {
+      "path": "pipeline-efficiency-audit/index.md",
+      "bytes": 14171,
+      "sha256": "559bf4be5ad7d930a3aea6896da2662888b1ba69b96ebe3c6d76079b094c913d"
+    },
+    {
+      "path": "pipeline-efficiency-audit/measurement-plan/analyze_wall_budget.py",
+      "bytes": 21030,
+      "sha256": "d1bcf9da86b27315f96cce70f3439d63e5c4a22e6889b5f614be5c4ab3161af6"
+    },
+    {
+      "path": "pipeline-efficiency-audit/measurement-plan/index.md",
+      "bytes": 4676,
+      "sha256": "70ca5b51348c6695be2ce27ec133d3f11d51f1aa69ef3fa0e075be808060628c"
+    },
+    {
+      "path": "pipeline-efficiency-audit/reader-entry/chapter-list/index.md",
+      "bytes": 11976,
+      "sha256": "4ec761ddfb4f23671f4e85f1c9a87cbc2aa67c91799dee0fa04be868e670e266"
+    },
+    {
+      "path": "pipeline-efficiency-audit/reader-entry/index.md",
+      "bytes": 16925,
+      "sha256": "5dd160ed8dcad01dd03c984c9ee9cba7680094fdea4a42ffd1a44514416c842f"
+    },
+    {
+      "path": "pipeline-efficiency-audit/reader-entry/persisted-reader/index.md",
+      "bytes": 15013,
+      "sha256": "b0febcd3ff58545bb4d421f5c8d60786b541258f7dcbdaf11daacceb2aa22970"
+    },
+    {
+      "path": "pipeline-efficiency-audit/round-2/auto-reader-investigation/index.md",
+      "bytes": 20335,
+      "sha256": "fb97770b85cacf4140ec1ef5064393e4d0e1cb703d1dd87c951319cf53259442"
+    },
+    {
+      "path": "pipeline-efficiency-audit/round-2/index.md",
+      "bytes": 5799,
+      "sha256": "56e3344aac8b7c1194550e4cef647542a88bf82bb18198809d55b873ddc70378"
+    },
+    {
+      "path": "pipeline-efficiency-audit/round-2/settings-investigation/index.md",
+      "bytes": 19735,
+      "sha256": "3d4a48e484e2268c8ad4516ac3e44d8f36994170ca271a7fef5e70966265c6c7"
+    },
+    {
+      "path": "pipeline-efficiency-audit/round-2/verified-follow-up/index.md",
+      "bytes": 30890,
+      "sha256": "25cb2dc2fee14d66e43485d32d4889b28b4de060fa9941346fdc35b00360e145"
+    },
+    {
+      "path": "store-baseline-investigation/index.md",
+      "bytes": 5977,
+      "sha256": "63b18d66138a0d6c57eb6e41bc26de12d15511cd6200c2301c07fb1a4a85c45a"
+    },
+    {
+      "path": "store-baseline-investigation/investigation-plan/index.md",
+      "bytes": 16760,
+      "sha256": "3f0ba7748237b838e87f1025bb36783adc8aab1c58b7449f1524031422f5219d"
+    },
+    {
+      "path": "store-baseline-investigation/investigation-plan/review/index.md",
+      "bytes": 9603,
+      "sha256": "be700ef0e10c46a80b65dfe066648b362df0a5657474ef2da2436e85a2aa05f3"
+    },
+    {
+      "path": "store-baseline-investigation/repair/closure/index.md",
+      "bytes": 2795,
+      "sha256": "fa29da8d4e8127e8c7a02e4306dfa2e40bd77b3554a07dee2dc8fb04c7597df7"
+    },
+    {
+      "path": "store-baseline-investigation/repair/full-rebaseline/final-results/index.md",
+      "bytes": 6616,
+      "sha256": "e419ee9fe41a95f779f8f3c00cb50dc67956aed00ea4390ef59f94a95018e19c"
+    },
+    {
+      "path": "store-baseline-investigation/repair/full-rebaseline/final-review/index.md",
+      "bytes": 13336,
+      "sha256": "7c7679bf041a36a20812db5d2457c3b4245736b82b5ad40c1897ff7f936b1bdb"
+    },
+    {
+      "path": "store-baseline-investigation/repair/full-rebaseline/index.md",
+      "bytes": 61,
+      "sha256": "1972a4a436f1000a1b98bfd17b29a95337636e15e8fd752d5264983c3a3b0754"
+    },
+    {
+      "path": "store-baseline-investigation/repair/full-rebaseline/results/index.md",
+      "bytes": 7416,
+      "sha256": "cb1757514600107c2dcd30d319260ccd57575e238ac4191719c0509c7dc8db62"
+    },
+    {
+      "path": "store-baseline-investigation/repair/index.md",
+      "bytes": 4215,
+      "sha256": "e7ac7c99dda1757cb95f206663e8861565022aca97c959fedd1d309a3ca012f5"
+    },
+    {
+      "path": "store-baseline-investigation/repair/results/index.md",
+      "bytes": 6193,
+      "sha256": "d0b112c73cfcf171249606e106d00a98e9e1c3762bba50e3e68e54c105ad96f9"
+    },
+    {
+      "path": "store-baseline-investigation/repair/review/index.md",
+      "bytes": 8389,
+      "sha256": "e9c60ae466972151dbc046711133640fde5f83f31c062747f05980c2cc20814b"
+    },
+    {
+      "path": "store-baseline-investigation/repair/trace-disposition/code-review/index.md",
+      "bytes": 10757,
+      "sha256": "831b1ed6f9392825a518daceef920972f88985936c47f559115038d05029fdb0"
+    },
+    {
+      "path": "store-baseline-investigation/repair/trace-disposition/index.md",
+      "bytes": 2754,
+      "sha256": "f7e0d889ae1d65ec8028ebde9db06562f1345e57f8080a0029d5547411f84d32"
+    },
+    {
+      "path": "store-baseline-investigation/repair/trace-disposition/plan/index.md",
+      "bytes": 7980,
+      "sha256": "34a6be693a2b04d2bffb8281dd1950cccd294d887114c57717831df4b924c99b"
+    },
+    {
+      "path": "store-baseline-investigation/repair/trace-disposition/results/index.md",
+      "bytes": 8554,
+      "sha256": "bb17b4947fac69cd8d91853d942af32c7798d613b6b78cdd036c7b52fe617ced"
+    },
+    {
+      "path": "store-baseline-investigation/repair/trace-disposition/review/index.md",
+      "bytes": 8802,
+      "sha256": "211b0f5881a560afc96774e2d3e98abf98b170becf9799b735185360a156c09c"
+    },
+    {
+      "path": "store-baseline-investigation/results/index.md",
+      "bytes": 16958,
+      "sha256": "a3d09d1dfe9fd885c4f1de0d0fb510e40d36794ae3c729a74f8a06c3e12d98f9"
+    },
+    {
+      "path": "store-baseline-investigation/review/index.md",
+      "bytes": 14804,
+      "sha256": "d67b46c8be09280f23b65f9eaced91f49bcea1cd86c32fafa83c6ec21ed879aa"
+    },
+    {
+      "path": "translation-simplicity-investigation/behavior-ledger/index.md",
+      "bytes": 7184,
+      "sha256": "cc65386ed2cd46e9d3d39a7dd656290e83d8f55b364de110e1c826081d335a7a"
+    },
+    {
+      "path": "translation-simplicity-investigation/index.md",
+      "bytes": 17611,
+      "sha256": "b69ffe48e2ee58e3d6b8d095b0cd7baa939626b79ce5cdf3349eae5170d37fe8"
+    },
+    {
+      "path": "translation-simplicity-investigation/mechanisms/index.md",
+      "bytes": 12139,
+      "sha256": "3a2097dd6e7f6f284880ee16be07518dd9db4e5302f620f43566527a568f7bb1"
+    },
+    {
+      "path": "translation-simplicity-investigation/phases/index.md",
+      "bytes": 14367,
+      "sha256": "c6efd73e2869fa097568bc26b54002c9f15637b3bd66468bd891a905fa2c280b"
+    },
+    {
+      "path": "translation-step1-plan/boundaries-and-bridges/index.md",
+      "bytes": 17841,
+      "sha256": "4564c1e9827287245ac6ea016a05ebac9a1cb704d5f5eef5127e0eb99a687978"
+    },
+    {
+      "path": "translation-step1-plan/commits/index.md",
+      "bytes": 15005,
+      "sha256": "1cc17555b7623c5b32a34ec1062be23d9a9375b8f19247964cec2f509e2e0a26"
+    },
+    {
+      "path": "translation-step1-plan/critique-response/index.md",
+      "bytes": 7694,
+      "sha256": "eb1c97004aeb5e66f308a7ccf7153dd0306fb977d63171bf62fe9d83754a419d"
+    },
+    {
+      "path": "translation-step1-plan/final-review/index.md",
+      "bytes": 8819,
+      "sha256": "9640e3a64b381f7d62ffcbd48caa7a34a6487ae6187c1de7ad7af6c328c722d8"
+    },
+    {
+      "path": "translation-step1-plan/independent-review/index.md",
+      "bytes": 15675,
+      "sha256": "d37923ffa2c2820849ae0a834f62df23a9eb3bec990fd59413f3203e881ffc7b"
+    },
+    {
+      "path": "translation-step1-plan/index.md",
+      "bytes": 23120,
+      "sha256": "b4cd3e3dee21f07d7220e441bfbe5f387c762909415f19b3939abfe074a1b5d6"
+    },
+    {
+      "path": "translation-step1-plan/production-manifest/index.md",
+      "bytes": 14246,
+      "sha256": "0d2d6ccf319f17895c9e1ff0add0a03a514f4a7e78c843935c811558632b6250"
+    },
+    {
+      "path": "translation-step1-plan/reader-queue/index.md",
+      "bytes": 18089,
+      "sha256": "d3b6bec14f104610a157716e6539af1d63425ddff983a6ccfcc05f1167a146fb"
+    },
+    {
+      "path": "translation-step1-plan/single-page/index.md",
+      "bytes": 33058,
+      "sha256": "6cbe1ed555d66eb61808850aeb82dc3854afc8705831c23ab402f6faaf149b59"
+    },
+    {
+      "path": "translation-step1-plan/test-manifest/index.md",
+      "bytes": 21037,
+      "sha256": "6fc6f476dd320e15d7caeb30fc45a099659e3aadbd1de25034ec127d375d444f"
+    }
+  ],
+  "validation": [
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/dev-tests/guarded-run.log",
+      "bytes": 17241,
+      "sha256": "1fcb03e62707d11560a6d920f06d52d9df70e98920fdbf8e811db4ce47ae4aee"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/dev-tests/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/dev-tests/xml/TEST-eu.kanade.translation.pipeline.AttemptAuthorityTest.xml",
+      "bytes": 1459,
+      "sha256": "fc5fc563ac7fd7876403a269013866dbe7734dfe0435f0f55ca047dca70c4d13"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/dev-tests/xml/TEST-eu.kanade.translation.pipeline.CleanedOwnerTest.xml",
+      "bytes": 2434,
+      "sha256": "925b0def935ecb6447335bc2e595a5b618d71ab8f44a3e1046b92b6dd4acc4b1"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/EVIDENCE_ROOT.txt",
+      "bytes": 182,
+      "sha256": "b961f095c7590fe3b40be47ecef47bd6ab5a814b20abdd4fe1c57e0ee8d4f24d"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/format/spotless-check.log",
+      "bytes": 3946,
+      "sha256": "28eb3c8c6ffa952e4432471b110a269c66b78184448e6b6e6ee9e94e6e678ce3"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/guarded-run.log",
+      "bytes": 38,
+      "sha256": "bede1669ea471ca0dab32335b76050fac2d39b5d6356c1c97cdb2b07a272d426"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/RECOVERY-PROVENANCE.md",
+      "bytes": 2070,
+      "sha256": "ddf31edc2f21acf640864896fbba5b82fd22f2eff4d84f0ba83ca276c6334458"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/dev-tests/guarded-run.log",
+      "bytes": 17241,
+      "sha256": "a09c7fb330c61549042f321f0d7e305370e1ee16f3ddb53862621e383816c786"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/dev-tests/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/dev-tests/xml/TEST-eu.kanade.translation.pipeline.AttemptAuthorityTest.xml",
+      "bytes": 1457,
+      "sha256": "bed928fcf7929278847d67ff88a40d0c212eaf365589a45531c157f1430aeffb"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/dev-tests/xml/TEST-eu.kanade.translation.pipeline.CleanedOwnerTest.xml",
+      "bytes": 2604,
+      "sha256": "fa2672c62f8c8e20ea5a4c9d19399d809b3cd43f73429728732422986f6d7946"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/format/guarded-run.init-missing.log",
+      "bytes": 471,
+      "sha256": "6cf54a12eb6bfc8c7e455c49256131078125aa6de07f68bc9e110932ea9575e6"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/format/guarded-run.log",
+      "bytes": 3946,
+      "sha256": "b9f743d450779b6943dd2f783d39000ffcc7081b036450419a3f1bd33481cf3e"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/format/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/std-tests/guarded-run.log",
+      "bytes": 17386,
+      "sha256": "a40cb1f4bec0cdfbbadbe663aa8de4827b26c4b884c12c3a5c42184de9fe6d93"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/std-tests/guarded-run.revision-attempt1-scopefail.log",
+      "bytes": 18085,
+      "sha256": "e098c50559975c077ba1a44e8173a11f60aeceb0068997d6dd02f6dea614fc85"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/std-tests/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/std-tests/xml/TEST-eu.kanade.translation.pipeline.AttemptAuthorityTest.xml",
+      "bytes": 1459,
+      "sha256": "cb9b6afa433148645bf23d753857b3e7ffbb37b83f303aa700716009fd34fdff"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/revision-r1/std-tests/xml/TEST-eu.kanade.translation.pipeline.CleanedOwnerTest.xml",
+      "bytes": 2605,
+      "sha256": "7171ece059f8c772973594936ddd8871f546df825861906a66704fd45058aa8b"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/s1-guarded-run.sh",
+      "bytes": 9462,
+      "sha256": "a991b9c968ee00a7994f732b6b7bd7dd302fde7d2830da98196908575eef4ada"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/selftest/S1SelftestSleep.java",
+      "bytes": 132,
+      "sha256": "7357e94e5b48e5d9b2b7cf5f86ec550ead8ba0ffe3dd1823529dda8e46641e6d"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-compile/compile-both-flavors.log",
+      "bytes": 34156,
+      "sha256": "fa195fc897a7908a3575dccb7366ae002149e75491950bd8eed148138ea266d6"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-tests/guarded-run.attempt4-initfail.log",
+      "bytes": 679,
+      "sha256": "e1ff58f7fbb7493ff4fff41cf1d646a61d4aa2ecfb1c90c1c081eccbd72d4ca5"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-tests/guarded-run.attempt5-staleinit.log",
+      "bytes": 682,
+      "sha256": "8b2baa613ba004266de90c4e97c592ee2d3fe3be9274312663ae92d98221861f"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-tests/guarded-run.log",
+      "bytes": 17386,
+      "sha256": "6da157678ef8fbf09f2fd1cf5d8dcf213aba06bc8e858773118b7fc2c44c7d51"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-tests/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-tests/test-std-attempt2.log",
+      "bytes": 26072,
+      "sha256": "961614c08e0e076c20f9a2048cac191a5efe8ae097acad4acc903dfcd37e4c0d"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-tests/test-std.log",
+      "bytes": 19543,
+      "sha256": "8fc8cb9d0df64f87921e5e436c27d91284fd645f4715d536dd9336bfe4c7738c"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-tests/xml/TEST-eu.kanade.translation.pipeline.AttemptAuthorityTest.xml",
+      "bytes": 1459,
+      "sha256": "17ad908956827c43dd8731142554707d2eb3f6c8342f4578589c6f2c0ec551d3"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/std-tests/xml/TEST-eu.kanade.translation.pipeline.CleanedOwnerTest.xml",
+      "bytes": 2434,
+      "sha256": "bdf7176b6f1d6c55f057cb5aa6c90656bab70e5dcc24f1f3840d61d61545db92"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/worker-dump.txt",
+      "bytes": 5985,
+      "sha256": "815dac2969c9cab44e02911dbd40601067e66e7054ae21c2d8b11df4ba444b51"
+    },
+    {
+      "path": "phase-3-s1/2026-10-15T20-08-45Z/worker-dump.txt.candidates",
+      "bytes": 40,
+      "sha256": "bbb63e7140f7ee8dda6092183eac582099d52e0bec26de408d6d50647b83abf4"
+    },
+    {
+      "path": "phase-3-s2/attempt-1-std/guarded-run.init-name-mismatch.log",
+      "bytes": 445,
+      "sha256": "a7ed5da45be1fb107aee25da2ca4855691f2a85bf7df7d60014b7aba8338e34c"
+    },
+    {
+      "path": "phase-3-s2/attempt-1-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s2/attempt-3-std/guarded-run.log",
+      "bytes": 22002,
+      "sha256": "38724a29ab7600b4289b717888e336245429d64133f2e1523e39b3a61a5ba0ee"
+    },
+    {
+      "path": "phase-3-s2/attempt-3-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s2/attempt-3-std/xml/TEST-eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest.xml",
+      "bytes": 15495,
+      "sha256": "daa4c4a6f2eb4de0d566b89c16335934eba5b321f3b3e45b405e9285a4bbc313"
+    },
+    {
+      "path": "phase-3-s2/attempt-3-std/xml/TEST-eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest.xml",
+      "bytes": 2635,
+      "sha256": "f754efcee9d5c36a50cfd1ef4161f948c7a5b6e743839d85a3d58f906441d036"
+    },
+    {
+      "path": "phase-3-s2/attempt-4-std/guarded-run.log",
+      "bytes": 17386,
+      "sha256": "4535fb7eb9caa781b3bf059128a9f5912e87807e24d9fd726fa8a327d8376a8b"
+    },
+    {
+      "path": "phase-3-s2/attempt-4-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s2/attempt-4-std/xml/TEST-eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest.xml",
+      "bytes": 3401,
+      "sha256": "3807c91aeca17fc576b59526227914b72fa775d794756188cf2f47c5dd7b574e"
+    },
+    {
+      "path": "phase-3-s2/attempt-4-std/xml/TEST-eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest.xml",
+      "bytes": 2637,
+      "sha256": "91b9d0a1ac45ffbad730dcd4b6a835e453625f6cecaaafb237438593d5908c25"
+    },
+    {
+      "path": "phase-3-s2/attempt-5-dev/guarded-run.log",
+      "bytes": 21219,
+      "sha256": "47f759a29a9e3f1bbd726fb9aa58ae4bf056c6db39b3a11ff23636f9ce1a4fb7"
+    },
+    {
+      "path": "phase-3-s2/attempt-5-dev/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s2/attempt-5-dev/xml/TEST-eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest.xml",
+      "bytes": 3401,
+      "sha256": "9bd0921982760265e677d39daa2ebd41179a1ab938a4d6b78953d58a935a5f9d"
+    },
+    {
+      "path": "phase-3-s2/attempt-5-dev/xml/TEST-eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest.xml",
+      "bytes": 2636,
+      "sha256": "a478960437412f4f4452bdfb2d1f55d7fd4e874d750856e1e86102bc68f761f5"
+    },
+    {
+      "path": "phase-3-s2/format/spotless-check.log",
+      "bytes": 6340,
+      "sha256": "62571ff0541a43f91eb14eb37e4eac407964745f4d8cd8a1c40a45a08ce5988a"
+    },
+    {
+      "path": "phase-3-s2/format-r1/spotless-check.log",
+      "bytes": 5781,
+      "sha256": "b3a199dbf312a7f7c6c1c4e0c859c027ce871760a4ad934dbc550351c6934bba"
+    },
+    {
+      "path": "phase-3-s2/format-r1-2/spotless-check.log",
+      "bytes": 3946,
+      "sha256": "c8ff10c6d8f9b80e36324cd51fd63740c4eb1d65bb8a957d01700d6f052969f0"
+    },
+    {
+      "path": "phase-3-s2/r1-dev/guarded-run.log",
+      "bytes": 17241,
+      "sha256": "361a590085db430302ddb582be8f195011a4738abf94467757e4501197753217"
+    },
+    {
+      "path": "phase-3-s2/r1-dev/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s2/r1-dev/xml/TEST-eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest.xml",
+      "bytes": 3636,
+      "sha256": "aaf0ad9a3220821cf80da683e97fa4bf29fd8726c0002e8cf79da5c1c69054c6"
+    },
+    {
+      "path": "phase-3-s2/r1-dev/xml/TEST-eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest.xml",
+      "bytes": 2637,
+      "sha256": "fefbfa3af3e0adbdbca2b9ae4e950f8eda65c3fca587a9f54d6a48103490ada2"
+    },
+    {
+      "path": "phase-3-s2/r1-std/guarded-run.attempt1-awaiter-race.log",
+      "bytes": 18106,
+      "sha256": "67b22a73aef3dddfdf1db23302a93a33eb60a22dd1f892267d78d0335dc7ce2b"
+    },
+    {
+      "path": "phase-3-s2/r1-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s2/r1-std/xml/TEST-eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest.xml",
+      "bytes": 15339,
+      "sha256": "d459c7651c479051db2713af988b8cacc748bbb2d64d18b627c87689f96537c0"
+    },
+    {
+      "path": "phase-3-s2/r1-std/xml/TEST-eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest.xml",
+      "bytes": 2633,
+      "sha256": "b8e0bdb1d63f06e03c18a8c28207e4f04112024286d1cd009f30e3fe98f91712"
+    },
+    {
+      "path": "phase-3-s2/r1-std-2/guarded-run.log",
+      "bytes": 17386,
+      "sha256": "ebb980a5a672c5753ba257c68233cae3ac5294042abe142fa8a3919231f81cbe"
+    },
+    {
+      "path": "phase-3-s2/r1-std-2/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s2/r1-std-2/xml/TEST-eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest.xml",
+      "bytes": 3635,
+      "sha256": "e5096cf22f5ffbdcec4af821a1625cc5e417f059f467e243401226c4142df3ff"
+    },
+    {
+      "path": "phase-3-s2/r1-std-2/xml/TEST-eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest.xml",
+      "bytes": 2637,
+      "sha256": "e0e6ce4bd7430b30625b4cd017c857a8e59deb99e7b1bf42baee629a493f3149"
+    },
+    {
+      "path": "phase-3-s2/s2-guarded-run.sh",
+      "bytes": 9462,
+      "sha256": "a991b9c968ee00a7994f732b6b7bd7dd302fde7d2830da98196908575eef4ada"
+    },
+    {
+      "path": "phase-3-s3/attempt-1-std/guarded-run.log",
+      "bytes": 15871,
+      "sha256": "cef7d1e9694006565d8c95c62477a1f5ddcb68f4cc091b47f6423166d8547ed6"
+    },
+    {
+      "path": "phase-3-s3/attempt-1-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s3/attempt-2-std/guarded-run.log",
+      "bytes": 28190,
+      "sha256": "906fff36f5ac5c18e02205b8a8b1f23bb4b20aa14bd16743248fe1eb982309fe"
+    },
+    {
+      "path": "phase-3-s3/attempt-2-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s3/attempt-2-std/xml/TEST-eu.kanade.translation.pipeline.EngineLaneTimeoutAdapterTest.xml",
+      "bytes": 1672,
+      "sha256": "92c5049c2aac9a628ad59138308c3a501348ccc17589f971db2501219c9421b7"
+    },
+    {
+      "path": "phase-3-s3/attempt-2-std/xml/TEST-eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest.xml",
+      "bytes": 736,
+      "sha256": "8b161653e1cbd931b326a5a9bf1efd0c7371079910fef01cfe1c896530bb7483"
+    },
+    {
+      "path": "phase-3-s3/final-2-dev/guarded-run.log",
+      "bytes": 17399,
+      "sha256": "e546cd7be3401fa0ee14eb7405e840d788630474cf00d44e2f10d86a185a235c"
+    },
+    {
+      "path": "phase-3-s3/final-2-dev/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s3/final-2-dev/xml/TEST-eu.kanade.translation.pipeline.EngineLaneTimeoutAdapterTest.xml",
+      "bytes": 1673,
+      "sha256": "806d58216ce8d7ab9e1c44b125ab770c284543aa3d503fa5ac35e33ed901fa22"
+    },
+    {
+      "path": "phase-3-s3/final-2-dev/xml/TEST-eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest.xml",
+      "bytes": 736,
+      "sha256": "1e2e9f304e35756d7fe4546102d8d913c630d530644cce6254a6dfe1f7d48fae"
+    },
+    {
+      "path": "phase-3-s3/final-2-std/guarded-run.log",
+      "bytes": 17386,
+      "sha256": "6fd0b624c39897ddc6b7d26ffc220afc9db68b4d395c49b91a9c7845d3aa7110"
+    },
+    {
+      "path": "phase-3-s3/final-2-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s3/final-2-std/xml/TEST-eu.kanade.translation.pipeline.EngineLaneTimeoutAdapterTest.xml",
+      "bytes": 1672,
+      "sha256": "fd8b3ca406819064045bef590397a915cb9345502390e82e7b08be5b07fd2fd8"
+    },
+    {
+      "path": "phase-3-s3/final-2-std/xml/TEST-eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest.xml",
+      "bytes": 736,
+      "sha256": "8456ecad932f522aa610f22e7612ba9cac4fcb74d7fe0a1b3d62fc5e26cdf979"
+    },
+    {
+      "path": "phase-3-s3/final-dev/guarded-run.log",
+      "bytes": 48065,
+      "sha256": "6551809df64454cd91fdcea1d82e130eb9c30087afe74146620f481f79410f96"
+    },
+    {
+      "path": "phase-3-s3/final-dev/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s3/final-dev/xml/TEST-eu.kanade.translation.pipeline.EngineLaneTimeoutAdapterTest.xml",
+      "bytes": 1671,
+      "sha256": "4863fd864a12c41a7cfb31c2edd2ab570c1a95e479fff670a4cfad20da16f2b4"
+    },
+    {
+      "path": "phase-3-s3/final-dev/xml/TEST-eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest.xml",
+      "bytes": 736,
+      "sha256": "20163fc43125b167dd3d259cbe78ab941164b945fa8511c2e45a3595d863491b"
+    },
+    {
+      "path": "phase-3-s3/final-std/guarded-run.log",
+      "bytes": 16874,
+      "sha256": "a6eecffd0724ed4b09100dcc6762f427c582c2b40ecc1732cf448d3924aefbb8"
+    },
+    {
+      "path": "phase-3-s3/final-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s3/final-std/xml/TEST-eu.kanade.translation.pipeline.EngineLaneTimeoutAdapterTest.xml",
+      "bytes": 1672,
+      "sha256": "4168faf38fa78f3ffe86976a44265aea8153ba00c15a3770c75ed2f7d33d5106"
+    },
+    {
+      "path": "phase-3-s3/final-std/xml/TEST-eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest.xml",
+      "bytes": 736,
+      "sha256": "22c8915970e2730bcd14b9ce21dfbca866f3061a3a96b2dc1d4b157e11daf76f"
+    },
+    {
+      "path": "phase-3-s3/format/preflight.txt",
+      "bytes": 13,
+      "sha256": "4c37d61095d0015745c7ec6af54f19fb3a964e710a5ce289958fdd3050f4027b"
+    },
+    {
+      "path": "phase-3-s3/format/spotless-check.log",
+      "bytes": 5620,
+      "sha256": "d133259b44bc3a64121033376004010725bb910753d563d2e212c45e06b42cfe"
+    },
+    {
+      "path": "phase-3-s3/format-2/exit.txt",
+      "bytes": 16,
+      "sha256": "b6b731ff76aae3367a0e87e0efe2cd98e8439b2ed489aa30701ecf4111fd29a3"
+    },
+    {
+      "path": "phase-3-s3/format-2/preflight.txt",
+      "bytes": 13,
+      "sha256": "4c37d61095d0015745c7ec6af54f19fb3a964e710a5ce289958fdd3050f4027b"
+    },
+    {
+      "path": "phase-3-s3/format-2/spotless-check.log",
+      "bytes": 3945,
+      "sha256": "c170538adfaf4ec7613f4596bb4743cde70595bfc5e282ca5f86fbe3add7916e"
+    },
+    {
+      "path": "phase-3-s3/format-r1/exit.txt",
+      "bytes": 16,
+      "sha256": "b6b731ff76aae3367a0e87e0efe2cd98e8439b2ed489aa30701ecf4111fd29a3"
+    },
+    {
+      "path": "phase-3-s3/format-r1/spotless-check.log",
+      "bytes": 3945,
+      "sha256": "c170538adfaf4ec7613f4596bb4743cde70595bfc5e282ca5f86fbe3add7916e"
+    },
+    {
+      "path": "phase-3-s3/r1-devdebug/guarded-run.log",
+      "bytes": 17211,
+      "sha256": "04866b770c9c8a1b612a117c12fc76bf7f09c25cdc94330a064adbba238cd895"
+    },
+    {
+      "path": "phase-3-s3/r1-devdebug/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s3/r1-devdebug/xml/TEST-eu.kanade.translation.pipeline.EngineLaneTimeoutAdapterTest.xml",
+      "bytes": 1673,
+      "sha256": "a4a2b065d06ad94d5f6ed62002437c61175ffd9555c15104b2e0111ac95120e3"
+    },
+    {
+      "path": "phase-3-s3/r1-devdebug/xml/TEST-eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest.xml",
+      "bytes": 736,
+      "sha256": "1bdd5ff822190d2ec418ffc6e7159759f87b148f182b8688b576e82b171c5a76"
+    },
+    {
+      "path": "phase-3-s3/r1-std/guarded-run.log",
+      "bytes": 17386,
+      "sha256": "8bff48abdd55a6bc4b1bd7b8a259db6ae58e3f352735150b40211e044cdcaa13"
+    },
+    {
+      "path": "phase-3-s3/r1-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s3/r1-std/xml/TEST-eu.kanade.translation.pipeline.EngineLaneTimeoutAdapterTest.xml",
+      "bytes": 1672,
+      "sha256": "56d5a8c7327aaaffaaa7eeddc004bdd03b7c246601db1dcda017b34acd6603e7"
+    },
+    {
+      "path": "phase-3-s3/r1-std/xml/TEST-eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest.xml",
+      "bytes": 735,
+      "sha256": "99067475a0c9709d1795d1aba12794cd6428e2b37b9d39e34ab9bb953cd5f789"
+    },
+    {
+      "path": "phase-3-s3/s3-guarded-run.sh",
+      "bytes": 9462,
+      "sha256": "a991b9c968ee00a7994f732b6b7bd7dd302fde7d2830da98196908575eef4ada"
+    },
+    {
+      "path": "phase-3-s4/format-s4/exit.txt",
+      "bytes": 16,
+      "sha256": "b6b731ff76aae3367a0e87e0efe2cd98e8439b2ed489aa30701ecf4111fd29a3"
+    },
+    {
+      "path": "phase-3-s4/format-s4/spotless-check.log",
+      "bytes": 3946,
+      "sha256": "c8ff10c6d8f9b80e36324cd51fd63740c4eb1d65bb8a957d01700d6f052969f0"
+    },
+    {
+      "path": "phase-3-s4/s4-devdebug/guarded-run.log",
+      "bytes": 21077,
+      "sha256": "4d7a821083f732a1660eeabd6356c3033723cdac3169315ccfdbdac85d4f2ae8"
+    },
+    {
+      "path": "phase-3-s4/s4-devdebug/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s4/s4-devdebug/xml/TEST-eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest.xml",
+      "bytes": 3639,
+      "sha256": "df31e383e6c7c612de92636ef5daef0bf0bbd758bad808c9caa154e091221e29"
+    },
+    {
+      "path": "phase-3-s4/s4-devdebug/xml/TEST-eu.kanade.translation.persistence.chapter.CleanedImagePublisherTest.xml",
+      "bytes": 2485,
+      "sha256": "f539a2a8e294cfff521cf74db892f6e9c279abe1d567bbe9afbf1f07075164c2"
+    },
+    {
+      "path": "phase-3-s4/s4-guarded-run.sh",
+      "bytes": 9462,
+      "sha256": "a991b9c968ee00a7994f732b6b7bd7dd302fde7d2830da98196908575eef4ada"
+    },
+    {
+      "path": "phase-3-s4/s4-std/guarded-run.log",
+      "bytes": 21197,
+      "sha256": "24cc9911eaa3efcc3e59b14d6bab155150026a38ca435a261cdb3779626bc658"
+    },
+    {
+      "path": "phase-3-s4/s4-std/s1-runid-init.gradle",
+      "bytes": 1179,
+      "sha256": "693c86303f0baffb887ce45f846a8f5177538ac8b10cff4775b45327f1fdd2d9"
+    },
+    {
+      "path": "phase-3-s4/s4-std/xml/TEST-eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest.xml",
+      "bytes": 3639,
+      "sha256": "5bdeb9c44d32e2be16a478bacd6c763693d054f5f213de48d456128d115da1b6"
+    },
+    {
+      "path": "phase-3-s4/s4-std/xml/TEST-eu.kanade.translation.persistence.chapter.CleanedImagePublisherTest.xml",
+      "bytes": 2485,
+      "sha256": "2302e38cb70112d045962adec1010c6480c28ed4925fdf379aab2fdcc11bd317"
+    }
+  ],
+  "checkpointFiles": [
+    {
+      "path": "app/src/main/java/eu/kanade/translation/model/PageTranslationView.kt",
+      "bytes": 28755,
+      "sha256": "1a2d3c613faf718f406890b1edccb2ab5af3da8e699e059658a18adb74fb5384"
+    },
+    {
+      "path": "app/src/main/java/eu/kanade/translation/persistence/chapter/ChapterTranslationStore.kt",
+      "bytes": 259553,
+      "sha256": "890c7923c195a6a7d5a898a0e531d2c5aabf69f311a04ed65e121609419f9c46"
+    },
+    {
+      "path": "app/src/main/java/eu/kanade/translation/pipeline/AttemptAuthority.kt",
+      "bytes": 14964,
+      "sha256": "02dfa8e410f11157d06238704c6668d60d748d70f8b76822c591da56cb938356"
+    },
+    {
+      "path": "app/src/main/java/eu/kanade/translation/pipeline/CleanedPublication.kt",
+      "bytes": 34306,
+      "sha256": "d47917b8a8e50f057a862648b96645752df425b28df8ddfeb3c4b1eeb9200fbd"
+    },
+    {
+      "path": "app/src/main/java/eu/kanade/translation/pipeline/DeferredPagePublications.kt",
+      "bytes": 2267,
+      "sha256": "e2c40f1bc49af9aeb1043d0f8136cd8bc5aab021e3277177014839f407a5994c"
+    },
+    {
+      "path": "app/src/main/java/eu/kanade/translation/pipeline/SinglePageHttpRenderPhase.kt",
+      "bytes": 49604,
+      "sha256": "39993839c7733989515e65d7c35ce9b109e27daa244d29f3123fe980ea03610c"
+    },
+    {
+      "path": "app/src/main/java/eu/kanade/translation/pipeline/SinglePageOnnxPhase.kt",
+      "bytes": 63095,
+      "sha256": "80b185f0120110f3ecb551eb3f9cd580e2e859dcf1f6ec1672bd2ea3c50f73b6"
+    },
+    {
+      "path": "app/src/main/java/eu/kanade/translation/pipeline/TranslationPipeline.kt",
+      "bytes": 81094,
+      "sha256": "1617a6567952631954a74b87eda0c49aa98bc3d3a69b8c44db0c98d9c206c6b6"
+    },
+    {
+      "path": "app/src/main/java/eu/kanade/translation/pipeline/execution/PreparedPageBoundary.kt",
+      "bytes": 5300,
+      "sha256": "e1c41682481749042c3e348d37c080c049eb4ae655637aa89792c73de514f832"
+    },
+    {
+      "path": "app/src/test/java/eu/kanade/translation/coexistence/CoexistenceBarrier.kt",
+      "bytes": 5269,
+      "sha256": "804080a8ca61875bbbac378edc27afe5e0a1b3cce7849a9d4e99847cd901da2d"
+    },
+    {
+      "path": "app/src/test/java/eu/kanade/translation/coexistence/FakeEngines.kt",
+      "bytes": 10368,
+      "sha256": "5e76d83886740791a5608ee9269b4b8f2660415d1b8bfedd778035de862319ed"
+    },
+    {
+      "path": "app/src/test/java/eu/kanade/translation/coexistence/TranslationCoexistenceHarness.kt",
+      "bytes": 72774,
+      "sha256": "ab1c4e6d141f35df1de5b2068e593ce08859019cc08a62f9108eaddc240280e4"
+    },
+    {
+      "path": "app/src/test/java/eu/kanade/translation/pipeline/SinglePageOverlapBoundaryTest.kt",
+      "bytes": 18234,
+      "sha256": "1e70d4b4ba5b71c161f70e369692cbace619d45b3f762527d143ac89c3ef30e9"
+    },
+    {
+      "path": "TachiyomiATVibe_Translation_Simplicity_First_Architecture_Report.md",
+      "bytes": 38794,
+      "sha256": "efc11b90a7d0b367f3878bd600bf893aa99eccdb5879d902e10eb6e06ef88ddd"
+    }
+  ]
+}

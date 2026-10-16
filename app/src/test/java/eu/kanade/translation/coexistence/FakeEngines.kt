@@ -111,9 +111,12 @@ internal class FakeRecognitionEngine(
         return PageTranslation().apply { blocks += FakeCoexistence.textBlock(singlePageText) }
     }
 
+    var inpaintOutcome: ((Bitmap, PageTranslation) -> Bitmap?)? = null
+
     override suspend fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         inpaintCalls.incrementAndGet()
-        return cleaned
+        barrier.arrive(CoexistenceBarrier.BarrierPoint.INPAINT, pageTranslation.sourceFileName.ifBlank { CoexistenceBarrier.WILDCARD_PAGE })
+        return inpaintOutcome?.invoke(bitmap, pageTranslation) ?: cleaned
     }
 
     override fun reclaimPooledMemory() {}

@@ -109,6 +109,45 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
+/** Bounded scalar record of an attempt's own verified artifact drain progress. */
+internal data class CertifiedArtifactProgress(
+    val pageKey: String,
+    val generation: Int,
+    val livePageVersion: Long,
+    val artifactPageVersion: Long?,
+    val candidateGenerationId: String?,
+    val dependencyFingerprint: Long?,
+)
+
+/** Binds one attempt's authority to its own lazy-drain artifact progressions on a specific page. */
+internal class AttemptArtifactLease internal constructor(
+    val pageKey: String,
+) {
+    @Volatile
+    internal var certifiedProgress: CertifiedArtifactProgress? = null
+
+    internal fun stamp(
+        store: ChapterTranslationStore,
+        stampedPageKey: String,
+        snapshot: ChapterTranslationStore.PageSnapshot,
+    ) {
+        if (stampedPageKey != pageKey) return
+        val manifestRecord = store.artifactManifest?.pages?.get(pageKey)
+        val manifestArtifactPageVersion = manifestRecord?.pageVersion
+        val manifestCandidateGen = manifestRecord?.candidate?.generationId
+        val manifestDepFingerprint = manifestRecord?.candidate?.dependencyFingerprint
+            ?: snapshot.dependencyFingerprint
+        certifiedProgress = CertifiedArtifactProgress(
+            pageKey = pageKey,
+            generation = snapshot.generation,
+            livePageVersion = snapshot.pageVersion,
+            artifactPageVersion = manifestArtifactPageVersion,
+            candidateGenerationId = manifestCandidateGen,
+            dependencyFingerprint = manifestDepFingerprint,
+        )
+    }
+}
+
 /** Durable outcome of the [ChapterTranslationStore.checkpointOcr] transaction. */
 sealed interface CheckpointOcrResult {
     data class Committed(
@@ -1247,6 +1286,7 @@ class ChapterTranslationStore internal constructor(
         val expected: PatchPrecondition,
         val generation: Long,
         val journalCredit: ChapterJournalCredit? = null,
+        val artifactLease: AttemptArtifactLease? = null,
     )
 
     internal data class LazyPersistenceTask(
@@ -1403,6 +1443,8 @@ class ChapterTranslationStore internal constructor(
                     } else {
                         mutation.journalCredit?.releaseIfRetained()
                     }
+                } else {
+                    mutation.artifactLease?.stamp(this, mutation.pageKey, snapshotLocked(mutation.pageKey))
                 }
             } catch (failure: Throwable) {
                 mutation.journalCredit?.releaseIfUnqueued()
@@ -1922,6 +1964,14 @@ class ChapterTranslationStore internal constructor(
         expected: PatchPrecondition,
         description: String,
         patch: (PageTranslation?) -> PageTranslation,
+    ): PatchResult = patchPage(pageKey, expected, description, artifactLease = null, patch = patch)
+
+    internal suspend fun patchPage(
+        pageKey: String,
+        expected: PatchPrecondition,
+        description: String,
+        artifactLease: AttemptArtifactLease?,
+        patch: (PageTranslation?) -> PageTranslation,
     ): PatchResult {
         if (defunct) return rejected(pageKey, description, "store is defunct")
         val journalCredit = reserveJournalCredit(pageKey)
@@ -1937,15 +1987,49 @@ class ChapterTranslationStore internal constructor(
                         )
                     }
                     val current = pages[pageKey]?.toDraft()
+                    if (expected.generation != generation) {
+                        return@withLock rejected(pageKey, description, "generation expected=${expected.generation} actual=$generation")
+                    }
+                    val currentLiveVersion = current?.pageVersion ?: 0L
+                    if (expected.pageVersion != currentLiveVersion) {
+                        return@withLock rejected(pageKey, description, "pageVersion expected=${expected.pageVersion} actual=$currentLiveVersion")
+                    }
+
+                    val drained = artifactLease?.takeIf { it.pageKey == pageKey }?.certifiedProgress
+                    val effective = if (
+                        drained != null &&
+                        expected.generation == drained.generation &&
+                        expected.pageVersion == drained.livePageVersion &&
+                        currentLiveVersion == drained.livePageVersion
+                    ) {
+                        val manifestRecord = artifactManifest?.pages?.get(pageKey)
+                        val manifestArtifactPageVersion = manifestRecord?.pageVersion
+                        val manifestCandidateGen = manifestRecord?.candidate?.generationId
+                        val manifestDepFingerprint = manifestRecord?.candidate?.dependencyFingerprint
+                            ?: pages[pageKey]?.let(StageFingerprints::pageSnapshot)
+                        if (
+                            manifestArtifactPageVersion == drained.artifactPageVersion &&
+                            manifestCandidateGen == drained.candidateGenerationId &&
+                            manifestDepFingerprint == drained.dependencyFingerprint
+                        ) {
+                            expected.copy(
+                                artifactPageVersion = drained.artifactPageVersion,
+                                candidateGenerationId = drained.candidateGenerationId,
+                                dependencyFingerprint = drained.dependencyFingerprint,
+                            )
+                        } else {
+                            expected
+                        }
+                    } else {
+                        expected
+                    }
+
                     val rejection = when {
-                        expected.generation != generation -> "generation expected=${expected.generation} actual=$generation"
-                        expected.pageVersion != (current?.pageVersion ?: 0L) ->
-                            "pageVersion expected=${expected.pageVersion} actual=${current?.pageVersion ?: 0L}"
-                        expected.artifactPageVersion != null &&
-                            expected.artifactPageVersion != artifactManifest?.pages?.get(pageKey)?.pageVersion ->
+                        effective.artifactPageVersion != null &&
+                            effective.artifactPageVersion != artifactManifest?.pages?.get(pageKey)?.pageVersion ->
                             "artifact pageVersion changed"
-                        expected.candidateGenerationId != null &&
-                            expected.candidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
+                        effective.candidateGenerationId != null &&
+                            effective.candidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
                             "candidate generation changed"
                         // The same candidate-grace rule as persistArtifactMutationLocked
                         // applies: `candidate != null` grace
@@ -1959,16 +2043,16 @@ class ChapterTranslationStore internal constructor(
                         // reject. Fail direction preserved: generation, pageVersion,
                         // candidate generation, block fingerprints, and the lease
                         // token fences stay fully armed.
-                        expected.dependencyFingerprint != null &&
+                        effective.dependencyFingerprint != null &&
                             artifactManifest?.pages?.get(pageKey)?.candidate != null &&
-                            expected.dependencyFingerprint != artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
+                            effective.dependencyFingerprint != artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
                             "candidate dependency fingerprint changed"
-                        expected.blockFingerprints != null &&
-                            expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
+                        effective.blockFingerprints != null &&
+                            effective.blockFingerprints != current?.blockFingerprints().orEmpty() ->
                             "block fingerprint changed"
-                        expected.leaseToken != null && pageLeases[pageKey]?.token != expected.leaseToken ->
+                        effective.leaseToken != null && pageLeases[pageKey]?.token != effective.leaseToken ->
                             "page lease token changed"
-                        expected.leaseToken == null && pageLeases[pageKey] != null ->
+                        effective.leaseToken == null && pageLeases[pageKey] != null ->
                             "page lease token required"
                         else -> null
                     }
@@ -1992,7 +2076,7 @@ class ChapterTranslationStore internal constructor(
                         }
                         val updated = ownedPage(pageKey, candidate)
                         pages = pages.put(pageKey, publishPage(updated))
-                        if (!publishLocked(current, updated, expected, journalCredit = journalCredit)) {
+                        if (!publishLocked(current, updated, effective, journalCredit = journalCredit, artifactLease = artifactLease)) {
                             restorePageLocked(pageKey, current)
                             return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
                         }
@@ -3706,6 +3790,7 @@ class ChapterTranslationStore internal constructor(
         expected: PatchPrecondition? = null,
         durableFailure: DurableFailureMetadata? = null,
         journalCredit: ChapterJournalCredit? = null,
+        artifactLease: AttemptArtifactLease? = null,
     ): Boolean {
         val pageKey = updated.sourceFileName ?: ""
         // Active reader stores are display-first: publish the complete live
@@ -3713,13 +3798,14 @@ class ChapterTranslationStore internal constructor(
         // Durable failure records remain synchronous so cancellation/retry
         // semantics never report a failure before its ledger is recorded.
         if (lazyPersistenceEnabled && durableFailure == null) {
-            val accepted = publishLazyLocked(pageKey, previous, updated, expected, journalCredit)
+            val accepted = publishLazyLocked(pageKey, previous, updated, expected, journalCredit, artifactLease)
             if (accepted) recordJournalStatusPageMutationLocked(pageKey, durableFailure)
             return accepted
         }
         val isDurable = shouldPersistUpdate(previous, updated)
+        var actuallyPersisted = false
         val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
-            persistArtifactMutationLocked(
+            val ok = persistArtifactMutationLocked(
                 pageKey = pageKey,
                 previous = previous,
                 updated = updated,
@@ -3727,10 +3813,15 @@ class ChapterTranslationStore internal constructor(
                 durableFailure = durableFailure,
                 journalCredit = journalCredit,
             )
+            if (ok) actuallyPersisted = true
+            ok
         } else {
             true
         }
         if (!artifactAccepted) return false
+        if (actuallyPersisted) {
+            artifactLease?.stamp(this, pageKey, snapshotLocked(pageKey))
+        }
         recordJournalStatusPageMutationLocked(pageKey, durableFailure)
         promoteDisplayIfReadyLocked(pageKey, updated)
         _state.value = snapshotPages()
@@ -3744,6 +3835,7 @@ class ChapterTranslationStore internal constructor(
         updated: PageTranslation,
         expected: PatchPrecondition?,
         journalCredit: ChapterJournalCredit?,
+        artifactLease: AttemptArtifactLease? = null,
     ): Boolean {
         val snapshot = snapshotLocked(pageKey)
         // Preserve the pre-existing durability gate: transient RUNNING/PENDING
@@ -3771,6 +3863,7 @@ class ChapterTranslationStore internal constructor(
                 ),
                 generation = snapshot.generation,
                 journalCredit = retainedCredit,
+                artifactLease = artifactLease,
             )
         }
         promoteDisplayIfReadyLocked(pageKey, updated)

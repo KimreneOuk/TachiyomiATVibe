@@ -468,7 +468,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 devicePagePermitGate = devicePagePermitGate,
                 cleanedPublication = cleanedPublicationMock,
                 expectedBatchFingerprints = expectedFingerprints,
-                retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation ->
+                retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation, _, _ ->
                     onnxPhase.retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
                 },
             )

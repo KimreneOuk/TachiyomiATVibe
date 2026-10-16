@@ -62,6 +62,11 @@ import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecis
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.toPrecondition
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -504,17 +509,21 @@ class TranslationPipeline private constructor(
                 acquisition.reason,
             )
         }
-        return withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
-            runGrantedSinglePageBoundary(
-                leaseStore = leaseStore,
-                manga = manga,
-                chapter = chapter,
-                source = source,
-                pageKey = pageKey,
-                force = force,
-                stageListener = stageListener,
-                origin = origin,
-            )
+        try {
+            return withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
+                runGrantedSinglePageBoundary(
+                    leaseStore = leaseStore,
+                    manga = manga,
+                    chapter = chapter,
+                    source = source,
+                    pageKey = pageKey,
+                    force = force,
+                    stageListener = stageListener,
+                    origin = origin,
+                )
+            }
+        } finally {
+            releaseReaderPageLease(leaseStore, pageKey, origin)
         }
     }
 
@@ -529,51 +538,38 @@ class TranslationPipeline private constructor(
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
     ): SinglePageOutcome {
-        // Typed HTTP+render phase completion and its timeout/terminality
-        // resolution; declared at boundary scope so the post-finally mapping
-        // can see them while the `finally` still owns the lease release.
-        var httpOutcome: TranslationCompletionOutcome? = null
-        // Set when the HTTP+render timer fired
-        // while the phase had ALREADY committed a durable terminal result —
-        // store truth outranks the timer there, and no timeout placeholder
-        // may overwrite terminal truth.
-        var httpTimeoutLandedDurableResult = false
-        // Boundary-level trace wiring. The
-        // run arrives via the TranslationTraceElement installed by the caller
-        // (scheduler launch / rolling-coordinator wrap); outside a trace every
-        // helper is a NO_OP. Emission is non-suspending and fail-open.
+        val store = leaseStore ?: resolveActiveStore(manga, chapter, source)
+            ?: return SinglePageOutcome.Failed(pageKey, "store unavailable")
+        val snapshot = store.snapshot(pageKey)
+
+        if (inFlightPageKeys.contains(pageKey)) {
+            logcat(LogPriority.DEBUG) {
+                "TachiyomiAT native admission rejected: chapter=${chapter.name} " +
+                    "pageKey=$pageKey reason=already in flight (residual)"
+            }
+            return SinglePageOutcome.Rejected(
+                null,
+                PageRejectionKind.ALREADY_OWNED,
+                "page already translating",
+            )
+        }
+
         val traceRun = TranslationTrace.currentRun()
         val nativeQueueSpan = traceRun?.beginStage(TranslationTraceStage.NATIVE_QUEUE)
+
+        val attempt = AttemptAuthority(
+            store = store,
+            pageKey = pageKey,
+            initial = snapshot.toPrecondition(),
+            callerJob = coroutineContext[Job],
+        )
+        val owner = CleanedOwner()
+        val sourceCustody = SourceBitmapCustody()
+        val deferredPublications = DeferredPagePublications()
+
+        engines.beginTranslatorUse()
         try {
-            //   a same-page request whose predecessor still owns the
-            // stove (e.g. a timed-out-but-parked native call) is rejected
-            // BEFORE queueing behind the quarantine. Membership here is the
-            // honest occupancy truth: the entry is cleared only when the
-            // residual invocation really exits, because the remover runs
-            // inside the parked block. The in-block add-check below remains
-            // the concurrent-race backstop.
-            if (inFlightPageKeys.contains(pageKey)) {
-                logcat(LogPriority.DEBUG) {
-                    "TachiyomiAT native admission rejected: chapter=${chapter.name} " +
-                        "pageKey=$pageKey reason=already in flight (residual)"
-                }
-                return SinglePageOutcome.Rejected(
-                    null,
-                    PageRejectionKind.ALREADY_OWNED,
-                    "page already translating",
-                )
-            }
-            // Storage-tail deferral holder. The
-            // ONNX phase enqueues its resume-path cleaned-image persistence,
-            // render tails, and the store flush here instead of running them
-            // under the native permit; this boundary drains the queue AFTER
-            // withNativeLane returns, so the permit is released before storage
-            // publication and the next page's native admission is never blocked
-            // behind this page's disk commit. On native timeout the boundary
-            // orphans the queue FIRST: any residual block invocation runs its
-            // tails inline (quarantine exit is awaited before withNativeLane
-            // returns), so publication is never silently dropped.
-            val deferredPublications = DeferredPagePublications()
+            // Segment 1: Admitted native OCR
             val onnxResult = try {
                 try {
                     withNativeLane(
@@ -583,7 +579,9 @@ class TranslationPipeline private constructor(
                         pageKey = pageKey,
                         onTimeout = {
                             deferredPublications.orphaned = true
-                            markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs)
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT Segment 1 native OCR timed out for $pageKey"
+                            }
                         },
                         priority = if (origin == PageWriteOrigin.MANUAL) {
                             DevicePermitPriority.FOREGROUND
@@ -591,23 +589,30 @@ class TranslationPipeline private constructor(
                             DevicePermitPriority.BACKGROUND
                         },
                     ) {
-                        // Queue behind the native lane settled: the span was
-                        // begun at boundary entry, so its duration is the
-                        // admission→execution wait (schedule maxQueueMs feed).
                         nativeQueueSpan?.end()
                         if (!inFlightPageKeys.add(pageKey)) {
-                            logcat(LogPriority.WARN) { "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight"
+                            }
                             throw NativePageAlreadyInFlightException()
                         }
                         try {
-                            val store = resolveActiveStore(manga, chapter, source)
-                            val generation = store?.snapshot(pageKey)?.generation
-                            if (store != null && generation != null) {
-                                store.withGeneration(generation) {
-                                    translateSinglePageOnnx(manga, chapter, source, pageKey, null, force, stageListener, deferredPublications)
-                                }
-                            } else {
-                                translateSinglePageOnnx(manga, chapter, source, pageKey, null, force, stageListener, deferredPublications)
+                            val generation = store.snapshot(pageKey).generation
+                            store.withGeneration(generation) {
+                                translateSinglePageOnnx(
+                                    manga = manga,
+                                    chapter = chapter,
+                                    source = source,
+                                    pageKey = pageKey,
+                                    readerStreamFn = null,
+                                    force = force,
+                                    stageListener = stageListener,
+                                    deferredPublications = deferredPublications,
+                                    sourceCustody = sourceCustody,
+                                    attempt = attempt,
+                                    owner = owner,
+                                    inlineInpaint = false,
+                                )
                             }
                         } catch (t: Throwable) {
                             if (t is CancellationException || t is NativePageAlreadyInFlightException) throw t
@@ -628,9 +633,6 @@ class TranslationPipeline private constructor(
                     )
                 }
             } catch (t: Throwable) {
-                // Exception path: the boundary does not continue, so run any
-                // deferred storage tails inline (best effort — the block has
-                // already failed the page) and rethrow the original failure.
                 runCatching { drainDeferredPublications(deferredPublications) }
                     .onFailure { drainError ->
                         logcat(LogPriority.ERROR, drainError) {
@@ -639,9 +641,7 @@ class TranslationPipeline private constructor(
                     }
                 throw t
             }
-            // Normal path: drain OUTSIDE the permit. Fail-closed: a deferred
-            // publication that throws fails the page — it must never be
-            // silently dropped.
+
             try {
                 drainDeferredPublications(deferredPublications)
             } catch (t: Throwable) {
@@ -650,97 +650,274 @@ class TranslationPipeline private constructor(
                 markPageFailed(manga, chapter, source, pageKey, t)
                 throw t
             }
-            // Resume-only paths can return null after succeeding. Once deferred
-            // storage writes have drained, inspect durable page truth before
-            // classifying the result as a timeout.
+
             if (onnxResult == null) {
-                val store = resolveActiveStore(manga, chapter, source)
-                val page = store?.state?.value?.get(pageKey)
+                val page = store.state.value[pageKey]
                 if (page != null && isPreparedPageTerminal(page)) {
                     return SinglePageOutcome.Completed
+                }
+                attempt.markTimeout { current ->
+                    val msg = PageStoreWriter.timeoutFailureMessage(nativeTimer = true)
+                    current.apply {
+                        ocrStatus = StageStatus.FAILED
+                        errorMessage = msg
+                        updatedAt = System.currentTimeMillis()
+                    }
                 }
                 return SinglePageOutcome.Failed(pageKey, "native phase timed out")
             }
 
-            // Track cleaned-image persistence on the storage lane. The span
-            // settles on every exit, including a throw from persistOnnxCleanedImage (cancellation or a
-            // store exception on paths that historically propagate) — no
-            // stage_start is left dangling.
-            val publishedResult = if (onnxResult.inpaintJob != null) {
-                onnxResult
-            } else {
-                val persistSpan = traceRun?.beginStage(
-                    TranslationTraceStage.CLEANED_PERSIST,
-                    lane = TranslationTraceLane.STORAGE,
-                )
-                try {
-                    val result = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
-                    persistSpan?.end(
-                        if (result == null) {
-                            TranslationTraceOutcome.FAILURE
-                        } else {
-                            TranslationTraceOutcome.SUCCESS
-                        },
+            if (onnxResult.pageTranslation.blocks.isEmpty() || onnxResult.pageTranslation.ocrStatus == StageStatus.FAILED) {
+                if (onnxResult.pageTranslation.ocrStatus == StageStatus.FAILED) {
+                    return SinglePageOutcome.Failed(
+                        pageKey,
+                        onnxResult.pageTranslation.errorMessage ?: "OCR failed",
                     )
-                    result
-                } catch (t: Throwable) {
-                    persistSpan?.end(TranslationTraceOutcome.FAILURE, error = t)
-                    throw t
                 }
-            }
-            if (publishedResult == null) {
-                return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
+                return SinglePageOutcome.Completed
             }
 
-            // Preserve governor deferrals as typed pauses instead of reporting
-            // them as successful completion.
-            try {
-                httpOutcome = withTimeoutOrNull(singlePageTimeoutMs) {
-                    translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener, origin)
-                } ?: run {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT HTTP+render phase timed out after ${singlePageTimeoutMs}ms: " +
-                            "pageKey=$pageKey chapter=${chapter.name}"
+            // Structured fork/join
+            val nativeDraft = onnxResult.pageTranslation.detachedCopy()
+            val httpDraft = onnxResult.pageTranslation.detachedCopy()
+            val httpCtx = onnxResult.copy(pageTranslation = httpDraft)
+
+            val completionOutcome: TranslationCompletionOutcome = coroutineScope {
+                val nativeBranch = async {
+                    try {
+                        val laneResult: InpaintLaneResult? = withNativeLane(
+                            timeoutMs = nativeTimeoutMs,
+                            chapterId = chapter.id,
+                            chapterName = chapter.name,
+                            pageKey = pageKey,
+                            priority = DevicePermitPriority.FOREGROUND,
+                        ) {
+                            val inpaintSpan = traceRun?.beginStage(
+                                TranslationTraceStage.INPAINT,
+                                lane = TranslationTraceLane.NATIVE,
+                                provider = TranslationTraceProvider.CPU,
+                            )
+                            val s = sourceCustody.take()
+                            if (s == null) {
+                                inpaintSpan?.end(TranslationTraceOutcome.CANCELLED)
+                                return@withNativeLane InpaintLaneResult.SoftNull
+                            }
+                            try {
+                                val cleaned = try {
+                                    recognitionEngine.inpaint(s, nativeDraft)
+                                } finally {
+                                    inpaintSpan?.end()
+                                }
+                                if (cleaned != null) {
+                                    owner.produce(cleaned, CleanedProvenance.INPAINT)
+                                    InpaintLaneResult.Produced(cleaned)
+                                } else {
+                                    InpaintLaneResult.SoftNull
+                                }
+                            } finally {
+                                if (!owner.owns(s)) {
+                                    try {
+                                        s.recycle()
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                        }
+                        if (owner.isAvailable) {
+                            cleanedPublication.enrollCleanedPersistence(
+                                manga = manga,
+                                chapter = chapter,
+                                source = source,
+                                pageKey = pageKey,
+                                store = store,
+                                pageTranslation = nativeDraft,
+                                owner = owner,
+                                attempt = attempt,
+                                deferredPublications = deferredPublications,
+                            )
+                        }
+                        when (laneResult) {
+                            is InpaintLaneResult.Produced -> NativeBranchOutcome.Success
+                            is InpaintLaneResult.SoftNull -> NativeBranchOutcome.SoftNull
+                            null -> NativeBranchOutcome.TimedOut
+                        }
+                    } catch (t: Throwable) {
+                        if (t is CancellationException) throw t
+                        logcat(LogPriority.ERROR, t) { "TachiyomiAT native inpaint branch failed: pageKey=$pageKey" }
+                        NativeBranchOutcome.Failed(t)
                     }
+                }
+
+                try {
+                    withTimeout(singlePageTimeoutMs) {
+                        val httpOutcome = try {
+                            singlePageHttpRenderPhase.translateSinglePageHttpOnly(
+                                manga = manga,
+                                chapter = chapter,
+                                source = source,
+                                pageKey = pageKey,
+                                ctx = httpCtx,
+                                attempt = attempt,
+                                stageListener = stageListener,
+                                origin = origin,
+                            )
+                        } catch (t: Throwable) {
+                            if (t is CancellationException) throw t
+                            logcat(LogPriority.ERROR, t) { "TachiyomiAT HTTP branch failed: pageKey=$pageKey" }
+                            val httpError = t.message ?: "HTTP translation failed"
+                            attempt.write("HTTP translation failure") { current ->
+                                current.apply {
+                                    translationStatus = StageStatus.FAILED
+                                    translationError = httpError
+                                    errorMessage = httpError
+                                    updatedAt = System.currentTimeMillis()
+                                }
+                            }
+                            return@withTimeout TranslationCompletionOutcome.Failed(httpError)
+                        }
+
+                        val nativeResult = nativeBranch.await()
+
+                        // C1 & C2: inpaint segment TimedOut
+                        if (nativeResult is NativeBranchOutcome.TimedOut) {
+                            val translationDurable = httpOutcome is TranslationCompletionOutcome.Completed
+                            attempt.markTimeout { current ->
+                                val msg = PageStoreWriter.timeoutFailureMessage(nativeTimer = true)
+                                current.apply {
+                                    if (inpaintStatus != StageStatus.READY) {
+                                        inpaintStatus = StageStatus.FAILED
+                                        inpaintError = msg
+                                    }
+                                    if (!translationDurable) {
+                                        if (translationStatus != StageStatus.READY && translationStatus != StageStatus.PARTIAL) {
+                                            translationStatus = StageStatus.FAILED
+                                            translationError = msg
+                                        }
+                                    }
+                                    if (renderStatus != StageStatus.READY) {
+                                        renderStatus = StageStatus.FAILED
+                                        renderError = msg
+                                    }
+                                    errorMessage = msg
+                                    retryCount += 1
+                                    attemptCount += 1
+                                    updatedAt = System.currentTimeMillis()
+                                }
+                            }
+                            return@withTimeout TranslationCompletionOutcome.Failed("native phase timed out")
+                        }
+
+                        // C5: native branch fails (non-timeout exception)
+                        if (nativeResult is NativeBranchOutcome.Failed) {
+                            val nativeError = nativeResult.throwable.message ?: "native inpaint failed"
+                            attempt.write("native inpaint failure") { current ->
+                                current.apply {
+                                    inpaintStatus = StageStatus.FAILED
+                                    inpaintError = nativeError
+                                    errorMessage = nativeError
+                                    updatedAt = System.currentTimeMillis()
+                                }
+                            }
+                            return@withTimeout TranslationCompletionOutcome.Failed(nativeError)
+                        }
+
+                        if (httpOutcome !is TranslationCompletionOutcome.Completed) {
+                            return@withTimeout httpOutcome
+                        }
+
+                        // Post-join: Admitted retry Segment 3 (C6) if needed + renderSinglePageTranslated
+                        singlePageHttpRenderPhase.renderSinglePageTranslated(
+                            manga = manga,
+                            chapter = chapter,
+                            source = source,
+                            pageKey = pageKey,
+                            ctx = httpCtx,
+                            owner = owner,
+                            attempt = attempt,
+                            stageListener = stageListener,
+                            origin = origin,
+                        )
+                    }
+                } catch (e: TimeoutCancellationException) {
                     val timeoutStore = resolveActiveStore(manga, chapter, source)
                     val timeoutPage = timeoutStore?.state?.value?.get(pageKey)
                     if (timeoutPage != null && isPreparedPageTerminal(timeoutPage)) {
-                        httpTimeoutLandedDurableResult = true
+                        TranslationCompletionOutcome.Completed
                     } else {
-                        markPageTimedOut(manga, chapter, source, pageKey, singlePageTimeoutMs, nativeTimer = false)
+                        attempt.markTimeout { current ->
+                            val msg = PageStoreWriter.timeoutFailureMessage(nativeTimer = false)
+                            current.apply {
+                                if (translationStatus != StageStatus.READY && translationStatus != StageStatus.PARTIAL) {
+                                    translationStatus = StageStatus.FAILED
+                                    translationError = msg
+                                }
+                                if (renderStatus != StageStatus.READY) {
+                                    renderStatus = StageStatus.FAILED
+                                    renderError = msg
+                                }
+                                errorMessage = msg
+                                retryCount += 1
+                                attemptCount += 1
+                                updatedAt = System.currentTimeMillis()
+                            }
+                        }
+                        TranslationCompletionOutcome.Failed(REASON_HTTP_RENDER_TIMER_EXPIRED)
                     }
-                    null
                 }
-            } catch (t: Throwable) {
-                if (t is CancellationException) throw t
-                logcat(LogPriority.ERROR, t) {
-                    "TachiyomiAT HTTP+render phase failed: pageKey=$pageKey"
-                }
-                markPageFailed(manga, chapter, source, pageKey, t)
-                throw t
+            }
+
+            return when (completionOutcome) {
+                is TranslationCompletionOutcome.Paused -> SinglePageOutcome.Paused(completionOutcome.nextEligibleRetryAtEpochMs)
+                is TranslationCompletionOutcome.PersistenceRejected ->
+                    SinglePageOutcome.Rejected(null, PageRejectionKind.PERSISTENCE_FAILED, completionOutcome.reason)
+                is TranslationCompletionOutcome.Failed -> SinglePageOutcome.Failed(pageKey, completionOutcome.reason)
+                is TranslationCompletionOutcome.Unexpected -> SinglePageOutcome.Failed(pageKey, completionOutcome.reason)
+                is TranslationCompletionOutcome.Completed -> SinglePageOutcome.Completed
             }
         } finally {
-            releaseReaderPageLease(leaseStore, pageKey, origin)
-        }
-        // Exhaustively map typed outcomes.
-        // Only a genuinely completed durable commit may type
-        // Completed; a timeout, a guarded-commit rejection, or a typed value
-        // failure is a visible non-success — never a fall-through Completed.
-        return when (val outcome = httpOutcome) {
-            null ->
-                if (httpTimeoutLandedDurableResult) {
-                    SinglePageOutcome.Completed
-                } else {
-                    SinglePageOutcome.Failed(pageKey, REASON_HTTP_RENDER_TIMER_EXPIRED)
+            try {
+                drainDeferredPublications(deferredPublications)
+            } finally {
+                try {
+                    chapter.id?.let { chapterId ->
+                        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
+                    }
+                } finally {
+                    try {
+                        sourceCustody.close()
+                    } finally {
+                        try {
+                            owner.release()
+                        } finally {
+                            try {
+                                engines.endTranslatorUse()
+                            } finally {
+                                try {
+                                    recognitionEngine.reclaimPooledMemory()
+                                } catch (e: Throwable) {
+                                    logcat(LogPriority.WARN, e) {
+                                        "Failed to reclaim pooled recognition memory for $pageKey"
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            is TranslationCompletionOutcome.Paused -> SinglePageOutcome.Paused(outcome.nextEligibleRetryAtEpochMs)
-            is TranslationCompletionOutcome.PersistenceRejected ->
-                SinglePageOutcome.Rejected(null, PageRejectionKind.PERSISTENCE_FAILED, outcome.reason)
-            is TranslationCompletionOutcome.Failed -> SinglePageOutcome.Failed(pageKey, outcome.reason)
-            is TranslationCompletionOutcome.Unexpected -> SinglePageOutcome.Failed(pageKey, outcome.reason)
-            is TranslationCompletionOutcome.Completed -> SinglePageOutcome.Completed
+            }
         }
     }
+
+    private sealed interface InpaintLaneResult {
+        data class Produced(val bitmap: Bitmap) : InpaintLaneResult
+        object SoftNull : InpaintLaneResult
+    }
+
+    private sealed interface NativeBranchOutcome {
+        object Success : NativeBranchOutcome
+        object SoftNull : NativeBranchOutcome
+        object TimedOut : NativeBranchOutcome
+        data class Failed(val throwable: Throwable) : NativeBranchOutcome
+    }
+
 
     /**
      * Lease admission for reader-originated single-page work. Session
@@ -798,8 +975,8 @@ class TranslationPipeline private constructor(
         devicePagePermitGate = devicePagePermitGate,
         cleanedPublication = cleanedPublication,
         expectedBatchFingerprints = { fromLang, toLang -> batchExpectedFingerprints(fromLang, toLang) },
-        retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation ->
-            retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
+        retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation, owner, attempt ->
+            retryInpaintDownscaledAdmitted(manga, chapter, source, pageKey, streams, decoded, pageTranslation, owner, attempt)
         },
     )
 
@@ -877,6 +1054,10 @@ class TranslationPipeline private constructor(
             // the resume paths' storage publication runs; orphaned tails run
             // inline; the normal-path drain is fail-closed.
             val deferredPublications = DeferredPagePublications()
+            val owner = CleanedOwner()
+            val sourceCustody = SourceBitmapCustody()
+            val store = resolveActiveStore(manga, chapter, source)
+            val attempt = store?.let { AttemptAuthority(it, pageKey, it.snapshot(pageKey).toPrecondition()) }
             // Correlated trace for the rolling-auto prepared
             // boundary. The coordinator installs the run through
             // TranslationTraceElement; outside that context every trace call
@@ -903,14 +1084,39 @@ class TranslationPipeline private constructor(
                         throw NativePageAlreadyInFlightException()
                     }
                     try {
-                        val store = resolveActiveStore(manga, chapter, source)
                         val generation = store?.snapshot(pageKey)?.generation
                         if (store != null && generation != null) {
                             store.withGeneration(generation) {
-                                translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                                translateSinglePageOnnx(
+                                    manga = manga,
+                                    chapter = chapter,
+                                    source = source,
+                                    pageKey = pageKey,
+                                    readerStreamFn = streamFn,
+                                    force = force,
+                                    stageListener = stageListener,
+                                    deferredPublications = deferredPublications,
+                                    sourceCustody = sourceCustody,
+                                    attempt = attempt,
+                                    owner = owner,
+                                    inlineInpaint = true,
+                                )
                             }
                         } else {
-                            translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                            translateSinglePageOnnx(
+                                manga = manga,
+                                chapter = chapter,
+                                source = source,
+                                pageKey = pageKey,
+                                readerStreamFn = streamFn,
+                                force = force,
+                                stageListener = stageListener,
+                                deferredPublications = deferredPublications,
+                                sourceCustody = sourceCustody,
+                                attempt = attempt,
+                                owner = owner,
+                                inlineInpaint = true,
+                            )
                         }
                     } catch (t: Throwable) {
                         if (t is CancellationException) throw t
@@ -949,14 +1155,7 @@ class TranslationPipeline private constructor(
             if (onnxResult == null) {
                 return buildTerminalPreparedPage(manga, chapter, source, pageKey)
             }
-            val onnxReadyResult = if (onnxResult.inpaintJob != null) {
-                val cleaned = onnxResult.inpaintJob.await()
-                onnxResult.pageTranslation.cleanedBitmap = cleaned
-                val currentStore = resolveActiveStore(manga, chapter, source)
-                onnxResult.copy(commitPrecondition = currentStore?.snapshot(pageKey)?.toPrecondition() ?: onnxResult.commitPrecondition)
-            } else {
-                onnxResult
-            }
+            val onnxReadyResult = onnxResult
 
             // Durability gate: persist the cleaned image BEFORE publishing the
             // prepared reference. If publication fails the page is not prepared.
@@ -967,7 +1166,16 @@ class TranslationPipeline private constructor(
                 lane = TranslationTraceLane.STORAGE,
             )
             val published = try {
-                val result = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxReadyResult)
+                val result = persistOnnxCleanedImage(
+                    manga = manga,
+                    chapter = chapter,
+                    source = source,
+                    pageKey = pageKey,
+                    result = onnxReadyResult,
+                    owner = owner,
+                    attempt = attempt,
+                    deferredPublications = deferredPublications,
+                )
                 persistSpan?.end(
                     if (result == null) {
                         TranslationTraceOutcome.FAILURE
@@ -1005,6 +1213,7 @@ class TranslationPipeline private constructor(
                 expectedGeneration = published.commitPrecondition?.generation
                     ?: published.store.snapshot(pageKey).generation,
                 expectedLeaseToken = published.commitPrecondition?.leaseToken,
+                owner = owner,
             )
         } finally {
             releaseReaderPageLease(leaseStore, pageKey, PageWriteOrigin.AUTO)
@@ -1168,21 +1377,65 @@ class TranslationPipeline private constructor(
                 decoded = decoded,
                 commitPrecondition = snapshot.toPrecondition(),
             )
-            // Provider occupancy covers HTTP translation; render permit wait and
-            // active render occupancy are recorded separately. The schedule
-            // accumulator preserves their overlap with the next page's native prep.
+            val attempt = AttemptAuthority(store, prepared.pageKey, snapshot.toPrecondition())
             val preparedOutcome = try {
                 val completed = withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
-                    translateSinglePageHttpRender(manga, chapter, source, prepared.pageKey, ctx, stageListener, PageWriteOrigin.AUTO)
+                    val httpOutcome = singlePageHttpRenderPhase.translateSinglePageHttpOnly(
+                        manga = manga,
+                        chapter = chapter,
+                        source = source,
+                        pageKey = prepared.pageKey,
+                        ctx = ctx,
+                        attempt = attempt,
+                        stageListener = stageListener,
+                        origin = PageWriteOrigin.AUTO,
+                    )
+                    if (httpOutcome !is TranslationCompletionOutcome.Completed) {
+                        httpOutcome
+                    } else {
+                        val localOwner = CleanedOwner()
+                        ctx.pageTranslation.cleanedBitmap?.let { bmp ->
+                            localOwner.produce(bmp, CleanedProvenance.INPAINT)
+                        }
+                        try {
+                            singlePageHttpRenderPhase.renderSinglePageTranslated(
+                                manga = manga,
+                                chapter = chapter,
+                                source = source,
+                                pageKey = prepared.pageKey,
+                                ctx = ctx,
+                                owner = localOwner,
+                                attempt = attempt,
+                                stageListener = stageListener,
+                                origin = PageWriteOrigin.AUTO,
+                            )
+                        } finally {
+                            localOwner.release()
+                        }
+                    }
                 }
                 if (completed == null) {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT translatePreparedPage timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
                             "pageKey=${prepared.pageKey} chapter=${chapter.name}"
                     }
-                    // The prepared path runs the HTTP+render phase, so its
-                    // timeout placeholder names THAT timer.
-                    markPageTimedOut(manga, chapter, source, prepared.pageKey, nativeTimer = false)
+                    attempt.markTimeout { current ->
+                        val msg = PageStoreWriter.timeoutFailureMessage(nativeTimer = false)
+                        current.apply {
+                            if (translationStatus != StageStatus.READY && translationStatus != StageStatus.PARTIAL) {
+                                translationStatus = StageStatus.FAILED
+                                translationError = msg
+                            }
+                            if (renderStatus != StageStatus.READY) {
+                                renderStatus = StageStatus.FAILED
+                                renderError = msg
+                            }
+                            errorMessage = msg
+                            retryCount += 1
+                            attemptCount += 1
+                            updatedAt = System.currentTimeMillis()
+                        }
+                    }
                     throw java.io.IOException("translatePreparedPage timed out for ${prepared.pageKey}")
                 } else {
                     completed
@@ -1190,15 +1443,20 @@ class TranslationPipeline private constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
-                // A genuine failure (unreadable cleaned image, timeout) — propagate
-                // so the caller attributes it as a failure, not a race loss.
                 throw e
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 logcat(LogPriority.ERROR, t) {
                     "TachiyomiAT translatePreparedPage failed: pageKey=${prepared.pageKey}"
                 }
-                markPageFailed(manga, chapter, source, prepared.pageKey, t)
+                attempt.write("translatePreparedPage failure") { current ->
+                    val msg = t.message ?: "Prepared page translation failed"
+                    current.apply {
+                        translationStatus = StageStatus.FAILED
+                        errorMessage = msg
+                        updatedAt = System.currentTimeMillis()
+                    }
+                }
                 throw t
             }
             return preparedOutcome
@@ -1277,29 +1535,25 @@ class TranslationPipeline private constructor(
         force: Boolean = true,
         stageListener: TranslationStageListener? = null,
         deferredPublications: DeferredPagePublications? = null,
+        sourceCustody: SourceBitmapCustody? = null,
+        attempt: AttemptAuthority? = null,
+        owner: CleanedOwner? = null,
+        inlineInpaint: Boolean = false,
     ): OnnxPhaseResult? =
         singlePageOnnxPhase.translateSinglePageOnnx(
-            manga,
-            chapter,
-            source,
-            pageKey,
-            readerStreamFn,
-            force,
-            stageListener,
-            deferredPublications,
+            manga = manga,
+            chapter = chapter,
+            source = source,
+            pageKey = pageKey,
+            readerStreamFn = readerStreamFn,
+            force = force,
+            stageListener = stageListener,
+            deferredPublications = deferredPublications,
+            sourceCustody = sourceCustody,
+            attempt = attempt,
+            owner = owner,
+            inlineInpaint = inlineInpaint,
         )
-
-    // Keep one pipeline entry point for provider translation and rendering.
-    private suspend fun translateSinglePageHttpRender(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        ctx: OnnxPhaseResult,
-        stageListener: TranslationStageListener? = null,
-        origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
-    ): TranslationCompletionOutcome =
-        singlePageHttpRenderPhase.translateSinglePageHttpRender(manga, chapter, source, pageKey, ctx, stageListener, origin)
 
     private suspend fun loadPersistedCleanedBitmap(
         manga: Manga,
@@ -1350,6 +1604,48 @@ class TranslationPipeline private constructor(
         pageTranslation: PageTranslation,
     ): PageTranslation =
         singlePageOnnxPhase.retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
+
+    private suspend fun retryInpaintDownscaledAdmitted(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        streams: List<Pair<String, () -> InputStream>>,
+        decoded: DecodedPage,
+        pageTranslation: PageTranslation,
+        owner: CleanedOwner? = null,
+        attempt: AttemptAuthority? = null,
+    ): PageTranslation {
+        val result = withNativeLane(
+            timeoutMs = nativeTimeoutMs,
+            chapterId = chapter.id,
+            chapterName = chapter.name,
+            pageKey = pageKey,
+            priority = DevicePermitPriority.FOREGROUND,
+        ) {
+            val retried = singlePageOnnxPhase.retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
+            val produced = retried.cleanedBitmap
+            if (produced != null && owner != null) {
+                owner.replace(produced, CleanedProvenance.RETRY)
+            }
+            retried
+        }
+        if (result == null) {
+            attempt?.markTimeout { current ->
+                current.apply {
+                    inpaintStatus = StageStatus.FAILED
+                    errorMessage = "Inpainting retry timed out"
+                    updatedAt = System.currentTimeMillis()
+                }
+            }
+            val copy = pageTranslation.detachedCopy()
+            copy.cleanedBitmap = null
+            copy.inpaintStatus = StageStatus.FAILED
+            copy.errorMessage = "Inpainting retry timed out"
+            return copy
+        }
+        return result
+    }
 
     private suspend fun analyzePage(
         fileName: String,

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-15T16:03:04" hostname="DESKTOP-8VS098Q" time="1.31">
+  <properties/>
+  <testcase name="prepared page fingerprints match the durable store after production publish()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="0.013"/>
+  <testcase name="production helper nulls cleaned bitmap on source before returning()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="0.002"/>
+  <testcase name="production terminal predicate classifies a fresh page with blocks as non-terminal()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="0.0"/>
+  <testcase name="lazy auto boundary flushes before eager cleaned bitmap recycle()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="1.228"/>
+  <testcase name="production terminal predicate classifies fresh textless pages as terminal()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="0.002"/>
+  <testcase name="stale fingerprint mismatch detected after production publish and re-OCR()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="0.012"/>
+  <testcase name="production durability write makes OCR blocks survive handoff for downstream reconstruction()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="0.03"/>
+  <testcase name="production helper returns terminal prepared page for textless OCR result()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="0.008"/>
+  <testcase name="production terminal predicate rejects failed pages()" classname="eu.kanade.translation.pipeline.execution.PreparedPageRuntimeBoundaryTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[WARNING: A Java agent has been loaded dynamically (C:\Users\ADMIN\.gradle\caches\modules-2\files-2.1\net.bytebuddy\byte-buddy-agent\1.14.17\e3c251a39dc90badaf71c83427ba46840f219d8d\byte-buddy-agent-1.14.17.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+]]></system-err>
+</testsuite>

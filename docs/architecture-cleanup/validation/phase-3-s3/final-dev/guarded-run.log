@@ -1,0 +1,451 @@
+Configuration on demand is an incubating feature.
+Type-safe project accessors is an incubating feature.
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:generateExternalPluginSpecBuilders UP-TO-DATE
+> Task :buildSrc:extractPrecompiledScriptPluginPlugins UP-TO-DATE
+> Task :buildSrc:compilePluginsBlocks UP-TO-DATE
+> Task :buildSrc:generatePrecompiledScriptPluginAccessors UP-TO-DATE
+> Task :buildSrc:generateScriptPluginAdapters UP-TO-DATE
+> Task :buildSrc:compileKotlin UP-TO-DATE
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:pluginDescriptors UP-TO-DATE
+> Task :buildSrc:processResources UP-TO-DATE
+> Task :buildSrc:classes UP-TO-DATE
+> Task :buildSrc:jar UP-TO-DATE
+
+> Configure project :app
+w: Deprecated Gradle Property 'kotlin.mpp.androidGradlePluginCompatibility.nowarn' Used
+The `kotlin.mpp.androidGradlePluginCompatibility.nowarn` deprecated property is used in your build.
+Solution: It is unsupported, please stop using it.
+
+
+> Task :presentation-widget:preBuild UP-TO-DATE
+> Task :source-api:preBuild UP-TO-DATE
+> Task :core:archive:preBuild UP-TO-DATE
+> Task :data:preBuild UP-TO-DATE
+> Task :source-local:preBuild UP-TO-DATE
+> Task :domain:preBuild UP-TO-DATE
+> Task :core:common:preBuild UP-TO-DATE
+> Task :core-metadata:preBuild UP-TO-DATE
+> Task :presentation-core:preBuild UP-TO-DATE
+> Task :core-metadata:preReleaseBuild UP-TO-DATE
+> Task :source-api:preReleaseBuild UP-TO-DATE
+> Task :presentation-widget:preReleaseBuild UP-TO-DATE
+> Task :core:archive:preReleaseBuild UP-TO-DATE
+> Task :core:common:preReleaseBuild UP-TO-DATE
+> Task :presentation-core:preReleaseBuild UP-TO-DATE
+> Task :domain:preReleaseBuild UP-TO-DATE
+> Task :i18n:generateMRcommonMain UP-TO-DATE
+> Task :i18n-at:generateMRcommonMain UP-TO-DATE
+> Task :data:preReleaseBuild UP-TO-DATE
+> Task :source-local:preReleaseBuild UP-TO-DATE
+> Task :i18n-at:generateMRandroidMain UP-TO-DATE
+> Task :i18n:generateMRandroidMain UP-TO-DATE
+> Task :i18n:generateMRandroidRelease SKIPPED
+> Task :i18n-at:generateMRandroidRelease SKIPPED
+> Task :i18n:generateLocalesConfig UP-TO-DATE
+> Task :i18n:generateMRandroidDebug SKIPPED
+> Task :i18n-at:generateMRandroidDebug SKIPPED
+> Task :i18n-at:generateMRandroidInstrumentedTest UP-TO-DATE
+> Task :i18n:generateMRandroidInstrumentedTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidInstrumentedTestDebug SKIPPED
+> Task :i18n:generateMRandroidInstrumentedTestDebug SKIPPED
+> Task :i18n-at:generateMRcommonTest UP-TO-DATE
+> Task :i18n:generateMRcommonTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidUnitTest UP-TO-DATE
+> Task :i18n:generateMRandroidUnitTest UP-TO-DATE
+> Task :i18n-at:generateMRandroidUnitTestDebug SKIPPED
+> Task :i18n:generateMRandroidUnitTestDebug SKIPPED
+> Task :i18n:generateMRandroidUnitTestRelease SKIPPED
+> Task :i18n:preBuild UP-TO-DATE
+> Task :i18n-at:generateMRandroidUnitTestRelease SKIPPED
+> Task :i18n:preReleaseBuild UP-TO-DATE
+> Task :i18n-at:preBuild UP-TO-DATE
+> Task :i18n-at:preReleaseBuild UP-TO-DATE
+> Task :source-local:generateReleaseResValues FROM-CACHE
+> Task :domain:generateReleaseResValues FROM-CACHE
+> Task :i18n:generateReleaseResValues FROM-CACHE
+> Task :data:generateReleaseResValues FROM-CACHE
+> Task :core:common:generateReleaseResValues FROM-CACHE
+> Task :core:archive:generateReleaseResValues FROM-CACHE
+> Task :source-api:generateReleaseResValues FROM-CACHE
+> Task :presentation-core:generateReleaseResValues FROM-CACHE
+> Task :presentation-widget:generateReleaseResValues FROM-CACHE
+> Task :core-metadata:generateReleaseResValues FROM-CACHE
+> Task :i18n-at:generateReleaseResValues FROM-CACHE
+> Task :source-local:generateReleaseResources FROM-CACHE
+> Task :presentation-widget:generateReleaseResources FROM-CACHE
+> Task :presentation-core:generateReleaseResources FROM-CACHE
+> Task :core:common:generateReleaseResources FROM-CACHE
+> Task :data:generateReleaseResources FROM-CACHE
+> Task :source-api:generateReleaseResources FROM-CACHE
+> Task :core-metadata:generateReleaseResources FROM-CACHE
+> Task :core:archive:generateReleaseResources FROM-CACHE
+> Task :i18n:generateReleaseResources FROM-CACHE
+> Task :domain:generateReleaseResources FROM-CACHE
+> Task :data:packageReleaseResources FROM-CACHE
+> Task :core:archive:packageReleaseResources FROM-CACHE
+> Task :source-local:packageReleaseResources FROM-CACHE
+> Task :core:common:packageReleaseResources FROM-CACHE
+> Task :core-metadata:packageReleaseResources FROM-CACHE
+> Task :presentation-core:packageReleaseResources FROM-CACHE
+> Task :source-local:extractDeepLinksRelease FROM-CACHE
+> Task :core:archive:extractDeepLinksRelease FROM-CACHE
+> Task :data:extractDeepLinksRelease FROM-CACHE
+> Task :core-metadata:extractDeepLinksRelease FROM-CACHE
+> Task :source-api:packageReleaseResources FROM-CACHE
+> Task :domain:packageReleaseResources FROM-CACHE
+> Task :source-local:processReleaseManifest FROM-CACHE
+> Task :core:archive:writeReleaseAarMetadata
+> Task :presentation-core:writeReleaseAarMetadata
+> Task :core-metadata:writeReleaseAarMetadata
+> Task :presentation-widget:packageReleaseResources FROM-CACHE
+> Task :domain:writeReleaseAarMetadata
+> Task :source-local:writeReleaseAarMetadata
+> Task :core:common:writeReleaseAarMetadata
+> Task :data:writeReleaseAarMetadata
+> Task :source-api:writeReleaseAarMetadata
+> Task :presentation-widget:writeReleaseAarMetadata
+> Task :app:buildKotlinToolingMetadata
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preStandardReleaseBuild UP-TO-DATE
+> Task :app:dataBindingMergeDependencyArtifactsStandardRelease
+> Task :i18n:packageReleaseResources FROM-CACHE
+> Task :i18n-at:generateReleaseResources
+> Task :app:generateStandardReleaseResValues FROM-CACHE
+> Task :presentation-core:extractDeepLinksRelease FROM-CACHE
+> Task :source-api:extractDeepLinksRelease FROM-CACHE
+> Task :domain:extractDeepLinksRelease FROM-CACHE
+> Task :presentation-widget:extractDeepLinksRelease FROM-CACHE
+> Task :core:common:extractDeepLinksRelease FROM-CACHE
+> Task :i18n:writeReleaseAarMetadata
+> Task :source-local:parseReleaseLocalResources FROM-CACHE
+> Task :app:generateStandardReleaseResources FROM-CACHE
+> Task :source-local:kmpPartiallyResolvedDependenciesChecker
+> Task :app:collectDependencies UP-TO-DATE
+> Task :source-local:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n:extractDeepLinksRelease FROM-CACHE
+> Task :source-local:javaPreCompileRelease FROM-CACHE
+> Task :core-metadata:processReleaseManifest FROM-CACHE
+> Task :source-api:processReleaseManifest FROM-CACHE
+> Task :core:common:processReleaseManifest FROM-CACHE
+> Task :domain:processReleaseManifest FROM-CACHE
+> Task :presentation-core:processReleaseManifest FROM-CACHE
+> Task :core:archive:processReleaseManifest FROM-CACHE
+> Task :data:processReleaseManifest FROM-CACHE
+> Task :i18n:processReleaseManifest FROM-CACHE
+> Task :app:prepareLibraryDefinitionsStandardRelease FROM-CACHE
+> Task :data:parseReleaseLocalResources FROM-CACHE
+> Task :data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :source-api:parseReleaseLocalResources FROM-CACHE
+> Task :core-metadata:parseReleaseLocalResources FROM-CACHE
+> Task :domain:parseReleaseLocalResources FROM-CACHE
+> Task :domain:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core-metadata:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n:parseReleaseLocalResources FROM-CACHE
+> Task :source-api:kmpPartiallyResolvedDependenciesChecker
+> Task :source-api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :presentation-widget:processReleaseManifest FROM-CACHE
+> Task :core:common:parseReleaseLocalResources FROM-CACHE
+> Task :core-metadata:javaPreCompileRelease FROM-CACHE
+> Task :core:common:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:common:javaPreCompileRelease FROM-CACHE
+> Task :core:archive:parseReleaseLocalResources FROM-CACHE
+> Task :domain:javaPreCompileRelease FROM-CACHE
+> Task :source-api:javaPreCompileRelease FROM-CACHE
+> Task :presentation-widget:parseReleaseLocalResources FROM-CACHE
+> Task :presentation-widget:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :presentation-widget:javaPreCompileRelease FROM-CACHE
+> Task :core:archive:generateReleaseRFile FROM-CACHE
+> Task :core:archive:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :presentation-core:parseReleaseLocalResources FROM-CACHE
+> Task :presentation-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :presentation-core:javaPreCompileRelease FROM-CACHE
+> Task :i18n-at:packageReleaseResources
+> Task :i18n-at:writeReleaseAarMetadata
+> Task :i18n-at:extractDeepLinksRelease FROM-CACHE
+> Task :i18n-at:processReleaseManifest FROM-CACHE
+> Task :i18n-at:parseReleaseLocalResources FROM-CACHE
+> Task :i18n-at:generateReleaseRFile FROM-CACHE
+> Task :i18n-at:kmpPartiallyResolvedDependenciesChecker
+> Task :i18n-at:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n:generateReleaseRFile FROM-CACHE
+> Task :i18n:kmpPartiallyResolvedDependenciesChecker
+> Task :i18n:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :data:generateReleaseDatabaseInterface FROM-CACHE
+> Task :data:javaPreCompileRelease FROM-CACHE
+> Task :core:common:generateReleaseRFile FROM-CACHE
+> Task :source-api:generateReleaseRFile FROM-CACHE
+> Task :presentation-core:generateReleaseRFile FROM-CACHE
+> Task :core-metadata:generateReleaseRFile FROM-CACHE
+> Task :domain:generateReleaseRFile FROM-CACHE
+> Task :i18n-at:javaPreCompileRelease FROM-CACHE
+> Task :source-local:generateReleaseRFile FROM-CACHE
+> Task :presentation-widget:generateReleaseRFile FROM-CACHE
+> Task :app:prepareStandardReleaseShortcutXML
+> Task :data:generateReleaseRFile FROM-CACHE
+> Task :core:archive:compileReleaseKotlin FROM-CACHE
+> Task :core:archive:javaPreCompileRelease FROM-CACHE
+> Task :core:archive:compileReleaseJavaWithJavac NO-SOURCE
+> Task :i18n:compileReleaseKotlinAndroid FROM-CACHE
+> Task :i18n:javaPreCompileRelease FROM-CACHE
+> Task :i18n:compileReleaseJavaWithJavac NO-SOURCE
+> Task :core:archive:processReleaseJavaRes
+> Task :i18n:processReleaseJavaRes
+> Task :core:archive:bundleLibRuntimeToJarRelease
+> Task :i18n:bundleLibRuntimeToJarRelease
+> Task :core:archive:bundleLibCompileToJarRelease
+> Task :i18n:bundleLibCompileToJarRelease
+
+> Task :i18n-at:compileReleaseKotlinAndroid
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+
+> Task :core:common:compileReleaseKotlin FROM-CACHE
+> Task :core:common:compileReleaseJavaWithJavac NO-SOURCE
+> Task :i18n-at:compileReleaseJavaWithJavac NO-SOURCE
+> Task :i18n-at:bundleLibRuntimeToJarRelease
+> Task :i18n-at:bundleLibCompileToJarRelease
+> Task :i18n-at:processReleaseJavaRes
+> Task :core:common:bundleLibRuntimeToJarRelease
+> Task :core:common:bundleLibCompileToJarRelease
+> Task :core:common:processReleaseJavaRes
+> Task :source-api:compileReleaseKotlinAndroid FROM-CACHE
+> Task :source-api:compileReleaseJavaWithJavac NO-SOURCE
+> Task :source-api:bundleLibCompileToJarRelease
+> Task :source-api:bundleLibRuntimeToJarRelease
+> Task :source-api:processReleaseJavaRes
+> Task :presentation-core:compileReleaseKotlin FROM-CACHE
+> Task :presentation-core:compileReleaseJavaWithJavac NO-SOURCE
+> Task :presentation-core:bundleLibRuntimeToJarRelease
+> Task :presentation-core:bundleLibCompileToJarRelease
+> Task :presentation-core:processReleaseJavaRes
+> Task :core-metadata:compileReleaseKotlin FROM-CACHE
+> Task :core-metadata:compileReleaseJavaWithJavac NO-SOURCE
+> Task :core-metadata:processReleaseJavaRes
+> Task :core-metadata:bundleLibRuntimeToJarRelease
+> Task :core-metadata:bundleLibCompileToJarRelease
+
+> Task :domain:compileReleaseKotlin
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+
+> Task :domain:compileReleaseJavaWithJavac NO-SOURCE
+> Task :domain:bundleLibCompileToJarRelease
+> Task :domain:bundleLibRuntimeToJarRelease
+> Task :domain:processReleaseJavaRes
+
+> Task :presentation-widget:compileReleaseKotlin
+w: The feature plugin:androidx.compose.compiler.plugins.kotlin:featureFlag=OptimizeNonSkippingGroups is enabled by default and specifying this option explicitly is not necessary.
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+
+> Task :presentation-widget:compileReleaseJavaWithJavac NO-SOURCE
+
+> Task :source-local:compileReleaseKotlinAndroid
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+
+> Task :source-local:compileReleaseJavaWithJavac NO-SOURCE
+> Task :presentation-widget:bundleLibRuntimeToJarRelease
+> Task :source-local:bundleLibRuntimeToJarRelease
+> Task :presentation-widget:bundleLibCompileToJarRelease
+> Task :source-local:bundleLibCompileToJarRelease
+> Task :presentation-widget:processReleaseJavaRes
+> Task :source-local:processReleaseJavaRes
+
+> Task :data:compileReleaseKotlin
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+
+> Task :data:compileReleaseJavaWithJavac NO-SOURCE
+> Task :data:bundleLibCompileToJarRelease
+> Task :data:bundleLibRuntimeToJarRelease
+> Task :data:processReleaseJavaRes
+
+> Task :app:mergeStandardReleaseResources
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-hi\values-hi.xml:607:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-pt\values-pt.xml:757:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-hu\values-hu.xml:718:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-nb-rNO\values-nb-rNO.xml:709:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-ar\values-ar.xml:811:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-ceb\values-ceb.xml:388:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-am\values-am.xml:241:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-ro\values-ro.xml:752:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-iw\values-iw.xml:669:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-sk\values-sk.xml:565:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-bg\values-bg.xml:576:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-bn\values-bn.xml:573:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-cs\values-cs.xml:750:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-lt\values-lt.xml:608:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-sr\values-sr.xml:733:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-lv\values-lv.xml:677:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-sa\values-sa.xml:531:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-eo\values-eo.xml:477:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-pt-rBR\values-pt-rBR.xml:752:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-ca\values-ca.xml:757:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-eu\values-eu.xml:530:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-kk\values-kk.xml:611:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-cv\values-cv.xml:550:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-kn\values-kn.xml:440:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-fa\values-fa.xml:605:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-fi\values-fi.xml:590:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-ko\values-ko.xml:688:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-sv\values-sv.xml:735:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-da\values-da.xml:287:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-ka-rGE\values-ka-rGE.xml:365:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-ms\values-ms.xml:689:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-pl\values-pl.xml:761:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-nl\values-nl.xml:741:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-fr\values-fr.xml:747:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-nn\values-nn.xml:235:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-gl\values-gl.xml:718:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-sq\values-sq.xml:608:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-th\values-th.xml:726:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+C:\Users\ADMIN\Documents\Coding Related\tachiyomiATVIBE-inpainting-modes-redesign\i18n\build\intermediates\packaged_res\release\packageReleaseResources\values-sah\values-sah.xml:350:4: Multiple substitutions specified in non-positional format of string resource string/restore_duration. Did you mean to add the formatted="false" attribute?
+
+> Task :app:generateStandardReleaseBuildConfig
+> Task :app:mapStandardReleaseSourceSetPaths
+> Task :app:createStandardReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksStandardRelease FROM-CACHE
+> Task :app:processStandardReleaseMainManifest FROM-CACHE
+> Task :app:processStandardReleaseManifest FROM-CACHE
+> Task :app:processStandardReleaseManifestForPackage FROM-CACHE
+> Task :app:javaPreCompileStandardRelease FROM-CACHE
+> Task :app:preStandardReleaseUnitTestBuild UP-TO-DATE
+> Task :app:checkStandardReleaseAarMetadata
+> Task :app:javaPreCompileStandardReleaseUnitTest FROM-CACHE
+> Task :app:dataBindingGenBaseClassesStandardRelease FROM-CACHE
+> Task :app:processStandardReleaseResources
+> Task :app:compileStandardReleaseKotlin
+w: The feature plugin:androidx.compose.compiler.plugins.kotlin:featureFlag=OptimizeNonSkippingGroups is enabled by default and specifying this option explicitly is not necessary.
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/presentation/manga/components/TranslationProgressSheet.kt:363:55 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/presentation/manga/components/TranslationProgressSheet.kt:556:48 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/presentation/reader/TranslationSettingsSheet.kt:273:31 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/presentation/reader/components/TranslationCompareHandle.kt:281:42 'val Icons.Outlined.CompareArrows: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Outlined.CompareArrows.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/presentation/util/ExceptionFormatter.kt:12:1 Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/presentation/util/FastScrollAnimateItem.kt:7:1 Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/download/DownloadManager.kt:346:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/download/DownloadManager.kt:373:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/download/Downloader.kt:171:13 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/library/LibraryUpdateNotifier.kt:212:13 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:200:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:226:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/data/translation/TranslationForegroundService.kt:111:13 'fun stopForeground(p0: Boolean): Unit' is deprecated. Deprecated in Java.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/extension/util/ExtensionInstallActivity.kt:28:43 'static field ACTION_INSTALL_PACKAGE: String' is deprecated. Deprecated in Java.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/extension/util/ExtensionLoader.kt:244:66 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/extension/util/ExtensionLoader.kt:244:113 'fun get(p0: String!): Any?' is deprecated. Deprecated in Java.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt:1249:25 Condition is always 'false'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt:1253:21 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt:703:16 'var statusBarColor: Int' is deprecated. Deprecated in Java.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt:705:20 'var navigationBarColor: Int' is deprecated. Deprecated in Java.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt:1676:9 This annotation is currently applied to the value parameter only, but in the future it will also be applied to field.
+- To opt in to applying to both value parameter and field, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt:165:13 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/ui/reader/setting/ReadingMode.kt:16:5 This annotation is currently applied to the value parameter only, but in the future it will also be applied to field.
+- To opt in to applying to both value parameter and field, add '-Xannotation-default-target=param-property' to your compiler arguments.
+- To keep applying to the value parameter only, use the '@param:' annotation target.
+
+See https://youtrack.jetbrains.com/issue/KT-73255 for more details.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/tachiyomi/util/view/EditTextPreferenceExtensions.kt:8:24 This extension is shadowed by a member: 'fun getOnBindEditTextListener(): EditTextPreference.OnBindEditTextListener?' defined in 'androidx.preference.EditTextPreference'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/engines/vision/detection/OnnxPageTextDetector.kt:96:49 Unchecked cast of 'Any!' to 'Array<LongArray>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/engines/vision/detection/OnnxPageTextDetector.kt:97:48 Unchecked cast of 'Any!' to 'Array<Array<FloatArray>>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/engines/vision/detection/OnnxPageTextDetector.kt:98:49 Unchecked cast of 'Any!' to 'Array<FloatArray>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/engines/vision/detection/OnnxPanelDetector.kt:140:44 Unchecked cast of 'Any!' to 'Array<Array<FloatArray>>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/engines/vision/ocr/MangaOcrEngine.kt:99:36 The corresponding parameter in the supertype 'RoiOcrEngine' is named 'crop'. This may cause problems when calling this function with named arguments.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/scheduling/TranslationScheduler.kt:173:33 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/scheduling/TranslationScheduler.kt:552:17 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/scheduling/TranslationScheduler.kt:580:17 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/workflow/ChapterTranslator.kt:487:17 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/workflow/ChapterTranslator.kt:776:31 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/workflow/TranslationManager.kt:230:17 Java type mismatch: inferred type is 'Long?', but 'Long' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/workflow/TranslationManager.kt:512:31 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/eu/kanade/translation/workflow/TranslationManager.kt:1048:23 Condition is always 'true'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/mihon/feature/upcoming/components/calendar/CalendarHeader.kt:57:36 'val Icons.Filled.KeyboardArrowLeft: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowLeft.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/main/java/mihon/feature/upcoming/components/calendar/CalendarHeader.kt:60:36 'val Icons.Filled.KeyboardArrowRight: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.KeyboardArrowRight.
+
+> Task :app:compileStandardReleaseJavaWithJavac
+> Task :app:processStandardReleaseJavaRes
+> Task :app:bundleStandardReleaseClassesToCompileJar
+> Task :app:bundleStandardReleaseClassesToRuntimeJar
+
+> Task :app:compileStandardReleaseUnitTestKotlin
+w: The feature plugin:androidx.compose.compiler.plugins.kotlin:featureFlag=OptimizeNonSkippingGroups is enabled by default and specifying this option explicitly is not necessary.
+w: Experimental context receivers are superseded by context parameters.
+Replace the '-Xcontext-receivers' compiler argument with '-Xcontext-parameters' and migrate to the new syntax.
+
+See the context parameters proposal for more details: https://kotl.in/context-parameters
+This warning will become an error in future releases.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/tachiyomi/data/download/DownloaderHandoffFailureSplitTest.kt:295:24 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModelCancelledBatchReconciliationTest.kt:403:62 Unchecked cast of 'Any!' to 'MutableMap<Any?, Any?>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModelMultiSelectBatchTest.kt:482:62 Unchecked cast of 'Any!' to 'MutableMap<Any?, Any?>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModelTranslationDrawerTest.kt:430:62 Unchecked cast of 'Any!' to 'MutableMap<Any?, Any?>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/coexistence/CancelledBatchRestartReuseTest.kt:78:42 Unchecked cast of 'Any!' to 'MutableStateFlow<List<Translation>>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/coexistence/PipelineStallWatchdogTest.kt:159:13 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'Any?'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/engines/inpainting/aot/NeuralInpaintingCoordinatorBubbleTest.kt:260:21 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'Int?'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/engines/inpainting/aot/NeuralInpaintingCoordinatorBubbleTest.kt:261:21 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'Int?'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/engines/inpainting/aot/NeuralInpaintingCoordinatorBubbleTest.kt:262:34 Java type mismatch: inferred type is 'Int?', but 'Int' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/persistence/chapter/StoreWriteDrainLockOrderTest.kt:16:9 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/persistence/journal/ChapterJournalWriterTest.kt:609:31 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'File?'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/persistence/journal/ChapterJournalWriterTest.kt:610:31 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'File?'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/persistence/journal/ChapterJournalWriterTest.kt:610:31 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'File?'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/AdmissionTestFixture.kt:144:16 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/ChapterTranslatorBatchStartGuardTest.kt:204:24 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/TranslationManagerDeleteResetOrderingTest.kt:387:24 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/TranslationManagerPendingAcknowledgementTest.kt:187:24 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/TranslationManagerStartupReconciliationTest.kt:288:69 Unchecked cast of 'Any?' to 'Set<Long>'.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/eu/kanade/translation/workflow/TranslationRequestGenerationFenceTest.kt:356:24 Java type mismatch: inferred type is 'Any?', but 'Any' was expected.
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/app/src/test/java/mihon/core/migration/MigratorTest.kt:145:35 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+
+> Task :app:compileStandardReleaseUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processStandardReleaseUnitTestJavaRes
+Java HotSpot(TM) 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+> Task :app:testStandardReleaseUnitTest
+
+> Task :app:testStandardReleaseUnitTestCountParity
+Test method inventory for testStandardReleaseUnitTest: declared=2280, quarantined=0, expected=2280.
+Skipping test count parity for filtered diagnostics: testStandardReleaseUnitTest
+
+[Incubating] Problems report is available at: file:///C:/Users/ADMIN/Documents/Coding%20Related/tachiyomiATVIBE-inpainting-modes-redesign/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.12/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 2m 37s
+196 actionable tasks: 73 executed, 103 from cache, 20 up-to-date

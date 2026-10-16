@@ -1,0 +1,96 @@
+=== S1 guard breach 2026-10-15T14:42:24Z: test execution exceeded 8s ===
+run id: a1c572c4-88f0-4703-b04f-ea5b053d7029; task: :app:testStandardDebugUnitTest
+--- candidates (run-id + task + project filtered at breach time) ---
+candidate PID=41280 created=2026-10-15T21:42:15.4550340+07:00
+revalidate#1 PID=41280 -> VERIFIED
+2026-10-15 21:42:27
+Full thread dump Java HotSpot(TM) 64-Bit Server VM (21.0.8+12-LTS-250 mixed mode, sharing):
+
+Threads class SMR info:
+_java_thread_list=0x00000268bc9a2b00, length=11, elements={
+0x0000026895cb98b0, 0x00000268bc7b0e90, 0x00000268bc7b4710, 0x00000268bc7b7480,
+0x00000268bc7ba3b0, 0x00000268bc7b8000, 0x00000268bc7b94b0, 0x00000268bc7c0b30,
+0x00000268bc7d6d00, 0x00000268bc9c5ca0, 0x00000268bc9c64c0
+}
+
+"main" #1 [34616] prio=5 os_prio=0 cpu=31.25ms elapsed=11.53s tid=0x0000026895cb98b0 nid=34616 waiting on condition  [0x00000084115ff000]
+   java.lang.Thread.State: TIMED_WAITING (sleeping)
+	at java.lang.Thread.sleep0(java.base@21.0.8/Native Method)
+	at java.lang.Thread.sleep(java.base@21.0.8/Thread.java:509)
+	at S1SelftestSleep.main(S1SelftestSleep.java:3)
+
+"Reference Handler" #9 [20144] daemon prio=10 os_prio=2 cpu=0.00ms elapsed=11.51s tid=0x00000268bc7b0e90 nid=20144 waiting on condition  [0x0000008411dfe000]
+   java.lang.Thread.State: RUNNABLE
+	at java.lang.ref.Reference.waitForReferencePendingList(java.base@21.0.8/Native Method)
+	at java.lang.ref.Reference.processPendingReferences(java.base@21.0.8/Reference.java:246)
+	at java.lang.ref.Reference$ReferenceHandler.run(java.base@21.0.8/Reference.java:208)
+
+"Finalizer" #10 [33372] daemon prio=8 os_prio=1 cpu=0.00ms elapsed=11.51s tid=0x00000268bc7b4710 nid=33372 in Object.wait()  [0x0000008411eff000]
+   java.lang.Thread.State: WAITING (on object monitor)
+	at java.lang.Object.wait0(java.base@21.0.8/Native Method)
+	- waiting on <0x0000000620c0c2e8> (a java.lang.ref.NativeReferenceQueue$Lock)
+	at java.lang.Object.wait(java.base@21.0.8/Object.java:366)
+	at java.lang.Object.wait(java.base@21.0.8/Object.java:339)
+	at java.lang.ref.NativeReferenceQueue.await(java.base@21.0.8/NativeReferenceQueue.java:48)
+	at java.lang.ref.ReferenceQueue.remove0(java.base@21.0.8/ReferenceQueue.java:158)
+	at java.lang.ref.NativeReferenceQueue.remove(java.base@21.0.8/NativeReferenceQueue.java:89)
+	- locked <0x0000000620c0c2e8> (a java.lang.ref.NativeReferenceQueue$Lock)
+	at java.lang.ref.Finalizer$FinalizerThread.run(java.base@21.0.8/Finalizer.java:173)
+
+"Signal Dispatcher" #11 [37872] daemon prio=9 os_prio=2 cpu=0.00ms elapsed=11.51s tid=0x00000268bc7b7480 nid=37872 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Attach Listener" #12 [41240] daemon prio=5 os_prio=2 cpu=0.00ms elapsed=11.51s tid=0x00000268bc7ba3b0 nid=41240 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Service Thread" #13 [6340] daemon prio=9 os_prio=0 cpu=0.00ms elapsed=11.51s tid=0x00000268bc7b8000 nid=6340 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Monitor Deflation Thread" #14 [21740] daemon prio=9 os_prio=0 cpu=0.00ms elapsed=11.51s tid=0x00000268bc7b94b0 nid=21740 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"C2 CompilerThread0" #15 [36976] daemon prio=9 os_prio=2 cpu=15.62ms elapsed=11.51s tid=0x00000268bc7c0b30 nid=36976 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+   No compile task
+
+"C1 CompilerThread0" #23 [26056] daemon prio=9 os_prio=2 cpu=15.62ms elapsed=11.51s tid=0x00000268bc7d6d00 nid=26056 waiting on condition  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+   No compile task
+
+"Notification Thread" #27 [30212] daemon prio=9 os_prio=0 cpu=0.00ms elapsed=11.50s tid=0x00000268bc9c5ca0 nid=30212 runnable  [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Common-Cleaner" #28 [17960] daemon prio=8 os_prio=1 cpu=0.00ms elapsed=11.50s tid=0x00000268bc9c64c0 nid=17960 waiting on condition  [0x00000084128ff000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(java.base@21.0.8/Native Method)
+	- parking to wait for  <0x0000000620e029d0> (a java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject)
+	at java.util.concurrent.locks.LockSupport.parkNanos(java.base@21.0.8/LockSupport.java:269)
+	at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await(java.base@21.0.8/AbstractQueuedSynchronizer.java:1852)
+	at java.lang.ref.ReferenceQueue.await(java.base@21.0.8/ReferenceQueue.java:71)
+	at java.lang.ref.ReferenceQueue.remove0(java.base@21.0.8/ReferenceQueue.java:143)
+	at java.lang.ref.ReferenceQueue.remove(java.base@21.0.8/ReferenceQueue.java:218)
+	at jdk.internal.ref.CleanerImpl.run(java.base@21.0.8/CleanerImpl.java:140)
+	at java.lang.Thread.runWith(java.base@21.0.8/Thread.java:1596)
+	at java.lang.Thread.run(java.base@21.0.8/Thread.java:1583)
+	at jdk.internal.misc.InnocuousThread.run(java.base@21.0.8/InnocuousThread.java:186)
+
+"VM Thread" os_prio=2 cpu=0.00ms elapsed=11.52s tid=0x00000268bbbcaac0 nid=8784 runnable  
+
+"VM Periodic Task Thread" os_prio=2 cpu=15.62ms elapsed=11.52s tid=0x00000268bbbb8270 nid=7180 waiting on condition  
+
+"G1 Service" os_prio=2 cpu=0.00ms elapsed=11.53s tid=0x00000268bba76ac0 nid=39752 runnable  
+
+"G1 Refine#0" os_prio=2 cpu=0.00ms elapsed=11.53s tid=0x00000268bba762a0 nid=1592 runnable  
+
+"G1 Conc#0" os_prio=2 cpu=0.00ms elapsed=11.53s tid=0x0000026895d73e60 nid=38068 runnable  
+
+"G1 Main Marker" os_prio=2 cpu=0.00ms elapsed=11.53s tid=0x0000026895d70d00 nid=25524 runnable  
+
+"GC Thread#0" os_prio=2 cpu=0.00ms elapsed=11.53s tid=0x0000026895d5df10 nid=34136 runnable  
+
+JNI global refs: 13, weak refs: 0
+
+revalidate#2 PID=41280 -> VERIFIED
+GUARD: terminating VERIFIED worker PID=41280 (taskkill, Win32 identity)
+SUCCESS: The process with PID 41280 (child process of PID 27376) has been terminated.
+GUARD: wrapper still alive after 5s grace; stopping OWNED wrapper pid=1263 (MSYS kill of own child)

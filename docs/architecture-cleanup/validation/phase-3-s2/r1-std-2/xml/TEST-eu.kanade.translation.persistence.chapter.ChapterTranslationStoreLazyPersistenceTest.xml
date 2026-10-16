@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-15T16:04:23" hostname="DESKTOP-8VS098Q" time="0.95">
+  <properties/>
+  <testcase name="caller cancelled while waiting for the store lock still gets its receipt completed()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.26"/>
+  <testcase name="receipt completes false when the store has no persistence target()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.004"/>
+  <testcase name="defunct store fails the active worker and discards queued lazy tasks()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.02"/>
+  <testcase name="transient stage remains live-only when the page is already registered()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.032"/>
+  <testcase name="failed lazy artifact flush leaves prior manifest authoritative()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.007"/>
+  <testcase name="batch durability barrier waits for lazy worker completion()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.017"/>
+  <testcase name="live state is visible before lazy artifact publication()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.391"/>
+  <testcase name="cancelling an awaiter blocked on the flush barrier leaves the receipt truthful after actual worker exit()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.006"/>
+  <testcase name="one store flush forces its accepted rendered journal pages once()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.06"/>
+  <testcase name="immediately promoted rendered page uses three atomic artifact publications()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.051"/>
+  <testcase name="caller cancellation after enrollment neither unqueues nor falsely signals the receipt()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.008"/>
+  <testcase name="generation change discards queued lazy task before it writes()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.005"/>
+  <testcase name="enrolled receipt completion is store exclusive()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.004"/>
+  <testcase name="zero padded page keeps one candidate dependency across repeated lazy flushes()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.01"/>
+  <testcase name="failed immediate terminal publication still hands accepted candidate state to journal()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.057"/>
+  <testcase name="receipt completes false once the drain scope has closed()" classname="eu.kanade.translation.persistence.chapter.ChapterTranslationStoreLazyPersistenceTest" time="0.008"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

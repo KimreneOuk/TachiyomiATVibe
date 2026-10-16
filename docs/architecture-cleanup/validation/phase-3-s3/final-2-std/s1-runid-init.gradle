@@ -1,0 +1,23 @@
+// S1 validation run-identity init script (scratch helper — NOT production code).
+// Applies this invocation's unique run tag to every Test task's worker JVM so the
+// outer guard can identify exactly THIS run's test workers by command line.
+//
+// The run id reaches this script through up to three channels set by the guard
+// from ONE generated GUID: env TRAYCER_VALIDATION_RUNID, -D system property,
+// -P project property. (Attempt 4 of the final std run demonstrated the -P
+// channel alone can be invisible to startParameter inside the daemon, failing
+// the build in 1s; multi-channel read makes the tag arrival deterministic.)
+def runId = System.getenv("TRAYCER_VALIDATION_RUNID") ?:
+        System.getProperty("traycer.validation.runId") ?:
+        gradle.startParameter.projectProperties.get("traycer.validation.runId")
+if (runId == null) {
+    throw new GradleException("s1-runid-init.gradle requires the validation run id (env TRAYCER_VALIDATION_RUNID, -D, or -P)")
+}
+allprojects {
+    tasks.withType(Test).configureEach { t ->
+        jvmArgs(
+            "-Dtraycer.validation.runId=${runId}",
+            "-Dtraycer.validation.task=${t.path}",
+        )
+    }
+}
