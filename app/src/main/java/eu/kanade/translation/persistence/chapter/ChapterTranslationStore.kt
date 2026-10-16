@@ -112,17 +112,21 @@ import kotlin.coroutines.CoroutineContext
 /** Bounded scalar record of an attempt's own verified artifact drain progress. */
 internal data class CertifiedArtifactProgress(
     val pageKey: String,
-    val generation: Int,
+    val generation: Long,
     val livePageVersion: Long,
     val artifactPageVersion: Long?,
     val candidateGenerationId: String?,
-    val dependencyFingerprint: Long?,
+    val dependencyFingerprint: String?,
 )
 
 /** Binds one attempt's authority to its own lazy-drain artifact progressions on a specific page. */
 internal class AttemptArtifactLease internal constructor(
+    private val store: ChapterTranslationStore,
     val pageKey: String,
 ) {
+    internal fun belongsTo(store: ChapterTranslationStore, pageKey: String): Boolean =
+        this.store === store && this.pageKey == pageKey
+
     @Volatile
     internal var certifiedProgress: CertifiedArtifactProgress? = null
 
@@ -131,7 +135,7 @@ internal class AttemptArtifactLease internal constructor(
         stampedPageKey: String,
         snapshot: ChapterTranslationStore.PageSnapshot,
     ) {
-        if (stampedPageKey != pageKey) return
+        if (!belongsTo(store, stampedPageKey)) return
         val manifestRecord = store.artifactManifest?.pages?.get(pageKey)
         val manifestArtifactPageVersion = manifestRecord?.pageVersion
         val manifestCandidateGen = manifestRecord?.candidate?.generationId
@@ -1995,7 +1999,7 @@ class ChapterTranslationStore internal constructor(
                         return@withLock rejected(pageKey, description, "pageVersion expected=${expected.pageVersion} actual=$currentLiveVersion")
                     }
 
-                    val drained = artifactLease?.takeIf { it.pageKey == pageKey }?.certifiedProgress
+                    val drained = artifactLease?.takeIf { it.belongsTo(this, pageKey) }?.certifiedProgress
                     val effective = if (
                         drained != null &&
                         expected.generation == drained.generation &&
@@ -2539,67 +2543,7 @@ class ChapterTranslationStore internal constructor(
         }
         if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
 
-        val result = patch.ocrResult
-        val updated = current!!.detachedCopy()
-        if (result.ocrStatus == StageStatus.FAILED) {
-            // Failure diagnostics only: reusable blocks, masks, and any
-            // committed display survive a failed recognition attempt.
-            updated.ocrStatus = StageStatus.FAILED
-            updated.errorMessage = patch.errorMessage ?: result.activeError
-        } else {
-            val preserveReusableInpaint =
-                result.inpaintStatus == StageStatus.PENDING &&
-                    result.sourceFingerprint != null &&
-                    result.sourceFingerprint == current.sourceFingerprint &&
-                    result.detectionFingerprint != null &&
-                    result.detectionFingerprint == current.detectionFingerprint &&
-                    current.isCleanedImageReady
-            val editedByIdentity = current.blocks
-                .filter { it.userEditedAt != null }
-                .associateBy { it.ocrFingerprint() }
-            updated.blocks = result.blocks.map { block ->
-                editedByIdentity[block.ocrFingerprint()]?.let { edited ->
-                    block.copy(translation = edited.translation, userEditedAt = edited.userEditedAt)
-                } ?: block
-            }.toMutableList()
-            updated.inpaintMaskBoxes = result.inpaintMaskBoxes
-            updated.allTextDetections = result.allTextDetections
-            updated.ocrStatus = result.ocrStatus
-            updated.inpaintStatus = result.inpaintStatus
-            updated.renderStatus = result.renderStatus
-            updated.detectionCount = result.detectionCount
-            updated.ocrBlockCount = result.ocrBlockCount
-            updated.recognitionEngine = result.recognitionEngine
-            updated.decodeSampleSize = result.decodeSampleSize
-            updated.imgWidth = result.imgWidth
-            updated.imgHeight = result.imgHeight
-            updated.originalImgWidth = result.originalImgWidth
-            updated.originalImgHeight = result.originalImgHeight
-            if (result.cleanedImageName != null) {
-                updated.cleanedImageName = result.cleanedImageName
-                updated.cleanedImageContentHash = result.cleanedImageContentHash
-            }
-            updated.inpaintRevision = result.inpaintRevision
-            updated.inpaintingModeUsed = result.inpaintingModeUsed
-            updated.detectionFingerprint = result.detectionFingerprint
-            updated.ocrFingerprint = result.ocrFingerprint
-            if (preserveReusableInpaint) {
-                // OCR-only invalidation does not invalidate a mask/cleaned
-                // artifact derived from the unchanged detector. Keep that
-                // durable payload reusable while the new OCR result proceeds
-                // to translation; a detector or source change still takes the
-                // normal invalidation path above.
-                updated.inpaintMaskBoxes = current.inpaintMaskBoxes
-                updated.inpaintStatus = current.inpaintStatus
-                updated.inpaintError = current.inpaintError
-                updated.inpaintRevision = current.inpaintRevision
-                updated.inpaintingModeUsed = current.inpaintingModeUsed
-                updated.inpaintFingerprint = current.inpaintFingerprint
-                updated.cleanedImageName = current.cleanedImageName
-                updated.cleanedImageContentHash = current.cleanedImageContentHash
-            }
-            patch.errorMessage?.let { updated.errorMessage = it }
-        }
+        val updated = mergeOcrFields(current!!, patch.ocrResult, patch.errorMessage)
         val owned = ownedPage(patch.pageKey, updated)
         pages = pages.put(patch.pageKey, publishPage(owned))
         if (!publishLocked(current, owned, patch.toPrecondition(), journalCredit = journalCredit)) {
@@ -4829,8 +4773,8 @@ class ChapterTranslationStore internal constructor(
         // where under the old pages.isNotEmpty() check a single such entry made
         // the chapter falsely read TRANSLATED forever. clearTransientQueuePages()
         // publishes durable cancellation through the artifact bridge.
-        // 1. A final rendered image (actual translation output).
-        if (updated.hasRenderedResult) return true
+        // 1. Completed display output, including textless pages using the source image.
+        if (updated.hasRenderedResult || updated.isTextlessTerminal) return true
         // 2. Recognized text blocks (real OCR work).
         if (updated.blocks.isNotEmpty()) return true
         // 3. Cleaned image; lets a later render resume without redoing the neural pass.
@@ -5196,4 +5140,74 @@ class ChapterTranslationStore internal constructor(
                 privateStorageIdentity = privateStorageIdentity,
             )
     }
+}
+
+/** Shared OCR merge for fenced and attempt writes. */
+internal fun mergeOcrFields(
+    current: PageTranslation,
+    result: PageTranslation,
+    errorMessage: String? = null,
+): PageTranslation {
+    val updated = current.detachedCopy()
+    if (result.ocrStatus == StageStatus.FAILED) {
+        // Failure updates diagnostics only; preserve reusable page data.
+        updated.ocrStatus = StageStatus.FAILED
+        updated.errorMessage = errorMessage ?: result.activeError
+    } else {
+        val preserveReusableInpaint =
+            result.inpaintStatus == StageStatus.PENDING &&
+                result.sourceFingerprint != null &&
+                result.sourceFingerprint == current.sourceFingerprint &&
+                result.detectionFingerprint != null &&
+                result.detectionFingerprint == current.detectionFingerprint &&
+                current.isCleanedImageReady
+        val editedByIdentity = current.blocks
+            .filter { it.userEditedAt != null }
+            .associateBy { it.ocrFingerprint() }
+        updated.blocks = result.blocks.map { block ->
+            editedByIdentity[block.ocrFingerprint()]?.let { edited ->
+                block.copy(translation = edited.translation, userEditedAt = edited.userEditedAt)
+            } ?: block
+        }.toMutableList()
+        updated.inpaintMaskBoxes = result.inpaintMaskBoxes
+        updated.allTextDetections = result.allTextDetections
+        updated.ocrStatus = result.ocrStatus
+        updated.inpaintStatus = result.inpaintStatus
+        updated.renderStatus = result.renderStatus
+        if (result.ocrStatus == StageStatus.READY &&
+            result.blocks.isEmpty() &&
+            result.translationStatus == StageStatus.SKIPPED
+        ) {
+            updated.translationStatus = StageStatus.SKIPPED
+        }
+        updated.detectionCount = result.detectionCount
+        updated.ocrBlockCount = result.ocrBlockCount
+        updated.recognitionEngine = result.recognitionEngine
+        updated.decodeSampleSize = result.decodeSampleSize
+        updated.imgWidth = result.imgWidth
+        updated.imgHeight = result.imgHeight
+        updated.originalImgWidth = result.originalImgWidth
+        updated.originalImgHeight = result.originalImgHeight
+        if (result.cleanedImageName != null) {
+            updated.cleanedImageName = result.cleanedImageName
+            updated.cleanedImageContentHash = result.cleanedImageContentHash
+        }
+        updated.inpaintRevision = result.inpaintRevision
+        updated.inpaintingModeUsed = result.inpaintingModeUsed
+        updated.detectionFingerprint = result.detectionFingerprint
+        updated.ocrFingerprint = result.ocrFingerprint
+        if (preserveReusableInpaint) {
+            // OCR-only updates retain cleaned data when source and detector match.
+            updated.inpaintMaskBoxes = current.inpaintMaskBoxes
+            updated.inpaintStatus = current.inpaintStatus
+            updated.inpaintError = current.inpaintError
+            updated.inpaintRevision = current.inpaintRevision
+            updated.inpaintingModeUsed = current.inpaintingModeUsed
+            updated.inpaintFingerprint = current.inpaintFingerprint
+            updated.cleanedImageName = current.cleanedImageName
+            updated.cleanedImageContentHash = current.cleanedImageContentHash
+        }
+        errorMessage?.let { updated.errorMessage = it }
+    }
+    return updated
 }

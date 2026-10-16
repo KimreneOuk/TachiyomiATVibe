@@ -13,6 +13,7 @@ fun PageTranslation.detachedCopy(): PageTranslation = copy(
     }
     detached.attemptCount = attemptCount
     detached.attemptCharged = attemptCharged
+    detached.setErrorMessageRaw(errorMessage)
 }
 
 /** Published values are deeply immutable, so the safest detached copy is identity. */

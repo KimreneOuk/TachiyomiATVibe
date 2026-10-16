@@ -115,6 +115,10 @@ class RenderPermitReacquisitionTest {
                     "p0",
                     TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
                 )
+                // Block only rendering after concurrent inpainting has published.
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                    harness.store.state.first { it["p0"]?.inpaintStatus == StageStatus.READY }
+                }
                 heldPermit = requireNotNull(gate.acquire(DevicePermitPriority.BACKGROUND))
                 harness.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
                 harness.barrier.awaitArrivalWithin(

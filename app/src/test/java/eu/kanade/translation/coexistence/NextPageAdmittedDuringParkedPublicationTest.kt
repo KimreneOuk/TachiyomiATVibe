@@ -3,12 +3,14 @@ package eu.kanade.translation.coexistence
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.pipeline.toPrecondition
+import eu.kanade.translation.pipeline.AttemptAuthority
+import eu.kanade.translation.pipeline.CleanedOwner
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -72,43 +74,37 @@ class NextPageAdmittedDuringParkedPublicationTest {
                 harness.registerReaderStream(harness.CHAPTER_ID, "p0")
                 harness.registerReaderStream(harness.CHAPTER_ID, "p1")
 
-                // The resume-tail seam: the cleaned-image publication is
-                // a REAL store commit that parks at the COMMIT barrier
-                // mid-publication (fake only at the sanctioned disk/graphics
-                // seam — the commit itself goes through the real store).
+                // The CURRENT publication seam: the manual route enrolls the
+                // cleaned image through the harness I/O shim contract. The stub
+                // parks at the COMMIT barrier BEFORE the attempt-fenced store
+                // write, so the commit itself stays the real fenced store write.
                 coEvery {
-                    harness.cleanedPublicationMock.persistCleanedBitmap(
-                        any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    harness.cleanedPublicationMock.enrollCleanedPersistence(
+                        any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     )
                 } coAnswers {
-                    val page = arg<PageTranslation>(0)
                     val pageKey = arg<String>(3)
-                    val publicationStore = arg<ChapterTranslationStore>(5)
+                    val page = arg<PageTranslation>(5)
+                    val attempt = arg<AttemptAuthority>(7)
                     harness.barrier.arrive(CoexistenceBarrier.BarrierPoint.COMMIT, pageKey)
                     page.cleanedImageName = "$pageKey.cleaned.jpg"
                     page.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                     page.inpaintingModeUsed = "FAST"
                     page.inpaintStatus = StageStatus.READY
                     page.errorMessage = null
-                    val precondition = publicationStore.snapshot(pageKey).toPrecondition()
-                    val published = publicationStore.updatePageGuarded(
-                        pageKey,
-                        precondition,
-                        "publish cleaned image (D11 stub)",
-                    ) { current ->
-                        (current ?: page).apply {
+                    val result = attempt.write("publish cleaned image (D11 stub)") { current ->
+                        current.apply {
                             cleanedImageName = page.cleanedImageName
-                            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+                            inpaintRevision = page.inpaintRevision
                             inpaintingModeUsed = page.inpaintingModeUsed
                             inpaintStatus = StageStatus.READY
                             errorMessage = null
                         }
                     }
-                    check(published is ChapterTranslationStore.PatchResult.Accepted) {
-                        "D11 stub commit rejected: " +
-                            "${(published as? ChapterTranslationStore.PatchResult.Rejected)?.reason}"
-                    }
-                    published.snapshot
+                    val accepted = result is ChapterTranslationStore.PatchResult.Accepted
+                    arg<CleanedOwner>(6).registerReceipt(CompletableDeferred(accepted))
+                    harness.nativeStageDone[pageKey]?.complete(Unit)
+                    accepted
                 }
 
                 // p0's manual tap reaches the cleaned publication and parks there.

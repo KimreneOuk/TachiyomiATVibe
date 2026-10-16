@@ -342,9 +342,7 @@ internal class CleanedPublication(
                                             }
                                         }
                                     } else {
-                                        attempt.write("record lazy cleaned image without hash") { current ->
-                                            current
-                                        }
+                                        ChapterTranslationStore.PatchResult.Rejected("cleaned image content hash missing")
                                     }
                                 } else {
                                     ChapterTranslationStore.PatchResult.Rejected("store generation changed")
@@ -445,9 +443,13 @@ internal class CleanedPublication(
         if (published == null) {
             // Do not let HTTP/render consume an in-memory result when the reader
             // cannot reopen it after publication or a newer page won the race.
-            try {
-                cleaned.recycle()
-            } catch (_: Exception) {}
+            if (owner != null) {
+                owner.release()
+            } else {
+                try {
+                    cleaned.recycle()
+                } catch (_: Exception) {}
+            }
             page.cleanedBitmap = null
             return null
         }

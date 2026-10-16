@@ -14,6 +14,7 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.pipeline.finalizePostOcrStage
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -158,10 +159,9 @@ class PreparedPageRuntimeBoundaryTest {
     fun `production terminal predicate classifies fresh textless pages as terminal`() {
         val textless = PageTranslation(sourceFileName = "p-tl").apply {
             ocrStatus = StageStatus.READY
-            inpaintStatus = StageStatus.TEXTLESS
-            renderStatus = StageStatus.SKIPPED
             blocks = mutableListOf()
         }
+        finalizePostOcrStage(textless, inpaintAlreadyRan = false)
         isPreparedPageTerminal(textless) shouldBe true
     }
 
@@ -198,10 +198,9 @@ class PreparedPageRuntimeBoundaryTest {
         }
         val textlessOcr = PageTranslation(sourceFileName = "p-tl").apply {
             ocrStatus = StageStatus.READY
-            inpaintStatus = StageStatus.TEXTLESS
-            renderStatus = StageStatus.SKIPPED
             blocks = mutableListOf()
         }
+        finalizePostOcrStage(textlessOcr, inpaintAlreadyRan = false)
         val prepared = publishPreparedPageFromOcr(store, "p-tl", textlessOcr, 1L, 1L, 1L, expectedPageVersion = store.snapshot("p-tl").pageVersion, expectedGeneration = store.snapshot("p-tl").generation)
         prepared.isTerminal shouldBe true
         prepared.cleanedImageName shouldBe null

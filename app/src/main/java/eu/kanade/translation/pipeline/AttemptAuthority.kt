@@ -13,52 +13,27 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Operation-scoped write authority for one translation attempt on one page
- * (plan §4). Every writer inside the operation — branch writers, the timeout
- * adapter, post-join publication — serializes through this authority instead
- * of patching the store directly, so two concurrent branch writers on one
- * page (the same-page overlap shape) can never interleave fenced patches or
- * race the terminal transition.
- *
- * Contract invariants:
- * - `authority mutex → store APIs` only; the mutex is never held across a
- *   native or HTTP wait, and no store callback re-enters the authority.
- * - [precondition] is the fenced write identity; it advances only on an
- *   `Accepted` patch receipt, so a foreign writer winning a page version
- *   makes every later attempt write a typed `Rejected` (terminal-and-ignore,
- *   never an overwrite of the winner).
- * - Writes are FIELD-SPECIFIC merges: the [write]/[markTimeout] `update`
- *   function composes against the store's current page and must never
- *   replace the page from a stale whole-object copy of a branch's working
- *   instance.
- * - Terminal policy is first-terminal-wins and executable: the first
- *   [markTimeout] closes the attempt; a second marker is an idempotent typed
- *   no-op. Once closed — or once [callerJob] is cancelled — [write] is
- *   suppressed without touching the store. The marker itself is
- *   `NonCancellable` so an already-won terminal transition cannot be lost to
- *   caller cancellation.
- *
- * The authority holds no admission, lane or ownership role; production
- * marker content is wired at the cutover slice.
+ * Operation-scoped write authority for one attempt on one page: mutex held only
+ * across store calls; field-specific merges; [precondition] advances only on
+ * `Accepted` (foreign winner typed `Rejected`, never overwritten). First terminal
+ * marker wins (`NonCancellable`); closed/cancelled [callerJob] suppresses [write].
  */
 internal class AttemptAuthority(
     private val store: ChapterTranslationStore,
     private val pageKey: String,
     initial: ChapterTranslationStore.PatchPrecondition,
-    /**
-     * Caller job captured before any quarantine Job strip. Cancellation of
-     * this job suppresses further [write]s; it does NOT cancel an already
-     * won terminal marker.
-     */
+    /** Captured before any quarantine Job strip; cancellation suppresses [write] but not a won marker. */
     val callerJob: Job? = null,
 ) {
     private val mutex = Mutex()
 
     /** Binds this attempt's authority to its own lazy-drain artifact progressions. */
-    internal val artifactLease = AttemptArtifactLease(pageKey)
+    internal val artifactLease = AttemptArtifactLease(store, pageKey)
 
     /** Fenced identity for the next patch; mutated only under [mutex]. */
     @Volatile
@@ -72,17 +47,9 @@ internal class AttemptAuthority(
 
     /**
      * One field-specific attempt write against the store's current page.
-     *
-     * Returns `Rejected` without touching the store when the attempt is
-     * closed or the caller job was cancelled. On `Accepted` the fenced
-     * precondition advances from the store's returned receipt snapshot; on
-     * `Rejected` the precondition stays frozen so the loss is observable.
-     *
-     * When the store reports no current page for [pageKey], the update
-     * composes against a fresh empty draft (same seeding convention as the
-     * store's own compatibility write seam); a live attempt on a healthy
-     * page never reaches that path because earlier stage writes created the
-     * page and the generation/page-version fences reject a lost page first.
+     * `Rejected` without store access when closed/caller job cancelled; `Accepted`
+     * advances [precondition] from the receipt snapshot, `Rejected` freezes it so
+     * the loss stays observable. A missing page composes against a fresh empty draft.
      */
     suspend fun write(
         description: String,
@@ -101,19 +68,10 @@ internal class AttemptAuthority(
     }
 
     /**
-     * Terminal marker for the attempt: closes the gate FIRST (under [mutex]),
-     * then writes the terminal page state `NonCancellable`, so exactly one
-     * marker ever mutates the page and a caller cancellation cannot lose it.
-     * The marker patch content is a parameter — production terminal state is
-     * wired at the cutover slice; adapters pass the store's timed-out stage
-     * transition here.
-     *
-     * Idempotent: after any prior [markTimeout] — by this caller or a racing
-     * one — this returns `Rejected("attempt already closed")` without
-     * touching the store. The losing marker is terminal-and-ignore; first
-     * terminal wins. A `Rejected` from the store fence itself (foreign
-     * writer advanced the page) leaves [closed] set: the attempt is closed
-     * either way and the foreign winner is never overwritten.
+     * Terminal marker: closes the gate under [mutex], then writes terminal state
+     * `NonCancellable` so exactly one marker mutates the page. Idempotent — a second
+     * marker gets `Rejected("attempt already closed")`; a store-fence `Rejected`
+     * still closes the attempt, so a foreign winner is never overwritten.
      */
     suspend fun markTimeout(
         update: (PageTranslation) -> PageTranslation,
@@ -157,25 +115,10 @@ internal enum class CleanedProvenance {
 }
 
 /**
- * Single-slot exclusive owner of one attempt's cleaned bitmap (plan §5).
- *
- * The owner is the SOLE recycler: the producing segment deposits its output
- * and drops its local reference; render and persistence borrow explicitly and
- * must close the borrow before the boundary's `finally` calls [release].
- * [release] is idempotent, joins the registered persistence receipt (so the
- * queued lazy writer's borrow always completes first — an accepted borrow is
- * never dropped), waits for any still-open explicit borrow, and only then
- * recycles. Native real exit is a caller-ordering obligation: the boundary
- * reaches [release] only after the owning segment joined, so the owner never
- * recycles under live native use.
- *
- * Alias transfer: when the inpainter returns its input bitmap unchanged, the
- * producing segment registers that SAME instance with [produce] and the
- * transfer-aware local cleanup consults [owns] instead of recycling, so the
- * alias identity transfers into the owner exactly once.
- *
- * Host tests verify recycle/exit via MockK bitmap stubs; actual native bitmap
- * disposal remains device-gated and is not claimed by this type.
+ * Single-slot exclusive owner of one attempt's cleaned bitmap and its SOLE recycler:
+ * producers deposit and drop their reference; render/persistence borrow explicitly and
+ * close the borrow before the boundary's `finally` calls [release] (idempotent, receipt
+ * + zero-borrow gates, after the owning segment joined). Alias transfer consults [owns].
  */
 internal class CleanedOwner {
 
@@ -204,10 +147,9 @@ internal class CleanedOwner {
     fun owns(bitmap: Bitmap): Boolean = !released.get() && slot?.bitmap === bitmap
 
     /**
-     * Deposits the first produced cleaned bitmap. The caller drops its local
-     * reference after this call; disposal belongs to [release] exclusively.
-     * Fails fast on double production — a produce/produce sequence is a
-     * pipeline wiring bug, never a recoverable state.
+     * Deposits the first produced cleaned bitmap; the caller drops its local
+     * reference after this call — disposal belongs to [release] exclusively.
+     * Fails fast on double production (a wiring bug, never recoverable).
      */
     fun produce(bitmap: Bitmap, provenance: CleanedProvenance) {
         check(!released.get()) { "produce after release started" }
@@ -216,11 +158,9 @@ internal class CleanedOwner {
     }
 
     /**
-     * Executes the identity transfer for the retry's genuinely new output:
-     * the slot swap happens NOW, not at release. Legal only on an empty slot
-     * — the retry runs after a null cleaned result, so there is no displaced
-     * bitmap to dispose; replacing over an owned bitmap would orphan it past
-     * the sole-recycler rule and fails fast.
+     * Slot swap NOW for the retry's genuinely new output; legal only on an
+     * empty slot — the retry runs after a null cleaned result. Replacing over
+     * an owned bitmap would orphan it past the sole-recycler rule; fails fast.
      */
     fun replace(bitmap: Bitmap, provenance: CleanedProvenance) {
         check(!released.get()) { "replace after release started" }
@@ -229,10 +169,9 @@ internal class CleanedOwner {
     }
 
     /**
-     * Counts one exclusive borrow of the owned bitmap for render or
-     * persistence work; returns null when nothing is owned or release has
-     * already started. Every successful borrow MUST be paired with
-     * [closeBorrow]; [release] never recycles under an open borrow.
+     * Counts one exclusive borrow; null when nothing is owned or release
+     * started. Every successful borrow MUST be paired with [closeBorrow];
+     * [release] never recycles under an open borrow.
      */
     fun borrow(): Bitmap? {
         if (released.get()) return null
@@ -256,18 +195,10 @@ internal class CleanedOwner {
     }
 
     /**
-     * Registers the caller-held persistence receipt before store enrollment.
-     * [release] joins it so recycling happens only after the queued lazy
-     * writer actually finished with the bitmap (a normal `false` completion
-     * still releases — suppression is a normal outcome; an exceptional or
-     * cancelled completion fails release closed, see [release]). Non-
-     * suspending; one receipt per attempt.
-     *
-     * Lifecycle guard: registration belongs BEFORE enrollment and release
-     * belongs at the boundary `finally` AFTER enrollment, so this fails fast
-     * on registration after release started. That ordering discipline is a
-     * boundary responsibility; this check is a guard against violating it,
-     * not an atomicity claim about arbitrary concurrent enrollment/release.
+     * Registers the persistence receipt before store enrollment; [release]
+     * joins it so recycling waits for the queued lazy writer (suppression's
+     * `false` releases; exceptional completion fails closed). Register before
+     * enrollment, release at the boundary `finally` - these checks guard that.
      */
     fun registerReceipt(receipt: CompletableDeferred<Boolean>) {
         check(!released.get()) { "registerReceipt after release started" }
@@ -275,27 +206,14 @@ internal class CleanedOwner {
         this.receipt = receipt
     }
 
+    /** True only after store persistence worker succeeds. */
+    suspend fun awaitPersistence(): Boolean = receipt?.await() == true
+
     /**
-     * Sole recycler: idempotent (the first caller performs the teardown,
-     * later callers return immediately), and gated on the persistence
-     * receipt-join plus zero open borrows. Both gates are true suspension
-     * points (no busy waiting): the receipt is awaited directly and the
-     * borrow count is observed with [kotlinx.coroutines.flow.first], which
-     * resumes exactly when [closeBorrow] transitions it to zero. Runs
-     * `NonCancellable` so a cancelled boundary still disposes the bitmap.
-     * The caller must already hold the native real-exit guarantee (the
-     * owning segment joined).
-     *
-     * Receipt failure policy is FAIL CLOSED: the persistence receipt is
-     * contracted to complete NORMALLY (`true` = persisted, `false` =
-     * suppressed — the S2 store protocol has no other completion). An
-     * exceptional or cancelled receipt completion is a protocol violation,
-     * NOT proof that the queued borrower physically exited, so [release]
-     * propagates the failure and does NOT recycle: the bitmap resource is
-     * retained for diagnosis instead of being recycled on an unverified
-     * borrower state. Release stays idempotent — later calls return without
-     * recycling. A caller exception is never used to fabricate a `false`
-     * completion for a queued borrower.
+     * Sole recycler: idempotent, gated on receipt-join plus zero open borrows (both
+     * true suspensions), `NonCancellable`; caller must hold the native real-exit
+     * guarantee. Receipt policy FAILS CLOSED: exceptional/cancelled receipt is a
+     * protocol violation - [release] propagates and does NOT recycle.
      */
     suspend fun release() {
         if (!released.compareAndSet(false, true)) return
@@ -324,7 +242,11 @@ internal class SourceBitmapCustody : AutoCloseable {
     /** Boundary cleanup: safely recycles only if the bitmap was never taken by a producer block. */
     override fun close() {
         slot.getAndSet(null)?.let { bitmap ->
-            try { bitmap.recycle() } catch (_: Exception) {}
+            try {
+                bitmap.recycle()
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Source bitmap recycle failed during custody close" }
+            }
         }
     }
 }

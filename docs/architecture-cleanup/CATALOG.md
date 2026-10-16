@@ -2,6 +2,13 @@
 
 All exported artifact pages, including historical and unrelated earlier initiative records. The current architecture-cleanup status is in [README](README.md).
 
+- [Destination-host continuation — Phase 3 S5](artifacts/continuation-2026-10-16/index.md)
+- [Destination cold code review and watchdog audit](artifacts/phase-3-implementation/tickets/owner-cutover/review/destination-cold/index.md)
+- [Corrected S5 source and red-run prelaunch review](artifacts/phase-3-implementation/tickets/owner-cutover/review/corrected-r2/index.md)
+- [Gemini independent prelaunch review for red02](artifacts/phase-3-implementation/tickets/owner-cutover/review/reviewer-gemini-prelaunch/index.md)
+- [GLM correction review and resolved logging blocker](artifacts/phase-3-implementation/tickets/owner-cutover/review/reviewer-glm-correction/index.md)
+- [GLM method-size extraction review](artifacts/phase-3-implementation/tickets/owner-cutover/review/reviewer-glm-extraction/index.md)
+
 - [Autonomous continuation and current agent roles](artifacts/execution-policy/index.md)
 - [Free-Text Inpainting Blur Fix & Paddle OCR Optimization Report](artifacts/free-text-inpainting-fix/index.md)
 - [Laptop transfer checkpoint ? unfinished Phase 3 S5](artifacts/laptop-handoff/index.md)
@@ -186,3 +193,7 @@ All exported artifact pages, including historical and unrelated earlier initiati
 - [Step 1: registered single-page native work and stable block joins](artifacts/translation-step1-plan/single-page/index.md)
 - [Translation Step 1 — test manifest v2 (queue-absorption delete plan, A/B/C), plan only](artifacts/translation-step1-plan/test-manifest/index.md)
 - [S5 r1 independent re-review received at migration freeze](artifacts/phase-3-implementation/tickets/owner-cutover/review/migration-recheck/index.md)
+
+- [S5 consolidated source review (Gemini / Antigravity)](artifacts/phase-3-implementation/tickets/owner-cutover/review/reviewer-s5-consolidated/index.md)
+
+- [S6 dictionary asset prerequisite](artifacts/phase-3-implementation/tickets/consolidation/validation-prerequisites/index.md)

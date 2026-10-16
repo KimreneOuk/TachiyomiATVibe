@@ -30,6 +30,8 @@ import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.queue.InMemorySharedPreferences
 import eu.kanade.translation.persistence.queue.TranslationQueueStore
+import eu.kanade.translation.pipeline.AttemptAuthority
+import eu.kanade.translation.pipeline.CleanedOwner
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.EngineLane
@@ -431,9 +433,9 @@ internal class TranslationCoexistenceHarness private constructor(
                 )
             }
             coEvery {
-                cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any())
+                cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any(), any(), any(), any())
             } coAnswers {
-                realCleanedPublication.persistOnnxCleanedImage(arg(0), arg(1), arg(2), arg(3), arg(4))
+                realCleanedPublication.persistOnnxCleanedImage(arg(0), arg(1), arg(2), arg(3), arg(4), arg(5), arg(6), arg(7))
             }
             coEvery {
                 cleanedPublicationMock.loadPersistedCleanedBitmap(any(), any(), any(), any())
@@ -1277,10 +1279,46 @@ internal class TranslationCoexistenceHarness private constructor(
      */
     private fun installManualPublishShim() {
         coEvery {
-            cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any())
+            cleanedPublicationMock.enrollCleanedPersistence(any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } coAnswers {
+            val pageKey = arg<String>(3)
+            val page = arg<PageTranslation>(5)
+            if (!arg<CleanedOwner>(6).isAvailable) return@coAnswers false
+            val attempt = arg<AttemptAuthority>(7)
+            page.cleanedImageName = "$pageKey.cleaned.jpg"
+            page.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            page.inpaintingModeUsed = engineLane.currentInpaintingMode.name
+            page.inpaintStatus = StageStatus.READY
+            val result = attempt.write("publish cleaned image (harness I/O shim)") { current ->
+                current.apply {
+                    cleanedImageName = page.cleanedImageName
+                    inpaintRevision = page.inpaintRevision
+                    inpaintingModeUsed = page.inpaintingModeUsed
+                    inpaintStatus = StageStatus.READY
+                    errorMessage = null
+                }
+            }
+            val accepted = result is ChapterTranslationStore.PatchResult.Accepted
+            // Disk fake owns no lazy borrower.
+            arg<CleanedOwner>(6).registerReceipt(CompletableDeferred(accepted))
+            nativeStageDone[pageKey]?.complete(Unit)
+            accepted
+        }
+
+        coEvery {
+            cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any(), any(), any(), any())
         } coAnswers {
             val result = arg<OnnxPhaseResult>(4)
-            persistManualCleanedResult(result)
+            val attempt = arg<AttemptAuthority?>(6)
+            if (attempt != null) {
+                val enrolled = cleanedPublicationMock.enrollCleanedPersistence(
+                    arg(0), arg(1), arg(2), arg(3), result.store, result.pageTranslation,
+                    arg(5), attempt, arg(7),
+                )
+                if (enrolled) result.copy(commitPrecondition = attempt.precondition) else null
+            } else {
+                persistManualCleanedResult(result)
+            }
         }
     }
 

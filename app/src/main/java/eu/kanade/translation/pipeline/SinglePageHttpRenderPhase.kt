@@ -37,7 +37,8 @@ import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.translator.retry.withRequestRetryBudget
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.hasCurrentInpaintResult
+import eu.kanade.translation.model.TextRecognizerLanguage
+import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
@@ -55,9 +56,7 @@ import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
@@ -683,19 +682,19 @@ internal class SinglePageHttpRenderPhase(
             val cleanedBitmap = owner.borrow()
             val hasCleanedOnDisk = pageTranslation.isCleanedImageReady
             if (cleanedBitmap != null || hasCleanedOnDisk) {
-                pageTranslation.renderStatus = StageStatus.RUNNING
-                val liveRenderPublished = try {
-                    publishLiveStage("single-page render running") {
-                        it.renderStatus = StageStatus.RUNNING
-                    }
-                    true
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    markRenderFailure()
-                    logcat(LogPriority.ERROR, e) { "Failed to publish render start for single page $pageKey" }
-                    false
-                }
                 try {
+                    pageTranslation.renderStatus = StageStatus.RUNNING
+                    val liveRenderPublished = try {
+                        publishLiveStage("single-page render running") {
+                            it.renderStatus = StageStatus.RUNNING
+                        }
+                        true
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        markRenderFailure()
+                        logcat(LogPriority.ERROR, e) { "Failed to publish render start for single page $pageKey" }
+                        false
+                    }
                     if (liveRenderPublished) {
                         val renderStageAdmitted = try {
                             stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
@@ -784,24 +783,31 @@ internal class SinglePageHttpRenderPhase(
                 )
                 val retriedCleaned = retryResult.cleanedBitmap
                 if (retriedCleaned != null) {
-                    val companionDir = provider.getCompanionImageDir(
-                        manga.title,
-                        source,
-                        chapter.name,
-                        chapter.scanlator,
-                    )
-                    val published = persistCleanedBitmap(
-                        pageTranslation,
-                        retriedCleaned,
-                        companionDir,
-                        pageKey,
-                        chapter.name,
-                        store,
-                        source.id,
-                        manga.id,
-                        chapter.id,
-                        expectedPrecondition = commitPrecondition,
-                    )
+                    val published = if (attempt != null) {
+                        val enrolled = cleanedPublication.enrollCleanedPersistence(
+                            manga,
+                            chapter,
+                            source,
+                            pageKey,
+                            store,
+                            retryResult,
+                            owner,
+                            attempt,
+                        )
+                        if (enrolled) store.flush()
+                        if (enrolled && owner.awaitPersistence()) store.snapshot(pageKey) else null
+                    } else {
+                        val companionDir = provider.getCompanionImageDir(
+                            manga.title,
+                            source,
+                            chapter.name,
+                            chapter.scanlator,
+                        )
+                        persistCleanedBitmap(
+                            pageTranslation, retriedCleaned, companionDir, pageKey, chapter.name,
+                            store, source.id, manga.id, chapter.id, expectedPrecondition = commitPrecondition,
+                        )
+                    }
                     if (published != null) {
                         commitPrecondition = published.toPrecondition()
                     }

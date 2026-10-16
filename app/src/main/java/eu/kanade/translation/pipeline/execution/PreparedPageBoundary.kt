@@ -3,33 +3,25 @@ package eu.kanade.translation.pipeline.execution
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
 import eu.kanade.translation.persistence.chapter.StagePatchResult
+import eu.kanade.translation.persistence.chapter.mergeOcrFields
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.pipeline.AttemptAuthority
 import eu.kanade.translation.pipeline.CleanedOwner
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
+import logcat.asLog
 import logcat.logcat
 
 /**
- * Production boundary helper: persists the in-memory OCR result (blocks,
- * geometry, ocrStatus, inpaint status) onto the durable [store] entry, recycles
- * the cleaned bitmap so it does NOT cross the lane boundary, and constructs the
- * lightweight [PreparedPage] reference from the resulting durable snapshot.
- *
- * This is the exact code path [TranslationPipeline.prepareSinglePage] runs
- * after the cleaned image is published. Active reader stores join the lazy
- * cleaned-image worker before recycling its source bitmap; probe stores retain
- * the historical synchronous path. It is extracted as a top-level internal
- * function so pure-JVM regression tests can drive the REAL durability write
- * without instantiating the full Android-bound pipeline. A test that removes
- * the durable write below will fail because the durable snapshot will have
- * empty blocks and `ocrStatus = RUNNING` instead of `READY`.
- *
- * The persist is a preconditioned detection/OCR stage merge carrying the page
- * version observed before the native pass, so a stale worker cannot clobber a
- * page a newer writer owns. A rejection is logged and the durable winner's
- * snapshot is returned — the reader observes the winner's progress.
+ * Persists the in-memory OCR result onto [store] via a preconditioned OCR merge
+ * (stale worker cannot clobber a newer writer; rejection logged, winner returned),
+ * releases the cleaned bitmap, and builds [PreparedPage] from the durable snapshot.
+ * Top-level so pure-JVM tests drive the real durability write.
  */
 internal suspend fun publishPreparedPageFromOcr(
     store: ChapterTranslationStore,
@@ -42,34 +34,44 @@ internal suspend fun publishPreparedPageFromOcr(
     expectedGeneration: Long,
     expectedLeaseToken: Long? = null,
     owner: CleanedOwner? = null,
+    attempt: AttemptAuthority? = null,
 ): PreparedPage {
-    val prior = store.snapshot(pageKey)
-    val merge = store.mergeOcr(
-        OcrStagePatch(
-            pageKey = pageKey,
-            generation = expectedGeneration,
-            expectedPageVersion = expectedPageVersion,
-            expectedPriorOcrFingerprints = prior.page?.ocrBlockFingerprints().orEmpty(),
-            ocrResult = ocrResult,
-            expectedLeaseToken = expectedLeaseToken,
-            expectedCandidateGenerationId = prior.candidateGenerationId,
-            expectedDependencyFingerprint = prior.dependencyFingerprint,
-            expectedArtifactPageVersion = prior.artifactPageVersion,
-        ),
-        description = "prepared-page detection/ocr persist",
-    )
-    if (merge is StagePatchResult.Rejected) {
+    val rejectionReason = if (attempt != null) {
+        when (
+            val result = attempt.write("prepared-page detection/ocr persist") { current ->
+                mergeOcrFields(current, ocrResult)
+            }
+        ) {
+            is ChapterTranslationStore.PatchResult.Accepted -> null
+            is ChapterTranslationStore.PatchResult.Rejected -> result.reason
+        }
+    } else {
+        val prior = store.snapshot(pageKey)
+        val merge = store.mergeOcr(
+            OcrStagePatch(
+                pageKey = pageKey,
+                generation = expectedGeneration,
+                expectedPageVersion = expectedPageVersion,
+                expectedPriorOcrFingerprints = prior.page?.ocrBlockFingerprints().orEmpty(),
+                ocrResult = ocrResult,
+                expectedLeaseToken = expectedLeaseToken,
+                expectedCandidateGenerationId = prior.candidateGenerationId,
+                expectedDependencyFingerprint = prior.dependencyFingerprint,
+                expectedArtifactPageVersion = prior.artifactPageVersion,
+            ),
+            description = "prepared-page detection/ocr persist",
+        )
+        (merge as? StagePatchResult.Rejected)?.reason
+    }
+    if (rejectionReason != null) {
         logcat(tag = "PreparedPageBoundary", priority = LogPriority.WARN) {
             "TachiyomiAT prepared-page OCR persist rejected (stale writer): " +
-                "pageKey=$pageKey reason=${merge.reason}"
+                "pageKey=$pageKey reason=$rejectionReason"
         }
     }
 
-    // Active reader stores enqueue the JPEG write before this boundary is
-    // reached. The AUTO lane must not recycle the source bitmap while that
-    // worker still owns it: [StoreWriteDrainCoordinator.flush] serializes the
-    // worker and is the same durability/ownership barrier used by the reader
-    // render path. Probe stores keep their historical synchronous behavior.
+    // Flush queued image writes before releasing owned pixels, using the same
+    // durability barrier as reader rendering.
     if (store.isLazyPersistenceEnabled()) {
         store.flush()
     }
@@ -78,12 +80,24 @@ internal suspend fun publishPreparedPageFromOcr(
     } else {
         try {
             ocrResult.cleanedBitmap?.recycle()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            logcat(tag = "PreparedPageBoundary", priority = LogPriority.ERROR) {
+                "Cleaned bitmap recycle failed at prepared boundary pageKey=$pageKey\n${e.asLog()}"
+            }
+        }
     }
     ocrResult.cleanedBitmap = null
 
     val snapshot = store.snapshot(pageKey)
     val durablePage = store.state.value[pageKey]
+    val lazyDurable = if (store.isLazyPersistenceEnabled()) {
+        store.mutex.withLock {
+            store.isLazyGenerationCurrent(snapshot.generation) &&
+                !store.hasPendingLazyPersistenceLocked()
+        }
+    } else {
+        true
+    }
     return PreparedPage(
         pageKey = pageKey,
         chapterId = chapterId,
@@ -94,17 +108,13 @@ internal suspend fun publishPreparedPageFromOcr(
         generation = snapshot.generation,
         pageVersion = snapshot.pageVersion,
         blockFingerprints = snapshot.blockFingerprints,
-        isTerminal = durablePage != null && isPreparedPageTerminal(durablePage),
+        isTerminal = lazyDurable && durablePage != null && isPreparedPageTerminal(durablePage),
     )
 }
 
 /**
- * Production terminal-classification predicate shared by the fresh and resume
- * branches of the prepared-page boundary. A page is terminal when it has a
- * rendered result (READY or SKIPPED) OR is genuinely textless (inpaint TEXTLESS,
- * or OCR READY with no detected blocks). Failed pages are never terminal —
- * [TranslationPipeline.prepareSinglePage] returns null for them so failure
- * attribution and retries flow through the regular pipeline.
+ * Failed pages remain retryable. Rendered or genuinely textless pages are terminal;
+ * masked textless pages also require completed inpainting.
  */
 internal fun isPreparedPageTerminal(page: PageTranslationView): Boolean {
     val failed = page.ocrStatus == StageStatus.FAILED ||
@@ -113,6 +123,8 @@ internal fun isPreparedPageTerminal(page: PageTranslationView): Boolean {
         page.renderStatus == StageStatus.FAILED
     if (failed) return false
     return page.hasRenderedResult ||
-        page.isTextlessTerminal ||
-        (page.ocrStatus == StageStatus.READY && page.blocks.isEmpty())
+        (
+            page.isTextlessTerminal &&
+                (page.inpaintMaskBoxes.isEmpty() || page.inpaintStatus == StageStatus.READY)
+            )
 }

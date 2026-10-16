@@ -6,6 +6,8 @@ comments: none
 
 # Standing user direction ? 16 October 2026
 
+Latest destination-host assignment: **Separate agents `e8d65346` (implementation) and `d6e13131` (independent review) both use GLM 5.3 Flash/max through OpenCode (`zai-coding-plan`), per the latest user selection.** This supersedes earlier role assignments. [Current continuation](../continuation-2026-10-16/index.md) records verified checkout, active identities, recovery and unavailable device gates; older role/profile rows below describe history. The latest supplied AGENTS.md prohibits pushing.
+
 The user instructed continuing through all remaining phases without routine supervision. Current roles override earlier artifact assignments: **Gemini 3.8 Flash through Antigravity implements; GLM 5.3 Flash on max reasoning reviews.** The coordinator retains source/evidence checks, sequencing, commits and remote publication. Internal review gates do not require a new user prompt. Earlier S1-S4 author/reviewer records remain historical facts.
 
 | Responsibility | Current agent / configuration |

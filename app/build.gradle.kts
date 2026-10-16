@@ -15,6 +15,7 @@ plugins {
 shortcutHelper.setFilePath("./shortcuts.xml")
 
 val supportedAbis = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+val buildTime = providers.gradleProperty("validationBuildTime").orNull ?: getBuildTime()
 
 android {
     namespace = "eu.kanade.tachiyomi"
@@ -27,7 +28,7 @@ android {
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
-        buildConfigField("String", "BUILD_TIME", "\"${getBuildTime()}\"")
+        buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
         buildConfigField("boolean", "INCLUDE_UPDATER", "false")
         buildConfigField("boolean", "PREVIEW", "false")
         // Paddle batching is production-pinned to B1. Staged/debug builds may

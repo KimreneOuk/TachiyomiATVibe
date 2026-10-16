@@ -5,47 +5,50 @@ import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.FakeCoexistence
 import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.BubbleMaskRle
-import eu.kanade.translation.model.PageRejectionKind
+import eu.kanade.translation.model.InpaintMaskBox
+import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.immutableCopy
-import eu.kanade.translation.persistence.chapter.AttemptArtifactLease
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
+import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
+import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
+import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.verify
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import java.util.concurrent.TimeUnit
 
-/**
- * Deterministic host proof suite for Slice S5 (plan §3, §11, §14):
- *  1. True concurrent overlap of native inpaint and HTTP translation branches in production pipeline.
- *  2. Both completion orders (inpaint first vs translate first).
- *  3. Genuine parent cancellation mid-join (C4: structured cancellation + safe receipt-join cleanup).
- *  4. Native timeout with completed translation (C1 & C2: store truth outranks timers, post-join marker).
- *  5. Both branches terminal-failed (C7: single terminal marker, loser terminal-and-ignore).
- *  6. Two concurrent branch writers & field-merge isolation (no whole-object clobber).
- *  7. Defensive mask copy immutability (BubbleMaskRle.immutableCopy()).
- *  8. Downscaled retry replaces into owner and render failure path (C6).
- *  9. Abandonment custody (SourceBitmapCustody: exactly one recycle across abort/take paths).
- * 10. Store AttemptArtifactLease absorption & foreign candidate rejection under real lazy queue/flush.
- */
+/** Pipeline overlap, cancellation, durability, and custody regressions. */
 class SinglePageOverlapBoundaryTest {
 
     private fun stubBitmap(): Bitmap = mockk(relaxed = true)
@@ -66,189 +69,324 @@ class SinglePageOverlapBoundaryTest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    fun `true concurrent overlap of inpaint and translation branches in pipeline`() = runTest {
-        val harness = TranslationCoexistenceHarness.create(listOf("p0"))
-        harness.stubChapterPages(listOf("p0"))
+    fun `real provider and inpaint both arrive before either completes`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertProductionOverlap(first = null) }
+    }
 
-        val inpaintStarted = CompletableDeferred<Unit>()
-        val translationStarted = CompletableDeferred<Unit>()
-        val unblockInpaint = CompletableDeferred<Unit>()
-        val unblockTranslation = CompletableDeferred<Unit>()
-
-        var inpaintOverlapped = false
-        var translationOverlapped = false
-
-        harness.fakeRecognition.inpaintOutcome = { _, _ ->
-            inpaintStarted.complete(Unit)
-            runBlocking {
-                translationStarted.await()
-                inpaintOverlapped = true
-                unblockInpaint.await()
-            }
-            FakeCoexistence.stubBitmap()
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `production render waits when inpaint finishes first`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+            assertProductionOverlap(CoexistenceBarrier.BarrierPoint.INPAINT)
         }
+    }
 
-        val scope = CoroutineScope(SupervisorJob() + testScheduler)
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `production render waits when translation finishes first`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+            assertProductionOverlap(CoexistenceBarrier.BarrierPoint.PROVIDER_START)
+        }
+    }
+
+    private suspend fun assertProductionOverlap(first: CoexistenceBarrier.BarrierPoint?) = coroutineScope {
+        val harness = TranslationCoexistenceHarness.create(listOf("p0"), preRegisterInStore = false)
+        val barrier = harness.barrier
+        val renderEntered = CompletableDeferred<Unit>()
+        var pipelineJob: kotlinx.coroutines.Deferred<SinglePageOutcome>? = null
         try {
-            val pipelineJob = scope.async {
+            harness.installGraphicsShims()
+            harness.stubChapterPages(listOf("p0"))
+            barrier.arm(CoexistenceBarrier.BarrierPoint.INPAINT)
+            barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
+            pipelineJob = async(Dispatchers.Default) {
                 harness.pipeline.translateSinglePage(
-                    manga = harness.manga,
-                    chapter = harness.chapterFor(harness.CHAPTER_ID),
-                    source = harness.source,
-                    pageKey = "p0",
+                    harness.manga,
+                    harness.chapterFor(harness.CHAPTER_ID),
+                    harness.source,
+                    "p0",
+                    force = false,
+                    stageListener = TranslationStageListener { _, stage ->
+                        if (stage == TranslationStageEvent.RENDERING) renderEntered.complete(Unit)
+                    },
+                    origin = PageWriteOrigin.MANUAL,
+                )
+            }
+            barrier.awaitArrival(CoexistenceBarrier.BarrierPoint.INPAINT)
+            barrier.awaitArrival(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
+            harness.fakeTransport.callsFor("p0") shouldBe 1
+            harness.fakeRecognition.inpaintCalls.get() shouldBe 1
+            renderEntered.isCompleted shouldBe false
+            pipelineJob.isCompleted shouldBe false
+
+            if (first != null) {
+                barrier.release(first) shouldBe true
+                harness.store.state.first { pages ->
+                    val page = pages["p0"]
+                    if (first == CoexistenceBarrier.BarrierPoint.INPAINT) {
+                        page?.inpaintStatus == StageStatus.READY
+                    } else {
+                        page?.translationStatus == StageStatus.READY
+                    }
+                }
+                renderEntered.isCompleted shouldBe false
+                pipelineJob.isCompleted shouldBe false
+            }
+            barrier.disarm(CoexistenceBarrier.BarrierPoint.INPAINT)
+            barrier.disarm(CoexistenceBarrier.BarrierPoint.PROVIDER_START)
+            pipelineJob.await() shouldBe SinglePageOutcome.Completed
+            renderEntered.isCompleted shouldBe true
+            harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
+            harness.fakeTransport.callsFor("p0") shouldBe 1
+        } finally {
+            barrier.disarm(CoexistenceBarrier.BarrierPoint.INPAINT)
+            barrier.disarm(CoexistenceBarrier.BarrierPoint.PROVIDER_START)
+            withContext(NonCancellable) { pipelineJob?.cancelAndJoin() }
+            harness.close()
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `caller cancellation cancels real provider and waits for native cleanup`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+            val harness = TranslationCoexistenceHarness.create(listOf("p0"), preRegisterInStore = false)
+            val cleaned = stubBitmap()
+            var pipelineJob: kotlinx.coroutines.Deferred<SinglePageOutcome>? = null
+            try {
+                harness.installGraphicsShims()
+                harness.stubChapterPages(listOf("p0"))
+                harness.fakeRecognition.inpaintOutcome = { _, _ -> cleaned }
+                harness.barrier.arm(CoexistenceBarrier.BarrierPoint.INPAINT)
+                harness.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
+                pipelineJob = async(Dispatchers.Default) {
+                    harness.pipeline.translateSinglePage(
+                        harness.manga,
+                        harness.chapterFor(harness.CHAPTER_ID),
+                        harness.source,
+                        "p0",
+                        force = false,
+                        stageListener = null,
+                        origin = PageWriteOrigin.MANUAL,
+                    )
+                }
+                harness.barrier.awaitArrival(CoexistenceBarrier.BarrierPoint.INPAINT)
+                harness.barrier.awaitArrival(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
+                harness.fakeTransport.callsFor("p0") shouldBe 1
+                pipelineJob.cancel()
+                // Quarantine owns parked native call until worker exits.
+                pipelineJob.isCompleted shouldBe false
+                verify(exactly = 0) { cleaned.recycle() }
+                harness.barrier.disarm(CoexistenceBarrier.BarrierPoint.INPAINT)
+                pipelineJob.join()
+                harness.transportShared.cancelledCalls.get() shouldBe 1
+                verify(exactly = 1) { cleaned.recycle() }
+                harness.store.state.value.getValue("p0").renderStatus shouldNotBe StageStatus.READY
+            } finally {
+                harness.barrier.disarm(CoexistenceBarrier.BarrierPoint.INPAINT)
+                harness.barrier.disarm(CoexistenceBarrier.BarrierPoint.PROVIDER_START)
+                withContext(NonCancellable) { pipelineJob?.cancelAndJoin() }
+                harness.close()
+            }
+        }
+    }
+
+    @Test
+    fun `masked textless reader cleans without provider call and reaches durable terminal`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertTextless(prepared = false) }
+    }
+
+    @Test
+    fun `masked textless prepared page cleans without provider call and reaches durable terminal`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertTextless(prepared = true) }
+    }
+
+    @Test
+    fun `unmasked textless prepared page needs no cleaned worker and reaches durable terminal`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertTextless(prepared = true, hasMask = false) }
+    }
+
+    @Test
+    fun `masked textless reader inpaint soft null fails attempt-fenced without provider calls`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertMaskedTextlessSoftNullFailure() }
+    }
+
+    private suspend fun assertMaskedTextlessSoftNullFailure() {
+        val store = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0"), preRegisterInStore = false)
+        val harness = TranslationCoexistenceHarness.create(listOf("p0"), storeOverride = store)
+        val source = FakeCoexistence.stubBitmap()
+        try {
+            harness.installGraphicsShims()
+            harness.stubChapterPages(listOf("p0"))
+            coEvery { PageDecode.decodePageBitmapForTranslation(any(), any(), any(), any(), any()) } returns
+                FakeCoexistence.decodedPage("p0").copy(bitmap = source)
+            harness.fakeRecognition.analyzeOutcome = {
+                PageTranslation(
+                    ocrStatus = StageStatus.READY,
+                    inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 1)),
+                )
+            }
+            harness.fakeRecognition.inpaintOutcome = { _, _ -> null }
+            val outcome = harness.pipeline.translateSinglePage(
+                harness.manga,
+                harness.chapterFor(harness.CHAPTER_ID),
+                harness.source,
+                "p0",
+                force = false,
+                stageListener = null,
+                origin = PageWriteOrigin.MANUAL,
+            )
+            store.flush()
+            harness.fakeRecognition.analyzeCalls.get() shouldBe 1
+            harness.fakeRecognition.inpaintCalls.get() shouldBe 1
+            outcome shouldBe SinglePageOutcome.Failed("p0", "Masked textless inpainting produced no cleaned image")
+            val page = store.snapshot("p0").page.shouldNotBeNull()
+            page.ocrStatus shouldBe StageStatus.READY
+            page.inpaintStatus shouldBe StageStatus.FAILED
+            page.inpaintError shouldBe "Masked textless inpainting produced no cleaned image"
+            harness.fakeTransport.totalCalls() shouldBe 0
+            verify(exactly = 1) { source.recycle() }
+            store.pageLeaseOwner("p0") shouldBe null
+        } finally {
+            try {
+                harness.close()
+            } finally {
+                store.closeAndFlush()
+            }
+        }
+    }
+
+    private suspend fun assertTextless(prepared: Boolean, hasMask: Boolean = true) {
+        val store = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0"), preRegisterInStore = false)
+        val harness = TranslationCoexistenceHarness.create(listOf("p0"), storeOverride = store)
+        val source = FakeCoexistence.stubBitmap()
+        try {
+            harness.installGraphicsShims()
+            harness.stubChapterPages(listOf("p0"))
+            coEvery { PageDecode.decodePageBitmapForTranslation(any(), any(), any(), any(), any()) } returns
+                FakeCoexistence.decodedPage("p0").copy(bitmap = source)
+            harness.fakeRecognition.analyzeOutcome = {
+                PageTranslation(
+                    ocrStatus = StageStatus.READY,
+                    inpaintMaskBoxes = if (hasMask) listOf(InpaintMaskBox(0, 0, 10, 10, 1)) else emptyList(),
+                )
+            }
+            harness.fakeRecognition.inpaintOutcome = { bitmap, _ -> bitmap }
+            var readerOutcome: SinglePageOutcome? = null
+            val reference = if (prepared) {
+                harness.pipeline.prepareSinglePage(
+                    harness.manga,
+                    harness.chapterFor(harness.CHAPTER_ID),
+                    harness.source,
+                    "p0",
+                    streamFn = null,
+                    force = false,
+                    stageListener = null,
+                )
+            } else {
+                readerOutcome = harness.pipeline.translateSinglePage(
+                    harness.manga,
+                    harness.chapterFor(harness.CHAPTER_ID),
+                    harness.source,
+                    "p0",
                     force = false,
                     stageListener = null,
                     origin = PageWriteOrigin.MANUAL,
                 )
+                null
             }
-
-            // Await native inpaint arrival
-            inpaintStarted.await()
-
-            // Signal provider translation can proceed and check overlap
-            translationStarted.complete(Unit)
-            translationOverlapped = true
-
-            // Release both branches
-            unblockInpaint.complete(Unit)
-            unblockTranslation.complete(Unit)
-
-            val outcome = pipelineJob.await()
-            inpaintOverlapped shouldBe true
-            translationOverlapped shouldBe true
-            outcome shouldBe SinglePageOutcome.Completed
+            store.flush()
+            harness.fakeRecognition.analyzeCalls.get() shouldBe 1
+            if (prepared) reference.shouldNotBeNull()
+            val page = store.snapshot("p0").page
+            if (page == null || page.ocrStatus != StageStatus.READY) {
+                throw AssertionError(
+                    "textless OCR result was not published: " + harness.failureDiagnostics(listOf("p0")),
+                )
+            }
+            if (!prepared) readerOutcome shouldBe SinglePageOutcome.Completed
+            page.inpaintStatus shouldBe if (hasMask) StageStatus.READY else StageStatus.SKIPPED
+            page.isTextlessTerminal shouldBe true
+            harness.fakeRecognition.inpaintCalls.get() shouldBe if (hasMask) 1 else 0
+            harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.INPAINT) shouldBe if (hasMask) 1 else 0
+            harness.fakeTransport.totalCalls() shouldBe 0
+            store.artifactEngine!!.readManifest()!!.pages.getValue("p0").displayState shouldBe
+                PageDisplayState.TEXTLESS_COMPLETE
+            if (prepared) reference.shouldNotBeNull().isTerminal shouldBe true
+            verify(exactly = 1) { source.recycle() }
+            store.pageLeaseOwner("p0") shouldBe null
         } finally {
-            inpaintStarted.complete(Unit)
-            translationStarted.complete(Unit)
-            unblockInpaint.complete(Unit)
-            unblockTranslation.complete(Unit)
-            scope.cancel()
+            try {
+                harness.close()
+            } finally {
+                store.closeAndFlush()
+            }
         }
     }
 
     @Test
-    @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    fun `both completion orders join cleanly - inpaint finishes first`() = runTest {
-        val store = newStore()
-        val attempt = seededAuthority(store)
-        val owner = CleanedOwner()
-        val cleanedBitmap = stubBitmap()
-
-        val inpaintOrder = CompletableDeferred<Unit>()
-        val translationCanFinish = CompletableDeferred<Unit>()
-
-        val inpaintBranch = async {
-            owner.produce(cleanedBitmap, CleanedProvenance.INPAINT)
-            attempt.write("inpaint complete") { it.copy(inpaintStatus = StageStatus.READY) }
-            inpaintOrder.complete(Unit)
-        }
-
-        val translationBranch = async {
-            inpaintOrder.await()
-            translationCanFinish.await()
-            attempt.write("translation complete") { it.copy(translationStatus = StageStatus.READY) }
-        }
-
-        translationCanFinish.complete(Unit)
-        inpaintBranch.await()
-        translationBranch.await()
-
-        val snapshot = store.snapshot("p0").page!!
-        snapshot.inpaintStatus shouldBe StageStatus.READY
-        snapshot.translationStatus shouldBe StageStatus.READY
-        owner.isAvailable shouldBe true
-
-        owner.release()
-        verify(exactly = 1) { cleanedBitmap.recycle() }
+    fun `prepared success releases aliased source through owner`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertPreparedCleanup(PreparedPublication.ACCEPT) }
     }
 
     @Test
-    @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    fun `both completion orders join cleanly - translation finishes first`() = runTest {
-        val store = newStore()
-        val attempt = seededAuthority(store)
-        val owner = CleanedOwner()
-        val cleanedBitmap = stubBitmap()
-
-        val translationOrder = CompletableDeferred<Unit>()
-        val inpaintCanFinish = CompletableDeferred<Unit>()
-
-        val translationBranch = async {
-            attempt.write("translation complete") { it.copy(translationStatus = StageStatus.READY) }
-            translationOrder.complete(Unit)
-        }
-
-        val inpaintBranch = async {
-            translationOrder.await()
-            inpaintCanFinish.await()
-            owner.produce(cleanedBitmap, CleanedProvenance.INPAINT)
-            attempt.write("inpaint complete") { it.copy(inpaintStatus = StageStatus.READY) }
-        }
-
-        inpaintCanFinish.complete(Unit)
-        translationBranch.await()
-        inpaintBranch.await()
-
-        val snapshot = store.snapshot("p0").page!!
-        snapshot.inpaintStatus shouldBe StageStatus.READY
-        snapshot.translationStatus shouldBe StageStatus.READY
-        owner.isAvailable shouldBe true
-
-        owner.release()
-        verify(exactly = 1) { cleanedBitmap.recycle() }
+    fun `prepared rejected persistence releases aliased source and lease`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertPreparedCleanup(PreparedPublication.REJECT) }
     }
 
     @Test
-    @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    fun `parent cancellation mid-join cancels provider and executes safe cleanup C4`() = runTest {
-        val owner = CleanedOwner()
-        val bitmap = stubBitmap()
-        owner.produce(bitmap, CleanedProvenance.INPAINT)
+    fun `prepared thrown persistence releases aliased source and lease`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertPreparedCleanup(PreparedPublication.THROW) }
+    }
 
-        val receipt = CompletableDeferred<Boolean>()
-        owner.registerReceipt(receipt)
+    private enum class PreparedPublication { ACCEPT, REJECT, THROW }
 
-        val providerStarted = CompletableDeferred<Unit>()
-        val providerCancelled = CompletableDeferred<Unit>()
-
-        val scope = CoroutineScope(SupervisorJob() + testScheduler)
+    private suspend fun assertPreparedCleanup(publication: PreparedPublication) {
+        val harness = TranslationCoexistenceHarness.create(listOf("p0"), preRegisterInStore = false)
+        val source = FakeCoexistence.stubBitmap()
+        val publicationFailure = java.io.IOException("controlled persistence failure")
         try {
-            val boundaryJob = scope.launch {
-                coroutineScope {
-                    val inpaint = async {
-                        owner.release()
-                    }
-                    val provider = async {
-                        try {
-                            providerStarted.complete(Unit)
-                            CompletableDeferred<Unit>().await()
-                        } catch (e: CancellationException) {
-                            providerCancelled.complete(Unit)
-                            throw e
-                        }
-                    }
-                    inpaint.await()
-                    provider.await()
-                }
+            harness.installGraphicsShims()
+            harness.stubChapterPages(listOf("p0"))
+            coEvery { PageDecode.decodePageBitmapForTranslation(any(), any(), any(), any(), any()) } returns
+                FakeCoexistence.decodedPage("p0").copy(bitmap = source)
+            harness.fakeRecognition.inpaintOutcome = { bitmap, _ -> bitmap }
+            when (publication) {
+                PreparedPublication.ACCEPT -> Unit
+                PreparedPublication.REJECT -> coEvery {
+                    harness.cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any(), any(), any(), any())
+                } returns null
+                PreparedPublication.THROW -> coEvery {
+                    harness.cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any(), any(), any(), any())
+                } throws publicationFailure
             }
-
-            providerStarted.await()
-            boundaryJob.cancel()
-            providerCancelled.await()
-
-            receipt.complete(true)
-            boundaryJob.join()
-
-            verify(exactly = 1) { bitmap.recycle() }
+            val result = runCatching {
+                harness.pipeline.prepareSinglePage(
+                    harness.manga,
+                    harness.chapterFor(harness.CHAPTER_ID),
+                    harness.source,
+                    "p0",
+                    streamFn = null,
+                    force = false,
+                    stageListener = null,
+                )
+            }
+            harness.fakeRecognition.inpaintCalls.get() shouldBe 1
+            verify(exactly = 1) { source.recycle() }
+            harness.store.pageLeaseOwner("p0") shouldBe null
+            when (publication) {
+                PreparedPublication.ACCEPT -> result.getOrThrow().shouldNotBeNull()
+                PreparedPublication.REJECT -> result.getOrThrow() shouldBe null
+                PreparedPublication.THROW -> result.exceptionOrNull() shouldBe publicationFailure
+            }
         } finally {
-            receipt.complete(false)
-            scope.cancel()
+            harness.close()
         }
     }
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    fun `native timeout with completed translation preserves durable translation C1 and C2`() = runTest {
+    fun `authority timeout marker preserves an already accepted translation`() = runTest {
         val store = newStore()
         val attempt = seededAuthority(store)
 
@@ -256,7 +394,7 @@ class SinglePageOverlapBoundaryTest {
         val writeResult = attempt.write("translation complete") {
             it.copy(
                 translationStatus = StageStatus.READY,
-                blocks = mutableListOf(eu.kanade.translation.model.TranslationBlock(text = "Hello", translation = "Bonjour")),
+                blocks = mutableListOf(FakeCoexistence.textBlock("Hello").copy(translation = "Bonjour")),
             )
         }
         writeResult.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
@@ -289,7 +427,7 @@ class SinglePageOverlapBoundaryTest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    fun `both branches terminal-failed writes single marker and loser is rejected C7`() = runTest {
+    fun `authority accepts one terminal marker and rejects the next`() = runTest {
         val store = newStore()
         val attempt = seededAuthority(store)
 
@@ -375,7 +513,7 @@ class SinglePageOverlapBoundaryTest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    fun `downscaled retry replaces into owner and render failure path C6`() = runTest {
+    fun `retry provenance owner borrows and recycles once`() = runTest {
         val owner = CleanedOwner()
         owner.isAvailable shouldBe false
 
@@ -425,45 +563,135 @@ class SinglePageOverlapBoundaryTest {
         verify(exactly = 0) { sourceBitmap.recycle() }
     }
 
+    private fun lazyStore(
+        scheduler: TestCoroutineScheduler,
+        io: FakeChapterDocumentIo = FakeChapterDocumentIo().apply { fileBacked = true },
+    ): ChapterTranslationStore {
+        val layout = ChapterArtifactLayout("s5-attempt-lease")
+        val documents = AtomicChapterDocuments(io)
+        val manifest = ChapterArtifactManifest(
+            chapterKey = layout.chapterKey,
+            pages = mapOf("p0" to PageArtifactRecord(pageKey = "p0")),
+        )
+        check(documents.publishJson(layout.manifestFileName, manifest))
+        return ChapterTranslationStore(
+            artifactFileName = "${layout.chapterKey}.json",
+            initialPages = mapOf("p0" to PageTranslation(sourceFileName = "p0")),
+            artifactStore = ChapterArtifactEngine(documents, layout),
+            initialArtifactManifest = manifest,
+            persistenceDispatcher = StandardTestDispatcher(scheduler),
+        ).also { it.enableLazyPersistence() }
+    }
+
+    private suspend fun publishOcr(attempt: AttemptAuthority): ChapterTranslationStore.PatchResult.Accepted =
+        attempt.write("OCR result") {
+            it.copy(
+                ocrStatus = StageStatus.READY,
+                blocks = mutableListOf(FakeCoexistence.textBlock("source")),
+            )
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+
     @Test
-    @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    fun `AttemptArtifactLease absorbs real lazy drain and rejects foreign drift`() = runTest {
-        val store = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0"))
-        val attempt = AttemptAuthority(store, "p0", store.snapshot("p0").toPrecondition())
-        val lease = attempt.artifactLease
+    fun `lease absorbs real lazy drain then rejects artifact-only foreign cancellation`() = runTest {
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val store = lazyStore(testScheduler, io)
+        try {
+            val attempt = AttemptAuthority(store, "p0", store.snapshot("p0").toPrecondition())
+            val beforeFiles = io.files.toMap()
+            val first = publishOcr(attempt)
+            attempt.artifactLease.certifiedProgress shouldBe null
+            store.mutex.withLock { store.hasPendingLazyPersistenceLocked() } shouldBe true
+            io.files shouldBe beforeFiles
 
-        // Initial attempt write: queues a lazy persistence mutation
-        val res1 = attempt.write("write 1") { it.copy(ocrStatus = StageStatus.READY) }
-        res1.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+            store.flush()
+            val certified = attempt.artifactLease.certifiedProgress.shouldNotBeNull()
+            certified.livePageVersion shouldBe first.snapshot.pageVersion
+            certified.candidateGenerationId.shouldNotBeNull()
+            store.artifactEngine!!.readManifest()!!.pages.getValue("p0").candidate.shouldNotBeNull()
+            store.snapshot("p0").pageVersion shouldBe first.snapshot.pageVersion
 
-        // Before flush, certifiedProgress is null
-        lease.certifiedProgress shouldBe null
+            attempt.write("after own drain") { it.copy(translationStatus = StageStatus.RUNNING) }
+                .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+            val beforeForeign = store.snapshot("p0")
+            // Cancellation changes artifact identity without advancing live pageVersion.
+            store.mutex.withLock { store.cancelArtifactCandidateLocked("p0") } shouldBe true
+            val afterForeign = store.snapshot("p0")
+            afterForeign.pageVersion shouldBe beforeForeign.pageVersion
+            afterForeign.artifactPageVersion shouldNotBe beforeForeign.artifactPageVersion
+            afterForeign.candidateGenerationId shouldBe null
+            val rejected = attempt.write("after foreign artifact cancellation") { it.copy(renderStatus = StageStatus.READY) }
+                .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+            rejected.reason shouldBe "artifact pageVersion changed"
+            store.snapshot("p0").pageVersion shouldBe beforeForeign.pageVersion
+        } finally {
+            store.closeAndFlush()
+        }
+    }
 
-        // Execute real durable store flush of lazy mutations
-        store.flush()
-
-        // Flush stamped the bounded scalar progress
-        val certified = lease.certifiedProgress
-        certified.shouldNotBeNull()
-        certified.pageKey shouldBe "p0"
-        certified.generation shouldBe res1.snapshot.generation
-        certified.livePageVersion shouldBe res1.snapshot.pageVersion
-
-        // Next write with lease succeeds (absorbs certified drain progression)
-        val res2 = attempt.write("write 2") { it.copy(translationStatus = StageStatus.READY) }
-        res2.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
-
-        // Foreign mutation: a foreign writer mutates the store page directly
-        store.updatePage("p0") {
-            (it ?: PageTranslation(sourceFileName = "p0")).apply {
-                pageVersion = 999L
-                errorMessage = "foreign mutation"
+    @Test
+    fun `lease cannot certify or absorb another store with identical scalar identity`() = runTest {
+        val first = lazyStore(testScheduler)
+        var second: ChapterTranslationStore? = null
+        try {
+            val attempt = AttemptAuthority(first, "p0", first.snapshot("p0").toPrecondition())
+            publishOcr(attempt)
+            first.flush()
+            // Equal scalar fences must not transfer store-bound lease capability.
+            val other = ChapterTranslationStore(
+                artifactFileName = "s5-attempt-lease.json",
+                artifactStore = first.artifactEngine,
+                initialArtifactManifest = first.artifactManifest,
+                initialRecoveredPages = first.capturePublishedPagesForCompaction(),
+                persistenceDispatcher = StandardTestDispatcher(testScheduler),
+            )
+            second = other
+            val lease = attempt.artifactLease
+            val certified = lease.certifiedProgress.shouldNotBeNull()
+            val otherSnapshot = other.snapshot("p0")
+            otherSnapshot.pageVersion shouldBe certified.livePageVersion
+            otherSnapshot.artifactPageVersion shouldBe certified.artifactPageVersion
+            otherSnapshot.candidateGenerationId shouldBe certified.candidateGenerationId
+            lease.stamp(other, "p0", otherSnapshot.copy(pageVersion = otherSnapshot.pageVersion + 1))
+            lease.certifiedProgress shouldBe certified
+            val rejected = other.patchPage(
+                "p0",
+                attempt.precondition,
+                "foreign store lease",
+                lease,
+            ) { (it ?: PageTranslation()).copy(renderStatus = StageStatus.READY) }
+                .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+            rejected.reason shouldBe "artifact pageVersion changed"
+        } finally {
+            try {
+                first.closeAndFlush()
+            } finally {
+                second?.closeAndFlush()
             }
         }
+    }
 
-        // The attempt writer is now stale; foreign mutation causes rejection
-        val res3 = attempt.write("write 3") { it.copy(renderStatus = StageStatus.READY) }
-        res3.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
-        (res3 as ChapterTranslationStore.PatchResult.Rejected).reason shouldBe "pageVersion expected=2 actual=999"
+    @Test
+    fun `coalesced own writes certify latest live version only after successful drain`() = runTest {
+        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val store = lazyStore(testScheduler, io)
+        try {
+            val attempt = AttemptAuthority(store, "p0", store.snapshot("p0").toPrecondition())
+            publishOcr(attempt)
+            val latest = attempt.write("coalesced OCR update") { current ->
+                current.apply { blocks.first().text = "latest source" }
+            }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+            io.failWrites = true
+            store.flush()
+            attempt.artifactLease.certifiedProgress shouldBe null
+            store.mutex.withLock { store.hasPendingLazyPersistenceLocked() } shouldBe true
+            io.failWrites = false
+            store.flush()
+            attempt.artifactLease.certifiedProgress.shouldNotBeNull().livePageVersion shouldBe latest.snapshot.pageVersion
+            attempt.write("after retried own drain") { it.copy(translationStatus = StageStatus.RUNNING) }
+                .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        } finally {
+            io.failWrites = false
+            store.closeAndFlush()
+        }
     }
 }

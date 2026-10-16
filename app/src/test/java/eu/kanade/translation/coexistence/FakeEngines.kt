@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
@@ -103,20 +104,24 @@ internal class FakeRecognitionEngine(
     val closeCalls = AtomicInteger(0)
     var singlePageText: String = "hello-single"
 
+    var analyzeOutcome: ((Bitmap) -> PageTranslation)? = null
+
     private val cleaned = FakeCoexistence.stubBitmap()
 
     override suspend fun analyze(bitmap: Bitmap): PageTranslation {
         analyzeCalls.incrementAndGet()
         barrier.arrive(CoexistenceBarrier.BarrierPoint.NATIVE_RELEASE, CoexistenceBarrier.WILDCARD_PAGE)
-        return PageTranslation().apply { blocks += FakeCoexistence.textBlock(singlePageText) }
+        return analyzeOutcome?.invoke(bitmap)
+            ?: PageTranslation(ocrStatus = StageStatus.READY).apply { blocks += FakeCoexistence.textBlock(singlePageText) }
     }
 
     var inpaintOutcome: ((Bitmap, PageTranslation) -> Bitmap?)? = null
 
     override suspend fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         inpaintCalls.incrementAndGet()
-        barrier.arrive(CoexistenceBarrier.BarrierPoint.INPAINT, pageTranslation.sourceFileName.ifBlank { CoexistenceBarrier.WILDCARD_PAGE })
-        return inpaintOutcome?.invoke(bitmap, pageTranslation) ?: cleaned
+        barrier.arrive(CoexistenceBarrier.BarrierPoint.INPAINT, pageTranslation.sourceFileName?.takeIf { it.isNotBlank() } ?: CoexistenceBarrier.WILDCARD_PAGE)
+        val outcome = inpaintOutcome
+        return if (outcome != null) outcome(bitmap, pageTranslation) else cleaned
     }
 
     override fun reclaimPooledMemory() {}
