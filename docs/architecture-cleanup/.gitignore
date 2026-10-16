@@ -1,2 +1,5 @@
-# Historical validation evidence is intentionally versioned in this handoff.
-!*.log
+# The entire exported snapshot is intentionally versioned, including historical audits/logs.
+!artifacts/**/
+!artifacts/**
+!validation/**/
+!validation/**
