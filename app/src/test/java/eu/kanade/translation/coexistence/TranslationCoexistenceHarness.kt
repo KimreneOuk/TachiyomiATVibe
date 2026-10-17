@@ -76,6 +76,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -131,7 +132,6 @@ internal class TranslationCoexistenceHarness private constructor(
     val fakeTransport: FakeTransportTranslator,
     internal val batchInpaintPageKeys: CopyOnWriteArrayList<String>,
     val trackerRegistry: TranslationBatchTrackerRegistry,
-    val schedulerJobMap: CapturingJobMap,
     val streamRegistry: TranslationStreamRegistry,
     val activeStores: ActiveChapterStoreRegistry,
     val trackerScope: CoroutineScope,
@@ -717,22 +717,17 @@ internal class TranslationCoexistenceHarness private constructor(
                     extraStores[chapterId] ?: store
                 },
                 immediateStoreResolver = { extraStores[it] ?: store },
+                // Queue-bound mode: manual taps resolve their stream factory
+                // through the same registry the reader controller populates.
+                manualStreamProvider = { mangaArg, chapterArg, sourceArg, pageKey ->
+                    streamRegistry.peek(mangaArg, chapterArg, sourceArg, pageKey)
+                },
                 readerSessionRejectionReason = { chapterId ->
                     when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
                         is SessionAdmission.Rejected -> admission.reason.name
                         else -> null
                     }
                 },
-            )
-            val schedulerJobMap = CapturingJobMap()
-            setFields(
-                scheduler,
-                listOf(
-                    // TranslationScheduler.kt:83 — replaced so tests capture the
-                    // manual job synchronously at registration (deterministic;
-                    // the map entry itself may be removed asynchronously).
-                    "activePageJobs" to schedulerJobMap,
-                ),
             )
 
             // ---- real ChapterTranslator over the real pipeline --------------
@@ -783,7 +778,6 @@ internal class TranslationCoexistenceHarness private constructor(
                 fakeTransport = fakeTransport,
                 batchInpaintPageKeys = batchInpaintPageKeys,
                 trackerRegistry = trackerRegistry,
-                schedulerJobMap = schedulerJobMap,
                 streamRegistry = streamRegistry,
                 activeStores = activeStores,
                 trackerScope = trackerScope,
@@ -1054,18 +1048,30 @@ internal class TranslationCoexistenceHarness private constructor(
         scheduler.translatePage(manga, chapterFor(chapterId), source, pageKey, force = force)
     }
 
-    /** Awaits (event-driven) the manual job captured at scheduler registration. */
-    suspend fun capturedManualJob(pageKey: String, chapterId: Long = CHAPTER_ID): Job =
-        runBlocking {
+    /**
+     * Awaits (event-driven) the manual attempt's terminal — the queue-bound
+     * equivalent of the removed scheduler job map. The returned handle
+     * completes when the queue publishes a typed outcome for the page;
+     * cancelling it does not stop the queue-owned worker (stop work through
+     * the scheduler's cancel entries instead).
+     */
+    fun capturedManualJob(pageKey: String, chapterId: Long = CHAPTER_ID): Job {
+        val terminal = CompletableDeferred<Unit>()
+        val watcherScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val watcher = watcherScope.launch {
             withTimeout(AWAIT_TIMEOUT_MS) {
-                schedulerJobMap.captured["$chapterId:$pageKey"]?.await()
-                    ?: error("manual job for $chapterId:$pageKey was never registered")
-            }.also { job ->
-                job.invokeOnCompletion { cause ->
-                    if (cause != null) println("DBG manual job failed: $cause")
+                while (scheduler.manualOutcomeFor(chapterId, pageKey) == null) {
+                    delay(25)
                 }
             }
+            terminal.complete(Unit)
         }
+        terminal.invokeOnCompletion {
+            watcher.cancel()
+            watcherScope.cancel()
+        }
+        return terminal
+    }
 
     /** A launched batch run: the real translation entry + its reconciliation. */
     class BatchRun(
@@ -1457,20 +1463,4 @@ internal class TranslationCoexistenceHarness private constructor(
      */
     fun transportCallsFor(pageKey: String): Int =
         transportInstances.sumOf { it.callsFor(pageKey) }
-}
-
-/**
- * ConcurrentHashMap replacement for TranslationScheduler.activePageJobs that
- * captures every registered job into a CompletableDeferred at registration time.
- * translatePage registers the job synchronously before returning, but removes
- * the entry asynchronously — capturing at put-time removes the observation race
- * without polls.
- */
-internal class CapturingJobMap : ConcurrentHashMap<String, Job>() {
-    val captured = ConcurrentHashMap<String, CompletableDeferred<Job>>()
-
-    override fun put(key: String, value: Job): Job? {
-        captured.computeIfAbsent(key) { CompletableDeferred() }.complete(value)
-        return super.put(key, value)
-    }
 }

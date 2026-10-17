@@ -2,6 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.translator.AdmissionPriority
+import eu.kanade.translation.engines.translator.LivePriorityHandle
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.PageTranslation
@@ -16,6 +17,8 @@ import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
+import eu.kanade.translation.pipeline.adaptive.DevicePriorityHandle
 import eu.kanade.translation.pipeline.execution.PreparedPage
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
@@ -75,6 +78,8 @@ class ReaderTranslationQueueTest {
         val paidPages = ConcurrentHashMap.newKeySet<String>()
         val paidEntries = ConcurrentHashMap<String, Boolean>()
         val jobs = ConcurrentHashMap<String, Job>()
+        val deviceHandles = ConcurrentHashMap<String, DevicePriorityHandle>()
+        val liveHandles = ConcurrentHashMap<String, LivePriorityHandle>()
         val calls = ConcurrentLinkedQueue<Call>()
         val attempts = ConcurrentHashMap<String, AtomicInteger>()
         val entered = ConcurrentHashMap<String, AtomicInteger>()
@@ -108,6 +113,8 @@ class ReaderTranslationQueueTest {
             readerPriority: (() -> AdmissionPriority)?,
         ): SinglePageOutcome {
             jobs[pageKey] = currentCoroutineContext()[Job]!!
+            currentCoroutineContext()[DevicePriorityHandle]?.let { deviceHandles[pageKey] = it }
+            currentCoroutineContext()[LivePriorityHandle]?.let { liveHandles[pageKey] = it }
             if (pageKey in paidPages) {
                 paidEntries[pageKey] = currentCoroutineContext()[OperationPaidCallLifecycle]?.tryEnterPaidCall() == true
             }
@@ -510,6 +517,72 @@ class ReaderTranslationQueueTest {
             executor.attemptsFor("p1") shouldBe 1
         } finally {
             executor.release("p1")
+        }
+    }
+
+    @Test
+    fun `manual tap worker context exposes foreground device and interactive live handles`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.hold("p0")
+        val q = newQueue(executor)
+        bind(q)
+        try {
+            q.submitCurrent(session, work("p0"), ReaderTrigger.MANUAL_TAP)
+            testScheduler.runCurrent()
+            executor.enteredFor("p0") shouldBe 1
+            executor.deviceHandles["p0"]?.priority shouldBe DevicePermitPriority.FOREGROUND
+            executor.liveHandles["p0"]?.priority shouldBe AdmissionPriority.INTERACTIVE
+        } finally {
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `explicit tap promotion foregrounds the running prefetch worker handles in place`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        val q = newQueue(executor)
+        bind(q)
+        executor.hold("p1")
+        try {
+            q.updateViewport(session, 0, 3, isAutoEnabled = true, resolve = { i -> work("p$i", i) })
+            testScheduler.advanceUntilIdle()
+            executor.enteredFor("p1") shouldBe 1
+            executor.deviceHandles["p1"]?.priority shouldBe DevicePermitPriority.BACKGROUND
+            executor.liveHandles["p1"]?.priority shouldBe AdmissionPriority.BACKGROUND
+            q.submitCurrent(session, work("p1", 1), ReaderTrigger.MANUAL_TAP)
+                .shouldBeInstanceOf<ReaderSubmission.Promoted>()
+            testScheduler.advanceUntilIdle()
+            executor.deviceHandles["p1"]?.priority shouldBe DevicePermitPriority.FOREGROUND
+            executor.liveHandles["p1"]?.priority shouldBe AdmissionPriority.INTERACTIVE
+            executor.attemptsFor("p1") shouldBe 1
+        } finally {
+            executor.release("p1")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `viewport promotion foregrounds the running prefetch worker handles in place`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        val q = newQueue(executor)
+        bind(q)
+        executor.hold("p1")
+        try {
+            q.updateViewport(session, 0, 3, isAutoEnabled = true, resolve = { i -> work("p$i", i) })
+            testScheduler.advanceUntilIdle()
+            executor.enteredFor("p1") shouldBe 1
+            executor.deviceHandles["p1"]?.priority shouldBe DevicePermitPriority.BACKGROUND
+            executor.liveHandles["p1"]?.priority shouldBe AdmissionPriority.BACKGROUND
+            // The reader scrolls: p1 becomes the visible page without re-demands.
+            q.updateViewport(session, 1, 3, isAutoEnabled = true, resolve = { i -> work("p$i", i) })
+            testScheduler.advanceUntilIdle()
+            executor.deviceHandles["p1"]?.priority shouldBe DevicePermitPriority.FOREGROUND
+            executor.liveHandles["p1"]?.priority shouldBe AdmissionPriority.INTERACTIVE
+            executor.attemptsFor("p1") shouldBe 1
+        } finally {
+            executor.release("p1")
+            testScheduler.advanceUntilIdle()
         }
     }
 
@@ -1302,6 +1375,81 @@ class ReaderTranslationQueueTest {
             executor.attemptsFor("p0") shouldBe 0
             lines.count { it.contains("event=run_end ") } shouldBe 1
             lines.count { it.contains("event=schedule_end ") } shouldBe 1
+        } finally {
+            diagnostics.sink = previousSink
+            diagnostics.detailedTracingEnabled = previousGate
+        }
+    }
+
+    // ---- external reconcile and event rearm ----
+
+    @Test
+    fun `reconcile rearms deferred prefetch demand when memory gate opens`() = runTest(workerDispatcher) {
+        var memoryOpen = false
+        val executor = RecordingExecutor()
+        val q = newQueue(executor, memoryGate = { memoryOpen })
+        bind(q)
+        q.updateViewport(session, 0, 2, isAutoEnabled = true, resolve = { i -> work("p$i", i) })
+        testScheduler.advanceUntilIdle()
+        executor.enteredFor("p0") shouldBe 1
+        executor.enteredFor("p1") shouldBe 0
+
+        memoryOpen = true
+        q.reconcile(session)
+        testScheduler.advanceUntilIdle()
+        executor.enteredFor("p1") shouldBe 1
+    }
+
+    @Test
+    fun `reconcile refreshes stream factory for missing stream demand and runs it`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        val q = newQueue(executor)
+        bind(q)
+        q.updateViewport(session, 0, 1, isAutoEnabled = true, resolve = { ReaderPageWork("p0", 0, null) })
+        testScheduler.advanceUntilIdle()
+        executor.attemptsFor("p0") shouldBe 0
+
+        q.reconcile(session) { index -> work("p$index", index) }
+        testScheduler.advanceUntilIdle()
+        executor.attemptsFor("p0") shouldBe 1
+    }
+
+    @Test
+    fun `reconcile ignores stale factory resolution when revision changes`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        val q = newQueue(executor)
+        bind(q)
+        q.updateViewport(session, 0, 1, isAutoEnabled = true, resolve = { ReaderPageWork("p0", 0, null) })
+        testScheduler.advanceUntilIdle()
+        executor.attemptsFor("p0") shouldBe 0
+
+        q.reconcile(session) { index ->
+            q.updateViewport(session, 1, 2, isAutoEnabled = true, resolve = { i -> work("p$i", i) })
+            work("p0", 0)
+        }
+        testScheduler.advanceUntilIdle()
+        // Stale p0 from reconcile resolution does not execute because revision changed
+        executor.attemptsFor("p0") shouldBe 0
+        executor.attemptsFor("p1") shouldBe 1
+    }
+
+    @Test
+    fun `manual submission with missing index sentinel minus one emits null trace index`() = runTest(workerDispatcher) {
+        val diagnostics = eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+        val previousSink = diagnostics.sink
+        val previousGate = diagnostics.detailedTracingEnabled
+        val lines = java.util.concurrent.CopyOnWriteArrayList<String>()
+        diagnostics.sink = eu.kanade.translation.diagnostics.TranslationTraceSink { _, line -> lines += line }
+        diagnostics.detailedTracingEnabled = true
+        try {
+            val executor = RecordingExecutor()
+            val q = newQueue(executor)
+            bind(q)
+            q.submitCurrent(session, ReaderPageWork("p0", -1) { java.io.ByteArrayInputStream(byteArrayOf(1)) }, ReaderTrigger.MANUAL_TAP)
+            testScheduler.advanceUntilIdle()
+            executor.attemptsFor("p0") shouldBe 1
+            lines.any { it.contains("pageIndex=none") } shouldBe true
+            lines.none { it.contains("pageIndex=-1") } shouldBe true
         } finally {
             diagnostics.sink = previousSink
             diagnostics.detailedTracingEnabled = previousGate

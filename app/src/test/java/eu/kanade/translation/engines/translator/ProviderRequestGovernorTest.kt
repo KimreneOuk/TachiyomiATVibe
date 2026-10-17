@@ -15,6 +15,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -220,7 +222,7 @@ class ProviderRequestGovernorTest {
     }
 
     private fun governor(
-        clock: FakeClock,
+        clock: ProviderRequestClock,
         policy: (ProviderQuotaPolicy) -> ProviderQuotaPolicy = { it },
     ) = ProviderRequestGovernor(
         policy = { policy(ProviderQuotaPolicy()) },
@@ -247,6 +249,10 @@ class ProviderRequestGovernorTest {
 
         override suspend fun delay(millis: Long) {
             delays += millis
+            now += millis
+        }
+
+        fun advance(millis: Long) {
             now += millis
         }
     }
@@ -352,6 +358,108 @@ class ProviderRequestGovernorTest {
             },
         )
         checks shouldBe List(checks.size) { true }
+    }
+
+    @Test
+    fun `waiter promoted from background to interactive wakes immediately and is prioritized over background waiters`() = runTest {
+        val clock = object : ProviderRequestClock {
+            override fun nowEpochMs(): Long = currentTime
+            override suspend fun delay(millis: Long) {
+                if (millis > 0) kotlinx.coroutines.delay(millis)
+            }
+        }
+        val governor = governor(clock) {
+            it.copy(requestsPerMinute = 20, minimumSpacingMs = 100, pollIntervalMs = 10)
+        }
+        val order = mutableListOf<String>()
+        val handle = LivePriorityHandle(AdmissionPriority.BACKGROUND) { governor.wakeWaiters() }
+
+        // Take initial slot to enforce spacing
+        governor.executeValue(metadata()) { "initial" }
+
+        val background1 = async {
+            withContext(handle) {
+                governor.executeValue(metadata()) {
+                    order += "promoted"
+                }
+            }
+        }
+        val background2 = async {
+            governor.executeValue(metadata()) {
+                order += "background2"
+            }
+        }
+        runCurrent()
+        order shouldBe emptyList()
+
+        handle.promote()
+        runCurrent()
+
+        advanceTimeBy(100)
+        runCurrent()
+        background1.await()
+        order shouldBe listOf("promoted")
+
+        advanceTimeBy(100)
+        runCurrent()
+        background2.await()
+        order shouldBe listOf("promoted", "background2")
+    }
+
+    @Test
+    fun `promoted waiter measures wait budget from original enqueue across promotion`() = runTest {
+        val clock = object : ProviderRequestClock {
+            override fun nowEpochMs(): Long = currentTime
+            override suspend fun delay(millis: Long) {
+                if (millis > 0) kotlinx.coroutines.delay(millis)
+            }
+        }
+        val governor = governor(clock) {
+            it.copy(maxForegroundWaitMs = 100, pollIntervalMs = 10)
+        }
+        val metadata = metadata()
+        governor.recordFailure(
+            metadata,
+            classifyHttpFailure(
+                backend = "gemini",
+                statusCode = 429,
+                retryAfterHeader = "0.08",
+                nowEpochMs = clock.nowEpochMs(),
+            ),
+        )
+        val handle = LivePriorityHandle(AdmissionPriority.BACKGROUND) { governor.wakeWaiters() }
+
+        val decision = async {
+            withContext(handle) {
+                governor.admit(metadata)
+            }
+        }
+        runCurrent()
+        decision.isCompleted shouldBe false
+
+        // Advance to t=40
+        advanceTimeBy(40)
+        runCurrent()
+        decision.isCompleted shouldBe false
+
+        // Extend cooldown at t=40 by 80ms -> t=120. Remaining budget from t=0 is 100-40=60. waitMs is 120-40=80 > 60.
+        governor.recordFailure(
+            metadata,
+            classifyHttpFailure(
+                backend = "gemini",
+                statusCode = 429,
+                retryAfterHeader = "0.08",
+                nowEpochMs = clock.nowEpochMs(),
+            ),
+        )
+
+        // Now promoted to interactive
+        handle.promote()
+        runCurrent()
+
+        // Waiter evaluates: waitMs=80 > remaining=60, so deferred!
+        val result = decision.await()
+        result.shouldBeInstanceOf<ProviderAdmissionDecision.Deferred>()
     }
 
     private class TraceClock(var nowMs: Long = 0L) : ProviderRequestClock, TranslationTraceClock {

@@ -7,13 +7,18 @@ import eu.kanade.translation.diagnostics.TranslationScheduleTrace
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.engines.translator.AdmissionPriority
+import eu.kanade.translation.engines.translator.LivePriorityHandle
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
+import eu.kanade.translation.pipeline.adaptive.DevicePriorityHandle
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -106,6 +111,27 @@ class ReaderTranslationQueue(
         var forceCancelled = false
         var drainTimer: Job? = null
         val priority = AtomicReference(priority)
+        val stage = AtomicReference<TranslationStageEvent?>(null)
+
+        /** Live governor handle; promotion re-reads priority at selection. */
+        val liveHandle = LivePriorityHandle(
+            if (priority == ReaderPriority.CURRENT_PAGE) AdmissionPriority.INTERACTIVE else AdmissionPriority.BACKGROUND,
+        )
+
+        /** Live device-permit handle; promotion restarts a fresh foreground window. */
+        val deviceHandle = DevicePriorityHandle(
+            if (priority == ReaderPriority.CURRENT_PAGE) DevicePermitPriority.FOREGROUND else DevicePermitPriority.BACKGROUND,
+        )
+
+        /** Promotes an already-waiting operation in place; never restarts work. */
+        fun promoteHandles() {
+            liveHandle.promote()
+            deviceHandle.promote()
+        }
+
+        /** Why this demand is currently deferred; null while queued or running. */
+        @Volatile
+        var deferral: AutoDeferralReason? = null
         var state = State.QUEUED
         var job: Job? = null
         var enteredBody = false
@@ -124,7 +150,7 @@ class ReaderTranslationQueue(
                 TranslationPipelineDiagnostics.startRun(
                     schedule = schedule,
                     pageRaw = work.pageKey,
-                    pageIndex = work.readerPageIndex,
+                    pageIndex = work.readerPageIndex.takeIf { it >= 0 },
                 ),
             )
         }
@@ -156,6 +182,57 @@ class ReaderTranslationQueue(
     private val localPermit = Semaphore(1)
     private val staleOutcomes = MutableStateFlow<Map<String, SinglePageOutcome>>(emptyMap()).asStateFlow()
 
+    /**
+     * Bumped on every demand-lifecycle mutation (submit, defer, stage event,
+     * terminal, cancel). The temporary snapshot adapter re-derives full truth
+     * through [observeSlots] on every bump instead of tracking incremental
+     * per-binding flows.
+     */
+    private val slotEvents = MutableStateFlow(0L)
+
+    private fun pokeSlots() {
+        slotEvents.value = slotEvents.value + 1L
+    }
+
+    /** Monotonic demand-mutation signal for observers of [observeSlots]. */
+    val slotEventFlow: StateFlow<Long> = slotEvents.asStateFlow()
+
+    /**
+     * Atomic queue truth for one bound session: live demands plus retained
+     * terminal outcomes. Stale or unbound sessions observe empty views.
+     */
+    fun observeSlots(session: ReaderSessionToken): ReaderQueueView = synchronized(control) {
+        val b = bound?.takeIf { it.token == session }
+            ?: return ReaderQueueView(emptyMap(), emptyMap())
+        val now = nowEpochMs()
+        val live = (pending.values + liveWorkers.values).distinct()
+            .filter { it.binding === b && (it.state == State.QUEUED || it.state == State.RUNNING) }
+            .associate { demand -> demand.work.pageKey to demand.observationLocked(now) }
+        ReaderQueueView(live, b.outcomes.value)
+    }
+
+    private fun Demand.observationLocked(now: Long): ReaderSlotObservation {
+        val phase = when {
+            state == State.RUNNING -> ReaderSlotPhase.RUNNING
+            retryAt > now || work.streamFn == null ||
+                (deferral != null && deferredAtEvent >= event) -> ReaderSlotPhase.DEFERRED
+            else -> ReaderSlotPhase.QUEUED
+        }
+        val reason = when {
+            phase != ReaderSlotPhase.DEFERRED -> null
+            work.streamFn == null -> AutoDeferralReason.SourceUnavailable
+            else -> deferral
+        }
+        return ReaderSlotObservation(
+            pageKey = work.pageKey,
+            readerPageIndex = work.readerPageIndex,
+            explicit = explicit,
+            phase = phase,
+            stage = stage.get(),
+            deferral = reason,
+        )
+    }
+
     fun bindSession(
         session: ReaderSessionToken,
         manga: Manga,
@@ -179,6 +256,7 @@ class ReaderTranslationQueue(
             jobs
         }
         cancelOutside(cancellations)
+        pokeSlots()
     }
 
     fun submitCurrent(
@@ -215,6 +293,7 @@ class ReaderTranslationQueue(
                         if (explicitCountLocked() >= EXPLICIT_BACKLOG_LIMIT) return capacityRejection()
                         existing.explicit = true
                         existing.priority.set(ReaderPriority.CURRENT_PAGE)
+                        existing.promoteHandles()
                         ReaderSubmission.Promoted(work.pageKey)
                     }
                     else -> ReaderSubmission.Existing(terminals[work.pageKey])
@@ -235,6 +314,7 @@ class ReaderTranslationQueue(
         }
         cancelOutside(retired)
         pump()
+        pokeSlots()
         return result
     }
 
@@ -284,7 +364,12 @@ class ReaderTranslationQueue(
                         val existing = pending[work.pageKey]
                         if (existing != null) {
                             if (existing.state == State.QUEUED) existing.work = work
-                            if (!existing.explicit) existing.priority.set(priority)
+                            if (!existing.explicit) {
+                                existing.priority.set(priority)
+                                // A promoted waiting entry foregrounds in place;
+                                // a re-demanded prefetch keeps its wait semantics.
+                                if (priority == ReaderPriority.CURRENT_PAGE) existing.promoteHandles()
+                            }
                         } else {
                             val done = terminals[work.pageKey]
                             if (done == null ||
@@ -302,6 +387,7 @@ class ReaderTranslationQueue(
             }
             cancelOutside(cancellations)
             pump()
+            pokeSlots()
         }
     }
 
@@ -322,6 +408,65 @@ class ReaderTranslationQueue(
         }
         cancelOutside(cancellations)
         pump()
+        pokeSlots()
+    }
+
+    fun reconcile(
+        session: ReaderSessionToken,
+        resolve: ((Int) -> ReaderPageWork?)? = null,
+    ) {
+        if (resolve == null) {
+            val valid = synchronized(control) {
+                val b = currentLocked(session) ?: return
+                event++
+                true
+            }
+            if (valid) {
+                pump()
+                pokeSlots()
+            }
+            return
+        }
+        val captured = synchronized(control) {
+            val b = currentLocked(session) ?: return
+            revision++
+            b to revision
+        }
+        scope.launch(workerDispatcher) {
+            val pendingIndices = synchronized(control) {
+                val b = currentLocked(session)
+                if (b !== captured.first || revision != captured.second) return@launch
+                pending.values
+                    .filter { it.binding === b && it.state == State.QUEUED && it.work.readerPageIndex >= 0 }
+                    .map { it.work.readerPageIndex to it.work.pageKey }
+            }
+            val resolved = try {
+                pendingIndices.mapNotNull { (index, pageKey) ->
+                    resolve(index)?.takeIf { it.pageKey == pageKey }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                logcat(LogPriority.WARN, t) { "Reader queue reconcile resolution failed" }
+                return@launch
+            }
+            val valid = synchronized(control) {
+                val b = currentLocked(session)
+                if (b !== captured.first || revision != captured.second) return@launch
+                event++
+                resolved.forEach { work ->
+                    val existing = pending[work.pageKey]
+                    if (existing != null && existing.binding === b && existing.state == State.QUEUED) {
+                        existing.work = work
+                    }
+                }
+                true
+            }
+            if (valid) {
+                pump()
+                pokeSlots()
+            }
+        }
     }
 
     fun cancelPage(session: ReaderSessionToken, pageKey: String): Boolean {
@@ -335,6 +480,7 @@ class ReaderTranslationQueue(
             cancelLocked { it.binding === b && it.work.pageKey == pageKey }
         }
         cancelOutside(cancellations)
+        pokeSlots()
         return true
     }
 
@@ -351,7 +497,26 @@ class ReaderTranslationQueue(
             cancelLocked(preservePaid = true, now = now) { it.binding === b }
         }
         cancelOutside(cancellations)
+        pokeSlots()
         return awaitDrain()
+    }
+
+    /**
+     * Non-suspending session invalidation for control-path callers (batch
+     * admission, download re-key): cancels the session's demand set and fences
+     * further submissions without awaiting physical worker drain. Retained
+     * paid workers keep draining under their own lifecycle contract.
+     */
+    fun cancelSessionAndForget(session: ReaderSessionToken) {
+        val now = nowEpochMs()
+        val cancellations = synchronized(control) {
+            val b = bound?.takeIf { it.token == session } ?: return
+            b.accepting = false
+            revision++
+            cancelLocked(preservePaid = true, now = now) { it.binding === b }
+        }
+        cancelOutside(cancellations)
+        pokeSlots()
     }
 
     suspend fun closeAndDrain(): ReaderDrainResult {
@@ -363,6 +528,7 @@ class ReaderTranslationQueue(
             cancelLocked(preservePaid = true, now = now) { true }
         }
         cancelOutside(cancellations)
+        pokeSlots()
         return awaitDrain()
     }
 
@@ -472,6 +638,7 @@ class ReaderTranslationQueue(
                 if (!demand.explicit && automatic >= AUTOMATIC_PHYSICAL_LIMIT) return@forEach
                 if (demand.work.streamFn == null) {
                     demand.deferredAtEvent = event
+                    demand.deferral = AutoDeferralReason.SourceUnavailable
                     return@forEach
                 }
                 if (!demand.explicit) automatic++
@@ -480,7 +647,9 @@ class ReaderTranslationQueue(
                 val job = scope.launch(workerDispatcher, start = CoroutineStart.LAZY) {
                     withContext(
                         TranslationTrace.elementFor(demand.trace.run) +
-                            (demand.paidCall ?: kotlin.coroutines.EmptyCoroutineContext),
+                            (demand.paidCall ?: kotlin.coroutines.EmptyCoroutineContext) +
+                            demand.liveHandle +
+                            demand.deviceHandle,
                     ) { runDemand(demand, work) }
                 }
                 demand.job = job
@@ -530,6 +699,7 @@ class ReaderTranslationQueue(
         }
         terminal?.let { demand.trace.end(it) }
         drained.first?.complete(Unit)
+        pokeSlots()
         pump()
     }
 
@@ -549,17 +719,27 @@ class ReaderTranslationQueue(
     private suspend fun runDemand(demand: Demand, work: ReaderPageWork) {
         val permit = localPermit.takeIf { demand.binding.computeClass == TranslatorComputeClass.LOCAL_COMPUTE }
         var acquired = false
+        val leaseWaitSpan = demand.trace.run.beginStage(TranslationTraceStage.LEASE_WAIT)
         try {
             permit?.acquire()
             acquired = permit != null
-            if (!valid(demand)) return
+            if (!valid(demand)) {
+                leaseWaitSpan.end()
+                return
+            }
             when (gate(demand)) {
-                Gate.ABORT -> return
+                Gate.ABORT -> {
+                    leaseWaitSpan.end()
+                    return
+                }
                 Gate.DEFER -> {
+                    leaseWaitSpan.end()
                     defer(demand)
+                    pokeSlots()
                     return
                 }
                 Gate.DISPLAY_READY -> {
+                    leaseWaitSpan.end()
                     synchronized(control) {
                         if (valid(demand) && pending[work.pageKey] === demand) {
                             demand.state = State.DONE
@@ -567,6 +747,7 @@ class ReaderTranslationQueue(
                             publishLocked(demand, SinglePageOutcome.Completed)
                         }
                     }
+                    pokeSlots()
                     return
                 }
                 Gate.PROCEED -> Unit
@@ -576,13 +757,15 @@ class ReaderTranslationQueue(
                 demand.state = State.RUNNING
                 demand.enteredBody = true
             }
+            pokeSlots()
+            leaseWaitSpan.end()
             val outcome = executor.translateSinglePage(
                 manga = demand.binding.manga,
                 chapter = demand.binding.chapter,
                 source = demand.binding.source,
                 pageKey = work.pageKey,
                 force = demand.force,
-                stageListener = null,
+                stageListener = { _, stage -> onStageEvent(demand, stage) },
                 origin = PageWriteOrigin.MANUAL,
                 readerStreamFn = work.streamFn,
                 readerPriority = {
@@ -605,14 +788,23 @@ class ReaderTranslationQueue(
                     }
                 }
             }
+            pokeSlots()
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
             logcat(LogPriority.WARN, t) { "Reader queue execution or admission failed" }
+            demand.deferral = AutoDeferralReason.Network
             defer(demand, nowEpochMs() + cancellationWaitMs)
+            pokeSlots()
         } finally {
             if (acquired) permit?.release()
         }
+    }
+
+    /** Stage events fire on pipeline threads; publish outside the control lock. */
+    private fun onStageEvent(demand: Demand, stage: TranslationStageEvent) {
+        demand.stage.set(stage)
+        pokeSlots()
     }
 
     private suspend fun gate(demand: Demand): Gate {
@@ -620,10 +812,19 @@ class ReaderTranslationQueue(
         if (!valid(demand)) return Gate.ABORT
         val automatic = synchronized(control) { !demand.explicit }
         if (automatic) {
-            if (store == null) return Gate.DEFER
-            if (!store.autoAttemptAllowed(demand.work.pageKey)) return Gate.DEFER
+            if (store == null) {
+                demand.deferral = AutoDeferralReason.SourceUnavailable
+                return Gate.DEFER
+            }
+            if (!store.autoAttemptAllowed(demand.work.pageKey)) {
+                demand.deferral = AutoDeferralReason.Network
+                return Gate.DEFER
+            }
             if (!valid(demand)) return Gate.ABORT
-            if (demand.priority.get() == ReaderPriority.PREFETCH_NEXT && !memoryGate()) return Gate.DEFER
+            if (demand.priority.get() == ReaderPriority.PREFETCH_NEXT && !memoryGate()) {
+                demand.deferral = AutoDeferralReason.Memory
+                return Gate.DEFER
+            }
         }
         if (demand.force || store == null) return Gate.PROCEED
         val ready = try {

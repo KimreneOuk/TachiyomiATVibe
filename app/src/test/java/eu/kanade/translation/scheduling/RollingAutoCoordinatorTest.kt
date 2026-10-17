@@ -26,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -130,6 +131,15 @@ class RollingAutoCoordinatorTest {
 
     private fun resolver(prefix: String = "p"): (Int) -> RollingAutoCoordinator.PageWorkItem? = { idx ->
         RollingAutoCoordinator.PageWorkItem("$prefix$idx", null)
+    }
+
+    /**
+     * Resolver for the scheduler facade tests: the queue only dispatches
+     * demands carrying a real stream factory (null defers for source-ready
+     * refresh), so these supply a fresh empty stream per attempt.
+     */
+    private fun queueResolver(prefix: String = "p"): (Int) -> RollingAutoCoordinator.PageWorkItem? = { idx ->
+        RollingAutoCoordinator.PageWorkItem("$prefix$idx") { java.io.ByteArrayInputStream(ByteArray(0)) }
     }
 
     /**
@@ -879,8 +889,16 @@ class RollingAutoCoordinatorTest {
         coordinator.awaitTermination()
     }
 
+    // ---- scheduler facade over the reader queue (Phase 4 S2 cutover) ----
+    //
+    // The rolling coordinator is no longer constructed by the scheduler; these
+    // re-homed cases pin the QUEUE contract at the scheduler seam: rebind
+    // retention, chapter/global fencing, snapshot pointer stability, and
+    // reconcile guards. Coordinator-only coverage above remains until S4.
+
     @Test
-    fun `scheduler replacement waits for a non cooperative retiring coordinator`() = runBlocking<Unit> {
+    @Timeout(60)
+    fun `scheduler rebind retains in-flight work and admits the replacement window`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false, ignoreCancellation = true)
         val oldStore = newStore(listOf("old0" to blank()))
         val newStore = newStore(listOf("new0" to blank()))
@@ -896,26 +914,32 @@ class RollingAutoCoordinatorTest {
         val newSession = fakeSession(newStore, chapterId = 22L, sessionKey = "new-session")
 
         try {
-            scheduler.updateAutoWindow(oldIdentity, 0, 0, 1, oldSession, resolver("old"), TranslatorComputeClass.REMOTE_IO)
-            executor.awaitPrepareStarted(0)
+            scheduler.updateAutoWindow(oldIdentity, 0, 0, 1, oldSession, queueResolver("old"), TranslatorComputeClass.REMOTE_IO)
+            executor.awaitSingleStarted("old0")
 
+            // Shutdown invalidates the old queue session (its in-flight worker
+            // is retained under paid custody) and detaches the snapshot.
             scheduler.shutdownAutoCoordinator()
-            scheduler.updateAutoWindow(newIdentity, 0, 0, 1, newSession, resolver("new"), TranslatorComputeClass.REMOTE_IO)
-            executor.prepareCallsByPage["new0"] shouldBe null
+            withTimeout(5_000) { scheduler.autoSnapshot.first { it == null } }
 
-            executor.completePrepare(0)
-            withTimeout(5_000) { executor.awaitPrepareStarted(1) }
-            executor.completePrepare(1)
-            withTimeout(5_000) { executor.awaitTranslateStarted(0) }
-            executor.completeTranslate(0)
+            // The replacement window is admitted without waiting for the
+            // non-cooperative old worker: the queue's cross-window automatic
+            // physical cap (2) governs, not a predecessor barrier.
+            scheduler.updateAutoWindow(newIdentity, 0, 0, 1, newSession, queueResolver("new"), TranslatorComputeClass.REMOTE_IO)
+            withTimeout(5_000) { executor.awaitSingleStarted("new0") }
+
+            // The old worker was never restarted and never re-fired.
+            executor.singleAttemptsFor("old0") shouldBe 1
         } finally {
+            executor.releaseSingle("old0")
+            executor.releaseSingle("new0")
             scheduler.close()
         }
     }
 
     @Test
     @Timeout(60)
-    fun `chapter mismatched cancellation leaves the active scheduler owner running`() = runBlocking<Unit> {
+    fun `chapter mismatched cancellation leaves the active queue session running`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
         val scheduler = TranslationScheduler(
@@ -927,24 +951,26 @@ class RollingAutoCoordinatorTest {
         val identity = AutoChapterIdentity(31L, "active")
 
         try {
-            scheduler.updateAutoWindow(identity, 0, 1, 2, session, resolver(), TranslatorComputeClass.REMOTE_IO)
-            executor.awaitPrepareStarted(0)
+            scheduler.updateAutoWindow(identity, 0, 1, 2, session, queueResolver(), TranslatorComputeClass.REMOTE_IO)
+            executor.awaitSingleStarted("p0")
+            executor.awaitSingleStarted("p1")
 
-            // Chapter-mismatched cancellation must be a no-op for the active owner.
+            // Chapter-mismatched cancellation must be a no-op for the active session.
             scheduler.cancelAutoTranslations(99L) shouldBe false
             scheduler.cancelPageTranslations(99L)
-            executor.completePrepare(0)
-            withTimeout(5_000) { executor.awaitTranslateStarted(0) }
 
-            // Chapter-matched cancellation stops the active owner. Whether p1's
-            // native prepare had already been admitted before the cancel is a
-            // legal pre-cancel race (the loop is event-driven on
-            // Dispatchers.Default); the cancelled owner can never drive p1
-            // through translate though: autoComplete=false parks prepare(p1) on
-            // a gate this test never opens, so cancellation unwinds it there.
+            // Chapter-matched cancellation stops the session; running work
+            // unwinds through its own cancellation and is never re-fired.
             scheduler.cancelAutoTranslations(31L) shouldBe true
-            executor.completeTranslate(0)
-            executor.translateCallsByPage["p1"] shouldBe null
+            executor.releaseSingle("p0")
+            executor.releaseSingle("p1")
+            withTimeout(5_000) {
+                while (executor.singleExitedFor("p0") == 0 || executor.singleExitedFor("p1") == 0) {
+                    delay(10)
+                }
+            }
+            executor.singleAttemptsFor("p0") shouldBe 1
+            executor.singleAttemptsFor("p1") shouldBe 1
         } finally {
             scheduler.close()
         }
@@ -952,7 +978,7 @@ class RollingAutoCoordinatorTest {
 
     @Test
     @Timeout(60)
-    fun `same-chapter replacement is suppressed while cancellation is signalling`() = runBlocking<Unit> {
+    fun `chapter cancellation fences the old window and a rebind converges on the replacement`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val oldStore = newStore(listOf("old0" to blank()))
         val newStore = newStore(listOf("new0" to blank()))
@@ -963,79 +989,34 @@ class RollingAutoCoordinatorTest {
             immediateStoreResolver = { chapterId -> stores[chapterId] },
         )
         val oldIdentity = AutoChapterIdentity(71L, "cancel-old")
-        val newIdentity = AutoChapterIdentity(71L, "cancel-new")
+        val newIdentity = AutoChapterIdentity(72L, "cancel-new")
         val oldSession = fakeSession(oldStore, chapterId = 71L, sessionKey = "cancel-old-session")
-        val newSession = fakeSession(newStore, chapterId = 71L, sessionKey = "cancel-new-session")
-        val cancelBuildEntered = CompletableDeferred<Unit>()
-        val releaseCancelBuild = CompletableDeferred<Unit>()
-        val blockNextResolver = AtomicBoolean(false)
-        val oldResolver: (Int) -> RollingAutoCoordinator.PageWorkItem? = { idx ->
-            if (blockNextResolver.compareAndSet(true, false)) {
-                cancelBuildEntered.complete(Unit)
-                runBlocking { releaseCancelBuild.await() }
-            }
-            RollingAutoCoordinator.PageWorkItem("old$idx", null)
-        }
+        val newSession = fakeSession(newStore, chapterId = 72L, sessionKey = "cancel-new-session")
 
         try {
-            scheduler.updateAutoWindow(
-                oldIdentity,
-                visiblePageIndex = 0,
-                configuredAheadTarget = 0,
-                pageCount = 1,
-                session = oldSession,
-                pageResolver = oldResolver,
-                computeClass = TranslatorComputeClass.REMOTE_IO,
-            )
-            executor.awaitPrepareStarted(0)
-            blockNextResolver.set(true)
+            scheduler.updateAutoWindow(oldIdentity, 0, 0, 1, oldSession, queueResolver("old"), TranslatorComputeClass.REMOTE_IO)
+            executor.awaitSingleStarted("old0")
+            executor.releaseSingle("old0")
+            withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == oldIdentity } }
 
-            val cancellation = async(Dispatchers.Default) {
-                scheduler.cancelAutoTranslations(71L)
-            }
-            cancelBuildEntered.await()
+            // Synchronous epoch cancellation of the old chapter...
+            scheduler.cancelAutoTranslations(71L) shouldBe true
 
-            // The chapter token is recorded before cancel() enters the resolver;
-            // a replacement with the same chapter cannot install/admit a new loop.
-            scheduler.updateAutoWindow(
-                newIdentity,
-                visiblePageIndex = 0,
-                configuredAheadTarget = 0,
-                pageCount = 1,
-                session = newSession,
-                pageResolver = resolver("new"),
-                computeClass = TranslatorComputeClass.REMOTE_IO,
-            )
-            executor.prepareCallsByPage["new0"] shouldBe null
-
-            releaseCancelBuild.complete(Unit)
-            cancellation.await()
-            executor.completePrepare(0)
-
-            // Cancellation must leave the pointer detached, but a subsequent
-            // explicit update must be able to install/re-arm the replacement
-            // owner after the chapter epoch is released.
-            scheduler.updateAutoWindow(
-                newIdentity,
-                visiblePageIndex = 0,
-                configuredAheadTarget = 0,
-                pageCount = 1,
-                session = newSession,
-                pageResolver = resolver("new"),
-                computeClass = TranslatorComputeClass.REMOTE_IO,
-            )
-            withTimeout(5_000) {
-                scheduler.autoSnapshot.first { it?.identity == newIdentity }
-            }
+            // ...then a rebind converges on the new identity with no obsolete
+            // window surviving.
+            scheduler.updateAutoWindow(newIdentity, 0, 0, 1, newSession, queueResolver("new"), TranslatorComputeClass.REMOTE_IO)
+            withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == newIdentity } }
+            executor.singleAttemptsFor("new0") shouldBe 1
         } finally {
+            executor.releaseSingle("new0")
             scheduler.close()
         }
     }
 
     @Test
     @Timeout(60)
-    fun `global cancellation epoch rejects a concurrent update and permits post-cancel rearm`() = runBlocking<Unit> {
-        val executor = ControllableExecutor(autoComplete = true)
+    fun `global cancellation fences the window and permits post-cancel rearm`() = runBlocking<Unit> {
+        val executor = ControllableExecutor(autoComplete = false)
         val oldStore = newStore(listOf("old0" to blank()))
         val newStore = newStore(listOf("new0" to blank()))
         val stores = mapOf(81L to oldStore, 82L to newStore)
@@ -1050,59 +1031,22 @@ class RollingAutoCoordinatorTest {
         val newSession = fakeSession(newStore, chapterId = 82L, sessionKey = "global-new-session")
 
         try {
-            scheduler.updateAutoWindow(
-                oldIdentity,
-                0,
-                0,
-                1,
-                oldSession,
-                resolver("old"),
-                TranslatorComputeClass.REMOTE_IO,
-            )
+            scheduler.updateAutoWindow(oldIdentity, 0, 0, 1, oldSession, queueResolver("old"), TranslatorComputeClass.REMOTE_IO)
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == oldIdentity } }
 
-            // The two production calls intentionally overlap on the normal
-            // dispatcher. If update observes the global epoch it is suppressed;
-            // if it wins before cancellation begins, cancellation still fences
-            // the old pointer. Either way no obsolete owner may survive.
-            val cancellation = async(Dispatchers.Default) {
-                scheduler.cancelAutoTranslations()
-            }
-            val concurrentUpdate = async(Dispatchers.Default) {
-                scheduler.updateAutoWindow(
-                    newIdentity,
-                    0,
-                    0,
-                    1,
-                    newSession,
-                    resolver("new"),
-                    TranslatorComputeClass.REMOTE_IO,
-                )
-            }
-            awaitAll(cancellation, concurrentUpdate)
-            // Both interleavings are legal:
-            // - Update won: it installed the new identity (the overlapping
-            //   global cancel may then have cancelled that new owner — still
-            //   fenced from the old one).
-            // - Cancel won: the global epoch rejected the concurrent update;
-            //   the cancelled old owner keeps its RETAINED snapshot (cancel(),
-            //   unlike shutdown(), never nulls it) until an explicit re-arm.
-            //   The old owner can no longer publish or admit work.
+            // Global cancellation detaches every session; cancel() keeps the
+            // last snapshot (unlike shutdown), so the projection is either
+            // detached or still the old identity — never a resurrected one.
+            scheduler.cancelAutoTranslations() shouldBe true
             val observed = scheduler.autoSnapshot.value
-            (observed == null || observed.identity == oldIdentity || observed.identity == newIdentity) shouldBe true
+            (observed == null || observed.identity == oldIdentity) shouldBe true
 
             // A post-cancel re-arm must always converge on the new identity.
-            scheduler.updateAutoWindow(
-                newIdentity,
-                0,
-                0,
-                1,
-                newSession,
-                resolver("new"),
-                TranslatorComputeClass.REMOTE_IO,
-            )
+            scheduler.updateAutoWindow(newIdentity, 0, 0, 1, newSession, queueResolver("new"), TranslatorComputeClass.REMOTE_IO)
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == newIdentity } }
         } finally {
+            executor.releaseSingle("old0")
+            executor.releaseSingle("new0")
             scheduler.close()
         }
     }
@@ -1163,7 +1107,7 @@ class RollingAutoCoordinatorTest {
                 configuredAheadTarget = 1,
                 pageCount = 3,
                 session = oldSession,
-                pageResolver = resolver("old"),
+                pageResolver = queueResolver("old"),
                 computeClass = TranslatorComputeClass.REMOTE_IO,
             )
             val first = withTimeout(5_000) { stable.first { it?.identity == oldIdentity } }
@@ -1176,7 +1120,7 @@ class RollingAutoCoordinatorTest {
                 configuredAheadTarget = 0,
                 pageCount = 3,
                 session = oldSession,
-                pageResolver = resolver("old"),
+                pageResolver = queueResolver("old"),
                 computeClass = TranslatorComputeClass.REMOTE_IO,
             )
             // The scheduler-level flow re-points through flatMapLatest on the
@@ -1206,13 +1150,12 @@ class RollingAutoCoordinatorTest {
                 configuredAheadTarget = 1,
                 pageCount = 3,
                 session = replacementSession,
-                pageResolver = resolver("replacement"),
+                pageResolver = queueResolver("replacement"),
                 computeClass = TranslatorComputeClass.REMOTE_IO,
             )
-            val replacement = withTimeout(5_000) {
+            withTimeout(5_000) {
                 stable.first { it != null && it.identity == oldIdentity && it.ownerVersion > firstOwnerVersion }
             }
-            (replacement!!.ownerVersion > firstOwnerVersion) shouldBe true
 
             scheduler.updateAutoWindow(
                 newIdentity,
@@ -1220,7 +1163,7 @@ class RollingAutoCoordinatorTest {
                 configuredAheadTarget = 0,
                 pageCount = 1,
                 session = newSession,
-                pageResolver = resolver("new"),
+                pageResolver = queueResolver("new"),
                 computeClass = TranslatorComputeClass.REMOTE_IO,
             )
             withTimeout(5_000) { stable.first { it?.identity == newIdentity } }
@@ -1252,17 +1195,20 @@ class RollingAutoCoordinatorTest {
                 configuredAheadTarget = 0,
                 pageCount = 1,
                 session = session,
-                pageResolver = resolver(),
+                pageResolver = queueResolver(),
                 computeClass = TranslatorComputeClass.REMOTE_IO,
             )
-            executor.awaitPrepareStarted(0)
+            executor.awaitSingleStarted("p0")
             scheduler.reconcileAutoWindow { !ownershipBlocked.get() }
-            executor.prepareCount.get() shouldBe 1
+            executor.singleAttemptsFor("p0") shouldBe 1
 
             ownershipBlocked.set(false)
             scheduler.reconcileAutoWindow { !ownershipBlocked.get() }
-            executor.prepareCount.get() shouldBe 1
+            delay(200)
+            // The running operation is never re-fired by a reconcile poke.
+            executor.singleAttemptsFor("p0") shouldBe 1
         } finally {
+            executor.releaseSingle("p0")
             scheduler.close()
         }
     }
@@ -1285,6 +1231,10 @@ class RollingAutoCoordinatorTest {
         val prepareCallsByPage = ConcurrentHashMap<String, Int>()
         val translateCallsByPage = ConcurrentHashMap<String, Int>()
         val translateChapterIdsByPage = ConcurrentHashMap<String, Long?>()
+        val singleAttemptsByPage = ConcurrentHashMap<String, Int>()
+        private val singleStarted = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+        private val singleGates = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+        private val singleExited = ConcurrentHashMap<String, AtomicInteger>()
         val failPrepareFor = ConcurrentHashMap.newKeySet<String>()
         val terminalPages = ConcurrentHashMap.newKeySet<String>()
 
@@ -1405,7 +1355,41 @@ class RollingAutoCoordinatorTest {
             origin: PageWriteOrigin,
             readerStreamFn: (() -> InputStream)?,
             readerPriority: (() -> AdmissionPriority)?,
-        ): SinglePageOutcome = SinglePageOutcome.Completed
+        ): SinglePageOutcome {
+            singleAttemptsByPage.merge(pageKey, 1) { a, b -> a + b }
+            singleStarted.getOrPut(pageKey) { CompletableDeferred() }.complete(Unit)
+            try {
+                if (!autoComplete) {
+                    val gate = singleGates.getOrPut(pageKey) { CompletableDeferred() }
+                    if (ignoreCancellation) {
+                        withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
+                    } else {
+                        gate.await()
+                    }
+                }
+            } finally {
+                singleExited.getOrPut(pageKey) { AtomicInteger(0) }.incrementAndGet()
+            }
+            return SinglePageOutcome.Completed
+        }
+
+        /** Waits for the queue to dispatch [pageKey]'s single-page call. */
+        suspend fun awaitSingleStarted(pageKey: String) {
+            singleStarted.getOrPut(pageKey) { CompletableDeferred() }.await()
+        }
+
+        /** Parks single-page calls for [pageKey] until released (autoComplete=false). */
+        fun holdSingle(pageKey: String) {
+            singleGates.getOrPut(pageKey) { CompletableDeferred() }
+        }
+
+        fun releaseSingle(pageKey: String) {
+            singleGates[pageKey]?.complete(Unit)
+        }
+
+        fun singleAttemptsFor(pageKey: String): Int = singleAttemptsByPage[pageKey] ?: 0
+
+        fun singleExitedFor(pageKey: String): Int = singleExited[pageKey]?.get() ?: 0
 
         /** Waits for prepare[callIndex] to start, then immediately completes it. */
         suspend fun awaitAndCompletePrepare(callIndex: Int) {

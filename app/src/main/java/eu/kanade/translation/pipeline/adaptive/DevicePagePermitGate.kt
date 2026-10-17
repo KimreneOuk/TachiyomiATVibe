@@ -3,16 +3,43 @@ package eu.kanade.translation.pipeline.adaptive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 /** Foreground/manual pages are ordered ahead of queued background pages. */
 enum class DevicePermitPriority {
     FOREGROUND,
     BACKGROUND,
+}
+
+/** Handle that allows live promotion of an enqueued background permit to foreground. */
+class DevicePriorityHandle(
+    initial: DevicePermitPriority = DevicePermitPriority.BACKGROUND,
+) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<DevicePriorityHandle>
+
+    private val current = AtomicReference(initial)
+    internal val promotion = CompletableDeferred<Unit>()
+
+    val priority: DevicePermitPriority get() = current.get()
+
+    fun promote(): Boolean {
+        while (true) {
+            val existing = current.get()
+            if (existing == DevicePermitPriority.FOREGROUND) return false
+            if (current.compareAndSet(existing, DevicePermitPriority.FOREGROUND)) {
+                promotion.complete(Unit)
+                return true
+            }
+        }
+    }
 }
 
 /**
@@ -48,21 +75,25 @@ class DevicePagePermitGate(
     val queuedCount: Int get() = queuedWaiterCount
 
     /** Returns null only when a foreground wait reaches its boundary. */
-    suspend fun acquire(priority: DevicePermitPriority): Permit? {
+    suspend fun acquire(
+        priority: DevicePermitPriority,
+        handle: DevicePriorityHandle? = null,
+    ): Permit? {
+        val initialPriority = handle?.priority ?: priority
         val waiter = lock.withLock {
             val limit = capacityLimit
             if (activePermits < limit && waiters.isEmpty()) {
                 activePermits++
                 return Permit(this)
             }
-            Waiter(priority, nextSequence++).also {
+            Waiter(initialPriority, nextSequence++).also {
                 waiters += it
                 queuedWaiterCount = waiters.size
             }
         }
 
         try {
-            val grantedInTime = when (priority) {
+            val grantedInTime = when (initialPriority) {
                 DevicePermitPriority.FOREGROUND ->
                     withTimeoutOrNull(foregroundWaitCapMs) {
                         waiter.granted.await()
@@ -70,8 +101,35 @@ class DevicePagePermitGate(
                     } ?: false
 
                 DevicePermitPriority.BACKGROUND -> {
-                    waiter.granted.await()
-                    true
+                    if (handle != null) {
+                        val promoted = select<Boolean> {
+                            waiter.granted.onAwait { false }
+                            handle.promotion.onAwait { true }
+                        }
+                        if (promoted) {
+                            lock.withLock {
+                                if (waiter.state == WaiterState.WAITING) {
+                                    waiter.priority = DevicePermitPriority.FOREGROUND
+                                    if (activePermits < capacityLimit) {
+                                        waiters.remove(waiter)
+                                        queuedWaiterCount = waiters.size
+                                        waiter.state = WaiterState.GRANTED
+                                        activePermits++
+                                        waiter.granted.complete(Unit)
+                                    }
+                                }
+                            }
+                            withTimeoutOrNull(foregroundWaitCapMs) {
+                                waiter.granted.await()
+                                true
+                            } ?: false
+                        } else {
+                            true
+                        }
+                    } else {
+                        waiter.granted.await()
+                        true
+                    }
                 }
             }
             if (grantedInTime) return Permit(this)
@@ -106,8 +164,12 @@ class DevicePagePermitGate(
         }
     }
 
-    suspend fun <T> withPermit(priority: DevicePermitPriority, block: suspend () -> T): T? {
-        val permit = acquire(priority) ?: return null
+    suspend fun <T> withPermit(
+        priority: DevicePermitPriority,
+        handle: DevicePriorityHandle? = null,
+        block: suspend () -> T,
+    ): T? {
+        val permit = acquire(priority, handle) ?: return null
         try {
             return block()
         } finally {
@@ -148,7 +210,7 @@ class DevicePagePermitGate(
     }
 
     private class Waiter(
-        val priority: DevicePermitPriority,
+        var priority: DevicePermitPriority,
         val sequence: Long,
     ) {
         val granted = CompletableDeferred<Unit>()

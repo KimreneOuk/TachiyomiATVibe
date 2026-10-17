@@ -141,6 +141,23 @@ class ProviderRequestPriorityContext(
     companion object Key : CoroutineContext.Key<ProviderRequestPriorityContext>
 }
 
+/** Live priority handle allowing background work to be promoted to interactive. */
+class LivePriorityHandle(
+    initial: AdmissionPriority = AdmissionPriority.BACKGROUND,
+    private val onPromoted: (() -> Unit)? = null,
+) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<LivePriorityHandle>
+
+    private val _priority = java.util.concurrent.atomic.AtomicReference(initial)
+    val priority: AdmissionPriority get() = _priority.get()
+
+    fun promote() {
+        if (_priority.compareAndSet(AdmissionPriority.BACKGROUND, AdmissionPriority.INTERACTIVE)) {
+            onPromoted?.invoke()
+        }
+    }
+}
+
 suspend fun <T> withProviderRequestPriority(
     priority: AdmissionPriority,
     block: suspend () -> T,
@@ -277,7 +294,15 @@ class ProviderRequestGovernor(
         val sequence: Long,
         val metadata: ProviderRequestMetadata,
         val enqueuedAtEpochMs: Long,
-    )
+        val priorityHandle: LivePriorityHandle? = null,
+    ) {
+        val currentPriority: AdmissionPriority
+            get() = if (metadata.priority == AdmissionPriority.INTERACTIVE || priorityHandle?.priority == AdmissionPriority.INTERACTIVE) {
+                AdmissionPriority.INTERACTIVE
+            } else {
+                AdmissionPriority.BACKGROUND
+            }
+    }
 
     private data class Bucket(
         val reservations: ArrayDeque<Reservation> = ArrayDeque(),
@@ -301,6 +326,10 @@ class ProviderRequestGovernor(
     private var nextSequence = 0L
     private val releaseWakeGeneration = MutableStateFlow(0L)
 
+    fun wakeWaiters() {
+        releaseWakeGeneration.update { it + 1L }
+    }
+
     private fun traceRuns(metadata: ProviderRequestMetadata): List<TranslationRunTrace> =
         (metadata.traceRuns + TranslationTrace.currentRuns()).distinct()
 
@@ -323,12 +352,14 @@ class ProviderRequestGovernor(
         )
         val key = normalizedMetadata.key
         val quota = policy(key)
+        val priorityHandle = currentCoroutineContext()[LivePriorityHandle]
         val waiter = try {
             mutex.withLock {
                 val created = Waiter(
                     sequence = nextSequence++,
                     metadata = normalizedMetadata,
                     enqueuedAtEpochMs = clock.nowEpochMs(),
+                    priorityHandle = priorityHandle,
                 )
                 buckets.getOrPut(key) { Bucket() }.waiters += created
                 created
@@ -347,7 +378,7 @@ class ProviderRequestGovernor(
                 when (result) {
                     is WaitResult.Granted -> {
                         emit(
-                            waiter.metadata,
+                            waiter.metadata.copy(priority = waiter.currentPriority),
                             waitMs = (clock.nowEpochMs() - waiter.enqueuedAtEpochMs).coerceAtLeast(0),
                             actualTokens = null,
                             cooldownSource = null,
@@ -359,7 +390,7 @@ class ProviderRequestGovernor(
 
                     is WaitResult.Defer -> {
                         emit(
-                            waiter.metadata,
+                            waiter.metadata.copy(priority = waiter.currentPriority),
                             waitMs = (clock.nowEpochMs() - waiter.enqueuedAtEpochMs).coerceAtLeast(0),
                             actualTokens = null,
                             cooldownSource = null,
@@ -577,10 +608,10 @@ class ProviderRequestGovernor(
         // never falls below this request's own cost (a single oversized
         // envelope stays admissible). Admitted reservations are never revoked.
         val interactiveWaiterWaiting = bucket.waiters.any {
-            it.metadata.priority == AdmissionPriority.INTERACTIVE
+            it.currentPriority == AdmissionPriority.INTERACTIVE
         }
         val backgroundReserveApplies =
-            waiter.metadata.priority == AdmissionPriority.BACKGROUND && interactiveWaiterWaiting
+            waiter.currentPriority == AdmissionPriority.BACKGROUND && interactiveWaiterWaiting
         val effectiveRequestsPerMinute =
             if (backgroundReserveApplies) quota.requestsPerMinute - 1 else quota.requestsPerMinute
         val effectiveTokensPerMinute = if (backgroundReserveApplies) {
@@ -666,14 +697,14 @@ class ProviderRequestGovernor(
     private fun selectWaiter(waiters: List<Waiter>, now: Long, quota: ProviderQuotaPolicy): Waiter? {
         val starvingBackground = waiters
             .asSequence()
-            .filter { it.metadata.priority == AdmissionPriority.BACKGROUND }
+            .filter { it.currentPriority == AdmissionPriority.BACKGROUND }
             .filter { now - it.enqueuedAtEpochMs >= quota.interactiveMaxAgeMs }
             .minByOrNull { it.sequence }
         if (starvingBackground != null) return starvingBackground
         return waiters.minWithOrNull(
             compareBy<Waiter> {
                 val age = (now - it.enqueuedAtEpochMs).coerceAtLeast(0L)
-                if (it.metadata.priority == AdmissionPriority.INTERACTIVE && age < quota.interactiveMaxAgeMs) 0 else 1
+                if (it.currentPriority == AdmissionPriority.INTERACTIVE && age < quota.interactiveMaxAgeMs) 0 else 1
             }.thenBy { it.sequence },
         )
     }

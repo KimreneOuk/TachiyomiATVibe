@@ -95,6 +95,14 @@ class TranslationSchedulerTraceTest {
         }
     }
 
+    private fun newScheduler(executor: TranslationExecutor): TranslationScheduler = TranslationScheduler(
+        executor,
+        { null },
+        // The queue facade dispatches manual taps only with a source factory;
+        // this fixture supplies a fresh empty stream per attempt.
+        manualStreamProvider = { _, _, _, _ -> { java.io.ByteArrayInputStream(ByteArray(0)) } },
+    )
+
     /**
      * Case 1: a manual intent produces exactly one schedule and one correlated
      * run, with the lease_wait scheduler queue measured and a success terminal.
@@ -104,7 +112,7 @@ class TranslationSchedulerTraceTest {
     fun `manual translate emits one schedule and one run with lease wait and success terminal`() = runBlocking<Unit> {
         setUpTraceCapture(detailed = true)
         val executor = ManualFakeExecutor()
-        val scheduler = TranslationScheduler(executor, { null })
+        val scheduler = newScheduler(executor)
         try {
             val (manga, chapter, source) = mockSession()
             scheduler.translatePage(manga, chapter, source, "p0")
@@ -149,7 +157,7 @@ class TranslationSchedulerTraceTest {
     fun `cancelled manual intent closes exactly once as cancelled`() = runBlocking<Unit> {
         setUpTraceCapture(detailed = true)
         val executor = ManualFakeExecutor(throwCancellation = true)
-        val scheduler = TranslationScheduler(executor, { null })
+        val scheduler = newScheduler(executor)
         try {
             val (manga, chapter, source) = mockSession()
             scheduler.translatePage(manga, chapter, source, "p0")
@@ -177,7 +185,7 @@ class TranslationSchedulerTraceTest {
     fun `cancel before dispatch still closes the run exactly once`() = runBlocking<Unit> {
         setUpTraceCapture(detailed = true)
         val executor = ManualFakeExecutor()
-        val scheduler = TranslationScheduler(executor, { null })
+        val scheduler = newScheduler(executor)
         val (manga, chapter, source) = mockSession()
         scheduler.translatePage(manga, chapter, source, "p0")
         scheduler.close()

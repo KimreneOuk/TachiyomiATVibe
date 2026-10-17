@@ -48,6 +48,7 @@ import eu.kanade.translation.pipeline.SinglePageHttpRenderPhase
 import eu.kanade.translation.pipeline.SinglePageOnnxPhase
 import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
 import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
+import eu.kanade.translation.pipeline.adaptive.DevicePriorityHandle
 import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
@@ -74,6 +75,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -281,10 +283,15 @@ class TranslationPipeline private constructor(
         pageKey: String,
         onTimeout: suspend () -> Unit,
         priority: DevicePermitPriority = DevicePermitPriority.BACKGROUND,
+        handle: DevicePriorityHandle? = null,
         block: suspend () -> T,
     ): T? {
+        // Live reader priority: the caller's context handle wins over the
+        // static priority (prefetch stays BACKGROUND despite MANUAL lease
+        // origin; promotion of the same waiting entry lands in place).
+        val effectiveHandle = handle ?: currentCoroutineContext()[DevicePriorityHandle]
         val scheduleTrace = TranslationTrace.currentRun()?.schedule
-        val permit = devicePagePermitGate.acquire(priority) ?: run {
+        val permit = devicePagePermitGate.acquire(priority, effectiveHandle) ?: run {
             onTimeout()
             return null
         }

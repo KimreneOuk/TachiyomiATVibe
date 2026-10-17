@@ -226,6 +226,14 @@ class TranslationManager private constructor(
             activeStores.get(chapterId)
         },
         immediateStoreResolver = { chapterId -> activeStores.get(chapterId) },
+        manualStreamProvider = { manga, chapter, source, pageKey ->
+            // Registry first: the controller registers the live reader stream
+            // right before tapping. Downloaded-chapter fallback resolves the
+            // chapter dir and page stream lazily on the worker, mirroring the
+            // pipeline's own downloaded-dir resolution.
+            streamRegistry.peek(manga, chapter, source, pageKey)
+                ?: downloadedPageStreamFactory(manga, chapter, source, pageKey)
+        },
         readerSessionRejectionReason = { chapterId ->
             if (chapterId in chaptersUnderDownloadRekey) {
                 "completed download re-key in progress"
@@ -237,6 +245,37 @@ class TranslationManager private constructor(
             }
         },
     )
+
+    /**
+     * Source factory for a manual tap on a downloaded chapter without a live
+     * reader stream. Each invocation rescans the chapter dir on the worker and
+     * opens a fresh stream; a missing dir or page throws so the attempt fails
+     * with a typed pipeline failure instead of a null dereference.
+     */
+    private fun downloadedPageStreamFactory(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+    ): (() -> java.io.InputStream)? {
+        val chapterId = chapter.id ?: return null
+        return {
+            val chapterPath = downloadProvider.findChapterDir(
+                chapter.name,
+                chapter.scanlator,
+                manga.title,
+                source,
+            ) ?: throw java.io.IOException(
+                "downloaded chapter dir not found for manual tap: chapterId=$chapterId pageKey=$pageKey",
+            )
+            eu.kanade.translation.util.getChapterPages(context, chapterPath)
+                .firstOrNull { it.first == pageKey }
+                ?.second?.invoke()
+                ?: throw java.io.IOException(
+                    "downloaded page not found for manual tap: chapterId=$chapterId pageKey=$pageKey",
+                )
+        }
+    }
 
     init {
         if (testConstruction == null) {
@@ -703,7 +742,7 @@ class TranslationManager private constructor(
             val currentGeneration = current?.generation
                 ?: pendingRequestStore.record(chapterId)?.generation
             if (currentGeneration != expectedGeneration) return
-            scheduler.shutdownAutoCoordinator(chapterId)
+            scheduler.invalidateQueueSession(chapterId)
             markTranslationRequestPreparing(chapterId)
             translator.queueChapter(manga, chapter)
             if (queueState.value.any { it.chapter.id == chapterId }) {
@@ -754,6 +793,12 @@ class TranslationManager private constructor(
     fun onMemoryPressure(level: Int) {
         val pressureClass = MemoryPressurePolicy.classify(level)
         translator.onMemoryPressure(level, pressureClass)
+        // The queue defers prefetch on the live memory gate; a pressure event
+        // (including recovery) rearms deferred demand through reconcile. The
+        // same-chapter batch-active guard keeps a suppressed window dormant.
+        scheduler.reconcileAutoWindow(admissionGuard = { chapterId ->
+            !isChapterBatchActive(chapterId, includePaused = true)
+        })
     }
 
     fun startTranslation() {
@@ -848,7 +893,7 @@ class TranslationManager private constructor(
                 return AdmissionResult.STALE_GENERATION
             }
         }
-        scheduler.shutdownAutoCoordinator(chapterId)
+        scheduler.invalidateQueueSession(chapterId)
         if (evictStaleQueuedEntry) {
             evictStaleQueuedChapters(chapterId, manga.source)
         }
@@ -1671,12 +1716,11 @@ class TranslationManager private constructor(
                             )
                         }
                         try {
-                            // Chapter-scoped scheduler cancellation only; the
+                            // Queue-session invalidation only; the
                             // reservation rejects fresh page dispatch until the
                             // new store identity is published. Unrelated batch
                             // work is never cancelled.
-                            scheduler.cancelAutoTranslations(chapterId)
-                            scheduler.cancelPageTranslations(chapterId)
+                            scheduler.invalidateQueueSession(chapterId)
                             store.beginGeneration("completed download re-key")
                             when (
                                 val outcome = store.rekeyPages(
@@ -1962,9 +2006,9 @@ class TranslationManager private constructor(
         }
         //   same-chapter auto is suppressed for the WHOLE chapter-batch
         // lifetime (queue entry in QUEUE|TRANSLATING|PAUSED retained state).
-        // Reader-window updates must not re-arm the rolling coordinator while
+        // Reader-window updates must not re-arm the queue session while
         // the chapter's batch is queued; the next update after the queue drains
-        // arms normally. `translateChapter`'s one-shot shutdownAutoCoordinator
+        // arms normally. `translateChapter`'s one-shot invalidateQueueSession
         // remains what retires an already-live window at admission.
         if (isChapterBatchActive(identity.chapterId, includePaused = true)) {
             logcat(LogPriority.INFO) {

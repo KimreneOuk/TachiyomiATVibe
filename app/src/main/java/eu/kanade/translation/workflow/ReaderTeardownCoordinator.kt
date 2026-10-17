@@ -93,6 +93,12 @@ internal class ReaderTeardownCoordinator(
         withContext(Dispatchers.IO) {
             readerTeardownMutex.withLock {
                 sessionCoordinator.abortPausingToBatch()
+                // Scheduler-owned teardown cancels every queue session and
+                // awaits each session's PendingNativeDrain handle to physical
+                // worker exit (native stragglers included) before returning.
+                // Store eviction below must never precede that drain: an
+                // evicted (defunct) store would strand a still-live paid
+                // worker's commit.
                 scheduler.awaitReaderStop()
                 val chapterIdsToEvict = activeStores.chapterIds()
                     .filter { !isChapterBatchActive(it, includePaused = true) }

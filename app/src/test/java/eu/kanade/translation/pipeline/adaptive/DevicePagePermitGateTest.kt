@@ -17,10 +17,12 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
@@ -222,6 +224,119 @@ class DevicePagePermitGateTest {
 
         order shouldBe listOf(1, 2)
         gate.activeCount shouldBe 0
+    }
+
+    @Test
+    fun `waiting background request promoted to foreground jumps ahead of newer background requests and gets fresh foreground timeout`() = runTest {
+        val gate = DevicePagePermitGate()
+        val initialPermit = gate.acquire(DevicePermitPriority.BACKGROUND)!!
+        val order = mutableListOf<String>()
+        val handle = DevicePriorityHandle()
+
+        val background1 = launch {
+            gate.withPermit(DevicePermitPriority.BACKGROUND, handle) {
+                order += "promoted"
+            }
+        }
+        runCurrent()
+        val background2 = launch {
+            gate.withPermit(DevicePermitPriority.BACKGROUND) {
+                order += "background2"
+            }
+        }
+        runCurrent()
+        gate.queuedCount shouldBe 2
+
+        handle.promote()
+        runCurrent()
+
+        initialPermit.release()
+        background1.join()
+        background2.join()
+        order shouldBe listOf("promoted", "background2")
+    }
+
+    @Test
+    fun `promoted background request that expires within fresh foreground deadline returns null without leaking waiter`() = runTest {
+        val gate = DevicePagePermitGate(foregroundWaitCapMs = 20L)
+        val initialPermit = gate.acquire(DevicePermitPriority.BACKGROUND)!!
+        val handle = DevicePriorityHandle()
+        val result = async { gate.acquire(DevicePermitPriority.BACKGROUND, handle) }
+        runCurrent()
+        gate.queuedCount shouldBe 1
+
+        advanceTimeBy(50L)
+        runCurrent()
+        gate.queuedCount shouldBe 1
+
+        handle.promote()
+        runCurrent()
+        gate.queuedCount shouldBe 1
+
+        advanceTimeBy(20L)
+        runCurrent()
+        result.await() shouldBe null
+        gate.queuedCount shouldBe 0
+        initialPermit.release()
+        gate.activeCount shouldBe 0
+    }
+
+    @Test
+    fun `native lane admission honors a promoted context handle`() = runTest {
+        val harness = TranslationCoexistenceHarness.create(pageKeys = listOf("p0"))
+        val gate = harness.pipeline.devicePagePermitGate
+        // A long-lived background seat occupies the pinned native lane.
+        val seat = gate.acquire(DevicePermitPriority.BACKGROUND)!!
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var result: String? = null
+        var worker: Job? = null
+        try {
+            val handle = DevicePriorityHandle()
+            val running = launch(start = CoroutineStart.UNDISPATCHED) {
+                withContext(handle) {
+                    result = harness.pipeline.withNativeLane(
+                        timeoutMs = 10_000L,
+                        chapterId = harness.CHAPTER_ID,
+                        chapterName = "promoted-context-handle",
+                        pageKey = "p0",
+                        onTimeout = {},
+                        priority = DevicePermitPriority.BACKGROUND,
+                        handle = currentCoroutineContext()[DevicePriorityHandle],
+                    ) {
+                        entered.complete(Unit)
+                        release.await()
+                        "admitted"
+                    }
+                }
+            }
+            worker = running
+            runCurrent()
+            gate.queuedCount shouldBe 1
+
+            // A pure background wait stays unbounded: far past the foreground cap it still waits.
+            advanceTimeBy(DevicePagePermitGate.DEFAULT_FOREGROUND_WAIT_CAP_MS * 4)
+            runCurrent()
+            gate.queuedCount shouldBe 1
+
+            handle.promote()
+            runCurrent()
+            // Promotion grants a fresh foreground window to the SAME waiting
+            // entry (no restart, no re-acquire); releasing the seat inside
+            // that window admits it in place.
+            seat.release()
+            withTimeout(10_000L) { entered.await() }
+            gate.activeCount shouldBe 1
+            release.complete(Unit)
+            running.join()
+            result shouldBe "admitted"
+            gate.activeCount shouldBe 0
+        } finally {
+            release.complete(Unit)
+            worker?.cancelAndJoin()
+            seat.release()
+            harness.close()
+        }
     }
 
     private class FakeClock(var nowNanos: Long = 0L) : TranslationTraceClock {
