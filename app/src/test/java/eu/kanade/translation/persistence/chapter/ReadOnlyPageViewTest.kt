@@ -36,7 +36,7 @@ class ReadOnlyPageViewTest {
         smallCommitted.shouldBeInstanceOf<PublishedPageTranslation>()
         candidate.shouldBeInstanceOf<PublishedPageTranslation>()
         store.committedDisplayPage("candidate") shouldBe null
-        val publicationCount = store.publishedPageCopyCount
+        val publicationCount = store.testSeams.publishedPageCopies
 
         var pageDataCopies = 0
         repeat(128) {
@@ -59,7 +59,7 @@ class ReadOnlyPageViewTest {
         }
 
         pageDataCopies shouldBe 0
-        store.publishedPageCopyCount shouldBe publicationCount
+        store.testSeams.publishedPageCopies shouldBe publicationCount
     }
 
     private fun page(pageKey: String, blockCount: Int, rendered: Boolean): PageTranslation {

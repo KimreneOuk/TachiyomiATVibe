@@ -73,8 +73,6 @@ sealed interface SidecarRead<out T : Any> {
 class ChapterArtifactEngine(
     private val documents: AtomicChapterDocuments,
     internal val layout: ChapterArtifactLayout,
-    @Suppress("UNUSED_PARAMETER")
-    private val displayBaseProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe,
 ) {
     private val io: ChapterDocumentIo get() = documents.rawIo()
 
@@ -993,31 +991,6 @@ class ChapterArtifactEngine(
     /** Content-addressed `ColorStylePreparation` sidecar name under `color/`. */
     internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.colorPreparationFile(pageKey, contentFingerprint)
-
-    sealed interface ContextSnapshotRead {
-        data class Usable(val snapshot: ChapterContextSnapshot) : ContextSnapshotRead
-        data class UnsupportedVersion(val schemaVersion: Int) : ContextSnapshotRead
-        data object Absent : ContextSnapshotRead
-    }
-
-    fun readContextSnapshot(pointer: SidecarPointer): ContextSnapshotRead {
-        if (!pointer.isWellFormed()) return ContextSnapshotRead.Absent
-        val bytes = io.read(pointer.fileName) ?: return ContextSnapshotRead.Absent
-        val snapshot = runCatching {
-            documents.json.decodeFromStream<ChapterContextSnapshot>(bytes.inputStream())
-        }.getOrNull() ?: run {
-            documents.quarantineCorrupt(pointer.fileName)
-            return ContextSnapshotRead.Absent
-        }
-        if (snapshot.schemaVersion > ChapterContextSnapshot.SCHEMA_VERSION) {
-            return ContextSnapshotRead.UnsupportedVersion(snapshot.schemaVersion)
-        }
-        if (!snapshot.isSemanticallyValid) {
-            documents.quarantineCorrupt(pointer.fileName)
-            return ContextSnapshotRead.Absent
-        }
-        return ContextSnapshotRead.Usable(snapshot)
-    }
 
     /**
      * Builds one immutable JSON sidecar publication for

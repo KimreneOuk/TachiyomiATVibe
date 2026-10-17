@@ -20,7 +20,7 @@ import java.util.UUID
 import java.util.zip.CRC32
 
 /**
- * Immutable page map captured at the store barrier. In shadow mode this is the published legacy
+ * Immutable page map captured at the store barrier. In shadow mode this is the published store
  * state and can legitimately contain state beyond the journal frontier; frontier metadata is not
  * provenance. ACK-purity is a cutover-activated guarantee, owned by E16c's recovery contract.
  */

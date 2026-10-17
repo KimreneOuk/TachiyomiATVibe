@@ -9,7 +9,7 @@ import java.util.zip.CRC32
  * Binary framing for the shadow journal. Payload meaning is intentionally owned by the caller.
  * Every physical frame, including metadata, consumes `frameSeq` and participates in the durable-prefix ACK.
  * State frames, including one-frame BULK_REPLACE/BULK_REKEY transactions, consume `commitSeq`; after
- * TERMINAL_LAG the logical legacy sequence may advance without frames, so later captured commits may have
+ * TERMINAL_LAG the logical store sequence may advance without frames, so later captured commits may have
  * a gap while remaining strictly increasing.
  */
 internal object ChapterJournalFormat {
@@ -18,7 +18,7 @@ internal object ChapterJournalFormat {
     // magic + version + segment index + generation + epoch ordinal + UUID.
     const val SEGMENT_HEADER_BYTES = 48
 
-    // payload length + physical frame sequence + legacy-aligned commit sequence + kind/reserved.
+    // payload length + physical frame sequence + store-aligned commit sequence + kind/reserved.
     const val FRAME_HEADER_BYTES = 24
     const val FRAME_TRAILER_BYTES = 4
     const val MAX_PAYLOAD_BYTES = 512 * 1024
@@ -29,7 +29,7 @@ internal object ChapterJournalFormat {
     /**
      * DEFUNCT marks the eviction boundary, not end-of-stream: frames after it
      * are legal when they use credits acquired before eviction and therefore
-     * represent legacy commits already accepted by the store. Replay applies
+     * represent durable commits already accepted by the store. Replay applies
      * those drain frames. A clean close, DEFUNCT-only epoch, DEFUNCT followed
      * by drain frames, and TERMINAL_LAG each have distinct framing outcomes;
      * process death may leave any outcome at its last valid CRC-framed prefix.

@@ -44,6 +44,7 @@ import eu.kanade.translation.persistence.artifact.EvidenceRef
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
@@ -158,13 +159,13 @@ class DisplayTailDrainTest {
 
     @BeforeEach
     fun seedDisplayBaseFixtures() {
-        probeBeforeDisplayBaseFixture = ChapterTranslationStore.artifactImageProbe
-        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
+        probeBeforeDisplayBaseFixture = ChapterStoreTestSeams.artifactImageProbe
+        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
     }
 
     @AfterEach
     fun restoreDisplayBaseProbe() {
-        ChapterTranslationStore.artifactImageProbe =
+        ChapterStoreTestSeams.artifactImageProbe =
             probeBeforeDisplayBaseFixture ?: BitmapFactoryCleanedImageProbe
         probeBeforeDisplayBaseFixture = null
     }

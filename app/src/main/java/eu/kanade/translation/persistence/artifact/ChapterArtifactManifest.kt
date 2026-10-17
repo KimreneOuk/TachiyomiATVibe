@@ -55,8 +55,6 @@ data class ChapterArtifactManifest(
     val layoutPlans: Map<String, SidecarPointer> = emptyMap(),
     /** Persisted per-page color/style preparations; key = pageKey. */
     val colorPreparations: Map<String, SidecarPointer> = emptyMap(),
-    /**  Increment 2: durable unified chapter context snapshot pointer. */
-    val context: SidecarPointer? = null,
     /**
      *  R2a (write-time digests): the durable per-page source SHA-256
      * (lowercase 64-hex), recorded AT FIRST ADMISSION — every OCR checkpoint
@@ -75,9 +73,10 @@ data class ChapterArtifactManifest(
 ) {
     companion object {
         /**
-         *  Increment 2: bumped 3 → 4 with the context pointer. New code reads
-         * v2, v3, and v4 and writes v4; the verified future-schema guard refuses
-         * versions greater than this read-only.
+         *  Increment 2: bumped 3 → 4 for the since-pruned context pointer;
+         * `ignoreUnknownKeys` keeps older v4 manifests decoding after the prune.
+         * New code reads v2, v3, and v4 and writes v4; the verified future-schema
+         * guard refuses versions greater than this read-only.
          */
         const val SCHEMA_VERSION = 4
     }
@@ -127,13 +126,6 @@ data class PageArtifactRecord(
     val previousCommitted: CommittedBundleMetadata? = null,
     /** The current work generation, if any. */
     val candidate: CandidateGenerationMetadata? = null,
-    /**
-     * Last-known-good display base the legacy reader can still show even
-     * though the page is not strictly complete (e.g. a legacy PARTIAL page).
-     * Compatibility visibility only: never counts as strict ready and never
-     * feeds promotion or batch completeness.
-     */
-    val legacyVisible: DisplayBaseReference? = null,
     /**
      * Canonical file name of this page's committed trusted context checkpoint
      * under `context/`, when one exists. Legacy pages have none (unknown).

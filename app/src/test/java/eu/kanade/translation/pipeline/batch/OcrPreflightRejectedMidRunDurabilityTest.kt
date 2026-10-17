@@ -110,8 +110,8 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         artifactFileName = "Chapter 1.json",
     )
 
-    private fun openArtifactStore(): ChapterTranslationStore =
-        ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+    private suspend fun openArtifactStore(): ChapterTranslationStore =
+        ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
 
     private fun frozenConfig(): RunConfigSnapshot = ChapterProfileBatchCoordinator.frozenRunConfig(
         sourceLang = "ja",

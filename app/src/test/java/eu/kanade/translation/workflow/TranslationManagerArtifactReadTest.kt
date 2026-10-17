@@ -8,6 +8,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import io.kotest.matchers.shouldBe
@@ -29,11 +30,11 @@ class TranslationManagerArtifactReadTest {
 
     @AfterEach
     fun restoreProductionProbe() {
-        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
+        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
     }
 
     private fun installImageProbe() {
-        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 100) }
+        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 100) }
     }
 
     private fun page() = PageTranslation(
@@ -63,7 +64,7 @@ class TranslationManagerArtifactReadTest {
     private suspend fun writeArtifactChapter(chapterName: String) {
         File(mangaDir, "$chapterName.json").createNewFile()
         val root = FakeUniFile(parent = null, backing = mangaDir)
-        val store = ChapterTranslationStore.openArtifact(root, "$chapterName.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "$chapterName.json")
         store.updatePage("page.jpg") { page() }
         store.closeAndFlush()
     }
@@ -121,7 +122,7 @@ class TranslationManagerArtifactReadTest {
         writeArtifactChapter("Chapter 1")
         val fileName = artifactFileName("Chapter 1")
         val root = artifactParent()
-        val store = ChapterTranslationStore.openArtifact(root, fileName)
+        val store = ChapterTranslationStore.openArtifactSuspend(root, fileName)
         store.updatePage("page.jpg") { current ->
             current!!.apply { blocks.single().userEditedAt = 42L }
         }
@@ -144,7 +145,7 @@ class TranslationManagerArtifactReadTest {
         installImageProbe()
         writeArtifactChapter("Chapter 4")
         val fileName = artifactFileName("Chapter 4")
-        val store = ChapterTranslationStore.openArtifact(artifactParent(), fileName)
+        val store = ChapterTranslationStore.openArtifactSuspend(artifactParent(), fileName)
         store.updatePage("page.jpg") { current ->
             current!!.copy(
                 blocks = mutableListOf(),

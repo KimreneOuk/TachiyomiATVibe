@@ -297,7 +297,7 @@ class OcrPreflightCoordinatorTest {
 
         // ---- simulated process death: fresh stores over the SAME document
         // set; leases and live pages are gone; durable state reconciles. ----
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
         val resumedWorker = FakePreflightOcrWorker(resumedStore)
 
         val resumed = coordinator(resumedStore, resumedWorker, pages)
@@ -338,7 +338,7 @@ class OcrPreflightCoordinatorTest {
         // The page file was replaced under the same key: the current source
         // digest no longer matches the durable checkpoint identity, so the
         // page MUST re-run instead of reusing stale OCR ( skip rule).
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
         val changedSources = sourcePairs(pages).map { (pageKey, _) ->
             pageKey to hex64("replaced-source-$pageKey")
         }

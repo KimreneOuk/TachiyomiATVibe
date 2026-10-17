@@ -40,7 +40,7 @@ import java.util.zip.DeflaterOutputStream
  * behavior. These tests also pin that opening a legacy flat translation file
  * does not migrate it into an artifact manifest or recreate the flat file.
  *
- * The cleaned-image validation seam ([ChapterTranslationStore.artifactImageProbe])
+ * The cleaned-image validation seam ([ChapterStoreTestSeams.artifactImageProbe])
  * is pointed at a header-parsing PNG probe because android.graphics is not
  * available in JVM unit tests; production keeps the BitmapFactory
  * bounds-only probe.
@@ -52,7 +52,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @AfterEach
     fun restoreProductionProbe() {
-        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
+        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
     }
 
     /** Complete PNG fixture; the production path never validates fabricated text/header-only bytes. */
@@ -96,7 +96,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     /** JVM stand-in for the BitmapFactory bounds probe: parses the PNG IHDR. */
     private fun installPngHeaderProbe() {
-        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { input ->
+        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { input ->
             val bytes = input.readPrefix(24)
             if (bytes.size < 24) return@CleanedImageProbe null
             val signature = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
@@ -167,14 +167,14 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
             parentFile?.mkdirs()
             writeBytes(pngBytes(100, 100))
         }
-        val store = ChapterTranslationStore.openArtifact(root, "Chapter 1.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Chapter 1.json")
         store.preRegisterPages(listOf("page.jpg"))
         store.updatePage("page.jpg") { displayablePage() }
         store.closeAndFlush()
     }
 
-    private fun openChapterStore(): ChapterTranslationStore =
-        ChapterTranslationStore.openArtifact(
+    private suspend fun openChapterStore(): ChapterTranslationStore =
+        ChapterTranslationStore.openArtifactSuspend(
             com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir),
             "Chapter 1.json",
         )
@@ -185,7 +185,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         }
 
     @Test
-    fun `committed-only artifact fixture rehydrates with no legacy flat file`() {
+    fun `committed-only artifact fixture rehydrates with no legacy flat file`() = runTest {
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val layout = ChapterArtifactLayout("Chapter 1")
         val page = displayablePage().copy(translationStatus = StageStatus.PARTIAL)
@@ -219,7 +219,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         }
 
         val journalRoot = File(mangaDir, "private-journal").apply { mkdirs() }
-        val store = ChapterTranslationStore.openArtifact(
+        val store = ChapterTranslationStore.openArtifactSuspend(
             root,
             "Chapter 1.json",
             journalRoot,
@@ -541,7 +541,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         candidateManifest.pages.getValue("page.jpg").committed shouldBe null
         candidateManifest.pages.getValue("page.jpg").candidate?.pageSnapshotFileName shouldNotBe null
 
-        val reopened = ChapterTranslationStore.openArtifact(root, "Chapter 2.json")
+        val reopened = ChapterTranslationStore.openArtifactSuspend(root, "Chapter 2.json")
         reopened.state.value.getValue("page.jpg").ocrStatus shouldBe StageStatus.RUNNING
 
         File(mangaDir, "Chapter 2_images").mkdirs()
@@ -559,7 +559,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         reopened.flush()
         reopened.closeAndFlush()
 
-        val promoted = ChapterTranslationStore.openArtifact(root, "Chapter 2.json")
+        val promoted = ChapterTranslationStore.openArtifactSuspend(root, "Chapter 2.json")
         promoted.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.retry.jpg"
         readManifest("Chapter 2").pages.getValue("page.jpg").committed shouldNotBe null
         flatFile.exists() shouldBe false
@@ -604,7 +604,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     }
 
     @Test
-    fun `openArtifact falls back to synthesized page and getOrLoadPageSnapshot lazily hydrates`() = runTest {
+    fun `openArtifactSuspend falls back to synthesized page and getOrLoadPageSnapshot lazily hydrates`() = runTest {
         installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val layout = ChapterArtifactLayout("Chapter 9")
@@ -632,7 +632,7 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         File(mangaDir, layout.manifestFileName).writeText(Json.encodeToString(manifest))
 
         // Open artifact without creating snapshotFile on disk -> should synthesize page cleanly
-        val store = ChapterTranslationStore.openArtifact(root, "Chapter 9.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Chapter 9.json")
         store.state.value["page1.jpg"]?.cleanedImageName shouldBe "page1.cleaned.png"
         store.display.value["page1.jpg"]?.cleanedImageName shouldBe "page1.cleaned.png"
         store.state.value["page1.jpg"]?.ocrStatus shouldBe StageStatus.READY

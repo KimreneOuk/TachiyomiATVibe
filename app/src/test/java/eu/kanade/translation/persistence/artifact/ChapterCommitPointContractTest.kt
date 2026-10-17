@@ -11,7 +11,6 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
-import java.io.InputStream
 import java.security.MessageDigest
 
 /**
@@ -63,13 +62,7 @@ class ChapterCommitPointContractTest {
     )
     private fun createStore(): Pair<ChapterArtifactEngine, FakeChapterDocumentIo> {
         val io = FakeChapterDocumentIo()
-        val store = ChapterArtifactEngine(
-            AtomicChapterDocuments(io),
-            layout,
-            object : CleanedImageProbe {
-                override fun probe(input: InputStream): ProbedImage? = ProbedImage(100, 100)
-            },
-        )
+        val store = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
         return store to io
     }
 

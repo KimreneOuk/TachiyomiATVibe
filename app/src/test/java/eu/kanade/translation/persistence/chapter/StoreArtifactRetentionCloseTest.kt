@@ -48,7 +48,7 @@ class StoreArtifactRetentionCloseTest {
 
                 io.releaseCrawl()
                 closeBarrier.await()
-                store.hasActivePersistenceChildrenForTests() shouldBe false
+                store.testSeams.hasActivePersistenceChildren() shouldBe false
             } finally {
                 io.releaseCrawl()
                 store.closeAndFlush()

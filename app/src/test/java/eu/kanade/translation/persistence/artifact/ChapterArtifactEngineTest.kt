@@ -12,10 +12,10 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
-import java.io.InputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -58,14 +58,7 @@ class ChapterArtifactEngineTest {
         ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     private fun transactionStore(io: FakeChapterDocumentIo) =
-        ChapterArtifactEngine(
-            AtomicChapterDocuments(io),
-            layout,
-            object : CleanedImageProbe {
-                override fun probe(input: InputStream): ProbedImage? =
-                    if (input.read() == 1) null else ProbedImage(100, 100)
-            },
-        )
+        ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     private val json = Json {
         encodeDefaults = true
@@ -187,6 +180,25 @@ class ChapterArtifactEngineTest {
         result.manifest shouldBe first.manifest
         // Fast path must not delete the future backup.
         io.files.containsKey(AtomicChapterDocuments.backupNameFor(layout.manifestFileName)) shouldBe true
+    }
+
+    @Test
+    fun `manifest decodes without the removed legacyVisible field`() {
+        // `legacyVisible` was removed from PageArtifactRecord with zero
+        // readers. Documents written before the removal carried the key and
+        // must still decode via ignoreUnknownKeys; documents written after
+        // the removal must decode without it.
+        val withLegacyField = """
+            {"schemaVersion":4,"chapterKey":"Chapter 1","pages":{},"legacyVisible":null}
+        """.trimIndent()
+        ArtifactDocumentJson.decodeFromString<ChapterArtifactManifest>(withLegacyField) shouldBe
+            ChapterArtifactManifest(chapterKey = "Chapter 1")
+
+        val withoutLegacyField = """
+            {"schemaVersion":4,"chapterKey":"Chapter 1","pages":{}}
+        """.trimIndent()
+        ArtifactDocumentJson.decodeFromString<ChapterArtifactManifest>(withoutLegacyField) shouldBe
+            ChapterArtifactManifest(chapterKey = "Chapter 1")
     }
 
     @Test
@@ -846,7 +858,6 @@ class ChapterArtifactEngineTest {
         manifest.envelopePlan shouldBe null
         manifest.layoutPlans shouldBe emptyMap()
         manifest.colorPreparations shouldBe emptyMap()
-        manifest.context shouldBe null
     }
 
     @Test

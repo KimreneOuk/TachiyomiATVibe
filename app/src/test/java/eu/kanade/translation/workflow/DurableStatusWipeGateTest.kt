@@ -8,6 +8,7 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import io.kotest.matchers.shouldBe
@@ -63,14 +64,14 @@ class DurableStatusWipeGateTest {
 
     @AfterEach
     fun restoreProductionProbe() {
-        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
+        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
     }
 
     private fun sentinel() = DurableChapterKey(null, "wipe-sentinel", null, "wipe-sentinel", -1L)
 
     /** JVM stand-in for the BitmapFactory bounds probe: parses the PNG IHDR. */
     private fun installPngHeaderProbe() {
-        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { input ->
+        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { input ->
             val bytes = input.readPrefix(24)
             if (bytes.size < 24) return@CleanedImageProbe null
             val signature = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
@@ -209,7 +210,7 @@ class DurableStatusWipeGateTest {
         writeLegacyChapter()
         // Materialize the artifact manifest beside the preserved flat file;
         // the open path never decodes or renames that file.
-        ChapterTranslationStore.openArtifact(artifactParent(), artifactFileName()).closeAndFlush()
+        ChapterTranslationStore.openArtifactSuspend(artifactParent(), artifactFileName()).closeAndFlush()
         val registry = ActiveChapterStoreRegistry()
         val resolver = resolver(provider(), registry)
         val cache = durableStatusCache(resolver)
@@ -225,7 +226,7 @@ class DurableStatusWipeGateTest {
         // finally, so the hold itself must create the store it lends.
         val document = resolver.findTranslationDocument("Chapter 1", null, "Manga", source)!!
         val held = registry.getOrCreateProbe(document.registryKey) {
-            ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+            ChapterTranslationStore.openArtifactSuspend(document.parent, document.fileName)
         }!!
         held.created shouldBe true
         cache[sentinel()] = DurableStatus(Translation.State.NOT_TRANSLATED)
@@ -243,7 +244,7 @@ class DurableStatusWipeGateTest {
         val resolver = resolver(provider(), registry)
         val cache = durableStatusCache(resolver)
 
-        registry.register(42L, ChapterTranslationStore.openArtifact(artifactParent(), artifactFileName()))
+        registry.register(42L, ChapterTranslationStore.openArtifactSuspend(artifactParent(), artifactFileName()))
         cache[sentinel()] = DurableStatus(Translation.State.NOT_TRANSLATED)
 
         resolver.persistedChapterStatus(42L, "Chapter 1", null, "Manga", 77L)

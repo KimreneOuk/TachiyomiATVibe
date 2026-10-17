@@ -7,7 +7,6 @@ import io.kotest.matchers.shouldBe
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
-import java.io.InputStream
 import java.security.MessageDigest
 
 /**
@@ -62,13 +61,7 @@ class ChapterArtifactSchemaGuardCacheTest {
         createdAtEpochMs = 42L,
     )
     private fun createStore(io: FakeChapterDocumentIo): ChapterArtifactEngine =
-        ChapterArtifactEngine(
-            AtomicChapterDocuments(io),
-            layout,
-            object : CleanedImageProbe {
-                override fun probe(input: InputStream): ProbedImage? = ProbedImage(100, 100)
-            },
-        )
+        ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
 
     @Test
     fun `schema normalization decision is cached and can be invalidated`() {

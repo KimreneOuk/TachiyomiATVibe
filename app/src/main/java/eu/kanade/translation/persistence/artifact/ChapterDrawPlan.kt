@@ -58,7 +58,7 @@ data class DrawPlanMaskComponentRef(
     }
 }
 
-/** Persisted measured line (legacy stacked/vertical mode output). */
+/** Persisted measured line (stacked/vertical mode draw output). */
 @Serializable
 data class DrawPlanPositionedLine(
     val text: String,
@@ -90,7 +90,7 @@ data class DrawPlanBlock(
     val drawAlign: DrawPlanAlign,
     /** Source-image space. */
     val clipRect: DrawPlanRect? = null,
-    /** Legacy stacked/vertical mode lines. */
+    /** Stacked/vertical mode lines. */
     val lines: List<String>? = null,
     val positionedLines: List<DrawPlanPositionedLine>? = null,
     /** Source-image space. */

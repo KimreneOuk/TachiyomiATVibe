@@ -75,7 +75,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     @Test
     fun `successful legacy artifact commit is handed to the shadow journal`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
-        val store = ChapterTranslationStore.openArtifact(root, "Chapter 1.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Chapter 1.json")
         val storage = MemoryStorage()
         val journalJson = Json {
             encodeDefaults = true
@@ -88,7 +88,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         var recordedPageHash: String? = null
 
         try {
@@ -152,7 +152,7 @@ class ChapterTranslationStoreJournalCaptureTest {
 
         // Reopen the persisted legacy artifact and derive the semantic snapshot hash again,
         // without consulting the live store instance that performed the original write.
-        val reopenedStore = ChapterTranslationStore.openArtifact(root, "Chapter 1.json")
+        val reopenedStore = ChapterTranslationStore.openArtifactSuspend(root, "Chapter 1.json")
         try {
             val persistedPage = reopenedStore.state.value.getValue("page.jpg")
             StageFingerprints.pageSnapshot(persistedPage) shouldBe recordedPageHash
@@ -164,7 +164,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     @Test
     fun `real captured journal prefix replays to the immutable published page snapshot`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
-        val store = ChapterTranslationStore.openArtifact(root, "Replay parity chapter.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Replay parity chapter.json")
         val cleanedImageName = "page.cleaned.legacy-token.jpg"
         val cleanedImageBytes = "real-cleaned-image-bytes".encodeToByteArray()
         val cleanedImageHash = StageFingerprints.sha256Hex(cleanedImageBytes)
@@ -192,7 +192,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         var closed = false
 
         try {
@@ -386,7 +386,7 @@ class ChapterTranslationStoreJournalCaptureTest {
         )
         try {
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = credit,
                 pageKey = pageKey,
@@ -719,7 +719,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     }
 
     @Test
-    fun `rekeyed manifest excludes stale v1 inventory keys from the trusted seed`() = runTest {
+    fun `rekeyed manifest excludes stale pre-rekey inventory keys from the trusted seed`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
         val privateJournalRoot = File(chapterDir, "v1-rekey-journal").also { check(it.mkdirs()) }
         val journalIdentity = "source:manga:Rekeyed v1 chapter.json"
@@ -792,8 +792,8 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeDefaults = true
             explicitNulls = true
         }
-        val v1Inventory = ChapterJournalInventoryRecord(
-            schemaVersion = ChapterJournalInventoryRecord.LEGACY_SCHEMA_VERSION,
+        val staleInventory = ChapterJournalInventoryRecord(
+            schemaVersion = ChapterJournalInventoryRecord.SCHEMA_VERSION,
             chapterIdentityHash = chapterHash,
             expectedPageKeys = listOf(oldKey),
             expectedPageCount = 1,
@@ -815,7 +815,7 @@ class ChapterTranslationStoreJournalCaptureTest {
                     frameSeq = 1L,
                     commitSeq = null,
                     kind = ChapterJournalFormat.RecordKind.INVENTORY,
-                    payload = journalJson.encodeToString(v1Inventory).encodeToByteArray(),
+                    payload = journalJson.encodeToString(staleInventory).encodeToByteArray(),
                 ),
             )
             write(
@@ -851,13 +851,13 @@ class ChapterTranslationStoreJournalCaptureTest {
             sessionId = sessionId,
             chapterIdentityHash = chapterHash,
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
 
         try {
             val beforeRekey = checkNotNull(store.replayJournalForRecovery())
             beforeRekey.corruptEpochs shouldBe emptySet()
             beforeRekey.validFrameCount shouldBe 2
-            beforeRekey.inventory?.schemaVersion shouldBe ChapterJournalInventoryRecord.LEGACY_SCHEMA_VERSION
+            beforeRekey.inventory?.schemaVersion shouldBe ChapterJournalInventoryRecord.SCHEMA_VERSION
             beforeRekey.inventory?.hasTrustedExpectedPageCount shouldBe false
             beforeRekey.expectedPageKeys shouldBe setOf(oldKey)
             beforeRekey.pageOutcomes.keys shouldBe emptySet()
@@ -1273,7 +1273,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     @Test
     fun `stale version and released lease rejections never enter the replay prefix`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
-        val store = ChapterTranslationStore.openArtifact(root, "Rejected writes chapter.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Rejected writes chapter.json")
         val storage = MemoryStorage()
         val journalJson = Json {
             encodeDefaults = true
@@ -1286,7 +1286,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { journalJson.encodeToString(it).encodeToByteArray() },
             encodeTerminalLag = { count, sequence -> "lag:$count:$sequence".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         var closed = false
 
         try {
@@ -1395,7 +1395,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     @Test
     fun `failed progress projection does not replace pending durable state during replay`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
-        val store = ChapterTranslationStore.openArtifact(root, "Projection truth chapter.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Projection truth chapter.json")
         val storage = MemoryStorage()
         val journalJson = Json {
             encodeDefaults = true
@@ -1408,7 +1408,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { journalJson.encodeToString(it).encodeToByteArray() },
             encodeTerminalLag = { count, sequence -> "lag:$count:$sequence".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         val tracker = TranslationBatchProgressTracker(1L, store, listOf("page.jpg"), this)
         var closed = false
 
@@ -1453,7 +1453,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     @Test
     fun `large replace and rekey operations remain one shadow event each`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
-        val store = ChapterTranslationStore.openArtifact(root, "Bulk chapter.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Bulk chapter.json")
         val storage = MemoryStorage()
         val journalJson = Json {
             encodeDefaults = true
@@ -1467,7 +1467,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         val pages = (1..12).associate { index ->
             val key = "page-$index.jpg"
             key to PageTranslation(
@@ -1656,7 +1656,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             epochOrdinal = 21L,
             sessionId = sessionId,
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
 
         try {
             store.rekeyPages(
@@ -1948,7 +1948,7 @@ class ChapterTranslationStoreJournalCaptureTest {
 
             val laterCredit = checkNotNull(fixture.writer.tryAcquireShadowCredit(foreground = false))
             fixture.store.withJournalCapturePermit {
-                fixture.writer.captureLegacyDeletion(
+                fixture.writer.capturePageDeletion(
                     commitSeq = fixture.writer.nextCommitSeq(),
                     credit = laterCredit,
                     pageKey = fixture.newKey,
@@ -1998,7 +1998,7 @@ class ChapterTranslationStoreJournalCaptureTest {
 
             fixture.io.writeNamesToFail.remove(fixture.layout.manifestFileName)
             var recoveredBetweenPublicationAndSwap = false
-            fixture.store.afterRekeyManifestPublicationBeforeLiveSwapForTests = {
+            fixture.store.testSeams.afterRekeyManifestPublicationBeforeLiveSwap = {
                 // The durable manifest and BULK_REKEY are visible while the live map is
                 // deliberately still on the old key: this is the second crash window.
                 fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
@@ -2036,7 +2036,7 @@ class ChapterTranslationStoreJournalCaptureTest {
                         skippedCollisions = 0,
                     )
             } finally {
-                fixture.store.afterRekeyManifestPublicationBeforeLiveSwapForTests = null
+                fixture.store.testSeams.afterRekeyManifestPublicationBeforeLiveSwap = null
             }
             recoveredBetweenPublicationAndSwap shouldBe true
             fixture.store.pages.keys shouldBe setOf(fixture.newKey)
@@ -2280,7 +2280,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     @Test
     fun `overlapping rekey preserves pending registrations through a later artifact update`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
-        val store = ChapterTranslationStore.openArtifact(root, "Pending overlap chapter.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Pending overlap chapter.json")
         val storage = MemoryStorage()
         val journalJson = Json {
             encodeDefaults = true
@@ -2293,7 +2293,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         var storeClosed = false
         try {
             store.preRegisterPages(listOf("p.jpg", "001.jpg")) shouldBe
@@ -2508,7 +2508,7 @@ class ChapterTranslationStoreJournalCaptureTest {
     @Test
     fun `replace aggregate contains only successful per-page outcomes`() = runTest {
         val root = FakeUniFile(parent = null, backing = chapterDir)
-        val store = ChapterTranslationStore.openArtifact(root, "Partial bulk chapter.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "Partial bulk chapter.json")
         val storage = MemoryStorage()
         val journalJson = Json {
             encodeDefaults = true
@@ -2522,7 +2522,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         val pages = (1..4).associate { index ->
             val key = "partial-$index.jpg"
             key to PageTranslation(
@@ -2774,7 +2774,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             epochOrdinal = 22L,
             sessionId = sessionId,
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         return RekeyFixture(
             io,
             layout,

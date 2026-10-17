@@ -6,9 +6,7 @@ import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
@@ -104,15 +102,11 @@ class EngineEpochStopRaceTest {
     private fun freshStore(): ChapterTranslationStore {
         // The AUTO prepared page names "$pageKey.cleaned.jpg", but publication
         // writes the guarded store record without Bitmap.compress. Seed the
-        // display-base file that promotion validates and provide a bounded
-        // decode probe because this fixture constructs ChapterArtifactEngine
-        // directly and JVM tests cannot use BitmapFactory.
+        // display-base file that promotion validates.
         val layout = ChapterArtifactLayout(CHAPTER_DIR)
-        val imageProbe = CleanedImageProbe { ProbedImage(100, 100) }
         val artifactStore = ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             layout,
-            imageProbe,
         )
         val manifest = artifactStore
             .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))

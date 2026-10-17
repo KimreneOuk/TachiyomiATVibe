@@ -50,8 +50,8 @@ class ChapterTranslationStoreCaptureBarrierTest {
             epochOrdinal = 1L,
         )
         val snapshotStorage = MemorySnapshotStorage()
-        store.attachJournalWriterForTests(writer)
-        store.attachJournalSnapshotManagerForTests(ChapterJournalSnapshotManager(snapshotStorage))
+        store.testSeams.attachJournalWriter(writer)
+        store.testSeams.attachJournalSnapshotManager(ChapterJournalSnapshotManager(snapshotStorage))
 
         try {
             val initialMapReference = store.pages

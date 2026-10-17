@@ -57,7 +57,7 @@ class ChapterJournalWriterTest {
         try {
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
             val sequence = writer.nextCommitSeq()
-            writer.captureLegacyPersisted(sequence, credit, "page-a", 2L, 9L, page())
+            writer.capturePageMutation(sequence, credit, "page-a", 2L, 9L, page())
             runCurrent()
 
             writer.ackedHighWaterSeq shouldBe 0L
@@ -100,7 +100,7 @@ class ChapterJournalWriterTest {
                     dispatcher = StandardTestDispatcher(testScheduler),
                 )
                 val firstCredit = journalWriter!!.tryAcquireShadowCredit(foreground = false)!!
-                journalWriter!!.captureLegacyPersisted(
+                journalWriter!!.capturePageMutation(
                     commitSeq = journalWriter!!.nextCommitSeq(),
                     credit = firstCredit,
                     pageKey = "journal-page-secret",
@@ -113,7 +113,7 @@ class ChapterJournalWriterTest {
 
                 storage.failOnWriteCall = storage.writeAttempts.size + 1
                 val secondCredit = journalWriter!!.tryAcquireShadowCredit(foreground = false)!!
-                journalWriter!!.captureLegacyPersisted(
+                journalWriter!!.capturePageMutation(
                     commitSeq = journalWriter!!.nextCommitSeq(),
                     credit = secondCredit,
                     pageKey = "second-journal-page-secret",
@@ -182,7 +182,7 @@ class ChapterJournalWriterTest {
             val source = draftPage().apply { inpaintRevision = 7 }
             val published = source.toPublishedPage()
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), credit, "page-a", 1L, 1L, published)
+            writer.capturePageMutation(writer.nextCommitSeq(), credit, "page-a", 1L, 1L, published)
 
             // Mutate the pipeline draft after the writer accepted the immutable publication.
             // The historical record must keep revision 7 without a deferred defensive copy.
@@ -211,7 +211,7 @@ class ChapterJournalWriterTest {
         try {
             val replaceKeys = (1..12).map { "page-$it" }
             val replaceCredit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyBulkMutation(
+            writer.captureBulkMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = replaceCredit,
                 kind = ChapterJournalFormat.RecordKind.BULK_REPLACE,
@@ -232,7 +232,7 @@ class ChapterJournalWriterTest {
 
             val rekeyMapping = replaceKeys.associateWith { "disk-$it" }
             val rekeyCredit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyBulkMutation(
+            writer.captureBulkMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = rekeyCredit,
                 kind = ChapterJournalFormat.RecordKind.BULK_REKEY,
@@ -294,7 +294,7 @@ class ChapterJournalWriterTest {
         )
         try {
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyBulkMutation(
+            writer.captureBulkMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = credit,
                 kind = ChapterJournalFormat.RecordKind.BULK_REPLACE,
@@ -323,7 +323,7 @@ class ChapterJournalWriterTest {
         val storage = MemoryStorage(failOnSync = 1)
         val writer = writer(storage, StandardTestDispatcher(testScheduler))
         val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-        writer.captureLegacyPersisted(
+        writer.capturePageMutation(
             commitSeq = writer.nextCommitSeq(),
             credit = credit,
             pageKey = "paid-page",
@@ -434,7 +434,7 @@ class ChapterJournalWriterTest {
         val storage = MemoryStorage()
         val first = writer(storage, StandardTestDispatcher(testScheduler))
         val firstCredit = first.tryAcquireShadowCredit(foreground = false)!!
-        first.captureLegacyPersisted(first.nextCommitSeq(), firstCredit, "page-a", 1L, 1L, page())
+        first.capturePageMutation(first.nextCommitSeq(), firstCredit, "page-a", 1L, 1L, page())
         runCurrent()
         first.drainAndClose()
 
@@ -445,7 +445,7 @@ class ChapterJournalWriterTest {
             // Recovery resumes this epoch after the scanner establishes the next durable
             // commit position. Production store sessions allocate a fresh epoch instead.
             val sequence = 2L
-            reopened.captureLegacyPersisted(sequence, credit, "page-b", 1L, 2L, page())
+            reopened.capturePageMutation(sequence, credit, "page-b", 1L, 2L, page())
             runCurrent()
 
             val frames = scan(storage).frames
@@ -468,10 +468,10 @@ class ChapterJournalWriterTest {
         try {
             val firstCredit = writer.tryAcquireShadowCredit(foreground = false)!!
             val sequence = writer.nextCommitSeq()
-            writer.captureLegacyPersisted(sequence, firstCredit, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(sequence, firstCredit, "page-a", 1L, 1L, page())
 
             val duplicateCredit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(sequence, duplicateCredit, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(sequence, duplicateCredit, "page-a", 1L, 1L, page())
             runCurrent()
 
             writer.ackedHighWaterSeq shouldBe 0L
@@ -490,10 +490,10 @@ class ChapterJournalWriterTest {
         try {
             val first = writer.tryAcquireShadowCredit(foreground = false)!!
             val firstSeq = writer.nextCommitSeq()
-            writer.captureLegacyPersisted(firstSeq, first, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(firstSeq, first, "page-a", 1L, 1L, page())
 
             val duplicate = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(firstSeq, duplicate, "duplicate", 1L, 2L, page())
+            writer.capturePageMutation(firstSeq, duplicate, "duplicate", 1L, 2L, page())
             val heldAcrossFailure = writer.tryAcquireShadowCredit(foreground = false)!!
             val retainedAcrossFailure = writer.tryAcquireShadowCredit(foreground = false)!!
             retainedAcrossFailure.retain() shouldBe true
@@ -506,7 +506,7 @@ class ChapterJournalWriterTest {
 
             // This credit was reserved before the writer failed, then offered after
             // the failure transition. It must be rejected and resolved, never crash.
-            writer.captureLegacyPersisted(2L, heldAcrossFailure, "page-after-failure", 1L, 3L, page())
+            writer.capturePageMutation(2L, heldAcrossFailure, "page-after-failure", 1L, 3L, page())
             writer.offersRejectedAfterTerminalCount shouldBe 1L
             writer.inFlightCount shouldBe 0
             writer.isWriterStopped shouldBe true
@@ -528,7 +528,7 @@ class ChapterJournalWriterTest {
         )
         try {
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), credit, "page-oversize", 1L, 1L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), credit, "page-oversize", 1L, 1L, page())
             runCurrent()
 
             val scanned = scan(storage)
@@ -561,10 +561,10 @@ class ChapterJournalWriterTest {
         )
         try {
             val first = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), first, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), first, "page-a", 1L, 1L, page())
             runCurrent()
             val second = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), second, "page-b", 1L, 2L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), second, "page-b", 1L, 2L, page())
             runCurrent()
 
             writer.writerFailureCount shouldBe 1L
@@ -597,11 +597,11 @@ class ChapterJournalWriterTest {
         )
         try {
             val first = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), first, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), first, "page-a", 1L, 1L, page())
             runCurrent()
 
             val second = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), second, "page-b", 1L, 2L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), second, "page-b", 1L, 2L, page())
             runCurrent()
 
             storage.segmentIndexes() shouldContainExactly listOf(0L, 1L)
@@ -632,12 +632,12 @@ class ChapterJournalWriterTest {
         )
         try {
             val paid = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), paid, "page-a", 1L, 1L, page(), paid = true)
+            writer.capturePageMutation(writer.nextCommitSeq(), paid, "page-a", 1L, 1L, page(), paid = true)
             runCurrent()
             writer.ackedHighWaterSeq shouldBe 2L
 
             val free = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), free, "page-b", 1L, 2L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), free, "page-b", 1L, 2L, page())
             runCurrent()
             writer.ackedHighWaterSeq shouldBe 2L
 
@@ -659,7 +659,7 @@ class ChapterJournalWriterTest {
         )
         try {
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), credit, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), credit, "page-a", 1L, 1L, page())
             runCurrent()
             storage.syncCount shouldBe 1 // New segment header durability.
 
@@ -686,7 +686,7 @@ class ChapterJournalWriterTest {
         )
         try {
             val accepted = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 writer.nextCommitSeq(),
                 accepted,
                 "accepted-page",
@@ -718,7 +718,7 @@ class ChapterJournalWriterTest {
         )
         try {
             val first = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = first,
                 pageKey = "page-a",
@@ -731,7 +731,7 @@ class ChapterJournalWriterTest {
             storage.events.clear()
 
             val second = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = second,
                 pageKey = "page-b",
@@ -769,18 +769,18 @@ class ChapterJournalWriterTest {
         try {
             val first = writer.tryAcquireShadowCredit(foreground = false)!!
             legacyCommitCount++
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), first, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), first, "page-a", 1L, 1L, page())
 
             val second = writer.tryAcquireShadowCredit(foreground = false)!!
             legacyCommitCount++
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), second, "page-b", 1L, 2L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), second, "page-b", 1L, 2L, page())
 
             val third = writer.tryAcquireShadowCredit(foreground = false)
             third shouldBe null
             legacyCommitCount++ // Legacy persistence continues without waiting for the journal.
-            writer.noteLegacyPersistedWithoutCredit(writer.nextCommitSeq())
+            writer.noteMutationWithoutCredit(writer.nextCommitSeq())
             legacyCommitCount++ // Later legacy writes continue after the terminal prefix marker.
-            writer.noteLegacyPersistedWithoutCredit(writer.nextCommitSeq())
+            writer.noteMutationWithoutCredit(writer.nextCommitSeq())
             writer.isShadowCaptureActive shouldBe false
             writer.shadowLaggedCount shouldBe 2L
             legacyCommitCount shouldBe 4
@@ -806,7 +806,7 @@ class ChapterJournalWriterTest {
         val writer = writer(storage, StandardTestDispatcher(testScheduler))
         try {
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), credit, "page-a", 1L, 4L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), credit, "page-a", 1L, 4L, page())
             writer.requestDefunctMarker()
             writer.requestDefunctMarker()
             runCurrent()
@@ -848,20 +848,20 @@ class ChapterJournalWriterTest {
             storage.closedSinkCount shouldBe 0
             writer.inFlightCount shouldBe 2
 
-            writer.captureLegacyPersisted(firstSeq, first, "late-a", 1L, 2L, page())
+            writer.capturePageMutation(firstSeq, first, "late-a", 1L, 2L, page())
             runCurrent()
             writer.isWriterStopped shouldBe false
             storage.closedSinkCount shouldBe 0
             writer.inFlightCount shouldBe 1
 
-            writer.captureLegacyPersisted(secondSeq, second, "late-b", 1L, 3L, page())
+            writer.capturePageMutation(secondSeq, second, "late-b", 1L, 3L, page())
             runCurrent()
             writer.isWriterStopped shouldBe true
             writer.isShadowCaptureActive shouldBe false
             writer.inFlightCount shouldBe 0
             storage.closedSinkCount shouldBe 1
 
-            writer.captureLegacyPersisted(secondSeq + 1L, second, "post-close", 1L, 4L, page())
+            writer.capturePageMutation(secondSeq + 1L, second, "post-close", 1L, 4L, page())
             writer.offersRejectedAfterTerminalCount shouldBe 1L
             writer.drainAndClose()
             storage.closedSinkCount shouldBe 1
@@ -878,7 +878,7 @@ class ChapterJournalWriterTest {
         coordinator.register(writer)
         try {
             val initial = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), initial, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), initial, "page-a", 1L, 1L, page())
             runCurrent()
 
             val linger = writer.tryAcquireShadowCredit(foreground = false)!!
@@ -923,7 +923,7 @@ class ChapterJournalWriterTest {
 
             // The store accepted this legacy operation before eviction. Its already-held
             // credit must be written after DEFUNCT so replay observes the accepted commit.
-            writer.captureLegacyPersisted(sequence, credit, "page-after-defunct", 1L, 7L, page())
+            writer.capturePageMutation(sequence, credit, "page-after-defunct", 1L, 7L, page())
             runCurrent()
 
             val frames = scan(storage).frames
@@ -943,7 +943,7 @@ class ChapterJournalWriterTest {
                 .map { it.payload.decodeToString().substringBefore(':') }
             replayedPageKeys shouldContainExactly listOf("page-after-defunct")
 
-            writer.captureLegacyPersisted(sequence + 1L, credit, "impossible-late-offer", 1L, 8L, page())
+            writer.capturePageMutation(sequence + 1L, credit, "impossible-late-offer", 1L, 8L, page())
             writer.offersRejectedAfterTerminalCount shouldBe 1L
             writer.inFlightCount shouldBe 0
             writer.isWriterStopped shouldBe true
@@ -970,11 +970,11 @@ class ChapterJournalWriterTest {
             writer.requestDefunctMarker()
 
             val firstSequence = writer.nextCommitSeq()
-            writer.captureLegacyPersisted(firstSequence, firstCredit, "page-a", 1L, 1L, page())
+            writer.capturePageMutation(firstSequence, firstCredit, "page-a", 1L, 1L, page())
             val secondSequence = writer.nextCommitSeq()
-            writer.captureLegacyPersisted(secondSequence, secondCredit, "page-b", 1L, 2L, page())
+            writer.capturePageMutation(secondSequence, secondCredit, "page-b", 1L, 2L, page())
             val starvedSequence = writer.nextCommitSeq()
-            writer.noteLegacyPersistedWithoutCredit(starvedSequence)
+            writer.noteMutationWithoutCredit(starvedSequence)
             runCurrent()
 
             val frames = scan(storage).frames
@@ -1007,7 +1007,7 @@ class ChapterJournalWriterTest {
         )
         try {
             val credit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(writer.nextCommitSeq(), credit, "page-a", 37L, 9L, page())
+            writer.capturePageMutation(writer.nextCommitSeq(), credit, "page-a", 37L, 9L, page())
             runCurrent()
             val valid = ChapterJournalFormat.scanSegment(
                 bytes = storage.readSegment(0L),

@@ -460,7 +460,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
         try {
             // Initialize the epoch before measuring per-flush state forces.
             val primerCredit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = primerCredit,
                 pageKey = "primer",
@@ -478,7 +478,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
                 initialArtifactManifest = manifest,
                 persistenceDispatcher = StandardTestDispatcher(testScheduler),
             ).also {
-                it.attachJournalWriterForTests(writer)
+                it.testSeams.attachJournalWriter(writer)
                 it.enableLazyPersistence()
             }
 
@@ -641,7 +641,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
         )
         try {
             val primerCredit = writer.tryAcquireShadowCredit(foreground = false)!!
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = primerCredit,
                 pageKey = "primer",
@@ -659,7 +659,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
                 initialArtifactManifest = opened.manifest,
                 persistenceDispatcher = StandardTestDispatcher(testScheduler),
             ).also {
-                it.attachJournalWriterForTests(writer)
+                it.testSeams.attachJournalWriter(writer)
                 it.enableLazyPersistence()
             }
             val rendered = PageTranslation(
