@@ -14,8 +14,8 @@ import java.security.MessageDigest
  * - [MANUAL]: a reader tap / foreground single-page intent. Evicts an
  *   in-flight [AUTO] lease at acquisition (fenced fail-closed for the evicted
  *   holder) and waits-and-attaches on [BATCH] (never preempts it).
- * - [AUTO]: reader-side automatic maintenance (rolling auto window, legacy
- *   auto window, stranded-page sweep). Never preempts anything.
+ * - [AUTO]: reader-side automatic maintenance (rolling auto window,
+ *   stranded-page sweep). Never preempts anything.
  * - [BATCH]: an ordered chapter batch run.
  *
  * This enum is for lease ownership only. Durable provenance keeps the

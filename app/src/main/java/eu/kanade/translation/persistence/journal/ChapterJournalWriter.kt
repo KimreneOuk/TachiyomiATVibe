@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 private const val REQUIRED_CONTROL_COMMAND_SLOTS = 5
 
-/** Immutable reference snapshot handed to the journal writer after a legacy commit succeeds. */
+/** Immutable reference snapshot handed to the journal writer after the store's artifact commit succeeds. */
 @Serializable
 internal data class ChapterJournalRecord(
     val schemaVersion: Int = SCHEMA_VERSION,
@@ -56,7 +56,7 @@ internal data class ChapterJournalRecord(
     val cleanedImageName: String? = null,
     val cleanedImageContentHash: String? = null,
     /**
-     * Semantic SHA-256 identity of the page snapshot persisted by the legacy artifact; null when
+     * Semantic SHA-256 identity of the page snapshot persisted by the artifact engine; null when
      * no snapshot exists or the record is an explicit retryable invalidation. Replay verifies it
      * by re-reading that artifact, re-deriving the PageTranslation, and calling the same
      * StageFingerprints.pageSnapshot function. It must not hash serialized JSON bytes, whose
@@ -65,7 +65,7 @@ internal data class ChapterJournalRecord(
     val artifactContentHash: String? = null,
     val durableFailure: DurableFailureMetadata? = null,
     val terminalReason: String? = null,
-    /** Logical legacy position associated with a metadata marker; this never consumes a commitSeq. */
+    /** Logical store commit position associated with a metadata marker; this never consumes a commitSeq. */
     val terminalCommitSeq: Long? = null,
     /** Payload length rejected before a state frame was appended. */
     val terminalObservedPayloadBytes: Int? = null,
@@ -97,7 +97,7 @@ internal data class ChapterJournalInventoryRecord(
 }
 
 /**
- * One legacy bulk transition in one journal frame and one commit sequence. Replay applies [mutations] as authoritative;
+ * One bulk store transition in one journal frame and one commit sequence. Replay applies [mutations] as authoritative;
  * [mapping] is a derived summary of successful durable outcomes, never an independent state source. Oversized aggregates
  * are represented by a terminal-payload ending; the shadow writer does not chunk one operation across frames.
  */
@@ -111,7 +111,7 @@ internal data class ChapterJournalBulkRecord(
      * without an artifact hash remains retryable, so mapping membership does not certify completion.
      */
     val mapping: Map<String, String?>,
-    /** Successful page states and tombstones that make up this legacy transaction. */
+    /** Successful page states and tombstones that make up this bulk transaction. */
     val mutations: List<ChapterJournalRecord>,
 ) {
     companion object {
@@ -345,7 +345,7 @@ internal class ChapterJournalCredit internal constructor(
 ) {
     private val state = AtomicInteger(HELD)
 
-    /** Keep the permit with a staged/lazy mutation until its legacy commit runs. */
+    /** Keep the permit with a staged/lazy mutation until its store commit runs. */
     internal fun retain(): Boolean {
         while (true) {
             when (val current = state.get()) {
@@ -581,7 +581,7 @@ internal class ChapterJournalWriter(
         return newCredit(foreground = false)
     }
 
-    /** Caller holds the store mutex. This sequence belongs only to legacy durable events. */
+    /** Caller holds the store mutex. This sequence belongs only to store-accepted durable events. */
     fun nextCommitSeq(): Long = assignedCommitSequence.incrementAndGet()
 
     /**
@@ -864,7 +864,7 @@ internal class ChapterJournalWriter(
                 return
             }
             // If eviction happened while this credit was still held, preserve the
-            // boundary in the epoch before accepting the late legacy commit. This
+            // boundary in the epoch before accepting the late captured commit. This
             // also avoids creating a marker-only file when the credit is abandoned.
             if (defunctRequested.get() && !defunctMarkerQueued.get()) {
                 if (!enqueueInventoryLocked(inventory) || !enqueueDefunctMarker()) {
@@ -1231,7 +1231,7 @@ internal class ChapterJournalWriter(
                             }
                             if (!nextExpected) {
                                 throw IOException(
-                                    "legacy commit sequence gap: expected=$nextCommitSeq actual=${command.commitSeq}",
+                                    "journal commit sequence gap: expected=$nextCommitSeq actual=${command.commitSeq}",
                                 )
                             }
                             if (

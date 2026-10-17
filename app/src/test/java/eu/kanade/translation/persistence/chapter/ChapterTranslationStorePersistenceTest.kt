@@ -38,7 +38,7 @@ class ChapterTranslationStorePersistenceTest {
 
     @AfterEach
     fun restoreProductionProbe() {
-        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
+        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
     }
 
     private fun block(translation: String = "target", userEditedAt: Long? = null) = TranslationBlock(
@@ -209,7 +209,7 @@ class ChapterTranslationStorePersistenceTest {
      * (android.graphics is unavailable in JVM unit tests).
      */
     private fun installPngHeaderProbe() {
-        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { input ->
+        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { input ->
             val bytes = input.readPrefix(24)
             if (bytes.size < 24) return@CleanedImageProbe null
             val signature = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)

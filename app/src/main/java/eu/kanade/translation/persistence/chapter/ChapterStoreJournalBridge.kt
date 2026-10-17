@@ -99,7 +99,7 @@ private const val DEFAULT_FILE_NAME = "translation.json"
 
 /**
  * Journal capture collaborator (Phase 7 S5). Owns one chapter's shadow-journal
- * capture mechanics: credit reservation, writer/epoch lifecycle, the legacy
+ * capture mechanics: credit reservation, writer/epoch lifecycle, the page
  * capture frames (the `capturePage*` family), bulk capture frames, inventory
  * snapshots, and the producer capture permit/barrier. The owning store
  * delegates every call here under the store mutex except the two seams that
@@ -188,7 +188,7 @@ internal class ChapterStoreJournalBridge(
      * Explicit, dormant shadow-era compaction entry point for E16b certification. Capture closes
      * the chapter-wide producer gate, drains each known epoch's queued frames, snapshots the
      * immutable published map under the store mutex, then reopens before file serialization/writes.
-     * Shadow payloads may contain legacy-ahead-of-journal state; E16c owns ACK-purity activation.
+     * Shadow payloads may contain store-ahead-of-journal state; E16c owns ACK-purity activation.
      */
     internal suspend fun captureJournalSnapshotForCompaction(
         gcMode: ChapterJournalGcMode = ChapterJournalGcMode.SHADOW_DORMANT,
@@ -257,8 +257,8 @@ internal class ChapterStoreJournalBridge(
         store.mutex.withLock { store.pages }
 
     /**
-     * Explicit E16b recovery seam. Shadow-era store opening remains legacy
-     * authoritative; callers that are certifying recovery (and E16c's future
+     * Explicit E16b recovery seam. Shadow-era store opening remains
+     * store-authoritative; callers that are certifying recovery (and E16c's future
      * cutover path) opt into this reducer and decide how to install its result.
      * File reads happen on the persistence dispatcher and never retain a file
      * handle across reducer application.
@@ -402,7 +402,7 @@ internal class ChapterStoreJournalBridge(
                 onFailure?.invoke(failure)
                 span.end(TranslationTraceOutcome.FAILURE, error = failure)
                 logcat(LogPriority.WARN, failure) {
-                    "TachiyomiAT shadow journal initialization failed; legacy persistence continues"
+                    "TachiyomiAT shadow journal initialization failed; artifact-only persistence continues"
                 }
                 return null
             }
@@ -499,7 +499,7 @@ internal class ChapterStoreJournalBridge(
         }
     }
 
-    /** A deletion is a page-level legacy commit and receives its own fenced tombstone record. */
+    /** A deletion is a page-level store commit and receives its own fenced tombstone record. */
     internal fun capturePageDeletionLocked(
         pageKey: String,
         pageVersion: Long,
@@ -600,7 +600,7 @@ internal class ChapterStoreJournalBridge(
         val laggedBefore = writer.shadowLaggedCount
         val rejectedBefore = writer.offersRejectedAfterTerminalCount
         // The aggregate describes the subset that actually committed.
-        // replaceAll can partially commit legacy page operations before a later
+        // replaceAll can partially commit bulk page operations before a later
         // page is rejected, so its emitted mapping comes from captured outcomes,
         // not the requested input map. A successful prior deletion remains a
         // null mapping when the replacement write for that key was rejected.

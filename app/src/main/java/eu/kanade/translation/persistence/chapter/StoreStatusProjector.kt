@@ -77,7 +77,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
     }
 
     /**
-     * Derives durable artifact status without consulting the legacy summary sidecar.
+     * Derives durable artifact status without consulting the flat-file summary sidecar.
      *
      * When a durable run record is COMPLETE, its manifest page records are
      * completion evidence only for artifact-only stores without a journal. After

@@ -79,7 +79,7 @@ internal data class ChapterJournalReplayResult(
 
 /**
  * Deterministic journal recovery. E16b deliberately keeps this reducer
- * separate from the live store: shadow-era legacy artifacts remain
+ * separate from the live store: shadow-era artifacts remain
  * authoritative until E16c explicitly activates journal recovery.
  */
 internal object ChapterJournalReplayReducer {

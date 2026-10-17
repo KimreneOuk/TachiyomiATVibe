@@ -22,6 +22,7 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
@@ -751,8 +752,8 @@ class OverlapSchedulerTest {
         // JVM has no BitmapFactory, so install the header-probe seam
         // (ChapterTranslationStorePersistenceTest /  fixture recipe) and
         // persist the cleaned companion file the layout expects.
-        val productionProbe = ChapterTranslationStore.artifactImageProbe
-        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
+        val productionProbe = ChapterStoreTestSeams.artifactImageProbe
+        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
         try {
             val store = lazyStore()
             val pageKeys = listOf("p1")
@@ -822,7 +823,7 @@ class OverlapSchedulerTest {
             promoted.translationStatus shouldBe StageStatus.READY
             promoted.cleanedImageName shouldBe "cleaned-p1.jpg"
         } finally {
-            ChapterTranslationStore.artifactImageProbe = productionProbe
+            ChapterStoreTestSeams.artifactImageProbe = productionProbe
         }
     }
 
@@ -869,8 +870,8 @@ class OverlapSchedulerTest {
         // later carries the full display evidence (p1: cleaned image +
         // translated block), and skip the one missing it (p2: no cleaned
         // image) — the drain-side twin of the coordinator's E2 stamp.
-        val productionProbe = ChapterTranslationStore.artifactImageProbe
-        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
+        val productionProbe = ChapterStoreTestSeams.artifactImageProbe
+        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
         try {
             val store = lazyStore()
             val pageKeys = listOf("p1", "p2")
@@ -921,7 +922,7 @@ class OverlapSchedulerTest {
             store.snapshot("p1").leaseToken shouldBe null
             store.snapshot("p2").leaseToken shouldBe null
         } finally {
-            ChapterTranslationStore.artifactImageProbe = productionProbe
+            ChapterStoreTestSeams.artifactImageProbe = productionProbe
         }
     }
 

@@ -8,6 +8,7 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import io.kotest.matchers.shouldBe
@@ -63,14 +64,14 @@ class DurableStatusWipeGateTest {
 
     @AfterEach
     fun restoreProductionProbe() {
-        ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
+        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
     }
 
     private fun sentinel() = DurableChapterKey(null, "wipe-sentinel", null, "wipe-sentinel", -1L)
 
     /** JVM stand-in for the BitmapFactory bounds probe: parses the PNG IHDR. */
     private fun installPngHeaderProbe() {
-        ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { input ->
+        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { input ->
             val bytes = input.readPrefix(24)
             if (bytes.size < 24) return@CleanedImageProbe null
             val signature = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)

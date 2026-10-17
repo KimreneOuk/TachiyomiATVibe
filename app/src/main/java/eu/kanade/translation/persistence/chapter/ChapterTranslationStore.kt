@@ -1,7 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
@@ -25,21 +24,15 @@ import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
-import eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.CommittedDisplayRef
-import eu.kanade.translation.persistence.artifact.DisplayBaseKind
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.OcrCheckpointMode
-import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.PageOcrCheckpoint
-import eu.kanade.translation.persistence.artifact.PartialBatchDetermination
-import eu.kanade.translation.persistence.artifact.PartialBatchInfo
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.persistence.artifact.SourceIdentity
@@ -56,7 +49,6 @@ import eu.kanade.translation.persistence.journal.ChapterJournalGcMode
 import eu.kanade.translation.persistence.journal.ChapterJournalInventorySnapshot
 import eu.kanade.translation.persistence.journal.ChapterJournalReplayResult
 import eu.kanade.translation.persistence.journal.ChapterJournalSnapshotCandidate
-import eu.kanade.translation.persistence.journal.ChapterJournalSnapshotManager
 import eu.kanade.translation.persistence.journal.ChapterJournalStorage
 import eu.kanade.translation.persistence.journal.ChapterJournalWriter
 import kotlinx.collections.immutable.PersistentMap
@@ -77,7 +69,6 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
 import java.security.MessageDigest
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -154,63 +145,6 @@ sealed interface MutationAdmission {
     }
 }
 
-/** Shared manifest-fallback projection used by the open path (ChapterStoreOpener). */
-internal fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
-    val committed = committed
-    val displayBase = committed?.displayBase
-    val hasCommittedDisplay = committed != null &&
-        (
-            displayBase?.kind == DisplayBaseKind.ORIGINAL_SOURCE ||
-                (
-                    displayBase?.kind == DisplayBaseKind.CLEANED_IMAGE &&
-                        displayBase.fileName != null &&
-                        !displayBase.legacyLayout
-                    )
-            )
-    val displayReady = displayState == PageDisplayState.DISPLAY_READY ||
-        displayState == PageDisplayState.TEXTLESS_COMPLETE ||
-        displayState == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT ||
-        displayState == PageDisplayState.FAILED_WITH_COMMITTED_RESULT
-    val ready = hasCommittedDisplay && displayReady
-    val running = displayState == PageDisplayState.CANDIDATE_RUNNING
-    val failed = displayState == PageDisplayState.FAILED_NO_RESULT
-    val cleanedName = displayBase?.fileName?.takeIf {
-        displayBase.kind == DisplayBaseKind.CLEANED_IMAGE &&
-            !displayBase.legacyLayout
-    }
-    return PageTranslation(
-        sourceFileName = pageKey,
-        cleanedImageName = cleanedName,
-        ocrStatus = when {
-            ready -> StageStatus.READY
-            running -> StageStatus.RUNNING
-            failed -> StageStatus.FAILED
-            else -> StageStatus.PENDING
-        },
-        translationStatus = when {
-            ready -> StageStatus.READY
-            running -> StageStatus.RUNNING
-            failed -> StageStatus.FAILED
-            else -> StageStatus.PENDING
-        },
-        inpaintStatus = when {
-            ready && cleanedName != null -> StageStatus.READY
-            running -> StageStatus.RUNNING
-            failed -> StageStatus.FAILED
-            else -> StageStatus.PENDING
-        },
-        renderStatus = when {
-            ready && (cleanedName != null || displayBase?.kind == DisplayBaseKind.ORIGINAL_SOURCE) ->
-                StageStatus.READY
-            running -> StageStatus.RUNNING
-            failed -> StageStatus.FAILED
-            else -> StageStatus.PENDING
-        },
-        pageVersion = pageVersion,
-        updatedAt = committed?.promotedAtEpochMs ?: 0L,
-    )
-}
-
 /**
  * Journal collaborators (Phase 7 S5): the journal capture bridge owns credit
  * reservation, the capture frames, bulk capture frames, inventory
@@ -220,7 +154,7 @@ internal fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
  * The bulk mutator collaborator (Phase 7 S7) owns the multi-page
  * transactions and re-key planning; the store keeps delegating shells for
  * them as well.
-     */
+ */
 
 class ChapterTranslationStore internal constructor(
     initialPages: Map<String, PageTranslation> = emptyMap(),
@@ -281,6 +215,12 @@ class ChapterTranslationStore internal constructor(
      */
     internal val mutex = Mutex()
 
+    /**
+     * Consolidated test-seam collaborator (Phase 7 S8). Declared before the
+     * init block because [publishPage] counts every publish through it.
+     */
+    internal val testSeams = ChapterStoreTestSeams(this)
+
     private val candidateReuseObservers = CopyOnWriteArrayList<
         (ChapterArtifactEngine.CandidateOpenState.Reused) -> Unit,
         >()
@@ -331,9 +271,7 @@ class ChapterTranslationStore internal constructor(
 
     @Volatile
     internal var pages: PersistentMap<String, PublishedPageTranslation> = persistentMapOf()
-    internal val _state = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
-    internal var publishedPageCopyCount: Int = 0
-        private set
+    internal val stateFlow = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
 
     /**
      * The last-known-good committed display bundle per
@@ -350,10 +288,6 @@ class ChapterTranslationStore internal constructor(
     /** Durable artifact manifest snapshot used by the live writer bridge. */
     @Volatile
     internal var artifactManifest: ChapterArtifactManifest? = initialArtifactManifest
-
-    /** JVM regression seam for the durable-publication/live-map-swap crash boundary. */
-    @Volatile
-    internal var afterRekeyManifestPublicationBeforeLiveSwapForTests: (() -> Unit)? = null
 
     /**
      * Status collaborator (Phase 7 S3). Owns the journal-status snapshot
@@ -394,7 +328,7 @@ class ChapterTranslationStore internal constructor(
     private var nextPageVersion = 0L
 
     /** Live candidate progress; readers that need display safety use [display]. */
-    val state: StateFlow<Map<String, PageTranslationView>> = _state.asStateFlow()
+    val state: StateFlow<Map<String, PageTranslationView>> = stateFlow.asStateFlow()
 
     /**
      * Committed-pointer display projection: each page resolves to
@@ -514,9 +448,10 @@ class ChapterTranslationStore internal constructor(
      * capture frames, inventory snapshots, and the capture permit; the store
      * delegates every call here. Epoch allocation runs on the persistence
      * dispatcher under the bridge's creation monitor, strictly outside
-     * [mutex].
+     * [mutex]. Module-internal so [ChapterStoreTestSeams] can reach its
+     * injection seams without facade shells.
      */
-    private val journalBridge = ChapterStoreJournalBridge(
+    internal val journalBridge = ChapterStoreJournalBridge(
         store = this,
         persistenceDispatcher = persistenceDispatcher,
         privateStorageRoot = privateStorageRoot,
@@ -553,13 +488,6 @@ class ChapterTranslationStore internal constructor(
         /** [reason] names why the re-key was refused; the store is left untouched. */
         data class Rejected(val reason: String, val cause: Throwable? = null) : PageRekeyOutcome()
     }
-
-    /** Injects a virtual-storage writer before the first page write in JVM tests. */
-    internal fun attachJournalWriterForTests(writer: ChapterJournalWriter) =
-        journalBridge.attachJournalWriterForTests(writer)
-
-    internal fun attachJournalSnapshotManagerForTests(manager: ChapterJournalSnapshotManager) =
-        journalBridge.attachJournalSnapshotManagerForTests(manager)
 
     /** The active journal writer (test seam first, then the lazily created production writer). */
     internal val journalWriter: ChapterJournalWriter?
@@ -607,7 +535,7 @@ class ChapterTranslationStore internal constructor(
         onFailure: ((Throwable) -> Unit)? = null,
     ): ChapterJournalCredit? = journalBridge.reserveJournalCredit(pageKey, onFailure)
 
-    /** Non-suspending lock-held snapshot handoff after the legacy transaction commits; delegates to the journal bridge. */
+    /** Non-suspending lock-held snapshot handoff after the store transaction commits; delegates to the journal bridge. */
     internal fun capturePageMutationLocked(
         pageKey: String,
         page: PageTranslationView,
@@ -626,7 +554,7 @@ class ChapterTranslationStore internal constructor(
         journalFlushBatch = journalFlushBatch,
     )
 
-    /** A deletion is a page-level legacy commit and receives its own fenced tombstone record; delegates to the journal bridge. */
+    /** A deletion is a page-level store commit and receives its own fenced tombstone record; delegates to the journal bridge. */
     internal fun capturePageDeletionLocked(
         pageKey: String,
         pageVersion: Long,
@@ -645,6 +573,7 @@ class ChapterTranslationStore internal constructor(
         newPageKey: String,
         mutation: ChapterArtifactEngine.PreparedRekeyJournalMutation,
     ) = journalBridge.captureRekeyStateLocked(oldPageKey, newPageKey, mutation)
+
     /** Caller holds [mutex]; opens one bulk API operation's journal frame. Delegates to the journal bridge. */
     internal fun openBulkJournalFrameLocked(
         kind: ChapterJournalFormat.RecordKind,
@@ -906,7 +835,7 @@ class ChapterTranslationStore internal constructor(
                 )
             }
         }
-        _state.value = snapshotPages()
+        stateFlow.value = snapshotPages()
         displaySnapshotLocked(pages.keys + committedDisplay.keys)
     }
 
@@ -1051,7 +980,7 @@ class ChapterTranslationStore internal constructor(
         if (artifact.publishManifest(updated)) {
             artifactManifest = updated
             statusLedger.clearFailureLocked(pageKey)
-            _state.value = snapshotPages()
+            stateFlow.value = snapshotPages()
             displaySnapshotLocked(emptyList())
         } else {
             logcat(LogPriority.WARN) {
@@ -1548,7 +1477,7 @@ class ChapterTranslationStore internal constructor(
                     statusLedger.recordPageMutationLocked(pageKey, failure)
                     // A retryable/terminal candidate is deliberately not promoted. The
                     // prior committed display remains the reader authority.
-                    _state.value = snapshotPages()
+                    stateFlow.value = snapshotPages()
                     displaySnapshotLocked(listOf(pageKey))
                     PatchResult.Accepted(snapshotLocked(pageKey))
                 }
@@ -1567,7 +1496,7 @@ class ChapterTranslationStore internal constructor(
 
     /**
      * TachiyomiAT: fast non-blocking cancellation of in-flight stages in memory.
-     * Synchronously flips pages with [isStageRunning] to CANCELLED in [_state] and [_display]
+     * Synchronously flips pages with [isStageRunning] to CANCELLED in [stateFlow] and [_display]
      * without acquiring [mutex] or performing disk I/O. This allows the reader UI (e.g.
      * auto-translation drawer toggle) to clear spinners and dim overlays instantly on the current
      * frame (<16ms) without blocking the Main thread. Durable persistence can follow
@@ -1616,7 +1545,7 @@ class ChapterTranslationStore internal constructor(
         // current map/state as-is instead of republishing identical values.
         if (flipped == 0) return 0
         pages = updatedPages
-        _state.value = snapshotPages()
+        stateFlow.value = snapshotPages()
         displaySnapshotLocked(changedPageKeys)
         return flipped
     }
@@ -1887,7 +1816,7 @@ class ChapterTranslationStore internal constructor(
                     when (outcome) {
                         is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                             artifactManifest = outcome.manifest
-                            _state.value = snapshotPages()
+                            stateFlow.value = snapshotPages()
                             displaySnapshotLocked(listOf(pageKey))
                             capturePageMutationLocked(
                                 pageKey = pageKey,
@@ -2041,7 +1970,7 @@ class ChapterTranslationStore internal constructor(
      * The envelope-plan precondition is active only when the patch carries its
      * nullable plan fingerprint;
      * a fully-null patch returns `null` before touching the manifest, so
-     * every legacy caller keeps byte-identical merge behavior.
+     * every caller without the fingerprint keeps byte-identical merge behavior.
      *
      *  - `envelopePlanFingerprint` must equal the manifest's current
      *    `envelopePlan` pointer content fingerprint  — a commit
@@ -2285,11 +2214,13 @@ class ChapterTranslationStore internal constructor(
     suspend fun deletePage(pageKey: String) = bulkMutator.deletePage(pageKey)
     suspend fun replaceAll(updatedPages: Map<String, PageTranslation>) =
         bulkMutator.replaceAll(updatedPages)
+
     /** Moves source-keyed pages to their completed-download keys atomically. */
     suspend fun rekeyPages(
         onlineKeys: List<String>,
         onDiskKeys: List<String>,
     ): PageRekeyOutcome = bulkMutator.rekeyPages(onlineKeys, onDiskKeys)
+
     /**
      * Outcome of [preRegisterPages]. A rejection is observable so
      * the caller can fail the batch explicitly instead of running a tracker
@@ -2325,8 +2256,8 @@ class ChapterTranslationStore internal constructor(
      *    trusted stamp and records `determinedFrom = UNKNOWN` — the durable
      *    record stops claiming trust it does not have.
      * Missing pages are never registered as page records; the manifest carries
-     * the absence. Without context (both defaults) the legacy self-derived
-     * stamp below is byte-identical to pre- behavior.
+     * the absence. Without context (both defaults) the self-derived
+     * stamp below is byte-identical to its pre-existing behavior.
      */
     suspend fun preRegisterPages(
         pageKeys: List<String>,
@@ -2334,6 +2265,7 @@ class ChapterTranslationStore internal constructor(
         sourceCountKnown: Boolean = false,
     ): PagePreRegistration =
         bulkMutator.preRegisterPages(pageKeys, probedSourcePageCount, sourceCountKnown)
+
     /**
      * Clears queue-like entries after a user cancel/auto-window replacement.
      * Pages with a rendered/cleaned result are kept; transient running, pending,
@@ -2392,7 +2324,7 @@ class ChapterTranslationStore internal constructor(
         }
         statusLedger.recordPageMutationLocked(pageKey, durableFailure)
         promoteDisplayIfReadyLocked(pageKey, updated)
-        _state.value = snapshotPages()
+        stateFlow.value = snapshotPages()
         displaySnapshotLocked(listOf(pageKey))
         return true
     }
@@ -2435,7 +2367,7 @@ class ChapterTranslationStore internal constructor(
             )
         }
         promoteDisplayIfReadyLocked(pageKey, updated)
-        _state.value = snapshotPages()
+        stateFlow.value = snapshotPages()
         displaySnapshotLocked(listOf(pageKey))
         if (shouldQueueArtifact) writeDrain.scheduleDrain()
         return true
@@ -2443,7 +2375,7 @@ class ChapterTranslationStore internal constructor(
 
     private fun restorePageLocked(pageKey: String, previous: PageTranslation?) {
         pages = if (previous == null) pages.remove(pageKey) else pages.put(pageKey, publishPage(previous))
-        _state.value = snapshotPages()
+        stateFlow.value = snapshotPages()
         displaySnapshotLocked(listOf(pageKey))
     }
 
@@ -2575,7 +2507,7 @@ class ChapterTranslationStore internal constructor(
                 if (loaded != null) {
                     val published = publishPage(loaded)
                     pages = pages.put(pageKey, published)
-                    _state.value = snapshotPages()
+                    stateFlow.value = snapshotPages()
                     if (record?.committed != null) {
                         committedDisplay = committedDisplay.put(
                             pageKey,
@@ -2794,7 +2726,7 @@ class ChapterTranslationStore internal constructor(
     internal fun snapshotPages(): PersistentMap<String, PublishedPageTranslation> = pages
 
     internal fun publishPage(draft: PageTranslation): PublishedPageTranslation {
-        publishedPageCopyCount++
+        testSeams.countPublishedPageCopy()
         return draft.toPublishedPage()
     }
 
@@ -2871,9 +2803,6 @@ class ChapterTranslationStore internal constructor(
         }
     }
 
-    /** Test seam for verifying that closeAndFlush joins all drain children. */
-    internal fun hasActivePersistenceChildrenForTests(): Boolean = writeDrain.hasActiveChildren()
-
     fun close() = writeDrain.close {
         try {
             journalWriter?.drainAndClose()
@@ -2918,9 +2847,6 @@ class ChapterTranslationStore internal constructor(
     internal fun schedulePendingLazyDrain() = writeDrain.scheduleDrain()
 
     companion object {
-        /** Artifact cleaned-image probe retained for artifact validation tests. */
-        internal var artifactImageProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe
-
         /**
          * Open mechanics live on the opener collaborator (Phase 7 S6); these
          * shells keep existing callers and tests unaffected. The open path

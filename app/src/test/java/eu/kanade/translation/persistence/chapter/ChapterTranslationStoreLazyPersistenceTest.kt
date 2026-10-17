@@ -478,7 +478,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
                 initialArtifactManifest = manifest,
                 persistenceDispatcher = StandardTestDispatcher(testScheduler),
             ).also {
-                it.attachJournalWriterForTests(writer)
+                it.testSeams.attachJournalWriter(writer)
                 it.enableLazyPersistence()
             }
 
@@ -659,7 +659,7 @@ class ChapterTranslationStoreLazyPersistenceTest {
                 initialArtifactManifest = opened.manifest,
                 persistenceDispatcher = StandardTestDispatcher(testScheduler),
             ).also {
-                it.attachJournalWriterForTests(writer)
+                it.testSeams.attachJournalWriter(writer)
                 it.enableLazyPersistence()
             }
             val rendered = PageTranslation(

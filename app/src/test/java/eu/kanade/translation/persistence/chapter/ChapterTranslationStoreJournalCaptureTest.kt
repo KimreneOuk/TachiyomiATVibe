@@ -88,7 +88,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         var recordedPageHash: String? = null
 
         try {
@@ -192,7 +192,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         var closed = false
 
         try {
@@ -851,7 +851,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             sessionId = sessionId,
             chapterIdentityHash = chapterHash,
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
 
         try {
             val beforeRekey = checkNotNull(store.replayJournalForRecovery())
@@ -1286,7 +1286,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { journalJson.encodeToString(it).encodeToByteArray() },
             encodeTerminalLag = { count, sequence -> "lag:$count:$sequence".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         var closed = false
 
         try {
@@ -1408,7 +1408,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { journalJson.encodeToString(it).encodeToByteArray() },
             encodeTerminalLag = { count, sequence -> "lag:$count:$sequence".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         val tracker = TranslationBatchProgressTracker(1L, store, listOf("page.jpg"), this)
         var closed = false
 
@@ -1467,7 +1467,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         val pages = (1..12).associate { index ->
             val key = "page-$index.jpg"
             key to PageTranslation(
@@ -1656,7 +1656,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             epochOrdinal = 21L,
             sessionId = sessionId,
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
 
         try {
             store.rekeyPages(
@@ -1998,7 +1998,7 @@ class ChapterTranslationStoreJournalCaptureTest {
 
             fixture.io.writeNamesToFail.remove(fixture.layout.manifestFileName)
             var recoveredBetweenPublicationAndSwap = false
-            fixture.store.afterRekeyManifestPublicationBeforeLiveSwapForTests = {
+            fixture.store.testSeams.afterRekeyManifestPublicationBeforeLiveSwap = {
                 // The durable manifest and BULK_REKEY are visible while the live map is
                 // deliberately still on the old key: this is the second crash window.
                 fixture.store.pages.keys shouldBe setOf(fixture.oldKey)
@@ -2036,7 +2036,7 @@ class ChapterTranslationStoreJournalCaptureTest {
                         skippedCollisions = 0,
                     )
             } finally {
-                fixture.store.afterRekeyManifestPublicationBeforeLiveSwapForTests = null
+                fixture.store.testSeams.afterRekeyManifestPublicationBeforeLiveSwap = null
             }
             recoveredBetweenPublicationAndSwap shouldBe true
             fixture.store.pages.keys shouldBe setOf(fixture.newKey)
@@ -2293,7 +2293,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         var storeClosed = false
         try {
             store.preRegisterPages(listOf("p.jpg", "001.jpg")) shouldBe
@@ -2522,7 +2522,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             encodeInventory = { inventory -> journalJson.encodeToString(inventory).encodeToByteArray() },
             encodeTerminalLag = { count, commitSeq -> "lag:$count:$commitSeq".encodeToByteArray() },
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         val pages = (1..4).associate { index ->
             val key = "partial-$index.jpg"
             key to PageTranslation(
@@ -2774,7 +2774,7 @@ class ChapterTranslationStoreJournalCaptureTest {
             epochOrdinal = 22L,
             sessionId = sessionId,
         )
-        store.attachJournalWriterForTests(writer)
+        store.testSeams.attachJournalWriter(writer)
         return RekeyFixture(
             io,
             layout,

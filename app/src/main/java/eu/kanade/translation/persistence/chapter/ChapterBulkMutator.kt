@@ -13,9 +13,7 @@ import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.PartialBatchDetermination
 import eu.kanade.translation.persistence.artifact.PartialBatchInfo
 import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
-import eu.kanade.translation.persistence.journal.ChapterJournalCredit
 import eu.kanade.translation.persistence.journal.ChapterJournalFormat
-import eu.kanade.translation.persistence.journal.ChapterJournalInventorySnapshot
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.sync.Mutex
@@ -122,7 +120,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                         store.statusLedger.recordPageDeletionLocked(pageKey)
                         store.retiredCleanedImages.remove(pageKey)
                         store.pageLeases.remove(pageKey)
-                        store._state.value = store.snapshotPages()
+                        store.stateFlow.value = store.snapshotPages()
                         store.displaySnapshotLocked(listOf(pageKey))
                     }
                 }
@@ -190,7 +188,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                             }
                         }
                         store.statusLedger.recordReplacementLocked(updatedPages.keys)
-                        store._state.value = store.snapshotPages()
+                        store.stateFlow.value = store.snapshotPages()
                         store.displaySnapshotLocked(changedDisplayKeys)
                     } finally {
                         store.finishBulkJournalCaptureLocked(bulk, bulkCredit)
@@ -440,7 +438,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                             ) {
                                 is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                                     store.artifactManifest = outcome.manifest
-                                    store.afterRekeyManifestPublicationBeforeLiveSwapForTests?.invoke()
+                                    store.testSeams.afterRekeyManifestPublicationBeforeLiveSwap?.invoke()
                                 }
                                 is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
                                     logcat(LogPriority.WARN) {
@@ -475,7 +473,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                         store.retiredCleanedImages.keys.toList().forEach { pageKey ->
                             if (pageKey !in updatedPages) store.retiredCleanedImages.remove(pageKey)
                         }
-                        store._state.value = store.snapshotPages()
+                        store.stateFlow.value = store.snapshotPages()
                         store.displaySnapshotLocked(plan.changedDisplayKeys)
                         if (plan.moves.isEmpty()) {
                             if (plan.skippedCollisions > 0) {
@@ -516,7 +514,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
      *    record stops claiming trust it does not have.
      * Missing pages are never registered as page records; the manifest carries
      * the absence. Without context (both defaults) the self-derived
-     * stamp below is byte-identical to pre- behavior.
+     * stamp below is byte-identical to its pre-existing behavior.
      */
     suspend fun preRegisterPages(
         pageKeys: List<String>,
@@ -538,7 +536,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
             throw cancelled
         } catch (failure: Throwable) {
             logcat(LogPriority.WARN, failure) {
-                "TachiyomiAT shadow journal initialization failed before page registration; legacy continues"
+                "TachiyomiAT shadow journal initialization failed before page registration; artifact-only persistence continues"
             }
             null
         }
@@ -574,7 +572,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                     }
                 }
                 if (changedPageKeys.isNotEmpty()) {
-                    store._state.value = store.snapshotPages()
+                    store.stateFlow.value = store.snapshotPages()
                     store.displaySnapshotLocked(changedPageKeys)
                 }
                 if (store.engineMode !is ChapterStoreEngineMode.Durable &&
@@ -709,7 +707,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                     store.pages.keys.forEach { pageKey ->
                         store.cancelArtifactCandidateLocked(pageKey)
                     }
-                    store._state.value = store.snapshotPages()
+                    store.stateFlow.value = store.snapshotPages()
                     store.displaySnapshotLocked(changedPageKeys)
                 }
             }
@@ -780,7 +778,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
             }
         val oldArtifactContentHashes = moves.keys.associateWith { oldKey ->
             val record = manifest?.pages?.get(oldKey)
-            // Never derive a fingerprint under the store mutex. A missing legacy fingerprint
+            // Never derive a fingerprint under the store mutex. A missing artifact fingerprint
             // stays absent and makes the corresponding replay mutation retryable.
             record?.candidate?.pageSnapshotFingerprint ?: record?.committed?.translationFingerprint
         }
