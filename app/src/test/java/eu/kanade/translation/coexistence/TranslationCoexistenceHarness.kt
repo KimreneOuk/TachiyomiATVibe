@@ -900,7 +900,6 @@ internal class TranslationCoexistenceHarness private constructor(
             val artifact = ChapterArtifactEngine(
                 AtomicChapterDocuments(documentIo),
                 layout,
-                displayBaseProbe = { eu.kanade.translation.persistence.artifact.ProbedImage(100, 100) },
             )
             var manifest = artifact
                 .loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))

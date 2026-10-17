@@ -74,11 +74,7 @@ class ChapterContextLegacySnapshotCompatibilityTest {
         val documents = AtomicChapterDocuments(io)
         documents.publishJson(fileName, legacySnapshot)
         documents.publishJson(layout.manifestFileName, manifest)
-        val artifact = ChapterArtifactEngine(
-            documents,
-            layout,
-            displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) },
-        )
+        val artifact = ChapterArtifactEngine(documents, layout)
         val store = ChapterTranslationStore(
             artifactParentResolver = null,
             initialPages = emptyMap(),
@@ -146,11 +142,7 @@ class ChapterContextLegacySnapshotCompatibilityTest {
         val documents = AtomicChapterDocuments(io)
         documents.publishJson(fileName, profile)
         documents.publishJson(layout.manifestFileName, manifest)
-        val artifact = ChapterArtifactEngine(
-            documents,
-            layout,
-            displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) },
-        )
+        val artifact = ChapterArtifactEngine(documents, layout)
         val store = ChapterTranslationStore(
             artifactParentResolver = null,
             initialPages = emptyMap(),

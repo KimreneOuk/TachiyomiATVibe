@@ -1,5 +1,6 @@
 package eu.kanade.translation.persistence.chapter
 
+import androidx.annotation.VisibleForTesting
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
@@ -867,10 +868,6 @@ class ChapterTranslationStore internal constructor(
         if (isDefunct) writer.requestDefunctMarker()
         return writer
     }
-
-    /** Shadow lag count is observable in tests and diagnostics without reading journal files. */
-    internal val journalShadowLagCount: Long
-        get() = journalWriter?.shadowLaggedCount ?: 0L
 
     /** Reserve before taking [mutex]; shadow uses only a non-blocking semaphore tryAcquire. */
     private suspend fun reserveJournalCredit(
@@ -4868,7 +4865,11 @@ class ChapterTranslationStore internal constructor(
         internal fun probeArtifactManifest(parent: UniFile, fileName: String): ArtifactManifestProbe =
             ChapterArtifactManifestReader.probeArtifactManifest(parent, fileName)
 
-        /** Synchronous compatibility seam retained for existing JVM tests. */
+        /**
+         * Synchronous compatibility seam retained for existing JVM tests;
+         * production callers must use [openArtifactSuspend].
+         */
+        @VisibleForTesting(otherwise = VisibleForTesting.NONE)
         internal fun openArtifact(
             parent: UniFile,
             fileName: String,

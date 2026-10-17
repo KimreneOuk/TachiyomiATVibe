@@ -73,8 +73,6 @@ sealed interface SidecarRead<out T : Any> {
 class ChapterArtifactEngine(
     private val documents: AtomicChapterDocuments,
     internal val layout: ChapterArtifactLayout,
-    @Suppress("UNUSED_PARAMETER")
-    private val displayBaseProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe,
 ) {
     private val io: ChapterDocumentIo get() = documents.rawIo()
 

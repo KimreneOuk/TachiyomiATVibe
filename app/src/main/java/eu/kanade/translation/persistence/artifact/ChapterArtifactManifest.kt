@@ -128,13 +128,6 @@ data class PageArtifactRecord(
     /** The current work generation, if any. */
     val candidate: CandidateGenerationMetadata? = null,
     /**
-     * Last-known-good display base the legacy reader can still show even
-     * though the page is not strictly complete (e.g. a legacy PARTIAL page).
-     * Compatibility visibility only: never counts as strict ready and never
-     * feeds promotion or batch completeness.
-     */
-    val legacyVisible: DisplayBaseReference? = null,
-    /**
      * Canonical file name of this page's committed trusted context checkpoint
      * under `context/`, when one exists. Legacy pages have none (unknown).
      */

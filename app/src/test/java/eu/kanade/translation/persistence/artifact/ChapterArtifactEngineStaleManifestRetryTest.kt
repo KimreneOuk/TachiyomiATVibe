@@ -9,7 +9,6 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
-import java.io.InputStream
 import java.security.MessageDigest
 
 /**
@@ -180,10 +179,6 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val store = ChapterArtifactEngine(
             AtomicChapterDocuments(io),
             layout,
-            object : CleanedImageProbe {
-                override fun probe(input: InputStream): ProbedImage? =
-                    if (input.read() == 1) null else ProbedImage(100, 100)
-            },
         )
         val ocrSnapshot = ocrPage()
         val migrated = store.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
