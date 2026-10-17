@@ -28,7 +28,6 @@ import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
-import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -181,20 +180,6 @@ sealed interface MutationAdmission {
     }
 }
 
-/** Selects the single-page artifact publication for a live mutation. */
-internal enum class ArtifactMutation {
-    Failure,
-    Direct,
-}
-
-/** Durable failures need failure metadata; ordinary page mutations publish directly. */
-internal fun classifyMutation(
-    durableFailure: DurableFailureMetadata?,
-): ArtifactMutation = when {
-    durableFailure != null -> ArtifactMutation.Failure
-    else -> ArtifactMutation.Direct
-}
-
 private fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
     val committed = committed
     val displayBase = committed?.displayBase
@@ -276,6 +261,11 @@ internal data class ChapterJournalSeedDiagnostics(
     val failure: Throwable? = null,
 )
 
+/** Collects this flush's accepted journal work for one final force; rollover may force a closed segment first. */
+internal class JournalFlushBatch {
+    var hasJournalWork = false
+}
+
 class ChapterTranslationStore internal constructor(
     initialPages: Map<String, PageTranslation> = emptyMap(),
     artifactStore: ChapterArtifactEngine? = null,
@@ -283,8 +273,8 @@ class ChapterTranslationStore internal constructor(
     initialArtifactManifest: ChapterArtifactManifest? = null,
     initialRetiredCleanedImages: Map<String, Set<String>> = emptyMap(),
     internal val artifactParent: UniFile? = null,
-    private val artifactFileName: String? = null,
-    private val artifactParentResolver: (() -> UniFile)? = null,
+    internal val artifactFileName: String? = null,
+    internal val artifactParentResolver: (() -> UniFile)? = null,
     private val persistenceDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val privateStorageRoot: File? = null,
     private val privateStorageIdentity: String? = null,
@@ -347,7 +337,7 @@ class ChapterTranslationStore internal constructor(
         return AutoCloseable { candidateReuseObservers.remove(observer) }
     }
 
-    private fun reportCandidateReuse(state: ChapterArtifactEngine.CandidateOpenState?) {
+    internal fun reportCandidateReuse(state: ChapterArtifactEngine.CandidateOpenState?) {
         val reused = state as? ChapterArtifactEngine.CandidateOpenState.Reused ?: return
         candidateReuseObservers.forEach { observer ->
             // Diagnostics must not change whether an artifact transaction is accepted.
@@ -415,7 +405,7 @@ class ChapterTranslationStore internal constructor(
      * state, and the pending expected-page totals; the store delegates every
      * read and write under [mutex].
      */
-    private val statusLedger = ChapterStatusLedger(
+    internal val statusLedger = ChapterStatusLedger(
         store = this,
         journalReplayResult = journalReplayResult,
         initialUnverifiedManifestFallbackPageKeys = initialUnverifiedManifestFallbackPageKeys,
@@ -433,7 +423,7 @@ class ChapterTranslationStore internal constructor(
      * of promotions from losing an earlier retained file.
      */
     private val retiredCleanedImages = ConcurrentHashMap<String, MutableSet<String>>()
-    private val pendingArtifactPageRegistrations = LinkedHashSet<String>()
+    internal val pendingArtifactPageRegistrations = LinkedHashSet<String>()
 
     private val _display = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
 
@@ -442,7 +432,7 @@ class ChapterTranslationStore internal constructor(
     private val pageStageLeaseTable = PageStageLeaseTable(this)
 
     /** Writer leases per page: one origin owns a page until it releases it. */
-    private val pageLeases get() = pageStageLeaseTable.pageLeases
+    internal val pageLeases get() = pageStageLeaseTable.pageLeases
 
     @Volatile
     private var generation = 0L
@@ -549,6 +539,14 @@ class ChapterTranslationStore internal constructor(
     // fail open, and memory-only stores keep no durable ledger.
     private val attemptLedger = ChapterAttemptLedger(this)
 
+    /**
+     * Publication collaborator (Phase 7 S4). Owns mutation admission, lazy
+     * artifact-store initialization, the registration CAS, and the candidate
+     * open/cancel/persist/promote/failure orchestration; the store delegates
+     * under [mutex].
+     */
+    private val publicationBridge = ChapterStorePublicationBridge(this)
+
     // Lazy-write queue state is stored by the drain coordinator, but every
     // mutation is serialized by this store's mutex. Store-to-drain scheduling
     // is a synchronous handoff with no second state lock; drain paths re-enter
@@ -607,11 +605,6 @@ class ChapterTranslationStore internal constructor(
         val accepted: Boolean,
     )
 
-    /** Collects this flush's accepted journal work for one final force; rollover may force a closed segment first. */
-    private class JournalFlushBatch {
-        var hasJournalWork = false
-    }
-
     private data class PageRekeyPlan(
         val generation: Long,
         val pages: PersistentMap<String, PublishedPageTranslation>,
@@ -669,7 +662,7 @@ class ChapterTranslationStore internal constructor(
         journalSnapshotManagerForTests = manager
     }
 
-    private val journalWriter: ChapterJournalWriter?
+    internal val journalWriter: ChapterJournalWriter?
         get() = journalWriterForTests ?: productionJournalWriter
 
     internal suspend fun <T> withJournalCapturePermit(block: suspend () -> T): T =
@@ -933,7 +926,7 @@ class ChapterTranslationStore internal constructor(
     }
 
     /** Non-suspending lock-held snapshot handoff after the legacy transaction commits. */
-    private fun captureLegacyPersistedLocked(
+    internal fun captureLegacyPersistedLocked(
         pageKey: String,
         page: PageTranslationView,
         expected: PatchPrecondition?,
@@ -1129,7 +1122,7 @@ class ChapterTranslationStore internal constructor(
         ?: fallbackSnapshot?.let(StageFingerprints::pageSnapshot)
 
     /** Capture the current inventory; sorting and fingerprinting remain on the writer dispatcher. */
-    private fun journalInventorySnapshot(
+    internal fun journalInventorySnapshot(
         manifest: ChapterArtifactManifest?,
         pendingRegistrations: Set<String> = pendingArtifactPageRegistrations,
     ): ChapterJournalInventorySnapshot {
@@ -1264,8 +1257,9 @@ class ChapterTranslationStore internal constructor(
     internal var lastBatchWriteGateRejectionDiagnostic: String? = null
         private set
 
-    @Volatile
-    private var lastArtifactPublicationRejectionDiagnostic: String? = null
+    /** Publication rejections live on the bridge; the facade only reads the latest diagnostic. */
+    private val lastArtifactPublicationRejectionDiagnostic: String?
+        get() = publicationBridge.lastArtifactPublicationRejectionDiagnostic
 
     internal fun recordBatchWriteGateRejectionDiagnostic(diagnostic: String) {
         lastBatchWriteGateRejectionDiagnostic = diagnostic
@@ -1503,7 +1497,7 @@ class ChapterTranslationStore internal constructor(
      * mutators read it lock-free.
      */
     @Volatile
-    private var defunct = false
+    internal var defunct = false
 
     /**
      * Eviction snapshots and joins the active drain job outside [mutex]. If
@@ -1734,39 +1728,8 @@ class ChapterTranslationStore internal constructor(
         }
     }
 
-    /** Caller holds [mutex]; suspending while a lazy first write opens the artifact store. */
-    internal suspend fun admitMutation(): MutationAdmission {
-        if (defunct) {
-            return MutationAdmission.Rejected(
-                code = MutationAdmission.Rejected.Code.STORE_DEFUNCT,
-                message = "store is defunct",
-            )
-        }
-        if (engineMode is ChapterStoreEngineMode.Durable && artifactManifest != null) {
-            return MutationAdmission.Granted
-        }
-        // Explicitly memory-only stores are used by pure reducer/unit tests;
-        // they have no persistence target and therefore cannot accidentally
-        // create a legacy document. Production stores always provide a parent
-        // or an already-open artifact document and take the lazy creation path below.
-        if (engineMode is ChapterStoreEngineMode.Memory) {
-            return MutationAdmission.Granted
-        }
-        if (!ensureArtifactStore()) {
-            return MutationAdmission.Rejected(
-                code = MutationAdmission.Rejected.Code.ARTIFACT_PUBLICATION_FAILED,
-                message = "artifact store creation/publication failed",
-            )
-        }
-        return if (engineMode is ChapterStoreEngineMode.Durable && artifactManifest != null) {
-            MutationAdmission.Granted
-        } else {
-            MutationAdmission.Rejected(
-                code = MutationAdmission.Rejected.Code.ARTIFACT_PUBLICATION_FAILED,
-                message = "artifact store was not established",
-            )
-        }
-    }
+    /** Caller holds [mutex]; suspending while a lazy first write opens the artifact store. Delegates to the publication bridge. */
+    internal suspend fun admitMutation(): MutationAdmission = publicationBridge.admitMutation()
 
     suspend fun beginGeneration(reason: String): Long = mutex.withLock {
         generation++
@@ -3713,10 +3676,10 @@ class ChapterTranslationStore internal constructor(
     }
 
     /**
-     * Production artifact bridge for mutable page emissions. Every emission is
-     * first written to a candidate snapshot. A display-ready emission writes
-     * the immutable committed snapshot and moves the manifest pointer in one
-     * final publication; the journal separately records the live state mutation.
+     * Production artifact publication for mutable page emissions. Delegates to
+     * the publication bridge (Phase 7 S4), which owns the registration CAS and
+     * the candidate open/cancel/persist/promote/failure orchestration. Caller
+     * holds [mutex].
      */
     private suspend fun persistArtifactMutation(
         pageKey: String,
@@ -3726,368 +3689,23 @@ class ChapterTranslationStore internal constructor(
         durableFailure: DurableFailureMetadata? = null,
         journalCredit: ChapterJournalCredit? = null,
         journalFlushBatch: JournalFlushBatch? = null,
-    ): Boolean {
-        lastArtifactPublicationRejectionDiagnostic = null
-        fun reject(reason: String): Boolean {
-            val page = artifactManifest?.pages?.get(pageKey)
-            lastArtifactPublicationRejectionDiagnostic = formatWriteDiagnostic(
-                pageKey,
-                "reason" to reason,
-                "expected" to "{generation=${expected?.generation}, pageVersion=${expected?.pageVersion}, " +
-                    "artifactPageVersion=${expected?.artifactPageVersion}, candidateGenerationId=${expected?.candidateGenerationId}, " +
-                    "dependencyFingerprint=${expected?.dependencyFingerprint}, leaseToken=${expected?.leaseToken}}",
-                "localArtifact" to "{pageVersion=${page?.pageVersion}, " +
-                    "candidateGenerationId=${page?.candidate?.generationId}, " +
-                    "dependencyFingerprint=${page?.candidate?.dependencyFingerprint}}",
-            )
-            return false
-        }
-        if (engineMode is ChapterStoreEngineMode.Memory) {
-            // Pure in-memory stores have no persistence target and never
-            // create a compatibility document as a side effect.
-            journalCredit?.releaseIfUnqueued()
-            return true
-        }
-        if (engineMode !is ChapterStoreEngineMode.Durable &&
-            !ensureArtifactStore()
-        ) {
-            return reject("artifact store initialization failed")
-        }
-        val store = (engineMode as? ChapterStoreEngineMode.Durable)?.artifact
-            ?: return reject("durable artifact store unavailable")
-        var manifest = artifactManifest ?: run {
-            journalCredit?.releaseIfUnqueued()
-            return true
-        }
-        if (pageKey.isEmpty()) {
-            journalCredit?.releaseIfUnqueued()
-            return true
-        }
-        val firstReaderBaseline = if (
-            manifest.expectedPageCount == null && statusLedger.pendingExpectedPageCountLocked() == null
-        ) {
-            pages.size
-        } else {
-            0
-        }
-        val expectedPageCount = maxOf(
-            manifest.expectedPageCount ?: 0,
-            statusLedger.pendingExpectedPageCountLocked() ?: 0,
-            firstReaderBaseline,
-        ).takeIf { it > 0 }
-        val expectedPageCountTrusted =
-            manifest.expectedPageCountTrusted || statusLedger.pendingExpectedPageCountTrustedLocked()
-        val registrationKeys = (pendingArtifactPageRegistrations + pageKey)
-            .filter { it.isNotEmpty() && it !in manifest.pages }
-        val expectedCountChanged = expectedPageCount != manifest.expectedPageCount ||
-            expectedPageCountTrusted != manifest.expectedPageCountTrusted
-        if (registrationKeys.isNotEmpty() || expectedCountChanged) {
-            //  LI-x: this publication used to blind-publish
-            // (`publishManifest`) a manifest rebuilt from the FAÇADE snapshot,
-            // silently reverting any newer durable field: the >8-page open
-            // path's background manifest publication can race without
-            // refreshing the façade, so the next resume-hydration adoption's
-            // registration write must not clobber newer durable fields. Route
-            // through the CAS'd sidecar-pointer transaction instead: the
-            // registration mutation (page-set + expected count) is recomputed
-            // against the FRESH durable manifest on a stale-manifest rejection
-            // — one-shot, the same semantics as the envelope-plan seam — so
-            // the mutation is pointer-set-only and every other durable field
-            // is carried forward by construction.
-            when (
-                val registration = store.publishSidecarPointersWithStaleRetry(
-                    manifest = manifest,
-                    sidecars = emptyList(),
-                    updatePointers = { current ->
-                        val keys = (pendingArtifactPageRegistrations + pageKey)
-                            .filter { it.isNotEmpty() && it !in current.pages }
-                        val currentFirstReaderBaseline =
-                            if (current.expectedPageCount == null && statusLedger.pendingExpectedPageCountLocked() == null) {
-                                pages.size
-                            } else {
-                                0
-                            }
-                        current.copy(
-                            pages = current.pages + keys.associateWith {
-                                PageArtifactRecord(pageKey = it)
-                            },
-                            expectedPageCount = maxOf(
-                                current.expectedPageCount ?: 0,
-                                statusLedger.pendingExpectedPageCountLocked() ?: 0,
-                                currentFirstReaderBaseline,
-                            ).takeIf { it > 0 },
-                            expectedPageCountTrusted =
-                            current.expectedPageCountTrusted || statusLedger.pendingExpectedPageCountTrustedLocked(),
-                        )
-                    },
-                    nowEpochMs = System.currentTimeMillis(),
-                    seam = "page-registration",
-                )
-            ) {
-                is ChapterArtifactEngine.TransactionOutcome.Committed -> {
-                    manifest = registration.manifest
-                    artifactManifest = manifest
-                    pendingArtifactPageRegistrations.removeAll(registrationKeys.toSet())
-                    if (expectedCountChanged) {
-                        statusLedger.clearPendingExpectedTotalsLocked()
-                    }
-                    journalWriter?.let { writer ->
-                        journalFlushBatch?.hasJournalWork = true
-                        writer.captureInventory(
-                            journalInventorySnapshot(manifest),
-                            deferSyncUntilBarrier = journalFlushBatch != null,
-                        )
-                    }
-                }
-                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact page registration failed: pageKey=$pageKey " +
-                            "count=${registrationKeys.size} reason=${registration.reason}"
-                    }
-                    return reject("page registration rejected: ${registration.reason}")
-                }
-            }
-        }
-        val record = manifest.pages.getValue(pageKey)
-        if (expected != null) {
-            if (expected.artifactPageVersion != null && expected.artifactPageVersion != record.pageVersion) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey " +
-                        "reason=artifact pageVersion expected=${expected.artifactPageVersion} actual=${record.pageVersion}"
-                }
-                return reject("artifact pageVersion expected=${expected.artifactPageVersion} actual=${record.pageVersion}")
-            }
-            if (expected.candidateGenerationId != null && expected.candidateGenerationId != record.candidate?.generationId) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey " +
-                        "reason=candidate generation expected=${expected.candidateGenerationId} " +
-                        "actual=${record.candidate?.generationId}"
-                }
-                return reject(
-                    "candidate generation expected=${expected.candidateGenerationId} " +
-                        "actual=${record.candidate?.generationId}",
-                )
-            }
-            if (expected.dependencyFingerprint != null &&
-                expected.dependencyFingerprint != record.candidate?.dependencyFingerprint &&
-                record.candidate != null
-            ) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey " +
-                        "reason=dependency fingerprint expected=${expected.dependencyFingerprint} " +
-                        "actual=${record.candidate?.dependencyFingerprint}"
-                }
-                return reject(
-                    "dependency fingerprint expected=${expected.dependencyFingerprint} " +
-                        "actual=${record.candidate?.dependencyFingerprint}",
-                )
-            }
-        } else if (pageLeases[pageKey] != null) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT artifact candidate write rejected: pageKey=$pageKey reason=unfenced active lease"
-            }
-            return reject("unfenced active lease token=${pageLeases[pageKey]?.token}")
-        }
-        // Compatibility writers may resume an on-disk candidate after process
-        // death before a new page lease is attached. Preserve the durable
-        // candidate provenance in that narrow no-lease window; otherwise a
-        // READER_ADHOC candidate would be misclassified as BATCH and its next
-        // snapshot could never be persisted.
-        //
-        //  round 3: a durable-FAILURE publication is a page-level ledger
-        // write, not work product — keep the live candidate's own provenance
-        // when one exists. Deriving the origin from the CURRENT lease holder
-        // routed the failure persist through cancelLiveCandidate +
-        // openCandidate under a FOREIGN origin (the display-tail drain
-        // persists its typed failure while a MANUAL reader lease holds the
-        // page's Render stage), splitting the ONE atomic page+failure
-        // publication the API documents into a cancel/reopen/persist chain
-        // against a candidate the failure writer does not own.
-        val leaseOrigin = pageLeases[pageKey]?.origin?.toArtifactOrigin()
-        val origin = when {
-            durableFailure != null && record.candidate != null -> record.candidate.origin
-            leaseOrigin != null -> leaseOrigin
-            else -> record.candidate?.origin ?: ArtifactOrigin.BATCH
-        }
-        val candidate = record.candidate
-        val dependencyFingerprint = expected?.dependencyFingerprint
-            ?: candidate?.dependencyFingerprint
-            ?: StageFingerprints.pageSnapshot(previous ?: updated)
-        if (candidate == null || candidate.origin != origin) {
-            val baseManifest = if (candidate != null && candidate.origin != origin) {
-                when (val cancelled = store.cancelLiveCandidate(manifest, pageKey, candidate.generationId)) {
-                    is ChapterArtifactEngine.TransactionOutcome.Committed -> cancelled.manifest
-                    else -> manifest
-                }
-            } else {
-                manifest
-            }
-            val opened = store.openCandidate(
-                manifest = baseManifest,
-                pageKey = pageKey,
-                origin = origin,
-                expectedPageVersion = baseManifest.pages[pageKey]?.pageVersion ?: record.pageVersion,
-                dependencyFingerprint = dependencyFingerprint,
-            )
-            manifest = when (opened) {
-                is ChapterArtifactEngine.TransactionOutcome.Committed -> {
-                    reportCandidateReuse(opened.candidateOpenState)
-                    opened.manifest
-                }
-                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                    reportCandidateReuse(opened.candidateOpenState)
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact candidate open rejected: pageKey=$pageKey reason=${opened.reason}"
-                    }
-                    return reject("candidate open rejected: ${opened.reason}")
-                }
-            }
-            artifactManifest = manifest
-        }
-        val currentCandidate = manifest.pages.getValue(pageKey).candidate
-            ?: run { return reject("candidate missing after open") }
-        val expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion
-        when (classifyMutation(durableFailure)) {
-            ArtifactMutation.Failure -> {
-                val failure = checkNotNull(durableFailure)
-                val persisted = store.persistLiveCandidateAndFailure(
-                    manifest = manifest,
-                    pageKey = pageKey,
-                    generationId = currentCandidate.generationId,
-                    expectedPageVersion = expectedPageVersion,
-                    expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                    pageSnapshot = updated,
-                    origin = origin,
-                    failure = failure,
-                    sourceIdentity = updated.sourceIdentity(pageKey),
-                )
-                manifest = when (persisted) {
-                    is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
-                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
-                        }
-                        return reject("candidate persist rejected: ${persisted.reason}")
-                    }
-                }
-                artifactManifest = manifest
-                captureLegacyPersistedLocked(
-                    pageKey,
-                    updated,
-                    expected,
-                    failure,
-                    journalCredit,
-                    journalFlushBatch = journalFlushBatch,
-                )
-            }
-            ArtifactMutation.Direct -> {
-                val immediatelyPromotable = updated.hasRenderedResult || updated.isTextlessTerminal
-                val persisted = if (immediatelyPromotable) {
-                    store.promoteLiveCandidateImmediately(
-                        manifest = manifest,
-                        pageKey = pageKey,
-                        generationId = currentCandidate.generationId,
-                        expectedPageVersion = expectedPageVersion,
-                        expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                        pageSnapshot = updated,
-                        origin = origin,
-                        sourceIdentity = updated.sourceIdentity(pageKey),
-                    )
-                } else {
-                    store.persistLiveCandidate(
-                        manifest = manifest,
-                        pageKey = pageKey,
-                        generationId = currentCandidate.generationId,
-                        expectedPageVersion = expectedPageVersion,
-                        expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                        pageSnapshot = updated,
-                        origin = origin,
-                        sourceIdentity = updated.sourceIdentity(pageKey),
-                    )
-                }
-                when (persisted) {
-                    is ChapterArtifactEngine.TransactionOutcome.Committed -> manifest = persisted.manifest
-                    is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                        persisted.recoverableCandidateManifest?.takeIf { immediatelyPromotable }?.let { recoverableManifest ->
-                            // The old two-step path had already published its candidate manifest
-                            // before terminal promotion could reject. Preserve that journal
-                            // handoff only when the fused failure path restored the same truth.
-                            manifest = recoverableManifest
-                            artifactManifest = recoverableManifest
-                            captureLegacyPersistedLocked(
-                                pageKey,
-                                updated,
-                                expected,
-                                durableFailure,
-                                journalCredit,
-                                journalFlushBatch = journalFlushBatch,
-                            )
-                        }
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT artifact ${if (immediatelyPromotable) "terminal publication" else "candidate persist"} " +
-                                "rejected: pageKey=$pageKey reason=${persisted.reason}"
-                        }
-                        return reject(
-                            "${if (immediatelyPromotable) "terminal publication" else "candidate persist"} " +
-                                "rejected: ${persisted.reason}",
-                        )
-                    }
-                }
-                artifactManifest = manifest
-            }
-        }
-        artifactManifest = manifest
-        captureLegacyPersistedLocked(
-            pageKey,
-            updated,
-            expected,
-            durableFailure,
-            journalCredit,
-            journalFlushBatch = journalFlushBatch,
-        )
-        return true
-    }
+    ): Boolean = publicationBridge.persistArtifactMutation(
+        pageKey = pageKey,
+        previous = previous,
+        updated = updated,
+        expected = expected,
+        durableFailure = durableFailure,
+        journalCredit = journalCredit,
+        journalFlushBatch = journalFlushBatch,
+    )
 
     /**
-     * Lazily creates the artifact store for a chapter that has no manifest yet.
-     * Suspending: acquires the same per-artifact open lock as [openArtifactSuspend]
-     * by waiting as a coroutine, so lazy loads and recovery opens cannot race
-     * each other and a first write never parks a carrier thread while holding
-     * the store mutex. Lock order: store mutex → artifact-open lock (never
-     * reversed).
+     * Lazily creates the artifact store for a chapter that has no manifest
+     * yet; delegates to the publication bridge. Suspending: acquires the
+     * per-artifact open lock as a coroutine (store mutex -> artifact-open
+     * lock, never reversed).
      */
-    private suspend fun ensureArtifactStore(): Boolean {
-        if (engineMode is ChapterStoreEngineMode.Durable) {
-            return artifactManifest != null
-        }
-        // Lazy production stores must provide an artifact parent/name. A store
-        // opened before its document existed resolves the parent through
-        // [artifactParentResolver] here, so the first real write creates the artifact
-        // manifest without reading or writing the preserved flat compatibility file.
-        val parent = artifactParent
-            ?: artifactParentResolver?.let { resolve -> runCatching { resolve() }.getOrNull() }
-            ?: return false
-        val fileName = artifactFileName ?: return false
-        val layout = ChapterArtifactLayout.fromArtifactFileName(fileName)
-        val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
-        val store = ChapterArtifactEngine(documents, layout)
-        val manifest = withContext(Dispatchers.IO) {
-            withArtifactOpenLock(parent, fileName) { store.load().manifest }
-        }
-        engineMode = ChapterStoreEngineMode.Durable(store)
-        artifactManifest = manifest
-        return true
-    }
-
-    private fun PageTranslationView.sourceIdentity(pageKey: String): SourceIdentity? =
-        sourceFingerprint?.let { fingerprint ->
-            SourceIdentity(
-                pageKey = pageKey,
-                sha256 = fingerprint,
-                width = imgWidth.takeIf { it > 0f }?.toInt(),
-                height = imgHeight.takeIf { it > 0f }?.toInt(),
-            )
-        }
+    private suspend fun ensureArtifactStore(): Boolean = publicationBridge.ensureArtifactStore()
 
     /**
      * Atomic committed-display promotion: when the page just reached a fully
@@ -4793,7 +4411,7 @@ class ChapterTranslationStore internal constructor(
             }
         }
 
-        private class ArtifactOpenLock {
+        internal class ArtifactOpenLock {
             val mutex = Mutex()
             var references = 0
         }
@@ -4805,7 +4423,7 @@ class ChapterTranslationStore internal constructor(
             return "$parentKey:$fileName"
         }
 
-        private suspend fun <T> withArtifactOpenLock(
+        internal suspend fun <T> withArtifactOpenLock(
             parent: UniFile?,
             fileName: String,
             block: suspend (ArtifactOpenLock) -> T,
