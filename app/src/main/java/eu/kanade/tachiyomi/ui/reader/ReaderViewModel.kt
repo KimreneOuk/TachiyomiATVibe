@@ -60,9 +60,7 @@ import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.AutoSmoothnessTelemetry
-import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.workflow.TranslationManager
 import eu.kanade.translation.workflow.TranslationSessionState
 import kotlinx.collections.immutable.ImmutableList
@@ -147,7 +145,6 @@ class ReaderViewModel @JvmOverloads constructor(
     private val updateChapter: UpdateChapter = Injekt.get(),
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
     internal val translationManager: TranslationManager = Injekt.get(),
-    internal val translationScheduler: TranslationScheduler = Injekt.get(),
     internal val streamRegistry: TranslationStreamRegistry = Injekt.get(),
     internal val chapterCache: ChapterCache = Injekt.get(),
     val translationPreferences: tachiyomi.domain.translation.TranslationPreferences = Injekt.get(),
@@ -158,17 +155,6 @@ class ReaderViewModel @JvmOverloads constructor(
 
     val translationSessionState: kotlinx.coroutines.flow.StateFlow<TranslationSessionState>
         get() = translationManager.sessionCoordinator.state
-
-    /** Reader-specific rolling Auto projection; batch state remains separate. */
-    val autoTranslationUiState: kotlinx.coroutines.flow.StateFlow<ReaderAutoTranslationUiState> =
-        state
-            .map { it.autoTranslation }
-            .distinctUntilChanged()
-            .stateIn(
-                viewModelScope,
-                kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
-                ReaderAutoTranslationUiState.empty(),
-            )
 
     /** The queue is selected by the current chapter ID; no other chapter may replace it. */
     val translationQueueState: kotlinx.coroutines.flow.StateFlow<ImmutableList<QueuedPageInfo>> =
@@ -353,11 +339,10 @@ class ReaderViewModel @JvmOverloads constructor(
     internal var translationStoreJob: kotlinx.coroutines.Job? = null
     internal var translationBatchProgressJob: kotlinx.coroutines.Job? = null
     internal var translationStateJob: kotlinx.coroutines.Job? = null
-    internal var autoSnapshotJob: kotlinx.coroutines.Job? = null
     internal var currentTranslationStore: eu.kanade.translation.persistence.chapter.ChapterTranslationStore? = null
 
     /** Resolver indirection is invalidated before any chapter/page resources are recycled. */
-    internal val autoPageResolver = ReaderAutoTranslationPageResolver(chapterCache)
+    internal val autoPageResolver = ReaderPageWorkResolver(chapterCache)
 
     /**
      * Source readiness is a reader-lifecycle signal, not a page observer. The loader callback
@@ -367,26 +352,6 @@ class ReaderViewModel @JvmOverloads constructor(
     internal val autoReadinessGeneration = AtomicLong(0L)
     internal var autoReadinessLoader: PageLoader? = null
     internal var autoReadinessPokeInFlight = false
-
-    /** Identity of the reader-owned rolling window currently bound to the UI. */
-    @Volatile
-    internal var activeAutoIdentity: AutoChapterIdentity? = null
-
-    /** Fences late emissions from a collector that was replaced by a new window. */
-    internal val autoSnapshotGeneration = AtomicLong(0L)
-
-    /**
-     * Stable-flow emissions can lag a synchronous coordinator replacement. Keep the last
-     * accepted scheduler tuple so a same-identity collector cannot publish a lower owner or
-     * window version while the flow switches stores.
-     */
-    internal val autoSnapshotFenceLock = Any()
-    internal var acceptedAutoOwnerVersion: Long? = null
-    internal var acceptedAutoWindowVersion: Long = -1L
-    internal var activeAutoOwnerToken: Any? = null
-
-    /** Distinguishes a reopened reader from an older coordinator session. */
-    internal val autoReaderSessionKey = "reader-${System.identityHashCode(this)}"
 
     // TachiyomiAT: the published [State.translationState] now reflects BOTH the
     // batch-queue status (batchTranslationState, driven by observeTranslationState)
@@ -592,21 +557,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
         translationPreferences.autoTranslate().changes()
             .onEach { enabled ->
-                if (enabled && translationPreferences.translationEnabled().get()) {
-                    translateCurrentPageForAuto()
-                } else {
-                    resetAutoTranslationState()
-                    val wasActive = getCurrentChapter()?.chapter?.id?.let {
-                        translationManager.cancelAutoTranslations(it)
-                    } ?: false
-                    // TachiyomiAT bug 4 fix: surface the cancellation so the user
-                    // sees the toggle had an effect; the dim clear (sync CANCELLED
-                    // write from B4 step 1) happens inside cancelAutoTranslations.
-                    if (wasActive) {
-                        val context = Injekt.get<Application>()
-                        context.toast(ATMR.strings.auto_translation_disabled_toast)
-                    }
-                }
+                translationController.onReaderAutoToggled(enabled)
             }
             .launchIn(viewModelScope)
 
@@ -623,19 +574,17 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             .launchIn(viewModelScope)
 
-        // Rebind the lane classification when the active translator family
-        // changes while Auto is on (for example ML Kit ↔ remote provider).
+        // Compute-epoch rebind trigger: when the active translator family
+        // changes, drop the captured queue session so the next dispatch
+        // rebinds it with the fresh compute class (the queue's rebind drains
+        // the old epoch's demand set), then re-kick the current page.
         combine(
             translationPreferences.translationEngineCategory().changes(),
             translationPreferences.translationStandardEngine().changes(),
             translationPreferences.translationAiEngine().changes(),
         ) { _, _, _ -> Unit }
             .onEach {
-                if (translationPreferences.translationEnabled().get() &&
-                    translationPreferences.autoTranslate().get()
-                ) {
-                    translateCurrentPageForAuto()
-                }
+                translationController.rebindForComputeEpochChange()
             }
             .launchIn(viewModelScope)
 
@@ -1159,7 +1108,6 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     internal val pageArrivalTimes = java.util.concurrent.ConcurrentHashMap<Int, Long>()
-    internal var autoTranslationScrollJob: kotlinx.coroutines.Job? = null
     private fun handleAutoTranslation(currentPage: ReaderPage) =
         translationController.handleAutoTranslation(currentPage)
 
@@ -1677,8 +1625,6 @@ class ReaderViewModel @JvmOverloads constructor(
         val translationState: Translation.State = Translation.State.NOT_TRANSLATED,
         val translationProgress: Pair<Int, Int> = Pair(0, 0),
         val translationBatchProgress: TranslationProgressSnapshot? = null,
-        /** Rolling Auto state; batch progress and manual state remain separate. */
-        val autoTranslation: ReaderAutoTranslationUiState = ReaderAutoTranslationUiState.empty(),
         // TachiyomiAT: 1-based index of the page currently being translated (the
         // lowest-index page with a RUNNING stage), or 0 when none. The bottom bar
         // uses this so "Translating page N of M" tracks the page the spinner is

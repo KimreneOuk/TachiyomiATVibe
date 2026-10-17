@@ -4,21 +4,21 @@ import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.translation.pipeline.onlinePageTranslationKey
-import eu.kanade.translation.scheduling.AutoChapterIdentity
-import eu.kanade.translation.scheduling.RollingAutoCoordinator
+import eu.kanade.translation.scheduling.ReaderPageWork
+import eu.kanade.translation.scheduling.ReaderSessionToken
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Reader-owned indirection for rolling page resolution.
+ * Reader-owned indirection between a bound queue session and the live reader page list.
  *
- * The coordinator may retain its resolver until a later lifecycle call. The resolver therefore
- * retains only this indirection, never the reader page list directly. Invalidation clears the
- * page list and every stream handle before a chapter loader can be recycled, making a late
- * resolver call inert even when the coordinator still owns its current window specification.
+ * The queue resolves page work lazily through the function this class issues, so the resolver
+ * retains only this indirection, never the queue's demand state. Invalidation clears the page
+ * list and every stream handle before a chapter loader can be recycled, making a late resolver
+ * call inert even when the queue still holds the issued function.
  */
-internal class ReaderAutoTranslationPageResolver(
+internal class ReaderPageWorkResolver(
     private val chapterCache: ChapterCache?,
 ) {
 
@@ -27,38 +27,26 @@ internal class ReaderAutoTranslationPageResolver(
     private val bindingLock = Any()
 
     /**
-     * Binds a reader page list to the scheduler owner that produced its snapshot. The store
-     * token is intentionally compared by identity: a same-key session may replace its store
-     * instance while retaining the same chapter identity, and that replacement must invalidate
-     * old page/loader closures instead of reusing them.
+     * Binds a reader page list to one reader queue session. The token is compared by value and
+     * the store by identity: a same-key session may replace its store instance while retaining
+     * the same chapter identity, and that replacement must invalidate old page/loader closures
+     * instead of reusing them. Rebinding the same session and store replaces only the page list;
+     * already-issued stream handles stay valid.
      */
     fun bind(
-        identity: AutoChapterIdentity,
+        session: ReaderSessionToken,
+        store: Any?,
         pages: List<ReaderPage>,
-        ownerVersion: Long?,
-        ownerToken: Any? = null,
-    ): (Int) -> RollingAutoCoordinator.PageWorkItem? = synchronized(bindingLock) {
+    ): (Int) -> ReaderPageWork? = synchronized(bindingLock) {
         val nextGeneration = generation.incrementAndGet()
         val existing = activeBinding.get()
         val nextBinding = existing
-            ?.takeIf {
-                it.identity == identity &&
-                    it.ownerToken === ownerToken &&
-                    (
-                        ownerVersion == null ||
-                            it.ownerVersion.get() == null ||
-                            it.ownerVersion.get() == ownerVersion
-                        )
-            }
-            ?.also {
-                if (ownerVersion != null) it.ownerVersion.set(ownerVersion)
-                it.binding.replacePages(pages)
-            }
+            ?.takeIf { it.session == session && it.store === store }
+            ?.also { it.binding.replacePages(pages) }
             ?: BoundBinding(
                 binding = Binding(pages, chapterCache),
-                identity = identity,
-                ownerToken = ownerToken,
-                ownerVersion = AtomicReference(ownerVersion),
+                session = session,
+                store = store,
             ).also { binding ->
                 activeBinding.getAndSet(binding)?.binding?.clear()
             }
@@ -67,24 +55,12 @@ internal class ReaderAutoTranslationPageResolver(
             val active = activeBinding.get()
             if (generation.get() != nextGeneration ||
                 active !== nextBinding ||
-                active.identity != identity
+                active.session != session
             ) {
                 return@resolver null
             }
             nextBinding.binding.resolve(index)
         }
-    }
-
-    /** Records the owner version once the stable scheduler snapshot reaches the Reader. */
-    fun bindOwnerVersion(
-        identity: AutoChapterIdentity,
-        ownerToken: Any?,
-        ownerVersion: Long,
-    ) = synchronized(bindingLock) {
-        activeBinding.get()
-            ?.takeIf { it.identity == identity && it.ownerToken === ownerToken }
-            ?.ownerVersion
-            ?.set(ownerVersion)
     }
 
     /** Invalidates all retained page and stream references before reader teardown. */
@@ -95,9 +71,8 @@ internal class ReaderAutoTranslationPageResolver(
 
     private data class BoundBinding(
         val binding: Binding,
-        val identity: AutoChapterIdentity,
-        val ownerToken: Any?,
-        val ownerVersion: AtomicReference<Long?>,
+        val session: ReaderSessionToken,
+        val store: Any?,
     )
 
     private class Binding(
@@ -113,7 +88,7 @@ internal class ReaderAutoTranslationPageResolver(
             pagesRef = pages
         }
 
-        fun resolve(index: Int): RollingAutoCoordinator.PageWorkItem? = synchronized(lock) {
+        fun resolve(index: Int): ReaderPageWork? = synchronized(lock) {
             val page = pagesRef?.getOrNull(index) ?: return@synchronized null
             val pageKey = resolveReaderPageTranslationKey(page)
             val imageUrl = page.imageUrl
@@ -131,8 +106,9 @@ internal class ReaderAutoTranslationPageResolver(
             }
 
             val issuedStream = stream?.let { factory -> IssuedStream(factory, lifecycle) }
-            RollingAutoCoordinator.PageWorkItem(
+            ReaderPageWork(
                 pageKey = pageKey,
+                readerPageIndex = index,
                 streamFn = issuedStream?.let { it::open },
             )
         }
@@ -144,8 +120,8 @@ internal class ReaderAutoTranslationPageResolver(
     }
 
     /**
-     * Stream functions can outlive the resolver call in the coordinator. Capture the exact
-     * factory selected for that work item so a later page-list replacement cannot retarget an
+     * Stream functions can outlive the resolver call in the queue. Capture the exact factory
+     * selected for that work item so a later page-list replacement cannot retarget an
      * already-issued item. The binding lock remains the lifecycle gate: invalidation is ordered
      * before loader/page recycling, and an open already holding the gate completes before clear.
      */
@@ -163,7 +139,7 @@ internal class ReaderAutoTranslationPageResolver(
 
         fun open(factory: () -> InputStream): InputStream = synchronized(lock) {
             check(active) {
-                "Reader Auto page resolver was invalidated before stream access"
+                "Reader page work resolver was invalidated before stream access"
             }
             factory()
         }
@@ -191,22 +167,22 @@ internal fun resolveReaderPageTranslationKey(page: ReaderPage): String {
 }
 
 /**
- * Pure identity/lifecycle gate used by the loader readiness callback. Keeping this predicate
- * outside the callback makes rapid chapter replacement and preference shutdown auditable without
- * constructing a ViewModel or subscribing to page status flows in tests.
+ * Pure identity/lifecycle gate used by the loader readiness callback. Shared reader semantics:
+ * a source-ready signal reconciles any captured reader session — including a manual deferred
+ * demand while auto is off — as long as the chapter, session token and readiness generation
+ * still match and translation is enabled. Keeping this predicate outside the callback makes
+ * rapid chapter replacement and preference shutdown auditable without constructing a ViewModel.
  */
-internal fun shouldReconcileAutoSourceReady(
+internal fun shouldReconcileReaderSourceReady(
     currentChapter: ReaderChapter?,
     boundChapter: ReaderChapter,
-    activeIdentity: AutoChapterIdentity?,
-    boundIdentity: AutoChapterIdentity,
-    activeGeneration: Long,
-    boundGeneration: Long,
+    activeSession: ReaderSessionToken?,
+    boundSession: ReaderSessionToken,
+    activeReadinessGeneration: Long,
+    boundReadinessGeneration: Long,
     translationEnabled: Boolean,
-    autoTranslate: Boolean,
 ): Boolean =
     currentChapter === boundChapter &&
-        activeIdentity == boundIdentity &&
-        activeGeneration == boundGeneration &&
-        translationEnabled &&
-        autoTranslate
+        activeSession == boundSession &&
+        activeReadinessGeneration == boundReadinessGeneration &&
+        translationEnabled

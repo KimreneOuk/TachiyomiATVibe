@@ -40,13 +40,14 @@ import java.util.concurrent.atomic.AtomicReference
  * Reader scheduling facade over the single [ReaderTranslationQueue].
  *
  * Since the Phase 4 S2 cutover the queue owns job scheduling, deduplication,
- * promotion, and cancellation; this class resolves the admitted session token,
- * delegates manual taps to [ReaderTranslationQueue.submitCurrent] and window
- * updates to [ReaderTranslationQueue.bindSession] +
- * [ReaderTranslationQueue.updateViewport], and projects queue truth into
- * [AutoTranslationSnapshot] through the temporary
- * [ReaderQueueSnapshotAdapter] (removed in S4). The rolling coordinator is no
- * longer constructed; its class remains compiled until S4 retirement.
+ * promotion, and cancellation; since S3 the reader callers submit through the
+ * typed facade — [bindReaderQueueSession], [submitReaderPage],
+ * [updateReaderViewport], [setReaderAutoEnabled] and [reconcileReaderQueue] —
+ * which resolves the admitted session token and delegates once. The temporary
+ * [ReaderQueueSnapshotAdapter] projection ([updateAutoWindow]/[autoSnapshot])
+ * lost its last reader-UI consumer in S3 and is removed in S4. The rolling
+ * coordinator is no longer constructed or referenced; its class remains
+ * compiled until S4 retirement.
  */
 class TranslationScheduler(
     private val executor: TranslationExecutor,
@@ -112,6 +113,7 @@ class TranslationScheduler(
         val chapterId: Long,
         val sessionKey: String,
         val store: ChapterTranslationStore?,
+        val computeClass: TranslatorComputeClass,
     )
 
     // One queue binding exists at a time; this registry tracks the token last
@@ -166,6 +168,10 @@ class TranslationScheduler(
      * Manual arbitration: the queue owns it natively — a manual tap promotes
      * the same demand (explicit priority) instead of hiding the page from a
      * separate coordinator, so the resolver is passed through unwrapped.
+     *
+     * Reader-UI callers moved to the typed facade in S3
+     * ([bindReaderQueueSession]/[updateReaderViewport]); this entry remains for
+     * the manager window gate tests until S4 retirement.
      */
     fun updateAutoWindow(
         identity: AutoChapterIdentity,
@@ -173,52 +179,23 @@ class TranslationScheduler(
         configuredAheadTarget: Int,
         pageCount: Int,
         session: TranslationSession,
-        pageResolver: (Int) -> RollingAutoCoordinator.PageWorkItem?,
+        pageResolver: (Int) -> ReaderPageWork?,
         computeClass: TranslatorComputeClass,
     ) {
-        val rejectionReason = readerSessionRejectionReason(identity.chapterId)
-        if (rejectionReason != null) {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT reader auto admission rejected at scheduler gate: " +
-                    "reason=$rejectionReason chapterId=${identity.chapterId}"
-            }
-            return
-        }
         val chapterId = session.chapter.id ?: return
-        synchronized(autoCoordinatorLock) {
-            if (readerStopInFlight || globalAutoCancellationInFlight) return
-            if (identity.chapterId in chapterCancellationEpochs) return
-        }
         val existing = sessions[chapterId]
         val reuse = existing != null &&
             existing.token == currentToken.get() &&
             existing.sessionKey == session.key &&
-            existing.store === session.store
-        val token = if (reuse && existing != null) {
-            existing.token
-        } else {
-            val fresh = ReaderSessionToken(
-                chapterIdentity = session.key,
-                readerGeneration = readerGeneration.incrementAndGet(),
-            )
-            queue.bindSession(fresh, session.manga, session.chapter, session.source, computeClass)
-            currentToken.set(fresh)
-            sessions[chapterId] = ActiveQueueSession(fresh, chapterId, session.key, session.store)
-            fresh
-        }
+            existing.store === session.store &&
+            existing.computeClass == computeClass
+        val token = bindReaderQueueSession(chapterId, session, computeClass) ?: return
         val ownerVersion = if (reuse) {
             queueWindow.value?.ownerVersion ?: ownerVersions.incrementAndGet()
         } else {
             ownerVersions.incrementAndGet()
         }
         val windowVersion = windowVersions.incrementAndGet()
-        val pageKeysByIndex = ConcurrentHashMap<Int, String>()
-        val wrappedResolver: (Int) -> ReaderPageWork? = { index ->
-            pageResolver(index)?.let { item ->
-                pageKeysByIndex[index] = item.pageKey
-                ReaderPageWork(item.pageKey, index, item.streamFn)
-            }
-        }
         queueWindow.value = ReaderQueueWindowSpec(
             identity = identity,
             session = session,
@@ -228,15 +205,88 @@ class TranslationScheduler(
             pageCount = pageCount,
             ownerVersion = ownerVersion,
             windowVersion = windowVersion,
-            pageKeysByIndex = pageKeysByIndex,
+            pageKeysByIndex = ConcurrentHashMap(),
         )
         queue.updateViewport(
             session = token,
             pageIndex = visiblePageIndex,
             pageCount = pageCount,
             isAutoEnabled = true,
-            resolve = wrappedResolver,
+            resolve = pageResolver,
         )
+    }
+
+    /**
+     * Binds (or reuses) the queue session for [chapterId] and returns its token.
+     * Reuse requires the same admitted session key, the same store instance and
+     * the same compute class — a changed value rebinds, which cancels the old
+     * binding's demand set under the queue's epoch drain. Suppressed during an
+     * in-flight reader stop, a global auto cancellation, or a chapter
+     * cancellation epoch; returns null in those cases.
+     */
+    fun bindReaderQueueSession(
+        chapterId: Long,
+        session: TranslationSession,
+        computeClass: TranslatorComputeClass,
+    ): ReaderSessionToken? {
+        val rejectionReason = readerSessionRejectionReason(chapterId)
+        if (rejectionReason != null) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT reader auto admission rejected at scheduler gate: " +
+                    "reason=$rejectionReason chapterId=$chapterId"
+            }
+            return null
+        }
+        synchronized(autoCoordinatorLock) {
+            if (readerStopInFlight || globalAutoCancellationInFlight) return null
+            if (chapterId in chapterCancellationEpochs) return null
+        }
+        val existing = sessions[chapterId]
+        val reuse = existing != null &&
+            existing.token == currentToken.get() &&
+            existing.sessionKey == session.key &&
+            existing.store === session.store &&
+            existing.computeClass == computeClass
+        if (reuse && existing != null) return existing.token
+        val fresh = ReaderSessionToken(
+            chapterIdentity = session.key,
+            readerGeneration = readerGeneration.incrementAndGet(),
+        )
+        queue.bindSession(fresh, session.manga, session.chapter, session.source, computeClass)
+        currentToken.set(fresh)
+        sessions[chapterId] = ActiveQueueSession(fresh, chapterId, session.key, session.store, computeClass)
+        return fresh
+    }
+
+    /** Typed manual/auto page submission for a captured reader session. */
+    fun submitReaderPage(
+        token: ReaderSessionToken,
+        work: ReaderPageWork,
+        trigger: ReaderTrigger,
+        force: Boolean = false,
+    ): ReaderSubmission = queue.submitCurrent(token, work, trigger, force)
+
+    /** Arms or refreshes the auto window demand set (exactly N, N+1) for the captured session. */
+    fun updateReaderViewport(
+        token: ReaderSessionToken,
+        pageIndex: Int,
+        pageCount: Int,
+        resolve: (Int) -> ReaderPageWork?,
+    ) {
+        queue.updateViewport(token, pageIndex, pageCount, isAutoEnabled = true, resolve = resolve)
+    }
+
+    /** Queue-native auto toggle: prunes automatic demand when disabled, arms viewport updates when enabled. */
+    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean) {
+        queue.setAutoEnabled(token, enabled)
+    }
+
+    /** Re-drives queued demands for the captured session after a source/memory/lifecycle event. */
+    fun reconcileReaderQueue(
+        token: ReaderSessionToken,
+        resolve: (Int) -> ReaderPageWork?,
+    ) {
+        queue.reconcile(token, resolve)
     }
 
     /**
@@ -359,7 +409,7 @@ class TranslationScheduler(
             )
             queue.bindSession(fresh, manga, chapter, source, TranslatorComputeClass.REMOTE_IO)
             currentToken.set(fresh)
-            sessions[chapterId] = ActiveQueueSession(fresh, chapterId, fresh.chapterIdentity, null)
+            sessions[chapterId] = ActiveQueueSession(fresh, chapterId, fresh.chapterIdentity, null, TranslatorComputeClass.REMOTE_IO)
             fresh
         }
         // The controller registers the reader stream in the stream registry

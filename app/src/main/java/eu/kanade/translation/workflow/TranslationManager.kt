@@ -26,6 +26,9 @@ import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.scheduling.ReaderSessionToken
+import eu.kanade.translation.scheduling.ReaderSubmission
+import eu.kanade.translation.scheduling.ReaderTrigger
 import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import kotlinx.coroutines.CoroutineScope
@@ -1988,7 +1991,7 @@ class TranslationManager private constructor(
         configuredAheadTarget: Int,
         pageCount: Int,
         session: TranslationSession,
-        pageResolver: (Int) -> eu.kanade.translation.scheduling.RollingAutoCoordinator.PageWorkItem?,
+        pageResolver: (Int) -> eu.kanade.translation.scheduling.ReaderPageWork?,
         computeClass: eu.kanade.translation.engines.translator.TranslatorComputeClass,
     ) {
         when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(identity.chapterId))) {
@@ -2034,6 +2037,99 @@ class TranslationManager private constructor(
         // chapter's batch queue entry is retained.
         scheduler.reconcileAutoWindow(admissionGuard = { chapterId -> !isChapterBatchActive(chapterId, includePaused = true) })
     }
+
+    /**
+     * Typed reader queue facade (Phase 4 S3). Binds or reuses the queue session
+     * admitted for [session]'s chapter and returns its token, applying the same
+     * workflow admission and BATCH-suppression gates as the window entry. Null
+     * when admission is denied.
+     */
+    fun bindReaderQueue(
+        session: TranslationSession,
+        computeClass: eu.kanade.translation.engines.translator.TranslatorComputeClass,
+    ): ReaderSessionToken? {
+        val chapterId = session.chapter.id ?: return null
+        when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
+            is SessionAdmission.Admitted,
+            is SessionAdmission.Switched,
+            -> Unit
+
+            is SessionAdmission.Rejected -> {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT reader auto admission rejected: reason=${admission.reason} " +
+                        "chapterId=$chapterId"
+                }
+                return null
+            }
+        }
+        if (isChapterBatchActive(chapterId, includePaused = true)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=$chapterId"
+            }
+            return null
+        }
+        return scheduler.bindReaderQueueSession(chapterId, session, computeClass)
+    }
+
+    /** Submits one page of work for the captured reader session. */
+    fun submitReaderPage(
+        token: ReaderSessionToken,
+        work: eu.kanade.translation.scheduling.ReaderPageWork,
+        trigger: ReaderTrigger,
+        force: Boolean = false,
+    ): ReaderSubmission = scheduler.submitReaderPage(token, work, trigger, force)
+
+    /** Arms or refreshes the auto viewport demand set (exactly N, N+1) for the captured session. */
+    fun updateReaderViewport(
+        token: ReaderSessionToken,
+        chapterId: Long,
+        pageIndex: Int,
+        pageCount: Int,
+        resolve: (Int) -> eu.kanade.translation.scheduling.ReaderPageWork?,
+    ) {
+        if (isChapterBatchActive(chapterId, includePaused = true)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=$chapterId"
+            }
+            return
+        }
+        scheduler.updateReaderViewport(token, pageIndex, pageCount, resolve)
+    }
+
+    /** Queue-native auto toggle for the captured reader session. */
+    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean) =
+        scheduler.setReaderAutoEnabled(token, enabled)
+
+    /**
+     * Re-drives queued demands for the captured session after a source-ready,
+     * memory or foreground event. A stale window is not re-admitted mid-batch.
+     */
+    fun reconcileReaderQueue(
+        token: ReaderSessionToken,
+        chapterId: Long,
+        resolve: (Int) -> eu.kanade.translation.scheduling.ReaderPageWork?,
+    ) {
+        if (isChapterBatchActive(chapterId, includePaused = true)) return
+        scheduler.reconcileReaderQueue(token, resolve)
+    }
+
+    /**
+     * Source factory for a manual tap on a downloaded chapter without live page
+     * bytes. Each invocation rescans the chapter dir and opens a fresh stream;
+     * a missing dir or page throws so the attempt fails with a typed pipeline
+     * failure instead of a null dereference.
+     */
+    fun downloadedChapterPageStream(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+    ): (() -> java.io.InputStream)? =
+        if (chapter.id == null) {
+            null
+        } else {
+            downloadedPageStreamFactory(manga, chapter, source, pageKey)
+        }
 
     /** Reader-facing projection with the committed display pointer applied. */
     fun observeActiveDisplayStore(chapterId: Long): StateFlow<Map<String, PageTranslationView>>? =

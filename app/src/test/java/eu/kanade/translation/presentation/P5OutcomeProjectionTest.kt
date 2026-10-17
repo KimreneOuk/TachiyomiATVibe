@@ -7,8 +7,6 @@ import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.scheduling.AutoDeferralReason
-import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.TranslationScheduler
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
@@ -24,8 +22,8 @@ import java.lang.reflect.Method
  *
  * Reflection keeps the assertions focused on the truth record and reports a
  * missing contract clearly instead of failing at compile time. Inputs are only
- * existing typed values ([SinglePageOutcome], [PageDisplayProjection],
- * [AutoSlotState]); the output is read reflectively as a truth record with:
+ * existing typed values ([SinglePageOutcome], [PageDisplayProjection]); the
+ * output is read reflectively as a truth record with:
  *
  *  - `label`               semantic English-source label (localized by surfaces)
  *  - `severity`            INFO / PROGRESS / WARNING / ERROR
@@ -37,9 +35,11 @@ import java.lang.reflect.Method
  *
  * Mapper behavior covered here:
  * manual — `TranslationUiTruth.forManualOutcome(outcome, durable, partial,
- * exhausted, cancelled)`; auto — `TranslationUiTruth.forAutoSlot(slot,
- * retryAtEpochMs)`. A stale/unconfirmable success may never project
- * "Translated" (§1.2: no mapper may produce success from a stale callback).
+ * exhausted, cancelled)`. Since the Phase 4 S3 cutover the reader has no
+ * auto-slot inputs: per-page truth comes from `forManualOutcome` over the
+ * queue's typed outcomes plus the display projection. A stale/unconfirmable
+ * success may never project "Translated" (§1.2: no mapper may produce success
+ * from a stale callback).
  */
 class P5OutcomeProjectionTest {
 
@@ -85,9 +85,6 @@ class P5OutcomeProjectionTest {
         exhausted,
         cancelled,
     )
-
-    private fun projectAuto(slot: AutoSlotState, retryAtEpochMs: Long? = null): Any? =
-        mapper("forAutoSlot", 2).apply { isAccessible = true }.invoke(truth(), slot, retryAtEpochMs)
 
     private fun prop(value: Any?, name: String): Any? {
         val getter = "get" + name.replaceFirstChar { it.uppercase() }
@@ -388,71 +385,6 @@ class P5OutcomeProjectionTest {
             str(truth, "label") shouldBe "Translated."
             flag(truth, "terminalSuccess") shouldBe true
         }
-    }
-
-    // ------------------------------------------------------------------
-    // Rolling auto slots (auto page/status column)
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `auto deferred slot keeps its retry epoch and never reads as ready`() {
-        val deferred = projectAuto(
-            AutoSlotState.Deferred(AutoDeferralReason.Memory),
-            retryAtEpochMs = 4_500L,
-        )
-        withClue("the coordinator's retry epoch must survive into the projection") {
-            str(deferred, "label") shouldBe "Auto paused; retries automatically when available."
-            word(deferred, "severity") shouldBe "WARNING"
-            word(deferred, "retryMode") shouldBe "AUTOMATIC"
-            epoch(deferred) shouldBe 4_500L
-            flag(deferred, "terminalSuccess") shouldBe false
-            str(deferred, "contentDescription") shouldBe
-                "Auto translation paused; automatic retry when available."
-        }
-        val waiting = projectAuto(AutoSlotState.Deferred(AutoDeferralReason.Network))
-        withClue("an unknown epoch stays null and automatic") {
-            word(waiting, "retryMode") shouldBe "AUTOMATIC"
-            epoch(waiting).shouldBeNull()
-            flag(waiting, "terminalSuccess") shouldBe false
-        }
-    }
-
-    @Test
-    fun `auto failed slots separate will retry from action required`() {
-        val retryable = projectAuto(AutoSlotState.Failed(retryable = true))
-        str(retryable, "label") shouldBe "Auto failed — will retry when available."
-        word(retryable, "retryMode") shouldBe "AUTOMATIC"
-        flag(retryable, "terminalSuccess") shouldBe false
-
-        val terminal = projectAuto(AutoSlotState.Failed(retryable = false))
-        str(terminal, "label") shouldBe "Auto failed — action required."
-        word(terminal, "severity") shouldBe "ERROR"
-        word(terminal, "retryMode") shouldBe "NONE"
-        names(terminal, "actions") shouldBe setOf("REVIEW", "DETAILS")
-        flag(terminal, "terminalSuccess") shouldBe false
-        str(terminal, "contentDescription") shouldBe "Auto translation failed and needs attention."
-    }
-
-    @Test
-    fun `auto queued and stage slots never count as ready`() {
-        projectAuto(AutoSlotState.Queued).let { queued ->
-            str(queued, "label") shouldBe "Queued."
-            word(queued, "severity") shouldBe "PROGRESS"
-            flag(queued, "terminalSuccess") shouldBe false
-            str(queued, "contentDescription") shouldBe "Translation queued; work has not started."
-        }
-        projectAuto(AutoSlotState.ReadingText).let { stage ->
-            str(stage, "label") shouldBe "Reading text."
-            flag(stage, "terminalSuccess") shouldBe false
-            str(stage, "contentDescription") shouldBe "Translation stage: reading text."
-        }
-        str(projectAuto(AutoSlotState.Cleaning), "label") shouldBe "Cleaning bubbles."
-        str(projectAuto(AutoSlotState.Translating), "label") shouldBe "Translating text."
-        str(projectAuto(AutoSlotState.Rendering), "label") shouldBe "Finishing page."
-
-        val ready = projectAuto(AutoSlotState.Ready)
-        str(ready, "label") shouldBe "Translated."
-        flag(ready, "terminalSuccess") shouldBe true
     }
 
     // ------------------------------------------------------------------

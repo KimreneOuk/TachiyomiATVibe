@@ -138,8 +138,8 @@ class RollingAutoCoordinatorTest {
      * demands carrying a real stream factory (null defers for source-ready
      * refresh), so these supply a fresh empty stream per attempt.
      */
-    private fun queueResolver(prefix: String = "p"): (Int) -> RollingAutoCoordinator.PageWorkItem? = { idx ->
-        RollingAutoCoordinator.PageWorkItem("$prefix$idx") { java.io.ByteArrayInputStream(ByteArray(0)) }
+    private fun queueResolver(prefix: String = "p"): (Int) -> ReaderPageWork? = { idx ->
+        ReaderPageWork("$prefix$idx", idx) { java.io.ByteArrayInputStream(ByteArray(0)) }
     }
 
     /**

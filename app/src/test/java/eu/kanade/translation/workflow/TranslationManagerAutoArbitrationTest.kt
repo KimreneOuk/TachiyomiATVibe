@@ -6,7 +6,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.scheduling.AutoChapterIdentity
-import eu.kanade.translation.scheduling.RollingAutoCoordinator
+import eu.kanade.translation.scheduling.ReaderPageWork
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStoreResolver
@@ -131,7 +131,7 @@ class TranslationManagerAutoArbitrationTest {
                 configuredAheadTarget = 0,
                 pageCount = 1,
                 session = session,
-                pageResolver = { RollingAutoCoordinator.PageWorkItem("p0", null) },
+                pageResolver = { ReaderPageWork("p0", 0, null) },
                 computeClass = eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
@@ -155,7 +155,7 @@ class TranslationManagerAutoArbitrationTest {
                 0,
                 1,
                 session,
-                { RollingAutoCoordinator.PageWorkItem("p0", null) },
+                { ReaderPageWork("p0", 0, null) },
                 eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             val reArmedWhileQueued = autoWindowReArmed()
@@ -183,7 +183,7 @@ class TranslationManagerAutoArbitrationTest {
                 0,
                 1,
                 session,
-                { RollingAutoCoordinator.PageWorkItem("p0", null) },
+                { ReaderPageWork("p0", 0, null) },
                 eu.kanade.translation.engines.translator.TranslatorComputeClass.REMOTE_IO,
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }

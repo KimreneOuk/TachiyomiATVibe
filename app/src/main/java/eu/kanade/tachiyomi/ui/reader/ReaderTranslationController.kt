@@ -51,9 +51,11 @@ import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.AutoSmoothnessTelemetry
-import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.scheduling.ReaderPageWork
+import eu.kanade.translation.scheduling.ReaderSessionToken
+import eu.kanade.translation.scheduling.ReaderSubmission
+import eu.kanade.translation.scheduling.ReaderTrigger
 import eu.kanade.translation.workflow.ReaderSessionIntent
 import eu.kanade.translation.workflow.SessionAdmission
 import eu.kanade.translation.workflow.SessionRejection
@@ -72,6 +74,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
@@ -100,7 +104,6 @@ internal class ReaderTranslationController(
     private val sourceManager: tachiyomi.domain.source.service.SourceManager get() = owner.sourceManager
     private val downloadManager: DownloadManager get() = owner.downloadManager
     private val translationManager: TranslationManager get() = owner.translationManager
-    private val translationScheduler: TranslationScheduler get() = owner.translationScheduler
     private val streamRegistry: TranslationStreamRegistry get() = owner.streamRegistry
     private val chapterCache: ChapterCache get() = owner.chapterCache
     private val translationPreferences: tachiyomi.domain.translation.TranslationPreferences get() = owner.translationPreferences
@@ -123,24 +126,37 @@ internal class ReaderTranslationController(
         set(value) {
             owner.translationStateJob = value
         }
-    private var autoSnapshotJob: Job?
-        get() = owner.autoSnapshotJob
-        set(value) {
-            owner.autoSnapshotJob = value
-        }
     private var currentTranslationStore: ChapterTranslationStore?
         get() = owner.currentTranslationStore
         set(value) {
             owner.currentTranslationStore = value
         }
-    private var autoTranslationScrollJob: Job?
-        get() = owner.autoTranslationScrollJob
-        set(value) {
-            owner.autoTranslationScrollJob = value
-        }
     private val pageArrivalTimes get() = owner.pageArrivalTimes
-    private var pendingDebouncePage: Int? = null
-    private var pendingDebounceStartNs: Long = 0L
+
+    /** One bound reader queue session: token, admitted session and installed resolver. */
+    private class QueueSessionBinding(
+        val token: ReaderSessionToken,
+        val chapterId: Long,
+        val chapter: ReaderChapter,
+        val store: Any?,
+        val computeClass: TranslatorComputeClass,
+        val boundPages: List<ReaderPage>,
+        val resolve: (Int) -> ReaderPageWork?,
+    )
+
+    @Volatile
+    private var capturedSession: QueueSessionBinding? = null
+
+    /**
+     * Latest desired viewport page. The session bind prepares the store/source
+     * asynchronously; when it completes it dispatches THIS page, never the one
+     * captured when the scroll first fired.
+     */
+    @Volatile
+    private var latestViewport: ReaderPage? = null
+
+    /** Serializes session bind attempts; a concurrent bind joins instead of duplicating. */
+    private val sessionBindMutex = Mutex()
 
     internal fun recordArrivalWait(pageIndex: Int, pageKey: String) {
         val arrivalEpoch = pageArrivalTimes.remove(pageIndex) ?: return
@@ -165,29 +181,6 @@ internal class ReaderTranslationController(
         set(value) {
             owner.autoReadinessPokeInFlight = value
         }
-    private var activeAutoIdentity: AutoChapterIdentity?
-        get() = owner.activeAutoIdentity
-        set(value) {
-            owner.activeAutoIdentity = value
-        }
-    private val autoSnapshotGeneration get() = owner.autoSnapshotGeneration
-    private val autoSnapshotFenceLock get() = owner.autoSnapshotFenceLock
-    private var acceptedAutoOwnerVersion: Long?
-        get() = owner.acceptedAutoOwnerVersion
-        set(value) {
-            owner.acceptedAutoOwnerVersion = value
-        }
-    private var acceptedAutoWindowVersion: Long
-        get() = owner.acceptedAutoWindowVersion
-        set(value) {
-            owner.acceptedAutoWindowVersion = value
-        }
-    private var activeAutoOwnerToken: Any?
-        get() = owner.activeAutoOwnerToken
-        set(value) {
-            owner.activeAutoOwnerToken = value
-        }
-    private val autoReaderSessionKey get() = owner.autoReaderSessionKey
     private var batchTranslationState: Translation.State
         get() = owner.batchTranslationState
         set(value) {
@@ -372,96 +365,107 @@ internal class ReaderTranslationController(
         )
     }
 
+    /**
+     * Auto viewport entry point. Records the latest desired viewport and arms
+     * it on the captured queue session immediately — scroll updates the
+     * viewport without debounce, so async store/source preparation can never
+     * drop the newest position. A session bind still in flight dispatches the
+     * latest viewport when it completes.
+     */
     internal fun handleAutoTranslation(currentPage: ReaderPage) {
-        if (autoTranslationScrollJob?.isActive == true) {
-            val prevTarget = pendingDebouncePage ?: -1
-            val elapsedMs = (System.nanoTime() - pendingDebounceStartNs) / 1_000_000.0
-            AutoSmoothnessTelemetry.logDebounceLifecycle(
-                action = "cancel",
-                targetPage = prevTarget,
-                queuedDurationMs = elapsedMs,
-            )
-            autoTranslationScrollJob?.cancel()
+        latestViewport = currentPage
+        val binding = capturedSession
+        if (binding != null && binding.chapter === currentPage.chapter) {
+            dispatchViewport(binding)
+            return
         }
-        val targetPage = currentPage.index
-        val startNs = System.nanoTime()
-        pendingDebouncePage = targetPage
-        pendingDebounceStartNs = startNs
-        AutoSmoothnessTelemetry.logDebounceLifecycle(
-            action = "start",
-            targetPage = targetPage,
-            queuedDurationMs = 0.0,
-        )
-        autoTranslationScrollJob = viewModelScope.launchIO {
-            kotlinx.coroutines.delay(150L)
-            if (state.value.viewerChapters?.currChapter !== currentPage.chapter) {
-                val cancelDurationMs = (System.nanoTime() - startNs) / 1_000_000.0
-                AutoSmoothnessTelemetry.logDebounceLifecycle(
-                    action = "cancel",
-                    targetPage = targetPage,
-                    queuedDurationMs = cancelDurationMs,
-                )
-                return@launchIO
-            }
-            val fireDurationMs = (System.nanoTime() - startNs) / 1_000_000.0
-            AutoSmoothnessTelemetry.logDebounceLifecycle(
-                action = "fire",
-                targetPage = targetPage,
-                queuedDurationMs = fireDurationMs,
-            )
-            handleAutoTranslationOnIo(currentPage)
+        viewModelScope.launchIO {
+            val bound = ensureQueueSession(currentPage.chapter) ?: return@launchIO
+            dispatchViewport(bound)
         }
     }
 
-    private suspend fun handleAutoTranslationOnIo(currentPage: ReaderPage) {
-        val chapterId = currentPage.chapter.chapter.id ?: return
-        val manga = manga ?: return
-        val chapter = currentPage.chapter.chapter
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+    /**
+     * Binds (or reuses) the reader queue session for [chapter]: opens the
+     * admitted translation session, binds the queue with the live compute
+     * class, and installs the page work resolver. The async preparation joins
+     * a concurrent bind instead of duplicating it.
+     */
+    private suspend fun ensureQueueSession(chapter: ReaderChapter): QueueSessionBinding? {
+        capturedSession?.takeIf { it.chapter === chapter }?.let { return it }
+        sessionBindMutex.withLock {
+            capturedSession?.takeIf { it.chapter === chapter }?.let { return it }
+            val manga = manga ?: return null
+            val chapterId = chapter.chapter.id ?: return null
+            val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+            val domainChapter = chapter.chapter.toDomainChapter() ?: return null
+            val session = translationManager.openTranslationSession(manga, domainChapter, source) ?: return null
+            val computeClass = currentTranslatorComputeClass()
+            val token = translationManager.bindReaderQueue(session, computeClass) ?: return null
+            val pages = chapter.pages.orEmpty()
+            val binding = QueueSessionBinding(
+                token = token,
+                chapterId = chapterId,
+                chapter = chapter,
+                store = session.store,
+                computeClass = computeClass,
+                boundPages = pages,
+                resolve = autoPageResolver.bind(token, session.store, pages),
+            )
+            capturedSession = binding
+            installReaderSourceReadiness(chapter, token)
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT reader queue session bound: chapterId=$chapterId " +
+                    "generation=${token.readerGeneration} computeClass=${computeClass.name} pageCount=${pages.size}"
+            }
+            return binding
+        }
+    }
+
+    /** Re-drives the captured session's queued demands after a lifecycle/memory/source event. */
+    private fun reconcileCapturedSession() {
+        val binding = capturedSession ?: return
+        translationManager.reconcileReaderQueue(binding.token, binding.chapterId, binding.resolve)
+    }
+
+    /**
+     * Arms the auto window demand set (exactly N, N+1) on the captured session
+     * for the latest viewport. Rebinding the resolver keeps already-issued
+     * stream handles valid when the reader replaced its page list.
+     */
+    private fun dispatchViewport(binding: QueueSessionBinding) {
+        val currentPage = latestViewport ?: return
+        if (currentPage.chapter !== binding.chapter) return
         val pages = currentPage.chapter.pages ?: return
         val currentIndex = pages.indexOfFirst { it === currentPage }
         if (currentIndex < 0) return
-        val domainChapter = chapter.toDomainChapter() ?: return
-        val session = translationManager.openTranslationSession(manga, domainChapter, source) ?: return
-        val computeClass = currentTranslatorComputeClass()
-        val identity = AutoChapterIdentity(
-            chapterId = chapterId,
-            sessionKey = "$autoReaderSessionKey:${session.key}:${computeClass.name}",
-        )
+        val active = if (pages !== binding.boundPages) {
+            val rebound = QueueSessionBinding(
+                token = binding.token,
+                chapterId = binding.chapterId,
+                chapter = binding.chapter,
+                store = binding.store,
+                computeClass = binding.computeClass,
+                boundPages = pages,
+                resolve = autoPageResolver.bind(binding.token, binding.store, pages),
+            )
+            capturedSession = rebound
+            rebound
+        } else {
+            binding
+        }
         val configuredAheadTarget = translationPreferences.autoTranslatePrefetchCount().get().coerceIn(1, 5)
-
         logcat(LogPriority.INFO) {
             "TachiyomiAT auto-translate window: visible=$currentIndex " +
                 "ahead=$configuredAheadTarget pageCount=${pages.size} pageKey=${resolvePageKey(currentPage)}"
         }
-
-        val ownerVersionHint = synchronized(autoSnapshotFenceLock) {
-            acceptedAutoOwnerVersion.takeIf {
-                activeAutoIdentity == identity && activeAutoOwnerToken === session.store
-            }
-        }
-        // Fence the previous collector before the scheduler publishes its synchronous anchor
-        // snapshot. The stable manager flow may deliver the old value after this call returns.
-        observeAutoSnapshot(identity, session.store, currentIndex)
-        val pageResolver = autoPageResolver.bind(
-            identity = identity,
-            pages = pages,
-            ownerVersion = ownerVersionHint,
-            ownerToken = session.store,
-        )
-        translationManager.updateAutoWindow(
-            identity = identity,
-            visiblePageIndex = currentIndex,
-            configuredAheadTarget = configuredAheadTarget,
+        translationManager.updateReaderViewport(
+            token = active.token,
+            chapterId = active.chapterId,
+            pageIndex = currentIndex,
             pageCount = pages.size,
-            session = session,
-            pageResolver = pageResolver,
-            computeClass = computeClass,
+            resolve = active.resolve,
         )
-        bindAutoSourceReadiness(currentPage.chapter, identity)
-        // Covers the narrow race where the loader published originalStream between the window
-        // update and installing the lifecycle callback. The coordinator trigger is conflated.
-        translationManager.reconcileAutoWindow()
     }
 
     /**
@@ -470,16 +474,15 @@ internal class ReaderTranslationController(
      * originalStream is assigned. Weak references avoid making a loader retain the ViewModel or
      * chapter while the callback is waiting for a late network page.
      */
-    private fun bindAutoSourceReadiness(
+    private fun installReaderSourceReadiness(
         chapter: ReaderChapter,
-        identity: AutoChapterIdentity,
+        token: ReaderSessionToken,
     ) {
         synchronized(autoReadinessLock) {
-            clearAutoSourceReadinessLocked()
+            clearReaderSourceReadinessLocked()
             val pageLoader = chapter.pageLoader
             if (pageLoader != null) {
                 val generation = autoReadinessGeneration.incrementAndGet()
-                val readerGeneration = autoSnapshotGeneration.get()
                 val controllerRef = WeakReference(this@ReaderTranslationController)
                 val boundChapter = WeakReference(chapter)
                 autoReadinessLoader = pageLoader
@@ -487,39 +490,38 @@ internal class ReaderTranslationController(
                     val controller = controllerRef.get()
                     val activeChapter = boundChapter.get()
                     if (controller != null && activeChapter != null) {
-                        controller.onAutoSourceReady(activeChapter, identity, generation, readerGeneration)
+                        controller.onReaderSourceReady(activeChapter, token, generation)
                     }
                 }
             }
         }
     }
 
-    private fun onAutoSourceReady(
+    private fun onReaderSourceReady(
         chapter: ReaderChapter,
-        identity: AutoChapterIdentity,
+        token: ReaderSessionToken,
         readinessGeneration: Long,
-        readerGeneration: Long,
     ) {
         synchronized(autoReadinessLock) {
+            val binding = capturedSession
             val isActive = autoReadinessLoader != null &&
                 readinessGeneration == autoReadinessGeneration.get() &&
-                shouldReconcileAutoSourceReady(
+                shouldReconcileReaderSourceReady(
                     currentChapter = state.value.currentChapter,
                     boundChapter = chapter,
-                    activeIdentity = activeAutoIdentity,
-                    boundIdentity = identity,
-                    activeGeneration = autoSnapshotGeneration.get(),
-                    boundGeneration = readerGeneration,
+                    activeSession = binding?.token,
+                    boundSession = token,
+                    activeReadinessGeneration = autoReadinessGeneration.get(),
+                    boundReadinessGeneration = readinessGeneration,
                     translationEnabled = translationPreferences.translationEnabled().get(),
-                    autoTranslate = translationPreferences.autoTranslate().get(),
                 )
-            if (isActive && !autoReadinessPokeInFlight) {
+            if (isActive && binding != null && !autoReadinessPokeInFlight) {
                 autoReadinessPokeInFlight = true
                 try {
-                    // RollingAutoCoordinator's trigger is CONFLATED. This guard only prevents
-                    // callback re-entry; it is reset after each synchronous reconcile so a later
-                    // source transition is still allowed to wake the same active window.
-                    translationManager.reconcileAutoWindow()
+                    // The queue's trigger is CONFLATED. This guard only prevents
+                    // callback re-entry; it is reset after each reconcile so a later
+                    // source transition is still allowed to wake the same session.
+                    translationManager.reconcileReaderQueue(binding.token, binding.chapterId, binding.resolve)
                 } finally {
                     autoReadinessPokeInFlight = false
                 }
@@ -527,16 +529,16 @@ internal class ReaderTranslationController(
         }
     }
 
-    private fun clearAutoSourceReadinessLocked() {
+    private fun clearReaderSourceReadinessLocked() {
         autoReadinessGeneration.incrementAndGet()
         autoReadinessLoader?.onPageStreamReady = null
         autoReadinessLoader = null
         autoReadinessPokeInFlight = false
     }
 
-    private fun clearAutoSourceReadiness() {
+    private fun clearReaderSourceReadiness() {
         synchronized(autoReadinessLock) {
-            clearAutoSourceReadinessLocked()
+            clearReaderSourceReadinessLocked()
         }
     }
 
@@ -547,94 +549,6 @@ internal class ReaderTranslationController(
             aiEngineName = translationPreferences.translationAiEngine().get().name,
         )
 
-    private fun observeAutoSnapshot(
-        identity: AutoChapterIdentity,
-        ownerToken: Any?,
-        expectedVisiblePageIndex: Int,
-    ) {
-        // The manager exposes the active coordinator's StateFlow. Rebind after
-        // every window update because a batch/revision suppression can replace
-        // that coordinator while keeping the same chapter identity.
-        val generation = synchronized(autoSnapshotFenceLock) {
-            if (activeAutoIdentity != identity) {
-                // A new chapter's owner counter is independent of the old chapter's counter.
-                // The collector generation/identity checks still fence any old flow emission.
-                acceptedAutoOwnerVersion = null
-                acceptedAutoWindowVersion = -1L
-            }
-            activeAutoIdentity = identity
-            activeAutoOwnerToken = ownerToken
-            autoSnapshotGeneration.incrementAndGet()
-        }
-        autoSnapshotJob?.cancel()
-        autoSnapshotJob = viewModelScope.launch {
-            var awaitingFreshSnapshot = true
-            translationManager.autoSnapshot.collect { snapshot ->
-                if (snapshot != null && snapshot.visiblePageIndex != expectedVisiblePageIndex) {
-                    return@collect
-                }
-                val accepted = synchronized(autoSnapshotFenceLock) {
-                    if (!isReaderAutoTranslationSnapshotVersionAccepted(
-                            snapshot = snapshot,
-                            expectedIdentity = identity,
-                            acceptedOwnerVersion = acceptedAutoOwnerVersion,
-                            acceptedWindowVersion = acceptedAutoWindowVersion,
-                            requireStrictlyNew = awaitingFreshSnapshot,
-                        )
-                    ) {
-                        false
-                    } else {
-                        if (snapshot != null &&
-                            (
-                                acceptedAutoOwnerVersion == null ||
-                                    snapshot.ownerVersion > acceptedAutoOwnerVersion!! ||
-                                    snapshot.windowVersion > acceptedAutoWindowVersion
-                                )
-                        ) {
-                            acceptedAutoOwnerVersion = snapshot.ownerVersion
-                            acceptedAutoWindowVersion = snapshot.windowVersion
-                            autoPageResolver.bindOwnerVersion(identity, ownerToken, snapshot.ownerVersion)
-                            awaitingFreshSnapshot = false
-                        }
-                        true
-                    }
-                }
-                if (!accepted) return@collect
-                val projected = projectReaderAutoTranslationUiState(snapshot, identity)
-                mutableState.update { current ->
-                    val active = synchronized(autoSnapshotFenceLock) {
-                        generation == autoSnapshotGeneration.get() &&
-                            activeAutoIdentity == identity &&
-                            activeAutoOwnerToken === ownerToken
-                    }
-                    if (!active) {
-                        current
-                    } else if (current.autoTranslation == projected) {
-                        current
-                    } else {
-                        current.copy(autoTranslation = projected)
-                    }
-                }
-            }
-        }
-    }
-
-    internal fun resetAutoTranslationState() {
-        // Invalidate loader callbacks and resolver-held page/stream handles before any caller
-        // cancels a coordinator or unreferences the chapter's loader resources.
-        clearAutoSourceReadiness()
-        autoPageResolver.invalidate()
-        autoSnapshotGeneration.incrementAndGet()
-        autoSnapshotJob?.cancel()
-        autoSnapshotJob = null
-        activeAutoIdentity = null
-        activeAutoOwnerToken = null
-        val empty = ReaderAutoTranslationUiState.empty()
-        mutableState.update { current ->
-            if (current.autoTranslation == empty) current else current.copy(autoTranslation = empty)
-        }
-    }
-
     /**
      * Translates just the page the user is currently viewing. Used when the
      * Auto toggle is switched ON so the current page starts processing
@@ -644,6 +558,66 @@ internal class ReaderTranslationController(
         val pages = getCurrentChapter()?.pages ?: return
         val page = pages.getOrNull(chapterPageIndex) as? ReaderPage ?: return
         handleAutoTranslation(page)
+    }
+
+    /**
+     * Reader auto-toggle transition. Enabling arms the captured session
+     * queue-natively and kicks the current page; disabling first prunes the
+     * session's automatic demand, then cancels the session and surfaces the
+     * disabled toast.
+     */
+    internal fun onReaderAutoToggled(enabled: Boolean) {
+        val binding = capturedSession
+        if (binding != null) {
+            translationManager.setReaderAutoEnabled(binding.token, enabled)
+        }
+        if (enabled) {
+            if (translationPreferences.translationEnabled().get()) {
+                translateCurrentPageForAuto()
+            }
+            return
+        }
+        resetAutoTranslationState()
+        val wasActive = getCurrentChapter()?.chapter?.id?.let {
+            translationManager.cancelAutoTranslations(it)
+        } ?: false
+        // TachiyomiAT bug 4 fix: surface the cancellation so the user
+        // sees the toggle had an effect; the dim clear (sync CANCELLED
+        // write from B4 step 1) happens inside cancelAutoTranslations.
+        if (wasActive) {
+            val context = Injekt.get<Application>()
+            context.toast(ATMR.strings.auto_translation_disabled_toast)
+        }
+    }
+
+    /**
+     * Engine-family change with Auto on: drop the captured binding so the next
+     * dispatch rebinds the queue session with the fresh compute class — the
+     * queue's rebind drains the old epoch's demand set — then re-kick the
+     * current page through the same viewport path.
+     */
+    internal fun rebindForComputeEpochChange() {
+        viewModelScope.launchIO {
+            // Serialize with an in-flight session bind so a bind that captured
+            // the previous compute class cannot overwrite the drop.
+            sessionBindMutex.withLock {
+                capturedSession = null
+            }
+            if (translationPreferences.autoTranslate().get() &&
+                translationPreferences.translationEnabled().get()
+            ) {
+                translateCurrentPageForAuto()
+            }
+        }
+    }
+
+    internal fun resetAutoTranslationState() {
+        // Invalidate loader callbacks and resolver-held page/stream handles before any caller
+        // cancels a queue session or unreferences the chapter's loader resources.
+        clearReaderSourceReadiness()
+        autoPageResolver.invalidate()
+        capturedSession = null
+        latestViewport = null
     }
 
     internal suspend fun cancelTranslationForChapter(chapter: ReaderChapter) {
@@ -935,63 +909,110 @@ internal class ReaderTranslationController(
             }
             return
         }
+        viewModelScope.launchIO {
+            val binding = ensureQueueSession(page.chapter) ?: run {
+                logcat(LogPriority.WARN) {
+                    "translateSinglePage: no reader queue session for $pageKey (admission denied or store unavailable)"
+                }
+                return@launchIO
+            }
+            val streamFn = resolveManualStreamFn(page, binding) ?: return@launchIO
+            val delayMs = (System.nanoTime() - tapTimeNs) / 1_000_000.0
+            NativeVisionTelemetry.logTapToDispatch(pageKey, delayMs)
+            // One submission path for every byte source: the queue owns dedup,
+            // promotion and the ordered replacement of a forced retry.
+            when (
+                val submission = translationManager.submitReaderPage(
+                    token = binding.token,
+                    work = ReaderPageWork(
+                        pageKey = pageKey,
+                        readerPageIndex = page.index,
+                        streamFn = streamFn,
+                    ),
+                    trigger = ReaderTrigger.MANUAL_TAP,
+                    force = effectiveForce,
+                )
+            ) {
+                is ReaderSubmission.Rejected -> logcat(LogPriority.WARN) {
+                    "translateSinglePage: submission rejected for $pageKey (${submission.outcome})"
+                }
+
+                else -> Unit
+            }
+        }
+    }
+
+    /**
+     * Resolves the tap's stream factory from the page's live byte sources and
+     * registers it with the reader stream registry. A late online download
+     * revalidates the captured session token (which also fences a compute-epoch
+     * rebind) and the page's chapter identity before registration.
+     */
+    private suspend fun resolveManualStreamFn(
+        page: ReaderPage,
+        binding: QueueSessionBinding,
+    ): (() -> InputStream)? {
+        val manga = manga ?: return null
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+        val pageKey = resolvePageKey(page)
         page.originalStream?.let { streamFn ->
             streamRegistry.register(
                 manga,
-                chapter.toDomainChapter()!!,
+                page.chapter.chapter.toDomainChapter()!!,
                 source,
                 pageKey,
                 streamFn,
             )
-            // TachiyomiAT: bytes already available — kick off translation now.
-            // force is resolved from the page's live state: true when a stage is
-            // FAILED (so prepareForcedRetry resets the bookkeeping and the page
-            // can be reprocessed), false otherwise (resume optimization). See the
-            // resolution above + PageTranslation.prepareForcedRetry.
-            val delayMs = (System.nanoTime() - tapTimeNs) / 1_000_000.0
-            NativeVisionTelemetry.logTapToDispatch(pageKey, delayMs)
-            translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
-        } ?: page.imageUrl?.let { imageUrl ->
-            // TachiyomiAT: for online pages not yet cached (originalStream is
-            // null), download the image bytes in a cancellable coroutine and
-            // only THEN register the stream + start translation. Previously this
-            // registered a runBlocking{ source.getImage() } closure, which blocked
-            // an IO thread for the whole download and could not be cancelled on a
-            // chapter switch. Now the download is suspend (cancellable) and the
-            // translation is enqueued only after the bytes are in hand.
-            viewModelScope.launchIO {
-                val streamFn = try {
-                    createLazyHttpStream(source, page, imageUrl)
-                } catch (e: Throwable) {
-                    logcat(LogPriority.WARN) {
-                        "translateSinglePage: lazy download failed for $pageKey: ${e.message}"
-                    }
-                    return@launchIO
-                }
-                streamRegistry.register(
-                    manga,
-                    chapter.toDomainChapter()!!,
-                    source,
-                    pageKey,
-                    streamFn,
-                )
-                val delayMs = (System.nanoTime() - tapTimeNs) / 1_000_000.0
-                NativeVisionTelemetry.logTapToDispatch(pageKey, delayMs)
-                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
-            }
-        } ?: run {
-            if (pageChapterDownloaded) {
-                // Downloaded chapters may not expose a live ReaderPage.originalStream
-                // after holder rebinding. The pipeline can reopen the page from disk,
-                // so enqueue the job instead of silently falling through.
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT manual translate page request using downloaded chapter fallback: pageKey=$pageKey"
-                }
-                val delayMs = (System.nanoTime() - tapTimeNs) / 1_000_000.0
-                NativeVisionTelemetry.logTapToDispatch(pageKey, delayMs)
-                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
-            }
+            return streamFn
         }
+        page.imageUrl?.let { imageUrl ->
+            // Online pages not yet cached download their bytes in this
+            // cancellable coroutine; only then are the stream registered and
+            // the page submitted. The registration uses the same cache-backed
+            // factory that was submitted.
+            val streamFn = try {
+                createLazyHttpStream(source, page, imageUrl)
+            } catch (e: Throwable) {
+                logcat(LogPriority.WARN) {
+                    "translateSinglePage: lazy download failed for $pageKey: ${e.message}"
+                }
+                return null
+            }
+            val live = capturedSession
+            if (live == null || live.token != binding.token) {
+                logcat(LogPriority.INFO) {
+                    "translateSinglePage: dropping late download for $pageKey (reader session replaced)"
+                }
+                return null
+            }
+            if (getCurrentChapter() !== page.chapter) {
+                logcat(LogPriority.INFO) {
+                    "translateSinglePage: dropping late download for $pageKey (chapter no longer active)"
+                }
+                return null
+            }
+            streamRegistry.register(
+                manga,
+                page.chapter.chapter.toDomainChapter()!!,
+                source,
+                pageKey,
+                streamFn,
+            )
+            return streamFn
+        }
+        // Downloaded chapters may not expose a live ReaderPage.originalStream
+        // after holder rebinding. The factory rescans the chapter dir on the
+        // worker and opens a fresh stream per invocation.
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT manual translate page request using downloaded chapter fallback: pageKey=$pageKey"
+        }
+        val domainChapter = page.chapter.chapter.toDomainChapter() ?: return null
+        return translationManager.downloadedChapterPageStream(
+            manga,
+            domainChapter,
+            source,
+            pageKey,
+        )
     }
 
     /**
@@ -1215,10 +1236,10 @@ internal class ReaderTranslationController(
      * dispatch sites (onPageSelected / loadChapter), which all require both.
      */
     internal fun resumeTranslationsOnForeground() {
-        // Foreground resume is a real lifecycle/memory-recovery signal for a
-        // fully Deferred(Memory) rolling window; it must not wait for a page
-        // change before asking the coordinator to reconcile.
-        translationManager.reconcileAutoWindow()
+        // Foreground resume is a real lifecycle/memory-recovery signal for
+        // deferred demands (memory/source); it must not wait for a page change
+        // before re-driving the captured session's queued work.
+        reconcileCapturedSession()
         if (!translationPreferences.translationEnabled().get()) return
         if (!translationPreferences.autoTranslate().get()) return
         val chapter = getCurrentChapter() ?: return
@@ -1233,7 +1254,7 @@ internal class ReaderTranslationController(
         translationManager.onMemoryPressure(level)
         // The trim callback is the reader's real memory-budget signal. A later
         // callback or foreground resume re-opens admission without navigation.
-        translationManager.reconcileAutoWindow()
+        reconcileCapturedSession()
         // CP8: only reset the live display state under genuine foreground memory pressure.
         // The previous `level >= TRIM_MEMORY_RUNNING_LOW` check fired on UI_HIDDEN(20)/
         // BACKGROUND(40)/MODERATE(60) too (they all exceed RUNNING_LOW(15)), so every
