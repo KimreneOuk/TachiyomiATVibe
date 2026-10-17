@@ -115,3 +115,7 @@ Kept but re-seamed in S4: `coexistence/AutoProviderCallDrainsNotCancelsTest`, `E
 4. `markChapterCancelledSync` still bridges through `runBlocking`; its callers must be counted and migrated before removal.
 5. `updateAutoWindow`'s owner identity embeds the compute class in `sessionKey` — the queue's `bindSession(computeClass)` epoch must reproduce this compatibility break on mode change (drain-then-rebind).
 6. The scheduler hides pages with active manual jobs from the coordinator (arbitration at window time). In the queue this becomes explicit-demand precedence over viewport demand — no second job map.
+
+# Execution evidence (S5 consolidation, 18 October 2026)
+
+Post-phase consolidation evidence — absorption-table outcomes, file accounting reconciliation against the [plan](../plan/index.md), and the residual findings that remain open — is recorded in the [S5 ticket execution evidence](../tickets/s5-consolidation/index.md#execution-evidence-18-october-2026-host-worktree-phase4-s5-consolidation-at-4c3a683a-zero-source-changes). Note: the survey's 8th retirement row (`ui/reader/ReaderAutoTranslationLifecycleTest.kt`) was resolved by rename/evolution into `ReaderPageWorkResolverLifecycleTest.kt` (R041), not deletion — recorded as an accounting deviation, not silently compensated.

@@ -403,6 +403,23 @@ class ReaderTranslationQueueTest {
         executor.attemptsFor("p0") shouldBe 2
     }
 
+    @Test
+    fun `explicit tap after a stalled refusal re-drives once the lane clears`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        val q = newQueue(executor)
+        bind(q)
+        executor.outcomes["p0"] = SinglePageOutcome.Stalled("p0", testScheduler.currentTime)
+        q.submitCurrent(session, work("p0"), ReaderTrigger.MANUAL_TAP)
+        testScheduler.advanceUntilIdle()
+        executor.attemptsFor("p0") shouldBe 1
+        // The refusal performed no work; the next explicit tap is a new attempt,
+        // not a duplicate of the retained terminal (parity with the D8 stall
+        // contract: stall, refuse, clear, next tap proceeds).
+        q.submitCurrent(session, work("p0"), ReaderTrigger.MANUAL_TAP)
+        testScheduler.advanceUntilIdle()
+        executor.attemptsFor("p0") shouldBe 2
+    }
+
     // ---- N/N+1 window (parity case 2) ----
 
     @Test

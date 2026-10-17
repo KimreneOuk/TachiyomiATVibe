@@ -394,6 +394,9 @@ class EngineEpochStopRaceTest {
             // grace 0: expiry is immediate — the close proceeds under the parked call.
             h.manager.clearQueue()
             withClue("T917 D7 §1.4.1c: grace expiry must close anyway (bounded memory outranks the rare retry)") {
+                // Event-driven: the expiry close is asynchronous; await the close
+                // signal instead of racing the flag read (S5 r1, F3 mode 2).
+                withTimeout(AWAIT_TIMEOUT_MS) { h.fakeTransport.closedSignal.await() }
                 h.fakeTransport.closedFlag.get() shouldBe true
             }
 

@@ -8,6 +8,7 @@ import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.currentProviderRequestPriority
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -155,21 +156,11 @@ class ForegroundProviderWindowFairnessTest {
             }
         }
 
-    private fun readManualOutcome(scheduler: TranslationScheduler, jobKey: String): Any? {
-        var cls: Class<*>? = scheduler.javaClass
-        while (cls != null) {
-            try {
-                val field = cls.getDeclaredField("manualOutcomes")
-                field.isAccessible = true
-                val map =
-                    @Suppress("UNCHECKED_CAST")
-                    (field.get(scheduler) as Map<String, Any>)
-                return map[jobKey]
-            } catch (_: NoSuchFieldException) {
-                cls = cls.superclass
-            }
-        }
-        throw AssertionError("scheduler manualOutcomes field not found")
+    // Phase 4 S5 r1: outcomes moved to the queue at the S2 cutover; read them
+    // through the live facade instead of the retired reflective map seam.
+    private fun readManualOutcome(scheduler: TranslationScheduler, jobKey: String): SinglePageOutcome? {
+        val sep = jobKey.indexOf(':')
+        return scheduler.manualOutcomeFor(jobKey.substring(0, sep).toLong(), jobKey.substring(sep + 1))
     }
 
     private fun pausedRetryAt(outcome: Any): Long? = outcome.javaClass.methods

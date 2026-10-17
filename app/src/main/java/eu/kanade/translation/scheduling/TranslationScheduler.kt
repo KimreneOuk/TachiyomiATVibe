@@ -18,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
@@ -57,7 +58,10 @@ class TranslationScheduler(
         runBlocking {
             when (val drain = queue.closeAndDrain()) {
                 ReaderDrainResult.Completed -> Unit
-                is ReaderDrainResult.PendingNativeDrain -> drain.completion.await()
+                is ReaderDrainResult.PendingNativeDrain ->
+                    // Bounded join: a wedged native call must not hang teardown; the
+                    // scope cancel below still stops the workers cooperatively.
+                    withTimeoutOrNull(CLOSE_DRAIN_JOIN_TIMEOUT_MS) { drain.completion.await() }
             }
         }
         scope.cancel()
@@ -538,5 +542,11 @@ class TranslationScheduler(
     companion object {
         /** Maximum number of recent manual page outcomes retained for the reader. */
         private const val MANUAL_OUTCOME_MAP_CAP = 32
+
+        /**
+         * Bound for close()'s join on physically draining work the queue retained;
+         * generous for honest native tails, finite for parked or wedged ones.
+         */
+        private const val CLOSE_DRAIN_JOIN_TIMEOUT_MS = 10_000L
     }
 }

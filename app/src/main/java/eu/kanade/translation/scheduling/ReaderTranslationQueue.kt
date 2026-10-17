@@ -252,7 +252,10 @@ class ReaderTranslationQueue(
                 val done = terminals[work.pageKey]
                 val pausedEligible = done is SinglePageOutcome.Paused &&
                     (done.nextEligibleRetryAtEpochMs ?: 0L) <= now
-                if (done != null && !force && !pausedEligible) {
+                // A stalled tap performed no work, so once the lane clears an
+                // explicit tap is a new attempt, not a duplicate of the refusal.
+                val stalledRetryable = done is SinglePageOutcome.Stalled && explicit
+                if (done != null && !force && !pausedEligible && !stalledRetryable) {
                     ReaderSubmission.Existing(done)
                 } else if (explicit && explicitCountLocked() >= EXPLICIT_BACKLOG_LIMIT) {
                     capacityRejection()

@@ -478,19 +478,11 @@ class P5HonestOutcomeTypingTest {
 
     private fun PageTranslationView.hasRenderedResult(): Boolean = renderStatus == StageStatus.READY
 
-    private fun readManualOutcome(h: TranslationCoexistenceHarness, key: String): Any? {
-        var cls: Class<*>? = h.scheduler.javaClass
-        while (cls != null) {
-            try {
-                val field = cls.getDeclaredField("manualOutcomes")
-                field.isAccessible = true
-                @Suppress("UNCHECKED_CAST")
-                return (field.get(h.scheduler) as Map<String, Any>)[key]
-            } catch (_: NoSuchFieldException) {
-                cls = cls.superclass
-            }
-        }
-        throw AssertionError("T917 P5 RED defect: scheduler manualOutcomes seam is missing")
+    // Phase 4 S5 r1: outcomes moved to the queue at the S2 cutover; read them
+    // through the live facade instead of the retired reflective map seam.
+    private fun readManualOutcome(h: TranslationCoexistenceHarness, key: String): SinglePageOutcome? {
+        val sep = key.indexOf(':')
+        return h.scheduler.manualOutcomeFor(key.substring(0, sep).toLong(), key.substring(sep + 1))
     }
 
     private fun readBooleanField(target: Any, name: String): Boolean? = try {
