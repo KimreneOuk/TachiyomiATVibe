@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test
 
 /**
  *  The `patchPage` path must grant
- * the same `record.candidate != null` grace `persistArtifactMutationLocked`
+ * the same `record.candidate != null` grace `persistArtifactMutation`
  * already applies to the dependency-fingerprint check.
  *
  * Defect shape: a page registered in the artifact manifest WITHOUT a live
@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test
  * captured its precondition in that state was then FALSELY rejected by
  * `patchPage`'s dependency clause ("candidate dependency fingerprint changed")
  * even though no real candidate ever moved — while the guarded-writer chain
- * (`pageWriteRejection`) and `persistArtifactMutationLocked` both waive the
+ * (`pageWriteRejection`) and `persistArtifactMutation` both waive the
  * check when `candidate == null`. A retried page must not be rejected solely
  * because of unrelated stamp traffic when no candidate exists.
  *

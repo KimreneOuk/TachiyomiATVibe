@@ -313,6 +313,22 @@ class ChapterTranslationStore internal constructor(
     internal fun hasArtifactPersistenceTarget(): Boolean =
         artifactParent != null || artifactFileName != null || artifactParentResolver != null
 
+    /**
+     * Monotonic store-side lock hierarchy (Phase 7 S2). Every acquisition in a
+     * write path moves DOWN this list; nothing ever acquires a lock higher in
+     * the list while holding a lower one:
+     *
+     * 1. journal credit reservation (`reserveJournalCredit` — before [mutex]);
+     * 2. producer capture permit (`withJournalCapturePermit`);
+     * 3. the store [mutex] — suspending, so holders may await lower locks;
+     * 4. the per-artifact open lock (`withArtifactOpenLock`) — acquired only
+     *    from inside [mutex] via [ensureArtifactStore], as a coroutine.
+     *
+     * The open path (`openArtifactSuspend`) takes ONLY level 4 and never the
+     * store mutex, so the order cannot invert and a first write never blocks a
+     * carrier thread under the store mutex. `runBlocking` is banned anywhere
+     * below level 3.
+     */
     internal val mutex = Mutex()
 
     private val candidateReuseObservers = CopyOnWriteArrayList<
@@ -1416,7 +1432,7 @@ class ChapterTranslationStore internal constructor(
      *
      * Caller holds [mutex].
      */
-    private fun flushLazyMutationsLocked(journalFlushBatch: JournalFlushBatch? = null): Boolean {
+    private suspend fun flushLazyMutationsLocked(journalFlushBatch: JournalFlushBatch? = null): Boolean {
         val pendingLazyMutations = writeDrain.pendingLazyMutations
         if (pendingLazyMutations.isEmpty()) return true
         val pending = pendingLazyMutations.values.toList()
@@ -1428,7 +1444,7 @@ class ChapterTranslationStore internal constructor(
                 return@forEach
             }
             try {
-                if (!persistArtifactMutationLocked(
+                if (!persistArtifactMutation(
                         pageKey = mutation.pageKey,
                         previous = mutation.previous,
                         updated = mutation.updated,
@@ -1845,7 +1861,8 @@ class ChapterTranslationStore internal constructor(
         }
     }
 
-    internal fun admitMutationLocked(): MutationAdmission {
+    /** Caller holds [mutex]; suspending while a lazy first write opens the artifact store. */
+    internal suspend fun admitMutation(): MutationAdmission {
         if (defunct) {
             return MutationAdmission.Rejected(
                 code = MutationAdmission.Rejected.Code.STORE_DEFUNCT,
@@ -1862,7 +1879,7 @@ class ChapterTranslationStore internal constructor(
         if (engineMode is ChapterStoreEngineMode.Memory) {
             return MutationAdmission.Granted
         }
-        if (!ensureArtifactStoreLocked()) {
+        if (!ensureArtifactStore()) {
             return MutationAdmission.Rejected(
                 code = MutationAdmission.Rejected.Code.ARTIFACT_PUBLICATION_FAILED,
                 message = "artifact store creation/publication failed",
@@ -1979,7 +1996,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutationLocked()) {
+                    when (val admission = admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejected(
                             pageKey,
@@ -2032,7 +2049,7 @@ class ChapterTranslationStore internal constructor(
                         effective.candidateGenerationId != null &&
                             effective.candidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
                             "candidate generation changed"
-                        // The same candidate-grace rule as persistArtifactMutationLocked
+                        // The same candidate-grace rule as persistArtifactMutation
                         // applies: `candidate != null` grace
                         // applies — a dependency fingerprint expected against a
                         // candidate-LESS record (candidate never opened, cleared by an
@@ -2108,7 +2125,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutationLocked()) {
+                    when (val admission = admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejected(
                             pageKey,
@@ -2184,7 +2201,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutationLocked()) {
+                    when (val admission = admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> {
                             return@withLock TranslationPublicationReconciliation.Deferred(
@@ -2327,7 +2344,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutationLocked()) {
+                    when (val admission = admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejected(
                             pageKey,
@@ -2348,7 +2365,7 @@ class ChapterTranslationStore internal constructor(
                         return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
                     }
                     pages = pages.put(pageKey, publishPage(updated))
-                    val persisted = persistArtifactMutationLocked(
+                    val persisted = persistArtifactMutation(
                         pageKey = pageKey,
                         previous = previous,
                         updated = updated,
@@ -2469,7 +2486,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutationLocked()) {
+                    when (val admission = admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejectedStage(
                             patch.pageKey,
@@ -2507,7 +2524,7 @@ class ChapterTranslationStore internal constructor(
         description: String = "detection/ocr stage merge",
     ): StagePatchResult = applyStagePatch(StagePatch.Ocr(patch), description)
 
-    private fun mergeOcrLocked(
+    private suspend fun mergeOcrLocked(
         current: PageTranslation?,
         patch: OcrStagePatch,
         description: String,
@@ -2594,7 +2611,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutationLocked()) {
+                    when (val admission = admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejectedCheckpoint(
                             description,
@@ -2776,7 +2793,7 @@ class ChapterTranslationStore internal constructor(
         return CheckpointOcrResult.Rejected(reason)
     }
 
-    private fun mergeTranslationLocked(
+    private suspend fun mergeTranslationLocked(
         current: PageTranslation?,
         patch: TranslationStagePatch,
         description: String,
@@ -2877,7 +2894,7 @@ class ChapterTranslationStore internal constructor(
         return null
     }
 
-    private fun mergeRenderLocked(
+    private suspend fun mergeRenderLocked(
         current: PageTranslation?,
         patch: RenderStagePatch,
         description: String,
@@ -3103,7 +3120,7 @@ class ChapterTranslationStore internal constructor(
         try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutationLocked()) {
+                    when (val admission = admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> {
                             logcat(LogPriority.WARN) {
@@ -3151,7 +3168,7 @@ class ChapterTranslationStore internal constructor(
         try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutationLocked()) {
+                    when (val admission = admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> {
                             logcat(LogPriority.WARN) {
@@ -3189,7 +3206,7 @@ class ChapterTranslationStore internal constructor(
                         updatedPages.forEach { (pageKey, page) ->
                             val owned = ownedPage(pageKey, page)
                             pages = pages.put(pageKey, publishPage(owned))
-                            if (persistArtifactMutationLocked(pageKey, null, owned)) {
+                            if (persistArtifactMutation(pageKey, null, owned)) {
                                 promoteDisplayIfReadyLocked(pageKey, owned)
                             }
                         }
@@ -3549,7 +3566,7 @@ class ChapterTranslationStore internal constructor(
         }
         return withJournalCapturePermit {
             mutex.withLock {
-                when (val admission = admitMutationLocked()) {
+                when (val admission = admitMutation()) {
                     MutationAdmission.Granted -> Unit
                     is MutationAdmission.Rejected -> {
                         logcat(LogPriority.WARN) {
@@ -3581,7 +3598,7 @@ class ChapterTranslationStore internal constructor(
                     artifactParent != null &&
                     artifactFileName != null
                 ) {
-                    ensureArtifactStoreLocked()
+                    ensureArtifactStore()
                 }
                 val store = artifactEngine
                 val manifest = artifactManifest
@@ -3660,7 +3677,7 @@ class ChapterTranslationStore internal constructor(
         }
         withJournalCapturePermit {
             mutex.withLock {
-                when (val admission = admitMutationLocked()) {
+                when (val admission = admitMutation()) {
                     MutationAdmission.Granted -> Unit
                     is MutationAdmission.Rejected -> {
                         logcat(LogPriority.WARN) {
@@ -3725,7 +3742,7 @@ class ChapterTranslationStore internal constructor(
             pageVersion = nextVersion()
         }
 
-    private fun publishLocked(
+    private suspend fun publishLocked(
         previous: PageTranslation?,
         updated: PageTranslation,
         expected: PatchPrecondition? = null,
@@ -3746,7 +3763,7 @@ class ChapterTranslationStore internal constructor(
         val isDurable = shouldPersistUpdate(previous, updated)
         var actuallyPersisted = false
         val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
-            val ok = persistArtifactMutationLocked(
+            val ok = persistArtifactMutation(
                 pageKey = pageKey,
                 previous = previous,
                 updated = updated,
@@ -3826,7 +3843,7 @@ class ChapterTranslationStore internal constructor(
      * the immutable committed snapshot and moves the manifest pointer in one
      * final publication; the journal separately records the live state mutation.
      */
-    private fun persistArtifactMutationLocked(
+    private suspend fun persistArtifactMutation(
         pageKey: String,
         previous: PageTranslation?,
         updated: PageTranslation,
@@ -3857,7 +3874,7 @@ class ChapterTranslationStore internal constructor(
             return true
         }
         if (engineMode !is ChapterStoreEngineMode.Durable &&
-            !ensureArtifactStoreLocked()
+            !ensureArtifactStore()
         ) {
             return reject("artifact store initialization failed")
         }
@@ -4158,10 +4175,13 @@ class ChapterTranslationStore internal constructor(
 
     /**
      * Lazily creates the artifact store for a chapter that has no manifest yet.
-     * This synchronous helper acquires the same per-artifact mutex as suspend opens via IO blocking,
-     * so lazy loads and recovery opens cannot race each other.
+     * Suspending: acquires the same per-artifact open lock as [openArtifactSuspend]
+     * by waiting as a coroutine, so lazy loads and recovery opens cannot race
+     * each other and a first write never parks a carrier thread while holding
+     * the store mutex. Lock order: store mutex → artifact-open lock (never
+     * reversed).
      */
-    private fun ensureArtifactStoreLocked(): Boolean {
+    private suspend fun ensureArtifactStore(): Boolean {
         if (engineMode is ChapterStoreEngineMode.Durable) {
             return artifactManifest != null
         }
@@ -4176,7 +4196,7 @@ class ChapterTranslationStore internal constructor(
         val layout = ChapterArtifactLayout.fromArtifactFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val store = ChapterArtifactEngine(documents, layout)
-        val manifest = runBlocking(Dispatchers.IO) {
+        val manifest = withContext(Dispatchers.IO) {
             withArtifactOpenLock(parent, fileName) { store.load().manifest }
         }
         engineMode = ChapterStoreEngineMode.Durable(store)
@@ -4261,12 +4281,12 @@ class ChapterTranslationStore internal constructor(
             .joinToString("") { byte -> "%02x".format(byte) }
     }
 
-    /** Caller holds [mutex]; snapshot immutable identities for off-lock re-key preparation. */
-    private fun createPageRekeyPlanLocked(
+    /** Caller holds [mutex]; suspends on lazy first-write artifact admission. */
+    private suspend fun createPageRekeyPlanLocked(
         onlineKeys: List<String>,
         onDiskKeys: List<String>,
     ): PageRekeyPlanResult {
-        when (val admission = admitMutationLocked()) {
+        when (val admission = admitMutation()) {
             MutationAdmission.Granted -> Unit
             is MutationAdmission.Rejected -> {
                 logcat(LogPriority.WARN) {
