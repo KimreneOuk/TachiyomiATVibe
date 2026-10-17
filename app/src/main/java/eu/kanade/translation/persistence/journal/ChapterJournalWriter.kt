@@ -71,10 +71,7 @@ internal data class ChapterJournalRecord(
     val terminalObservedPayloadBytes: Int? = null,
 ) {
     companion object {
-        /** E16a records remain readable; absent cleaned-image digests are handled as page-local invalidity. */
-        const val LEGACY_SCHEMA_VERSION = 1
         const val SCHEMA_VERSION = 2
-        val SUPPORTED_SCHEMA_VERSIONS = setOf(LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
         const val TERMINAL_LAG_REASON_CREDIT_WINDOW = "shadow_credit_window_exhausted"
         const val TERMINAL_PAYLOAD_REASON_SIZE_LIMIT = "shadow_payload_size_limit"
     }
@@ -90,14 +87,12 @@ internal data class ChapterJournalInventoryRecord(
     /** Only v2 records may assert that this count came from accepted registration truth. */
     val expectedPageCountTrusted: Boolean = false,
 ) {
-    /** v1 is deliberately never promoted, even if a stray JSON field claims otherwise. */
+    /** A stray JSON field cannot promote a non-current schema to trusted. */
     val hasTrustedExpectedPageCount: Boolean
         get() = schemaVersion == SCHEMA_VERSION && expectedPageCountTrusted
 
     companion object {
-        const val LEGACY_SCHEMA_VERSION = 1
         const val SCHEMA_VERSION = 2
-        val SUPPORTED_SCHEMA_VERSIONS = setOf(LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
     }
 }
 
@@ -590,14 +585,14 @@ internal class ChapterJournalWriter(
     fun nextCommitSeq(): Long = assignedCommitSequence.incrementAndGet()
 
     /**
-     * Caller holds the store mutex. Hands off an already-sequenced legacy-persisted page state.
+     * Caller holds the store mutex. Hands off an already-sequenced persisted page state.
      * [deferSyncUntilBarrier] is only for a store flush that closes the producer gate and follows
      * these appends with a capture barrier before returning; it never batches durability across
      * flushes. Each non-empty flush batch receives one final force, plus required pre-close
      * segment forces at rollover and the segment-header force whenever a new segment is created
      * (epoch start or rollover).
      */
-    fun captureLegacyPersisted(
+    fun capturePageMutation(
         commitSeq: Long,
         credit: ChapterJournalCredit?,
         pageKey: String,
@@ -640,7 +635,7 @@ internal class ChapterJournalWriter(
     }
 
     /** Caller holds the store mutex. Captures an atomic replace/rekey as a single bounded event. */
-    fun captureLegacyBulkMutation(
+    fun captureBulkMutation(
         commitSeq: Long,
         credit: ChapterJournalCredit?,
         kind: ChapterJournalFormat.RecordKind,
@@ -674,7 +669,7 @@ internal class ChapterJournalWriter(
     }
 
     /** Caller holds the store mutex. Deletions are absolute tombstones in the future replay schema. */
-    fun captureLegacyDeletion(
+    fun capturePageDeletion(
         commitSeq: Long,
         credit: ChapterJournalCredit?,
         pageKey: String,
@@ -725,7 +720,7 @@ internal class ChapterJournalWriter(
     }
 
     /** Caller holds the store mutex. Subsequent calls only advance commitSeq/lag telemetry. */
-    fun noteLegacyPersistedWithoutCredit(
+    fun noteMutationWithoutCredit(
         commitSeq: Long,
         credit: ChapterJournalCredit? = null,
         inventory: ChapterJournalInventorySnapshot = ChapterJournalInventorySnapshot.EMPTY,

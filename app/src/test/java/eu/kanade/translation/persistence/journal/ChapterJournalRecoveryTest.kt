@@ -270,14 +270,14 @@ class ChapterJournalRecoveryTest {
     }
 
     @Test
-    fun `v1 inventory count equal to key count never implies trusted completeness`() {
+    fun `schema-1 inventory frames are rejected by replay after the prune`() {
         val legacyInventory = ChapterJournalInventoryRecord(
-            schemaVersion = ChapterJournalInventoryRecord.LEGACY_SCHEMA_VERSION,
+            schemaVersion = 1,
             chapterIdentityHash = "chapter",
             expectedPageKeys = listOf("same-count.jpg"),
             expectedPageCount = 1,
             sourceFingerprint = "legacy-v1-fingerprint",
-            // Even a stray field cannot promote a v1 record to trusted.
+            // Even a stray field cannot promote a rejected schema to trusted.
             expectedPageCountTrusted = true,
         )
         val result = replay(
@@ -291,8 +291,8 @@ class ChapterJournalRecoveryTest {
             expectedChapterIdentityHash = "chapter",
         )
 
-        result.expectedPageCount shouldBe result.expectedPageKeys.size
-        result.inventory?.hasTrustedExpectedPageCount shouldBe false
+        result.corruptEpochs shouldNotBe emptySet<ChapterJournalFormat.EpochOrderKey>()
+        result.inventory shouldBe null
         result.hasCompleteInventory shouldBe false
     }
 
@@ -722,10 +722,10 @@ class ChapterJournalRecoveryTest {
     }
 
     @Test
-    fun `E16a record schema remains readable while cleaned images without an anchored digest stay invalid`() {
+    fun `canonical record schema stays readable while cleaned images without an anchored digest stay invalid`() {
         val legacyPlain = page("legacy-plain")
         val plainRecord = ChapterJournalRecord(
-            schemaVersion = ChapterJournalRecord.LEGACY_SCHEMA_VERSION,
+            schemaVersion = ChapterJournalRecord.SCHEMA_VERSION,
             pageKey = checkNotNull(legacyPlain.sourceFileName),
             generation = 0L,
             fencingToken = 0L,
@@ -735,7 +735,7 @@ class ChapterJournalRecoveryTest {
         )
         val legacyBulkPage = page("legacy-bulk")
         val bulkRecord = ChapterJournalRecord(
-            schemaVersion = ChapterJournalRecord.LEGACY_SCHEMA_VERSION,
+            schemaVersion = ChapterJournalRecord.SCHEMA_VERSION,
             pageKey = checkNotNull(legacyBulkPage.sourceFileName),
             generation = 0L,
             fencingToken = 0L,
@@ -750,7 +750,7 @@ class ChapterJournalRecoveryTest {
         )
         val legacyCleanedPage = page("legacy-cleaned", cleanedImageName = "cleaned.jpg")
         val cleanedRecord = ChapterJournalRecord(
-            schemaVersion = ChapterJournalRecord.LEGACY_SCHEMA_VERSION,
+            schemaVersion = ChapterJournalRecord.SCHEMA_VERSION,
             pageKey = checkNotNull(legacyCleanedPage.sourceFileName),
             generation = 0L,
             fencingToken = 0L,

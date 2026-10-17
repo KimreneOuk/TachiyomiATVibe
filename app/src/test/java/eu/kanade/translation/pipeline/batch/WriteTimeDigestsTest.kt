@@ -241,7 +241,7 @@ class WriteTimeDigestsTest {
         // ---- simulated process death: fresh store over the SAME documents,
         // and the dispatch provides NO usable hash observation (every pair is
         // the hash-failure placeholder) — the strongest zero-re-hash form. ----
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
         val resumedWorker = FakeDigestWorker(resumedStore)
         val withheldPairs = pages.map { (pageKey, _) -> pageKey to unhashed }
 
@@ -274,7 +274,7 @@ class WriteTimeDigestsTest {
 
         // The page files were replaced under the same keys: the dispatch's
         // fresh observation no longer matches the durable checkpoint identity.
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
         val resumedWorker = FakeDigestWorker(resumedStore).apply {
             sourceContentFor = { pageKey -> "replaced-source-$pageKey" }
         }
@@ -322,7 +322,7 @@ class WriteTimeDigestsTest {
             sidecar.delete() shouldBe true
         }
 
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
         val resumedWorker = FakeDigestWorker(resumedStore)
 
         coordinator(resumedStore, resumedWorker, pages).runPass1(pages, TranslatorComputeClass.REMOTE_IO)

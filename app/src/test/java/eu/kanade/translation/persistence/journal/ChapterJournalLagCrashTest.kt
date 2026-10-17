@@ -51,7 +51,7 @@ class ChapterJournalLagCrashTest {
         try {
             val firstCredit = writer.tryAcquireShadowCredit(foreground = false)!!
             legacyPages["a.jpg"] = PageTranslation(sourceFileName = "a.jpg", pageVersion = 1L)
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 writer.nextCommitSeq(),
                 firstCredit,
                 "a.jpg",
@@ -65,12 +65,12 @@ class ChapterJournalLagCrashTest {
             // This commit has no shadow credit. Shadow ends with a terminal marker,
             // while the legacy artifact still accepts and publishes the page.
             legacyPages["b.jpg"] = PageTranslation(sourceFileName = "b.jpg", pageVersion = 2L)
-            writer.noteLegacyPersistedWithoutCredit(
+            writer.noteMutationWithoutCredit(
                 writer.nextCommitSeq(),
                 inventory = inventory("a.jpg", "b.jpg"),
             )
             legacyPages["c.jpg"] = PageTranslation(sourceFileName = "c.jpg", pageVersion = 3L)
-            writer.noteLegacyPersistedWithoutCredit(writer.nextCommitSeq())
+            writer.noteMutationWithoutCredit(writer.nextCommitSeq())
             writer.shadowLaggedCount shouldBe 2L
             legacyPages.keys.toList() shouldContainExactly listOf("a.jpg", "b.jpg", "c.jpg")
 
@@ -126,7 +126,7 @@ class ChapterJournalLagCrashTest {
         )
         try {
             val first = PageTranslation(sourceFileName = "a.jpg", pageVersion = 1L)
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = checkNotNull(writer.tryAcquireShadowCredit(foreground = false)),
                 pageKey = "a.jpg",
@@ -143,7 +143,7 @@ class ChapterJournalLagCrashTest {
             replayImage(syncedFirst, json).pages.keys shouldBe setOf("a.jpg")
 
             val second = PageTranslation(sourceFileName = "b.jpg", pageVersion = 1L)
-            writer.captureLegacyPersisted(
+            writer.capturePageMutation(
                 commitSeq = writer.nextCommitSeq(),
                 credit = checkNotNull(writer.tryAcquireShadowCredit(foreground = false)),
                 pageKey = "b.jpg",

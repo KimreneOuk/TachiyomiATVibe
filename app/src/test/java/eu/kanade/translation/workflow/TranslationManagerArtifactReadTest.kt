@@ -63,7 +63,7 @@ class TranslationManagerArtifactReadTest {
     private suspend fun writeArtifactChapter(chapterName: String) {
         File(mangaDir, "$chapterName.json").createNewFile()
         val root = FakeUniFile(parent = null, backing = mangaDir)
-        val store = ChapterTranslationStore.openArtifact(root, "$chapterName.json")
+        val store = ChapterTranslationStore.openArtifactSuspend(root, "$chapterName.json")
         store.updatePage("page.jpg") { page() }
         store.closeAndFlush()
     }
@@ -121,7 +121,7 @@ class TranslationManagerArtifactReadTest {
         writeArtifactChapter("Chapter 1")
         val fileName = artifactFileName("Chapter 1")
         val root = artifactParent()
-        val store = ChapterTranslationStore.openArtifact(root, fileName)
+        val store = ChapterTranslationStore.openArtifactSuspend(root, fileName)
         store.updatePage("page.jpg") { current ->
             current!!.apply { blocks.single().userEditedAt = 42L }
         }
@@ -144,7 +144,7 @@ class TranslationManagerArtifactReadTest {
         installImageProbe()
         writeArtifactChapter("Chapter 4")
         val fileName = artifactFileName("Chapter 4")
-        val store = ChapterTranslationStore.openArtifact(artifactParent(), fileName)
+        val store = ChapterTranslationStore.openArtifactSuspend(artifactParent(), fileName)
         store.updatePage("page.jpg") { current ->
             current!!.copy(
                 blocks = mutableListOf(),

@@ -1632,7 +1632,6 @@ class TranslationManager private constructor(
                                     manifest.envelopePlan != null ||
                                     manifest.layoutPlans.isNotEmpty() ||
                                     manifest.colorPreparations.isNotEmpty() ||
-                                    manifest.context != null ||
                                     manifest.cutoverAtEpochMs != null
                             } == true
                             if (manifestHasPriorEvidence) {

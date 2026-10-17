@@ -138,7 +138,7 @@ internal object ChapterJournalReplayReducer {
                     ChapterJournalFormat.RecordKind.INVENTORY -> {
                         val root = versionedPayload(
                             frame.payload,
-                            ChapterJournalInventoryRecord.SUPPORTED_SCHEMA_VERSIONS,
+                            ChapterJournalInventoryRecord.SCHEMA_VERSION,
                             json,
                         )
                         val decoded = root?.let {
@@ -161,7 +161,7 @@ internal object ChapterJournalReplayReducer {
                     ChapterJournalFormat.RecordKind.FREE_STATE,
                     ChapterJournalFormat.RecordKind.PAID_STATE,
                     -> {
-                        val root = versionedPayload(frame.payload, ChapterJournalRecord.SUPPORTED_SCHEMA_VERSIONS, json)
+                        val root = versionedPayload(frame.payload, ChapterJournalRecord.SCHEMA_VERSION, json)
                         val record = root?.let {
                             runCatching { json.decodeFromJsonElement<ChapterJournalRecord>(it) }.getOrNull()
                         }
@@ -200,7 +200,7 @@ internal object ChapterJournalReplayReducer {
                         val mutationsValid = mutationRoots != null &&
                             mutationRoots.all { mutation ->
                                 val mutationRoot = mutation as? JsonObject ?: return@all false
-                                versionedPayload(mutationRoot, ChapterJournalRecord.SUPPORTED_SCHEMA_VERSIONS) != null
+                                versionedPayload(mutationRoot, ChapterJournalRecord.SCHEMA_VERSION) != null
                             }
                         val bulk = root?.takeIf { mutationsValid }?.let {
                             runCatching { json.decodeFromJsonElement<ChapterJournalBulkRecord>(it) }.getOrNull()
@@ -300,7 +300,7 @@ internal object ChapterJournalReplayReducer {
                     ChapterJournalFormat.RecordKind.DEFUNCT,
                     ChapterJournalFormat.RecordKind.TERMINAL_PAYLOAD,
                     -> {
-                        val root = versionedPayload(frame.payload, ChapterJournalRecord.SUPPORTED_SCHEMA_VERSIONS, json)
+                        val root = versionedPayload(frame.payload, ChapterJournalRecord.SCHEMA_VERSION, json)
                         val record = root?.let {
                             runCatching { json.decodeFromJsonElement<ChapterJournalRecord>(it) }.getOrNull()
                         }
@@ -613,32 +613,22 @@ internal object ChapterJournalReplayReducer {
         bytes: ByteArray,
         expectedVersion: Int,
         json: Json = DEFAULT_JSON,
-    ): JsonObject? = versionedPayload(bytes, setOf(expectedVersion), json)
-
-    private fun versionedPayload(
-        bytes: ByteArray,
-        supportedVersions: Set<Int>,
-        json: Json = DEFAULT_JSON,
     ): JsonObject? {
         val root = runCatching {
             json.parseToJsonElement(bytes.decodeToString(throwOnInvalidSequence = true)).jsonObject
         }.getOrNull() ?: return null
-        // A serializer default must not make a legacy frame with no declared schema look current.
+        // A serializer default must not make a frame with no declared schema look current.
         val schemaVersion = root["schemaVersion"]?.let {
             runCatching { it.jsonPrimitive.intOrNull }.getOrNull()
         } ?: return null
-        return root.takeIf { schemaVersion in supportedVersions }
+        return root.takeIf { schemaVersion == expectedVersion }
     }
 
     private fun versionedPayload(root: JsonObject, expectedVersion: Int): JsonObject? {
-        return versionedPayload(root, setOf(expectedVersion))
-    }
-
-    private fun versionedPayload(root: JsonObject, supportedVersions: Set<Int>): JsonObject? {
         val schemaVersion = root["schemaVersion"]?.let {
             runCatching { it.jsonPrimitive.intOrNull }.getOrNull()
         } ?: return null
-        return root.takeIf { schemaVersion in supportedVersions }
+        return root.takeIf { schemaVersion == expectedVersion }
     }
 
     private fun ChapterJournalInventoryRecord.isSemanticallyValid(): Boolean =

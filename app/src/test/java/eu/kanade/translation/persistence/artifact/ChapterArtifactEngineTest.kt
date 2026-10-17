@@ -858,7 +858,6 @@ class ChapterArtifactEngineTest {
         manifest.envelopePlan shouldBe null
         manifest.layoutPlans shouldBe emptyMap()
         manifest.colorPreparations shouldBe emptyMap()
-        manifest.context shouldBe null
     }
 
     @Test

@@ -536,7 +536,7 @@ class ProfileEnvelopeDispatchTest {
         firstOutcome.status shouldBe BatchPass1Status.COMPLETED
         firstTranslator.requests.size shouldBe 1
 
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json").also { ownedStores += it }
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         val resumedWorker = FakePreflightOcrWorker(resumedStore, identicalOcr)
         val changedTranslator = FakeTranslator { _, chunk ->
             responseFor(chunk) { stableId -> "changed-$stableId" }
@@ -648,7 +648,7 @@ class ProfileEnvelopeDispatchTest {
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
         pageKeys.forEach { key -> userEdit(store, key) }
 
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json").also { ownedStores += it }
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         val resumedWorker = FakePreflightOcrWorker(resumedStore)
         val resumedAnalyzer = FakeAnalyzer()
         val outcome = coordinator(
@@ -755,7 +755,7 @@ class ProfileEnvelopeDispatchTest {
             ChapterProfileBatchCoordinator.COUNTER_PROTOCOL_PARKED_RETRYABLE,
         ] shouldBe 1
 
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json").also { ownedStores += it }
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         val secondTranslator = FakeTranslator { _, _ ->
             throw GeminiEmptyResponseException("Gemini returned no response candidate")
         }
@@ -932,7 +932,7 @@ class ProfileEnvelopeDispatchTest {
         store.snapshot("p3").page.shouldNotBeNull().translationStatus shouldBe StageStatus.FAILED
 
         // ---- simulated process death: a fresh run over the SAME documents.
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json").also { ownedStores += it }
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         val resumedWorker = FakePreflightOcrWorker(resumedStore)
         val secondTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
 
@@ -1041,7 +1041,7 @@ class ProfileEnvelopeDispatchTest {
         // and all plan inputs are identical, so the  reuse branch must
         // skip republication entirely (same pointer, no file write) and the
         // run still drains.
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json").also { ownedStores += it }
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         val resumedWorker = FakePreflightOcrWorker(resumedStore)
         val workingTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
 
@@ -1116,7 +1116,7 @@ class ProfileEnvelopeDispatchTest {
         runCounters(store).second["pagesTranslated"] shouldBe 8
 
         // ---- simulated process death: fresh stores over the SAME documents.
-        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json").also { ownedStores += it }
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         val resumedWorker = FakePreflightOcrWorker(resumedStore)
         val resumedAnalyzer = FakeAnalyzer()
         val secondTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
@@ -1220,7 +1220,7 @@ class ProfileEnvelopeDispatchTest {
         // only frozen in the old controller's memory, so neither p2 block is
         // pretranslated. Committed p1 stays excluded and p2 receives a fresh
         // request-local 1..2 namespace from its verified plan/store state.
-        val reopened = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json").also { ownedStores += it }
+        val reopened = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         reopened.readArtifactManifest().shouldNotBeNull().ocrCheckpoints.containsKey("p2") shouldBe true
         reopened.durableFailure("p2").shouldNotBeNull().missingBlockIds shouldBe setOf("p1_b2")
         val secondTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }

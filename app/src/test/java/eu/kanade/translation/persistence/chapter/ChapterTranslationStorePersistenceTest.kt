@@ -181,7 +181,7 @@ class ChapterTranslationStorePersistenceTest {
         // checkpoint is adopted against the user-edited committed bundle; the
         // drift comparison accepts it (user edits are excluded from the OCR
         // content fingerprint) and the bundle identity stays intact. ----
-        val reopened = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val reopened = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
         val adoptLease = reopened.tryAcquirePageStageLease("p1", PageStage.Ocr, PageWriteOrigin.BATCH)
             .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
         val adoptSnapshot = reopened.snapshot("p1")

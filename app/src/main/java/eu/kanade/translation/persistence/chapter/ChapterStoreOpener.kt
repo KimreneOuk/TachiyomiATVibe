@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence.chapter
 
-import androidx.annotation.VisibleForTesting
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PublishedPageTranslation
@@ -12,13 +11,11 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifestReader
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.journal.ChapterJournalInventoryRecord
 import eu.kanade.translation.persistence.journal.ChapterJournalInventorySnapshot
 import eu.kanade.translation.persistence.journal.ChapterJournalPageOutcome
 import eu.kanade.translation.persistence.journal.ChapterJournalReplayReducer
 import eu.kanade.translation.persistence.journal.ChapterJournalStorage
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -36,28 +33,13 @@ import java.util.concurrent.ConcurrentHashMap
  * Lock order: the open path takes ONLY the per-artifact open lock and never
  * the store mutex, so `store mutex -> artifact-open lock` (never reversed)
  * is preserved and a first write never parks a carrier thread under the
- * store mutex. `runBlocking` appears only inside the test-only
- * [openArtifact] compatibility seam.
+ * store mutex.
  */
 internal object ChapterStoreOpener {
 
     /** Reads only the small manifest header; page snapshots stay unopened. */
     internal fun probeArtifactManifest(parent: UniFile, fileName: String): ArtifactManifestProbe =
         ChapterArtifactManifestReader.probeArtifactManifest(parent, fileName)
-
-    /**
-     * Synchronous compatibility seam retained for existing JVM tests;
-     * production callers must use [openArtifactSuspend].
-     */
-    @VisibleForTesting(otherwise = VisibleForTesting.NONE)
-    internal fun openArtifact(
-        parent: UniFile,
-        fileName: String,
-        privateStorageRoot: File? = null,
-        privateStorageIdentity: String? = null,
-    ): ChapterTranslationStore = runBlocking(Dispatchers.IO) {
-        openArtifactSuspend(parent, fileName, privateStorageRoot, privateStorageIdentity)
-    }
 
     /** Opens an artifact and installs only the state reconstructed from its ACKed journal prefix. */
     internal suspend fun openArtifactSuspend(
@@ -137,8 +119,6 @@ internal object ChapterStoreOpener {
         val layout = ChapterArtifactLayout.fromArtifactFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val artifact = ChapterArtifactEngine(documents, layout)
-        val hasPersistedManifest = documents.exists(layout.manifestFileName) ||
-            documents.exists(artifact.backupName())
         val manifest = artifact.load().manifest
         val chapterIdentity = privateStorageIdentity ?: buildString {
             append(parent.filePath ?: parent.uri?.toString() ?: "<no-parent>")
@@ -256,10 +236,6 @@ internal object ChapterStoreOpener {
                     ?.takeIf { it.hasTrustedExpectedPageCount }
                     ?.expectedPageKeys
                     ?.let(::addAll)
-                // A v1 inventory is the only existence record only for a deep-legacy chapter with no manifest.
-                if (!hasPersistedManifest && inventory?.schemaVersion == ChapterJournalInventoryRecord.LEGACY_SCHEMA_VERSION) {
-                    addAll(journalReplay.expectedPageKeys)
-                }
             }
             val expectedCount = maxOf(
                 journalReplay.expectedPageCount,

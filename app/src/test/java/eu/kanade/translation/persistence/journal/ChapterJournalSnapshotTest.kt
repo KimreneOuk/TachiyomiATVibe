@@ -325,7 +325,7 @@ class ChapterJournalSnapshotTest {
             ),
         ).toPublishedPage()
         val oldMutation = ChapterJournalRecord(
-            schemaVersion = ChapterJournalRecord.LEGACY_SCHEMA_VERSION,
+            schemaVersion = ChapterJournalRecord.SCHEMA_VERSION,
             pageKey = oldKey,
             generation = 0L,
             fencingToken = 0L,

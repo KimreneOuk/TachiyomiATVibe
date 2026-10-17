@@ -100,7 +100,7 @@ private const val DEFAULT_FILE_NAME = "translation.json"
 /**
  * Journal capture collaborator (Phase 7 S5). Owns one chapter's shadow-journal
  * capture mechanics: credit reservation, writer/epoch lifecycle, the legacy
- * capture frames (the `captureLegacy*` family), bulk capture frames, inventory
+ * capture frames (the `capturePage*` family), bulk capture frames, inventory
  * snapshots, and the producer capture permit/barrier. The owning store
  * delegates every call here under the store mutex except the two seams that
  * predate the extraction: [reserveJournalCredit] and [ensureJournalWriter]
@@ -441,8 +441,8 @@ internal class ChapterStoreJournalBridge(
         }
     }
 
-    /** Non-suspending lock-held snapshot handoff after the legacy transaction commits. */
-    internal fun captureLegacyPersistedLocked(
+    /** Non-suspending lock-held snapshot handoff after the artifact transaction commits. */
+    internal fun capturePageMutationLocked(
         pageKey: String,
         page: PageTranslationView,
         expected: ChapterTranslationStore.PatchPrecondition?,
@@ -452,7 +452,7 @@ internal class ChapterStoreJournalBridge(
         journalFlushBatch: JournalFlushBatch? = null,
     ) {
         // Capture only the exact immutable value already installed in the store map.
-        // The draft argument documents which successful legacy mutation reached this point;
+        // The draft argument documents which successful page mutation reached this point;
         // it is intentionally never retained by the asynchronous writer.
         val published = store.pages[pageKey] ?: return
         val record = ChapterJournalRecord(
@@ -479,7 +479,7 @@ internal class ChapterStoreJournalBridge(
         val wasAccepting = writer.isShadowCaptureActive
         journalFlushBatch?.hasJournalWork = true
         val paid = durableFailure != null || published.hasRenderedResult || published.isTextlessTerminal
-        writer.captureLegacyPersisted(
+        writer.capturePageMutation(
             commitSeq = writer.nextCommitSeq(),
             credit = credit,
             pageKey = pageKey,
@@ -500,7 +500,7 @@ internal class ChapterStoreJournalBridge(
     }
 
     /** A deletion is a page-level legacy commit and receives its own fenced tombstone record. */
-    internal fun captureLegacyDeletionLocked(
+    internal fun capturePageDeletionLocked(
         pageKey: String,
         pageVersion: Long,
         credit: ChapterJournalCredit?,
@@ -524,7 +524,7 @@ internal class ChapterStoreJournalBridge(
             return
         }
         val wasAccepting = writer.isShadowCaptureActive
-        writer.captureLegacyDeletion(
+        writer.capturePageDeletion(
             commitSeq = writer.nextCommitSeq(),
             credit = credit,
             pageKey = pageKey,
@@ -538,7 +538,7 @@ internal class ChapterStoreJournalBridge(
     }
 
     /** Caller holds [ChapterTranslationStore.mutex] and an active bulk capture; null hash means retryable invalidation. */
-    internal fun captureLegacyRekeyStateLocked(
+    internal fun captureRekeyStateLocked(
         oldPageKey: String,
         newPageKey: String,
         mutation: ChapterArtifactEngine.PreparedRekeyJournalMutation,
@@ -618,7 +618,7 @@ internal class ChapterStoreJournalBridge(
             }
             else -> error("unsupported bulk journal kind: ${bulk.kind}")
         }
-        writer.captureLegacyBulkMutation(
+        writer.captureBulkMutation(
             commitSeq = writer.nextCommitSeq(),
             credit = credit,
             kind = bulk.kind,
@@ -705,7 +705,7 @@ internal class ChapterStoreJournalBridge(
                         val page = store.pages[pageKey] ?: return@withLock
                         val durableFailure = store.artifactManifest?.durableFailures?.values
                             ?.firstOrNull { it.pageKey == pageKey }
-                        writer.captureLegacyPersisted(
+                        writer.capturePageMutation(
                             commitSeq = writer.nextCommitSeq(),
                             credit = credit,
                             pageKey = pageKey,

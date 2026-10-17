@@ -257,7 +257,7 @@ class OcrCheckpointRestartReuseTest {
         // ----.1 adopt-committed after restart: Batch checkpoints the
         // reader-committed page WITHOUT any active candidate; the committed
         // display is untouched. ----
-        val reopened = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val reopened = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
         val adoptLease = reopened.tryAcquirePageStageLease("p1", PageStage.Ocr, PageWriteOrigin.BATCH)
             .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
         val adoptSnapshot = reopened.snapshot("p1")

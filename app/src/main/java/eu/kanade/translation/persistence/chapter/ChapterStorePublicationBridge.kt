@@ -393,7 +393,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                     }
                 }
                 store.artifactManifest = manifest
-                store.captureLegacyPersistedLocked(
+                store.capturePageMutationLocked(
                     pageKey,
                     updated,
                     expected,
@@ -436,7 +436,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                             // handoff only when the fused failure path restored the same truth.
                             manifest = recoverableManifest
                             store.artifactManifest = recoverableManifest
-                            store.captureLegacyPersistedLocked(
+                            store.capturePageMutationLocked(
                                 pageKey,
                                 updated,
                                 expected,
@@ -459,7 +459,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
             }
         }
         store.artifactManifest = manifest
-        store.captureLegacyPersistedLocked(
+        store.capturePageMutationLocked(
             pageKey,
             updated,
             expected,
