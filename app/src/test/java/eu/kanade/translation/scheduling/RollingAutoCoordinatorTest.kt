@@ -1,5 +1,6 @@
 package eu.kanade.translation.scheduling
 
+import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
@@ -1402,6 +1403,8 @@ class RollingAutoCoordinatorTest {
             force: Boolean,
             stageListener: TranslationStageListener?,
             origin: PageWriteOrigin,
+            readerStreamFn: (() -> InputStream)?,
+            readerPriority: (() -> AdmissionPriority)?,
         ): SinglePageOutcome = SinglePageOutcome.Completed
 
         /** Waits for prepare[callIndex] to start, then immediately completes it. */

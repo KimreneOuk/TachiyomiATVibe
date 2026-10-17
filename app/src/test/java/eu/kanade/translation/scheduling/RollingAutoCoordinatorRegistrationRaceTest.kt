@@ -4,6 +4,7 @@ import eu.kanade.translation.diagnostics.TranslationIdentityKeys
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
 import eu.kanade.translation.diagnostics.TranslationTraceSink
+import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
@@ -223,5 +224,7 @@ private class ParkingExecutor : TranslationExecutor {
         force: Boolean,
         stageListener: TranslationStageListener?,
         origin: eu.kanade.translation.persistence.chapter.PageWriteOrigin,
+        readerStreamFn: (() -> InputStream)?,
+        readerPriority: (() -> AdmissionPriority)?,
     ): SinglePageOutcome = SinglePageOutcome.Completed
 }

@@ -1,6 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
@@ -51,6 +52,8 @@ class CancelSyncStoreWriteTest {
                 force: Boolean,
                 stageListener: TranslationStageListener?,
                 origin: PageWriteOrigin,
+                readerStreamFn: (() -> InputStream)?,
+                readerPriority: (() -> AdmissionPriority)?,
             ): SinglePageOutcome = SinglePageOutcome.Completed
 
             override suspend fun prepareSinglePage(

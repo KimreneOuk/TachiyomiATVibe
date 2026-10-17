@@ -1,6 +1,7 @@
 package eu.kanade.translation.pipeline.execution
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
@@ -38,6 +39,10 @@ import java.io.InputStream
  */
 interface TranslationExecutor {
 
+    /**
+     * @param readerStreamFn captured fresh-stream factory; each invocation must open a new stream, never an open stream.
+     * @param readerPriority pure live supplier sampled at both the admission and execution gates; waiting governor/native promotion lands in S2.
+     */
     suspend fun translateSinglePage(
         manga: Manga,
         chapter: Chapter,
@@ -46,6 +51,8 @@ interface TranslationExecutor {
         force: Boolean = false,
         stageListener: TranslationStageListener? = null,
         origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
+        readerStreamFn: (() -> InputStream)? = null,
+        readerPriority: (() -> AdmissionPriority)? = null,
     ): SinglePageOutcome
 
     /**

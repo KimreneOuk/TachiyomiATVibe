@@ -469,6 +469,8 @@ class TranslationPipeline private constructor(
         force: Boolean,
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
+        readerStreamFn: (() -> InputStream)?,
+        readerPriority: (() -> AdmissionPriority)?,
     ): SinglePageOutcome {
         //  refuses a new promise while the native lane is visibly stalled.
         // Check before lease admission so this tap performs no writer/native work.
@@ -479,7 +481,7 @@ class TranslationPipeline private constructor(
         // Session admission owns the batch/reader boundary; a low-level lease
         // denial is returned as a typed rejection without observing another
         // origin's terminal state.
-        val acquisition = withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
+        val acquisition = withProviderRequestPriority(readerPriority?.invoke() ?: AdmissionPriority.INTERACTIVE) {
             leaseStore?.let {
                 acquireReaderPageLease(
                     store = it,
@@ -498,7 +500,7 @@ class TranslationPipeline private constructor(
             )
         }
         try {
-            return withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
+            return withProviderRequestPriority(readerPriority?.invoke() ?: AdmissionPriority.INTERACTIVE) {
                 runGrantedSinglePageBoundary(
                     leaseStore = leaseStore,
                     manga = manga,
@@ -508,6 +510,7 @@ class TranslationPipeline private constructor(
                     force = force,
                     stageListener = stageListener,
                     origin = origin,
+                    readerStreamFn = readerStreamFn,
                 )
             }
         } finally {
@@ -525,6 +528,7 @@ class TranslationPipeline private constructor(
         force: Boolean,
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
+        readerStreamFn: (() -> InputStream)?,
     ): SinglePageOutcome {
         val store = leaseStore ?: resolveActiveStore(manga, chapter, source)
             ?: return SinglePageOutcome.Failed(pageKey, "store unavailable")
@@ -603,7 +607,7 @@ class TranslationPipeline private constructor(
                                     chapter = chapter,
                                     source = source,
                                     pageKey = pageKey,
-                                    readerStreamFn = null,
+                                    readerStreamFn = readerStreamFn,
                                     force = force,
                                     stageListener = stageListener,
                                     deferredPublications = deferredPublications,

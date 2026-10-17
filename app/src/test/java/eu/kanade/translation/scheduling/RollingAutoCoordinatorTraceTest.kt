@@ -2,6 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceSink
+import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -465,6 +466,8 @@ private class TraceControllableExecutor(
         force: Boolean,
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
+        readerStreamFn: (() -> InputStream)?,
+        readerPriority: (() -> AdmissionPriority)?,
     ): SinglePageOutcome = SinglePageOutcome.Completed
 
     suspend fun awaitAndCompletePrepare(callIndex: Int) {

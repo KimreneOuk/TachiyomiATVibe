@@ -1,6 +1,7 @@
 package eu.kanade.translation.coexistence
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -371,6 +372,8 @@ class AutoProviderCallDrainsNotCancelsTest {
             force: Boolean,
             stageListener: TranslationStageListener?,
             origin: eu.kanade.translation.persistence.chapter.PageWriteOrigin,
+            readerStreamFn: (() -> InputStream)?,
+            readerPriority: (() -> AdmissionPriority)?,
         ): eu.kanade.translation.model.SinglePageOutcome =
             eu.kanade.translation.model.SinglePageOutcome.Completed
 

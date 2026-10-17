@@ -3,6 +3,7 @@ package eu.kanade.translation.scheduling
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
 import eu.kanade.translation.diagnostics.TranslationTraceSink
+import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.PreparedPage
@@ -212,6 +213,8 @@ private class ManualFakeExecutor(
         force: Boolean,
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
+        readerStreamFn: (() -> InputStream)?,
+        readerPriority: (() -> AdmissionPriority)?,
     ): SinglePageOutcome {
         translateCount.incrementAndGet()
         translateStartedDeferred.complete(Unit)
